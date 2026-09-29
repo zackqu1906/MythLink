@@ -186,6 +186,14 @@ class ProximitySessionController:
         return self._active
 
     @property
+    def gesture_busy(self) -> bool:
+        """Include a start queued by inference but not yet visible to the GUI."""
+        with self._tap_lock:
+            return bool(self._active or self._gesture_start_requested
+                        or self._gesture_preparation is not None
+                        or self._tap_requested_ns is not None)
+
+    @property
     def consecutive_rejects(self) -> int:
         return self._consecutive_rejects
 
@@ -218,7 +226,8 @@ class ProximitySessionController:
         if self.start_on_gesture and not self._active:
             with self._tap_lock:
                 start_requested = self._gesture_start_requested
-                self._gesture_start_requested = False
+                # Keep the request busy until _begin_manual opens the tap
+                # endpoint. Inference may run between this read and BEGIN.
             if start_requested:
                 self._begin_manual(x, reason="gesture")
                 return

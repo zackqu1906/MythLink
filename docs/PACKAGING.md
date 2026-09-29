@@ -1,7 +1,16 @@
 # 桌面安装包
 
+## 输入法验收隔离
+
+打包自检使用临时 `PROXIMIC_IME_SOCKET` 时，不能通过 `open` 预热系统已安装的输入法。
+`open` 启动的常驻输入法可能继承测试环境，临时目录删除后仍不断连接旧地址，造成
+正式主程序中 tap 已切换输入法、但始终不能开始听写。2026-09-21 已据进程环境和
+真实日志确认此问题。现在 `warm_input_method()` 在设置了独立通信路径，或运行
+`--self-check-package` 时直接跳过系统组件启动；正常运行的后台预热保持原样。
+测试自己的输入法客户端须显式启动并自行清理，不能借系统常驻组件验收临时端点。
+
 Proximic Voice 使用“轻量主安装包 + 模型按需下载”：安装包包含 UI、Ring SDK、
-ASR/推理依赖和 16 kHz Opus 解码运行时，不包含 ASR 权重及约 2.5 GB 的本地 GGUF。
+ASR/推理依赖和 16 kHz ADPCM 解码器，不包含 ASR 权重及约 2.5 GB 的本地 GGUF。
 首次使用相应功能时，ASR 框架下载权重；本地文本模型由设置页的“下载本地模型”按钮下载。
 
 所有可变文件都放在用户目录，应用安装目录保持只读：
@@ -49,16 +58,16 @@ $env:WINDOWS_TIMESTAMP_URL = "http://timestamp.digicert.com" # 可省略
 ## macOS Apple Silicon
 
 当前产物支持 Apple Silicon（arm64）和 macOS 15 及以上。构建机需要 Xcode Command
-Line Tools；脚本会把固定版本的 Python 3.11、构建工具和 libopus 安装到项目目录，不要求
+Line Tools；脚本会把固定版本的 Python 3.11 和构建工具安装到项目目录，不要求
 Homebrew，也不会修改系统 Python：
 
 ```bash
 ./scripts/build-macos.sh
 ```
 
-产物：`dist/ProximicVoice-0.6.0-macos-arm64.dmg`。构建脚本把自行编译的 libopus
+产物：`dist/ProximicVoice-0.6.0-macos-arm64.dmg`。构建脚本把 Python 运行时
 复制进 `.app`，用户电脑不需要安装 Python、Homebrew 或其他运行库。生成 DMG 前，脚本会实际启动冻结后的
-可执行文件执行 `--self-check-package`，验证内置 libopus、全部必需 QML 模块、QApplication、
+可执行文件执行 `--self-check-package`，验证内置 ADPCM 解码器、全部必需 QML 模块、QApplication、
 控制器、ASR 导入和 QML 根窗口；启动失败会直接终止构建，详细信息写入
 `.build/macos-smoke-data/logs/startup.log`。
 
@@ -101,7 +110,7 @@ PROXIMIC_SKIP_DEPENDENCY_INSTALL=1 bash scripts/build-macos.sh --app-only
 macOS 打包默认在最终签名前精简 10 个已验证运行库的调试和本地符号，当前依赖版本
 约节省 84 MiB。工具 `tools/strip_macos_runtime.py` 对比处理前后的导出符号和动态链接
 依赖，不一致即中止构建；体积明细保存在 `.build/macos-runtime-size.json`。
-主可执行文件中的 Python 归档、ASR/手势模型、Opus、输入法组件及其他模块均保留。
+主可执行文件中的 Python 归档、ASR 依赖、ADPCM 解码器、输入法组件及其他模块均保留。
 依赖升级导致库路径变化时会明确报错，需要重新检查名单，不能静默漏掉或扩大精简范围。
 
 构建仍从当前 `src` 收集代码与资源，不复用已安装的旧项目包。打包启动检查使用独立
@@ -114,16 +123,21 @@ IME socket，避免占用正在运行的源码主程序连接。安装器诊断�
 输入法组件安装与主程序的辅助功能授权是两条独立流程。临时签名更新可能使旧授权不再匹配，
 但无需每次都先删除权限：先完全退出旧进程、替换 `/Applications` 中的 app，再打开新版并
 查看主界面的权限状态。重新授权后会自动检测，系统确认生效即可继续使用，无需例行重启。
-若持续未生效，核对实际运行路径，必要时删除旧条目、添加新版 app；系统仍未放行时再退出重开。
+若持续未生效，核对实际运行路径，必要时删除旧条目、添加新版 app。
 不要从 DMG 或另一个同名副本继续运行。
 
-主界面同时检测当前进程的 Accessibility 信任与按键发送权限，异常时持续显示警告。
+主界面同时检测实际按键工作进程的 Accessibility 信任与按键发送权限，异常时持续显示警告。
+按键通道通过同一个打包可执行文件的 `--native-access-worker` 入口运行，不启动第二个 UI/ASR 主机。
+得到未授权结果就退出该工作进程，下次检查启动新进程，避免 CoreGraphics 在旧进程内缓存拒绝。
+主程序、音频连接和输入法会话不因授权刷新而重启。源码运行使用同一 Python 解释器的模块入口。
 检测在后台进行：启动和回到主界面时立即刷新，未授权时每 1 秒、已授权时每 10 秒刷新，
 主窗口不在前台时仍持续检测。实际发键仍做即时检查，权限生效后下一次操作即可使用。
 授权恢复不会自动重放之前失败的发送、编辑或撤销。系统授权状态的返回延迟不受程序控制；
 检测恢复也不能修复临时签名变化造成的旧授权身份不匹配。
 设置页提供授权入口、重新检测、显示当前 app 和复制诊断。诊断只含权限状态、进程与路径，
 不含文本内容。程序不会自动清空 TCC 权限，也不会用 Accessibility 的成功结果绕过发键拒绝。
+私有管道不开放网络或公开 socket；操作固定目标 PID，应用手势的 AX 对象留在工作进程内。
+工作进程重建会使旧目标句柄失效，超时/断开不会自动重发按键。详细验证见 `docs/NATIVE_ACCESS.md`。
 
 ## 自动构建
 
@@ -157,7 +171,7 @@ git push origin v0.6.0
 在干净的 Windows 10/11 x64 和 Apple Silicon macOS 15+ 上分别验证：
 
 1. 安装/拖入 Applications 后正常启动，蓝牙权限提示文案正确。
-2. 扫描、选择 Ringo、连接、Opus 连续音频至少 15 分钟、连续说 20 次，并验证单个 BLE
+2. 扫描、选择 Ringo、连接、ADPCM 连续音频至少 15 分钟、连续说 20 次，并验证单个 BLE
    音频块丢失后后续语音仍可继续；再测试断开后重连。
 3. 首次 ASR 权重下载、重启后的缓存复用。
 4. 本地模型下载中断后续传、校验完成、llama-server 启动和修改确认。
@@ -177,10 +191,9 @@ SHA-256：`6602c913cbf0524fbcbc5340c3a020947e15a68fd925b86b47e85650b6023d1e`。�
 - 从该 DMG 的冻结可执行文件调用同一安装器，在本机用户目录实际安装组件，系统确认注册及启用成功，未改变选中的输入源；安装后的二进制与 DMG 内组件一致。
 - 以上不等于另一台干净 Mac 的验收。本包没有 Developer ID 公证；按用户要求保留本地临时签名。
 
-## Opus 自带运行库
+## Public 固件音频与手势
 
-`opuslib` 是 Python 绑定，依赖已列入 `ring-opus` extra、requirements.txt 和 macOS/Windows 锁定文件；macOS App 同时携带 `Contents/Frameworks/opus/libopus.0.dylib`，用户无需安装 Opus、Homebrew 或 Python。
-
-打包版直接从自身资源目录定位动态库，不接受旧的 `PROXIMIC_OPUS_DIR` 覆盖，也不回退到开发机或用户机器上的系统 Opus；缺失时提示重新安装完整应用。打包自检使用五个真实 Opus 静音帧完成 16 kHz 单声道解码，确认得到 3200 字节 PCM。缺少库或解码失败会使自检失败，阻止继续生成 DMG。
-
-源码首次安装 `scripts/setup-macos.sh` 会在 `.runtime/opus/lib` 缺少运行库时自动调用项目内的构建脚本，并验证实际解码。这个开发安装步骤需要编译工具和网络；DMG 使用者无需执行它。
+ADPCM 使用纯 Python 解码，不需要 libopus。打包自检验证完整的 1600 样本
+ADPCM 块可解码为 3200 字节 PCM16。生产安装脚本使用 `ring` extra。
+手势只包含固件确认事件的解析和分发；电脑端手势模型、权重及参数不再打包。
+Torch 仍用于近点检测与本地 ASR，不能作为手势模型残留删除。

@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from proximic_ring.app_shortcuts import MacAppShortcuts, ShortcutTarget, verify_native_api
+from proximic_ring.app_shortcuts import LocalMacAppShortcuts as MacAppShortcuts, ShortcutTarget, verify_native_api
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="real macOS bridge exports")
@@ -18,7 +18,7 @@ def desktop(monkeypatch):
     target = ShortcutTarget("com.openai.codex", 42, "codex", "w", "editor", "AXTextArea")
     state = SimpleNamespace(target=target, permission=True, sent=[])
     backend = MacAppShortcuts()
-    monkeypatch.setattr(backend, "capture", lambda: state.target)
+    monkeypatch.setattr(backend, "capture", lambda **kw: state.target)
     quartz = SimpleNamespace(
         kCGEventFlagMaskCommand=256, kCGEventFlagMaskShift=128,
         kCGEventFlagMaskControl=64, kCGEventFlagMaskAlternate=32, kCGEventSourceUserData=99,
@@ -104,3 +104,45 @@ def test_capture_is_bounded_metadata_only_no_text_or_clipboard(monkeypatch):
     target = MacAppShortcuts().capture()
     assert target.profile == "codex" and target.focus == "focus" and not target.blocked
     assert len(reads) == 6
+
+
+@pytest.mark.parametrize("bundle,role,description", [
+    ("com.apple.Safari", "AXTextField", "网址和搜索"),
+    ("com.google.Chrome", "AXComboBox", "Address and search bar"),
+    ("other.app", "AXSearchField", "搜索"),
+    ("other.editor", "AXWebArea", "editor"),
+])
+def test_plain_enter_capture_all_apps_and_fields(monkeypatch, bundle, role, description):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    values = {("app", "AXFocusedWindow"): "w", ("app", "AXFocusedUIElement"): "f",
+              ("f", "AXRole"): role, ("f", "AXDescription"): description}
+    reads = []
+    def read(node, name, _):
+        reads.append(name)
+        return 0, values.get((node, name))
+    monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(
+        AXUIElementCreateApplication=lambda pid: "app",
+        AXUIElementCopyAttributeValue=read,
+        AXUIElementSetMessagingTimeout=lambda *args: None))
+    app = SimpleNamespace(bundleIdentifier=lambda: bundle, processIdentifier=lambda: 42,
+                          localizedName=lambda: "Unknown")
+    monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWorkspace=SimpleNamespace(
+        sharedWorkspace=lambda: SimpleNamespace(frontmostApplication=lambda: app))))
+    backend = MacAppShortcuts()
+    assert backend.capture() is None  # App-specific navigation stays restricted.
+    target = backend.capture(plain_enter=True)
+    assert target.bundle == bundle and target.plain_enter and not target.blocked
+    assert backend.same_target(target, require_focus=True)
+    values[("app", "AXFocusedUIElement")] = "different-field"
+    assert not backend.same_target(target, require_focus=True)
+    assert set(reads) == {"AXFocusedWindow", "AXFocusedUIElement", "AXRole"}
+
+
+def test_plain_enter_target_posts_no_modifiers_and_rejects_other_chords(desktop):
+    backend, state, _ = desktop
+    state.target = replace(state.target, bundle="com.apple.Safari", profile="", plain_enter=True)
+    backend.post(state.target, "Enter", require_focus=True)
+    assert [(e["code"], e["flags"], e["down"]) for _, e in state.sent] == [(36, 0, True), (36, 0, False)]
+    with pytest.raises(RuntimeError, match="仅允许 Enter"):
+        backend.post(state.target, "Cmd+Return", require_focus=True)
+    assert len(state.sent) == 2

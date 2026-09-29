@@ -48,7 +48,7 @@ def test_pending_start_does_not_survive_cancel_pause_or_disconnect(boundary):
 @pytest.mark.parametrize("audio_source", ["ring", "microphone"])
 @pytest.mark.parametrize("control_mode", ["proximity", "gesture"])
 def test_four_combinations_use_selected_audio_and_respect_processing_gate(monkeypatch, audio_source, control_mode):
-    import proximic_ring.host_gestures as gestures
+    import proximic_ring.firmware_gestures as gestures
 
     state, logs, finals, actions, detections = {}, [], [], [], []
     disconnect, recognition, cancel = threading.Event(), threading.Event(), threading.Event()
@@ -62,13 +62,15 @@ def test_four_combinations_use_selected_audio_and_respect_processing_gate(monkey
         thread.join(1)
         assert not thread.is_alive()
 
-    class Recognizer:
-        prediction_count = 0
-        reset_count = 0
+    class Dispatcher:
 
         def __init__(self, *, on_gesture):
             state["callback"] = on_gesture
-            self.classifier = SimpleNamespace(window_size=60, predict=lambda _: None)
+        error = None
+        def start(self): pass
+        def submit(self, event): state["callback"](event)
+        def close(self): pass
+        def snapshot(self): return {}
 
     class Sink:
         def start(self, audio):
@@ -123,7 +125,7 @@ def test_four_combinations_use_selected_audio_and_respect_processing_gate(monkey
         error = None
 
         def __init__(self, **kwargs):
-            assert kwargs["imu_hz"] == 200
+            assert kwargs["imu_hz"] == 50
             assert kwargs.get("audio_enabled", True) is (audio_source == "ring")
 
         def connect(self):
@@ -177,7 +179,7 @@ def test_four_combinations_use_selected_audio_and_respect_processing_gate(monkey
         state["gate"] = gate
         return gate
 
-    monkeypatch.setattr(gestures, "GestureRecognizer", Recognizer)
+    monkeypatch.setattr(gestures, "FirmwareGestureWorker", Dispatcher)
     monkeypatch.setattr(app_runtime, "RingAudioSource", Ring)
     monkeypatch.setattr(app_runtime, "MicrophoneSource", Mic)
     monkeypatch.setattr(app_runtime, "_build_detector", build_detector)

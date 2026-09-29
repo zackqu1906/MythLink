@@ -1,0 +1,162 @@
+[
+  {
+    "id": "edit_01",
+    "expected": "编辑",
+    "document": "会议定在明天下午三点，地点是 3 号会议室。",
+    "context": "",
+    "utterance": "把明天改成周三",
+    "note": "出现「改」，且指向已有文本 -> 编辑"
+  },
+  {
+    "id": "edit_02",
+    "expected": "编辑",
+    "document": "今天天气不错，我们出去走走吧。",
+    "context": "",
+    "utterance": "把最后一句删掉",
+    "note": "删除指令"
+  },
+  {
+    "id": "edit_03",
+    "expected": "编辑",
+    "document": "预算控制在十万元以内。",
+    "context": "",
+    "utterance": "不是十万，是二十万",
+    "note": "口语纠正，不含编辑动词"
+  },
+  {
+    "id": "edit_04",
+    "expected": "编辑",
+    "document": "第一、要保证质量。第二、要控制成本",
+    "context": "",
+    "utterance": "第一句后面加个句号",
+    "note": "改标点"
+  },
+  {
+    "id": "edit_05",
+    "expected": "编辑",
+    "document": "联系人是张伟。",
+    "context": "",
+    "utterance": "不对，是张伟明",
+    "note": "纠错人名"
+  },
+  {
+    "id": "edit_06",
+    "expected": "编辑",
+    "document": "我们决定取消这个项目。",
+    "context": "",
+    "utterance": "撤销，回到上一版",
+    "note": "撤销"
+  },
+  {
+    "id": "edit_07",
+    "expected": "编辑",
+    "document": "先做设计，再做需求分析。",
+    "context": "",
+    "utterance": "顺序反了，调过来",
+    "note": "调整顺序"
+  },
+  {
+    "id": "edit_08",
+    "expected": "编辑",
+    "document": "需求分析 设计 开发 测试",
+    "context": "",
+    "utterance": "改成有序列表",
+    "note": "改格式"
+  },
+  {
+    "id": "edit_09",
+    "expected": "编辑",
+    "document": "项目预计两周完成。",
+    "context": "用户上一句：把「两周」改成「三周」",
+    "utterance": "后面再加一句：如有变动另行通知",
+    "note": "上下文里已经在改，这句是接着的指令"
+  },
+  {
+    "id": "dict_01",
+    "expected": "听写",
+    "document": "",
+    "context": "",
+    "utterance": "我们下周要开一次全员大会",
+    "note": "最普通的听写"
+  },
+  {
+    "id": "dict_02",
+    "expected": "听写",
+    "document": "这个方案我们不改了，",
+    "context": "",
+    "utterance": "就按原来的执行",
+    "note": "陷阱：出现「不改了」，但它是内容本身"
+  },
+  {
+    "id": "dict_03",
+    "expected": "听写",
+    "document": "",
+    "context": "",
+    "utterance": "用户可以通过语音直接修改文档内容",
+    "note": "陷阱：出现「修改」，但整句是要写进文档的话"
+  },
+  {
+    "id": "dict_04",
+    "expected": "听写",
+    "document": "",
+    "context": "",
+    "utterance": "他说：“这个功能不能删，删了整个流程就断了。”",
+    "note": "陷阱：引号里的「删」是引述内容"
+  },
+  {
+    "id": "dict_05",
+    "expected": "听写",
+    "document": "今天天气不错，",
+    "context": "",
+    "utterance": "下午我们去公园吧",
+    "note": "接着已有文本继续写"
+  },
+  {
+    "id": "dict_06",
+    "expected": "听写",
+    "document": "会议时间定在",
+    "context": "",
+    "utterance": "下午两点半",
+    "note": "短语续写"
+  },
+  {
+    "id": "dict_07",
+    "expected": "听写",
+    "document": "我们明天开会，",
+    "context": "用户正在口述通知内容",
+    "utterance": "请大家准时参加",
+    "note": "上下文表明是口述"
+  },
+  {
+    "id": "amb_01",
+    "expected": null,
+    "document": "",
+    "context": "",
+    "utterance": "改一下",
+    "note": "要改什么、改成什么都没说"
+  },
+  {
+    "id": "amb_02",
+    "expected": null,
+    "document": "谢谢大家。",
+    "context": "",
+    "utterance": "嗯",
+    "note": "单字，无法判断"
+  },
+  {
+    "id": "amb_03",
+    "expected": null,
+    "document": "",
+    "context": "",
+    "utterance": "顺便说一下",
+    "note": "语义不完整"
+  },
+  {
+    "id": "amb_04",
+    "expected": null,
+    "document": "",
+    "context": "",
+    "utterance": "把这句话删掉",
+    "note": "看似是删除指令，但已有文本为空、也没有上下文，无从判断该删什么"
+  }
+]

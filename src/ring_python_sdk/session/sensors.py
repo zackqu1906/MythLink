@@ -76,12 +76,13 @@ from ring_python_sdk.raise_to_wake.processor import RaiseToWakeProcessor
 from ring_python_sdk.session.types import MIC_ENCODE, PPG_MODE
 from ring_python_sdk.swipe.processor import SwipeProcessor
 from ring_python_sdk.swipe.events import SwipeResult
+from ring_python_sdk.public_protocol import quaternion_start_command
 
 
 class SensorsMixin:
     async def mic_on(
         self,
-        encode_name: str = "opus",
+        encode_name: str = "adpcm",
         *,
         hardware_gain_db: float | None = None,
         software_gain_db: float | None = None,
@@ -107,15 +108,28 @@ class SensorsMixin:
         except OpusUnavailableError as exc:
             print(str(exc))
             return
-        await send_mic_control(
-            self.client,
-            self.rx_uuid,
-            on=True,
-            encode=encode,
-            hardware_gain_db=hardware_gain_db,
-            software_gain_db=software_gain_db,
-        )
+        # Notifications can arrive before the START write returns.
         self.mic_active = True
+        try:
+            await send_mic_control(
+                self.client,
+                self.rx_uuid,
+                on=True,
+                encode=encode,
+                hardware_gain_db=hardware_gain_db,
+                software_gain_db=software_gain_db,
+            )
+        except BaseException:
+            self.mic_active = False
+            if self.mic is not None:
+                self.mic.close()
+                self.mic = None
+            # START may have reached the device before cancellation/failure.
+            try:
+                await send_mic_control(self.client, self.rx_uuid, on=False)
+            except Exception:
+                pass
+            raise
         print(f"mic capturing -> {path}")
 
     async def mic_off(self) -> None:
@@ -123,13 +137,50 @@ class SensorsMixin:
         if not self.mic_active:
             print("mic already off")
             return
-        await send_mic_control(self.client, self.rx_uuid, on=False)
-        if self.mic is not None:
-            self.mic.close()
-            self.saved_paths.append(self.mic.output_path)
-            print(f"mic saved: {self.mic.output_path}")
-            self.mic = None
         self.mic_active = False
+        try:
+            await send_mic_control(self.client, self.rx_uuid, on=False)
+        finally:
+            processor, self.mic = self.mic, None
+            if processor is not None:
+                processor.close()
+                self.saved_paths.append(processor.output_path)
+                print(f"mic saved: {processor.output_path}")
+
+    async def quaternion_on(self, *, on_frame, sample_rate_hz=200, frames_per_packet=10):
+        """Subscribe to public SDK quaternion frames; independent of gestures.
+
+        Shares the IMU stream with raw capture, so the two modes are exclusive.
+        Callback runs on the BLE loop and must return promptly.
+        """
+        command = quaternion_start_command(sample_rate_hz, frames_per_packet)
+        if not callable(on_frame):
+            raise TypeError("on_frame must be callable")
+        if self.imu_active or self.quaternion_active:
+            raise RuntimeError("Stop the current IMU/quaternion stream first")
+        if self.client is None or not self.client.is_connected:
+            raise RuntimeError("Ring is not connected")
+        self.quaternion_rate_hz = sample_rate_hz
+        self.quaternion_callback = on_frame
+        self.quaternion_active = True
+        try:
+            await self.client.write_gatt_char(self.rx_uuid, command, response=False)
+            await asyncio.sleep(.05)
+        except BaseException:
+            try:
+                await self.quaternion_off()
+            except Exception:
+                pass
+            raise
+
+    async def quaternion_off(self):
+        if not self.quaternion_active:
+            return
+        self.quaternion_active = False
+        self.quaternion_callback = None
+        if self.client is not None and self.client.is_connected:
+            await self.client.write_gatt_char(self.rx_uuid, b"\x21\x01", response=False)
+            await asyncio.sleep(.05)
 
     async def mic_recording_status_get(self):
         assert self.client is not None
@@ -245,6 +296,8 @@ class SensorsMixin:
         if self.imu_active:
             print("imu already on")
             return
+        if self.quaternion_active:
+            raise RuntimeError("Stop quaternion capture before starting raw IMU")
         if lp and encode_mode != IMU_ENCODE_RAW:
             raise ValueError("IMU LP mode only supports encode_mode=raw")
         path = self._seg_path("imu", DEFAULT_IMU_OUTPUT)

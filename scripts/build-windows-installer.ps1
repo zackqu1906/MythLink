@@ -24,7 +24,7 @@ try {
     if ($PackageCheck.ExitCode -ne 0) {
         throw "Bundled application self-check failed (exit $($PackageCheck.ExitCode)); check the startup log under LOCALAPPDATA\ProxiMic Voice\logs."
     }
-    Write-Host "Bundled QML, Opus, and ASR self-check passed."
+    Write-Host "Bundled QML, ADPCM, and ASR self-check passed."
 
     $IsccCandidates = @(
         "$ProjectRoot\.build\tools\InnoSetup6\ISCC.exe",

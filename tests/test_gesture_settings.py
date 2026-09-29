@@ -16,9 +16,9 @@ def isolate_settings(tmp_path, monkeypatch):
 
 
 def test_defaults_match_sdk_and_current_assignments():
-    from proximic_ring.host_gestures import GESTURE_NAMES
+    from proximic_ring.firmware_gestures import GESTURE_NAMES
 
-    assert set(GESTURE_LABELS) == set(GESTURE_NAMES) - {"empty"}
+    assert set(GESTURE_LABELS) == set(GESTURE_NAMES.values()) - {"empty"}
     bindings = GestureBindings()
     assert bindings.confirm == ("tap", "")
     assert bindings.undo == ("swipe-left", "")
@@ -82,11 +82,14 @@ def test_settings_save_restore_conflicts_and_immediate_dispatch(tmp_path, monkey
         controller.dispatchVoiceAction("cancel")
         assert calls == ["cancel", "cancel"]  # Down is no longer an undo alias.
         assert not controller.setGestureBinding("confirm", 1, "swipe-up")  # Reserved by app send.
-        assert controller._app_gestures.setInputSourceGesture("swipe-down")
-        assert not controller.setGestureBinding("confirm", 1, "swipe-down")  # Reserved only after user binding.
+        assert not controller._app_gestures.setInputSourceGesture("swipe-down")
+        assert not controller.setGestureBinding("confirm", 1, "swipe-down")  # Global field/scroll command.
+        assert controller.setGestureBinding("switch_mode", 0, "")
+        assert controller._app_gestures.setInputSourceGesture("swipe-right")
+        assert not controller.setGestureBinding("confirm", 1, "swipe-right")
         assert controller._app_gestures.setInputSourceGesture("")
-        assert controller.setGestureBinding("confirm", 1, "swipe-down")
-        assert "下滑" in controller.transcriptText
+        assert controller.setGestureBinding("confirm", 1, "swipe-right")
+        assert "右滑" in controller.transcriptText
 
         restarted = _controller(tmp_path, monkeypatch)
         assert restarted.gestureBindings == controller.gestureBindings

@@ -14,9 +14,10 @@ shiboken6==6.11.1
 pyobjc-framework-Quartz==12.2.2
 pyobjc-framework-ApplicationServices==12.2.2
 pyobjc-framework-CoreText==12.2.2
+pyobjc-framework-ScreenCaptureKit==12.2.2
+pyobjc-framework-CoreMedia==12.2.2
 bleak==3.0.2
 asr-decoder==0.1.2
 online-fbank==0.0.4
 kaldi-native-fbank==1.22.3
 websocket-client==1.9.0
-opuslib==3.0.1

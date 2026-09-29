@@ -94,6 +94,9 @@ class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, Stat
         default_factory=asyncio.Event, repr=False
     )
     imu_active: bool = False
+    quaternion_active: bool = False
+    quaternion_rate_hz: int = 200
+    quaternion_callback: Any = field(default=None, repr=False)
     imu_calibration_status: ImuCalibrationStatus | None = None
     ppg_active: bool = False
     ppg_mode: str = ""

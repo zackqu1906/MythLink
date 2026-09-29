@@ -79,6 +79,9 @@ from ring_python_sdk.imu.calibration import (
 )
 
 
+from ring_python_sdk.public_protocol import parse_quaternions
+
+
 class DemuxMixin:
     def _demux(self, sender: int, data: bytearray) -> None:
         if len(data) < 1:
@@ -156,6 +159,13 @@ class DemuxMixin:
             if status is not None:
                 self.imu_calibration_status = status
                 self.emit_live(format_imu_calibration_status(status))
+        elif data[:2] == b"\x21\x0a":
+            if self.quaternion_active and self.quaternion_callback is not None:
+                for frame in parse_quaternions(bytes(data), self.quaternion_rate_hz):
+                    try:
+                        self.quaternion_callback(frame)
+                    except Exception as exc:
+                        self.emit_live(f"quaternion callback failed: {exc}")
         elif cmd == CMD_IMU and self.imu is not None:
             before = self.imu.stats.sample_count
             self.imu.handle_notification(sender, data)

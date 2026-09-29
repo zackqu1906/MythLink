@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 
-from .gesture_settings import GESTURE_LABELS, GestureBindings
+from .gesture_settings import GESTURE_LABELS, GestureBindings, RING_RESERVED_GESTURES
 
 APP_LABELS = {"codex": "Codex", "workbuddy": "WorkBuddy", "wechat": "微信"}
 ACTION_LABELS = {"send": "发送", "previous": "上一个任务／聊天",
@@ -49,8 +49,10 @@ class AppBinding:
     enabled: bool = True
 
     def __post_init__(self):
-        if self.gesture not in GESTURE_LABELS or type(self.enabled) is not bool:
+        if (self.gesture not in GESTURE_LABELS and self.gesture != "") or type(self.enabled) is not bool:
             raise ValueError("应用手势设置无效")
+        if not self.gesture and self.enabled:
+            raise ValueError("请先选择手势，再启用此操作")
         object.__setattr__(self, "shortcut", normalize_shortcut(self.shortcut))
 
 
@@ -64,16 +66,22 @@ def default_profiles() -> dict[str, dict[str, AppBinding]]:
             "next": AppBinding("circle-clockwise", prefix + "+]"),
         }
         if app != "wechat":
-            profiles[app]["new"] = AppBinding("index-pinch", "Cmd+N")
+            profiles[app]["new"] = AppBinding("", "Cmd+N", False)
     return profiles
 
 
 def validate_profiles(profiles, voice: GestureBindings) -> None:
     for app, actions in profiles.items():
         used = set()
-        for binding in actions.values():
+        for action, binding in actions.items():
+            if action == "send":
+                if binding != AppBinding("swipe-up", "Return"):
+                    raise ValueError("输入模式上滑固定为 Enter，适用于所有应用")
+                continue
             if not binding.enabled:
                 continue
+            if binding.gesture in RING_RESERVED_GESTURES:
+                raise ValueError("该手势已保留给 Ring 全局菜单")
             if binding.gesture in voice.confirm:
                 raise ValueError("开始／结束听写的手势需独立保留，请选择其他手势")
             if binding.gesture in used:
@@ -96,6 +104,14 @@ def profiles_from_json(value: object):
             raise ValueError("应用手势设置格式无效")
         defaults[app] = {name: AppBinding(**fields) for name, fields in actions.items()}
     return defaults
+
+
+def reserve_ring_profiles(profiles):
+    return {app: {action: AppBinding("swipe-up", "Return") if action == "send" else
+                  replace(binding, gesture="", enabled=False)
+                  if binding.gesture in RING_RESERVED_GESTURES else binding
+                  for action, binding in actions.items()}
+            for app, actions in profiles.items()}
 
 
 def migrate_voice_defaults(bindings: GestureBindings) -> GestureBindings:

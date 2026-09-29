@@ -273,8 +273,18 @@ final class CompositionSession {
               (context.text as NSString).length == context.range.length else { return nil }
         return context
     }
-    var editScope: String { editOriginal == nil ? "unavailable" : (original.complete ? "document" : "readable_range") }
-    var editContextAvailable: Bool { original.documentAccess && editOriginal != nil }
+    // Keep the original scope for native replacement/undo, but expose only the
+    // text before the initial caret (or selection start) to the edit model.
+    var editRequestText: String? {
+        guard let context = editOriginal, context.range.location == 0 else { return nil }
+        return (context.text as NSString).substring(to: original.selection.location)
+    }
+    private func editResult(_ text: String) -> String? {
+        guard let context = editOriginal, context.range.location == 0 else { return nil }
+        return text + (context.text as NSString).substring(from: original.selection.location)
+    }
+    var editScope: String { editRequestText == nil ? "unavailable" : "before_caret" }
+    var editContextAvailable: Bool { original.documentAccess && editRequestText != nil }
     private var dictatedEditText: String? {
         guard let context = editOriginal else { return nil }
         let relative = NSRange(location: original.selection.location - context.range.location, length: original.selection.length)
@@ -779,9 +789,11 @@ final class CompositionSession {
     }
 
     private func startEditing() {
-        guard editOriginal != nil, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let source = editRequestText, !source.isEmpty,
+              !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             editRequested = false
-            restoreDictation(error: editOriginal == nil ? "当前输入框未提供可读的编辑原文，已保留听写" : "")
+            restoreDictation(error: editRequestText == nil ? "当前输入框未提供光标前的完整原文，已保留听写" :
+                (editRequestText?.isEmpty == true ? "光标前没有可编辑文字，已保留听写" : ""))
             return
         }
         revision += 1
@@ -794,7 +806,7 @@ final class CompositionSession {
             // Reading the initial IMK context is invisible. Treat it as a model
             // proposal only: native selection verifies the source after the
             // result arrives, before any candidate can replace the document.
-            onEdit?(editOriginal?.text ?? "", raw, revision)
+            onEdit?(source, raw, revision)
             onChanged?()
         }
     }
@@ -828,15 +840,18 @@ final class CompositionSession {
             committedRangeVerified = true
         }, then: { [unowned self] in
             guard editRequested, revision == requestedRevision else { drainDeferredCommands(); return }
-            let resultRange = NSRange(location: 0, length: (candidate as NSString).length)
+            // The native selection may omit IMK's synthetic trailing paragraph
+            // markers. Join the model's prefix to that freshly read suffix.
+            guard let result = editResult(candidate) else { return }
+            let resultRange = NSRange(location: 0, length: (result as NSString).length)
             if client.verifiedReplacement?.range == resultRange,
-               client.verifiedReplacement?.text == candidate,
+               client.verifiedReplacement?.text == result,
                let caret = client.verifiedReplacementCaret {
-                expectedEditText = candidate
+                expectedEditText = result
                 expectedSelection = caret
                 committedRangeVerified = false
                 replacementVerified = true
-                completeEdit(candidate)
+                completeEdit(result)
             } else if cancelPending {
                 drainDeferredCommands()
             } else {
@@ -898,14 +913,14 @@ final class CompositionSession {
         return expectedSelection.location - range.length + (text as NSString).length
     }
 
-    private func replaceEditScope(with text: String, restoring: Bool = false, then continuation: @escaping () -> Void) {
+    private func replaceEditScope(with text: String, restoring: Bool = false, caret: Int? = nil, then continuation: @escaping () -> Void) {
         guard editContextAvailable, let context = editOriginal, let before = expectedEditText else { return }
         withEditOwnership { [unowned self] in
             if cancelPending, !restoring { drainDeferredCommands(); return }
             let generation = workGeneration
             let range = NSRange(location: context.range.location, length: (before as NSString).length)
             let suffix = suffixCaret(afterReplacing: range, with: text)
-            let restoredCaret = restoring ? original.selection.location + (raw as NSString).length : nil
+            let restoredCaret = restoring ? original.selection.location + (raw as NSString).length : caret
             sendNativeWrite { client.replaceEditing(range, with: text, restoringCaret: restoredCaret, expected: before) }
             guard active, workGeneration == generation else { return }
             let result = NSRange(location: range.location, length: (text as NSString).length)
@@ -917,7 +932,7 @@ final class CompositionSession {
                 let receipt = client.verifiedReplacement
                 let verified = receipt?.range == result && receipt?.text == text
                 let observed = verified ? text : client.readText(in: result)
-                let caret = NSRange(location: NSMaxRange(result), length: 0)
+                let caret = NSRange(location: restoredCaret ?? NSMaxRange(result), length: 0)
                 let positioned = client.verifiedReplacementCaret
                 recordReadback(expected: text, observed: observed, selection: probe.selection,
                                marked: probe.markedRange, desiredSelection: positioned ?? caret, desiredMarked: unspecifiedRange)
@@ -1021,8 +1036,9 @@ final class CompositionSession {
             return
         }
         let apply = { [unowned self] in
-            replaceEditScope(with: text) { [unowned self] in
-                completeEdit(text)
+            guard let result = editResult(text) else { return }
+            replaceEditScope(with: result, caret: (text as NSString).length) { [unowned self] in
+                completeEdit(result)
             }
         }
         if client.preparesEditContext {

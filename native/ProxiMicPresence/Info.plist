@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.proximic.Presence</string>
+<key>CFBundleName</key><string>ProxiMic 距离锁屏</string>
+<key>CFBundleExecutable</key><string>ProxiMicPresence</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+<key>LSMinimumSystemVersion</key><string>15.0</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>检测当前连接戒指的远近，在您离开时锁屏、回来时解锁。</string>
+<key>NSBluetoothPeripheralUsageDescription</key><string>连接当前连接戒指并读取蓝牙信号强度。</string>
+</dict></plist>

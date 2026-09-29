@@ -1,0 +1,2 @@
+﻿id,expected,predicted,correct,p_听写,p_编辑,confidence,information_sufficient,latency_ms,utterance,note,error
+cli,,编辑,,0.28,0.72,0.43,,1712,“300年我还做了一件事”,,

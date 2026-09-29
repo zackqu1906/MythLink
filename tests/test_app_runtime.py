@@ -100,7 +100,7 @@ def test_runtime_defaults_only_enable_windows_desktop_features():
     settings = RuntimeSettings()
     args = settings.to_namespace()
 
-    assert args.encoding == "opus"
+    assert args.encoding == "adpcm"
     expected = os.name == "nt"
     assert args.desktop_output is expected
     assert args.push_to_talk is expected

@@ -81,8 +81,8 @@ def _add_ring_connection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--encoding",
         choices=["pcm", "adpcm", "opus"],
-        default="pcm",
-        help="Ring MIC transport codec. pcm is simplest and recommended for dataset collection.",
+        default="adpcm",
+        help="Public firmware uses ADPCM (default); pcm/opus are legacy diagnostic modes.",
     )
 
 

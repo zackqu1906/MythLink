@@ -73,133 +73,6 @@ ApplicationWindow {
         }
     }
 
-    component OverlayActionButton: Rectangle {
-        id: actionButton
-        property string title: ""
-        property string shortcut: ""
-        property string gestureHint: ""
-        readonly property string inputHint: [shortcut, gestureHint].filter(function(part) {
-            return part.length > 0
-        }).join(" · ")
-        property color fillColor: "#1A2230"
-        property color hoverColor: "#232E40"
-        property color pressedColor: "#2B3850"
-        property color outlineColor: "#344155"
-        property color titleColor: "#F4F7FB"
-        property color shortcutColor: "#93A2B8"
-        property bool busy: false
-        property string busyLabel: "处理中"
-        signal triggered()
-
-        implicitWidth: Math.max(82, Math.ceil(actionHintMetrics.advanceWidth) + 24)
-        implicitHeight: 44
-        radius: 10
-        color: actionMouse.pressed
-               ? pressedColor
-               : (actionMouse.containsMouse ? hoverColor : fillColor)
-        border.width: 1
-        border.color: outlineColor
-        Accessible.role: Accessible.Button
-        Accessible.name: title + (shortcut.length > 0 ? "，快捷键 " + shortcut : "")
-                        + (gestureHint.length > 0 ? "，手势 " + gestureHint : "")
-
-        TextMetrics {
-            id: actionHintMetrics
-            text: actionButton.inputHint
-            font.family: root.uiFontFamily
-            font.pixelSize: 10
-        }
-
-        Behavior on color {
-            ColorAnimation { duration: 90 }
-        }
-
-        Column {
-            anchors.centerIn: parent
-            width: parent.width - 14
-            spacing: 1
-
-            Text {
-                width: parent.width
-                height: 17
-                text: actionButton.title
-                color: actionButton.titleColor
-                font.family: root.uiFontFamily
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
-                fontSizeMode: Text.Fit
-                minimumPixelSize: 10
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                wrapMode: Text.NoWrap
-                clip: true
-            }
-            Item {
-                width: parent.width
-                height: 11
-
-                Row {
-                    anchors.centerIn: parent
-                    spacing: 4
-
-                    Item {
-                        id: inlineBusySpinner
-                        width: actionButton.busy ? 10 : 0
-                        height: 10
-                        visible: actionButton.busy
-
-                        Rectangle {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            y: 0
-                            width: 3
-                            height: 3
-                            radius: 1.5
-                            color: actionButton.titleColor
-                        }
-                        Rectangle {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.bottom: parent.bottom
-                            width: 2
-                            height: 2
-                            radius: 1
-                            color: actionButton.shortcutColor
-                            opacity: 0.45
-                        }
-                        RotationAnimator on rotation {
-                            from: 0
-                            to: 360
-                            duration: 720
-                            loops: Animation.Infinite
-                            running: inlineBusySpinner.visible
-                        }
-                    }
-
-                    Text {
-                        objectName: actionButton.objectName + "InputHint"
-                        height: 11
-                        text: actionButton.busy
-                              ? actionButton.busyLabel
-                              : actionButton.inputHint
-                        color: actionButton.shortcutColor
-                        font.family: root.uiFontFamily
-                        font.pixelSize: 10
-                        verticalAlignment: Text.AlignVCenter
-                        wrapMode: Text.NoWrap
-                    }
-                }
-            }
-        }
-
-        MouseArea {
-            id: actionMouse
-            anchors.fill: parent
-            enabled: actionButton.enabled && !actionButton.busy
-            hoverEnabled: true
-            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: actionButton.triggered()
-        }
-    }
-
     component SegmentedChoice: Rectangle {
         id: segmentedChoice
         property var options: []
@@ -1515,7 +1388,7 @@ ApplicationWindow {
             modal: true
             popupType: Popup.Item
             property int currentPage: 0
-            readonly property var pageTitles: ["设置", "听写与撤销", "手势与快捷键", "麦克风与启停", "语音识别", "编辑模型", "输入法与权限", "发送与切换对话", "微信聊天切换设置"]
+            readonly property var pageTitles: ["设置", "听写与撤销", "手势与快捷键", "麦克风与启停", "语音识别", "编辑模型", "输入法与权限", "发送与切换对话", "微信聊天切换设置", "离开锁屏"]
             title: pageTitles[currentPage]
             Overlay.modal: Rectangle { color: "#99000000" }
             header: Label {
@@ -1525,7 +1398,10 @@ ApplicationWindow {
             }
             enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 100 } }
             exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
-            onClosed: appController.appGestures.recording = false
+            onClosed: {
+                appController.appGestures.recording = false
+                appController.inlineInput.permissions.cancelScreenPreview()
+            }
             onAboutToShow: navigate(0)
             onOpened: {
                 if (appController.audioSource === "microphone")
@@ -1551,7 +1427,11 @@ ApplicationWindow {
             function navigate(page) {
                 runtimeSettingsScroll.forceActiveFocus(Qt.OtherFocusReason)
                 appController.appGestures.recording = false
+                if (page !== 6)
+                    appController.inlineInput.permissions.cancelScreenPreview()
                 currentPage = page
+                if (page === 6 && Qt.platform.os === "osx")
+                    appController.inlineInput.permissions.refreshScreenRecording()
                 Qt.callLater(function() { runtimeSettingsScroll.contentItem.contentY = 0 })
             }
             function goBack() {
@@ -1604,6 +1484,25 @@ ApplicationWindow {
                                 text: "选择要调整的内容，修改会自动保存。"
                                 color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
                             }
+                            RowLayout {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: Qt.platform.os === "osx"
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: "菜单栏图标"; color: root.textMain; font.bold: true }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: "显示连接状态和电量；关闭后只保留应用图标。"
+                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                                    }
+                                }
+                                Switch {
+                                    objectName: "menuBarStatusInfoSwitch"
+                                    Accessible.name: "显示菜单栏连接状态和电量"
+                                    checked: appController.menuBarStatusInfo
+                                    onClicked: appController.menuBarStatusInfo = checked
+                                }
+                            }
                             SettingsCategoryButton {
                                 objectName: "settingsCategory1"
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -1646,6 +1545,20 @@ ApplicationWindow {
                                 description: "安装语音输入法、辅助功能和输入位置"
                                 onClicked: runtimeSettingsDialog.navigate(6)
                             }
+                            SettingsCategoryButton {
+                                objectName: "settingsCategory9"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "离开锁屏"
+                                description: "戒指远离时锁定电脑，弹指（snap）解锁"
+                                onClicked: runtimeSettingsDialog.navigate(9)
+                            }
+                        }
+                        ProximitySettings {
+                            objectName: "settingsPage9"
+                            Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                            visible: runtimeSettingsDialog.currentPage === 9
+                            controller: appController.proximity
+                            host: appController
                         }
                         ColumnLayout {
                             objectName: "settingsPage1"
@@ -1658,61 +1571,6 @@ ApplicationWindow {
                                 badge: "即时保存"
                                 accent: "#C89BFF"
                             }
-                            Label { visible: !appController.inlineInput.enabled; text: "撤销浮窗"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                            SegmentedChoice {
-                                id: appliedOverlayStyleCombo
-                                objectName: "appliedOverlayStyleCombo"
-                                visible: !appController.inlineInput.enabled
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                options: ["普通浮窗", "极简浮窗"]
-                                currentIndex: appController.appliedOverlayStyle === "compact" ? 1 : 0
-                                onActivated: function(index) {
-                                    appController.appliedOverlayStyle = index === 1 ? "compact" : "normal"
-                                }
-                            }
-                            Label {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                visible: !appController.inlineInput.enabled
-                                text: appController.appliedOverlayStyle === "compact"
-                                      ? "仅保留撤销与语音类型转换按钮，占用更少空间。"
-                                      : "在按钮上方显示本次输入或修改的简短摘要；较长内容会自动省略。"
-                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                            }
-                            RowLayout {
-                                visible: !appController.inlineInput.enabled
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 20
-                                Layout.rightMargin: 20
-                                Label { text: "撤销浮窗显示时长"; color: root.textMuted; font.pixelSize: 12 }
-                                Item { Layout.fillWidth: true }
-                                Label {
-                                    text: (Math.round(appliedOverlayDurationSlider.value * 2) / 2) + " 秒"
-                                    color: root.textMain
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                }
-                            }
-                            Slider {
-                                id: appliedOverlayDurationSlider
-                                objectName: "appliedOverlayDurationSlider"
-                                visible: !appController.inlineInput.enabled
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 20
-                                Layout.rightMargin: 20
-                                from: 1
-                                to: 10
-                                stepSize: 0.5
-                                snapMode: Slider.SnapAlways
-                                value: appController.appliedOverlayDurationSeconds
-                                onMoved: appController.appliedOverlayDurationSeconds = value
-                            }
-                            Label {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                visible: !appController.inlineInput.enabled
-                                text: "连接设备期间也可即时调整；仅改变浮窗停留时间，不会清除撤销记录。"
-                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                            }
-
                             Switch {
                                 objectName: "multiUndoSwitch"
                                 visible: appController.inlineInput.enabled
@@ -1815,6 +1673,16 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: runtimeSettingsDialog.currentPage === 2
                             spacing: 14
+                            Label {
+                                objectName: "ringGestureModeLabel"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "Ring 全局菜单 · " + appController.ringGestures.modeLabel
+                                      + "\n食指捏合唤起提示，中指捏合切换模式，显示 5 秒。"
+                                      + "\n操作模式仅保留上下滑、握拳和两种捏合；语音手势在输入模式使用。"
+                                      + "\n下滑进入输入框选择，四向滑动移动高亮，5 秒无操作退出。"
+                                      + "\n普通框选中即聚焦，Tap 开始语音；地址栏需先 Tap 确认聚焦。"
+                                color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                            }
                             SettingsCategoryButton {
                                 objectName: "openAppGestureSettingsButton"
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -1973,19 +1841,15 @@ ApplicationWindow {
                                 visible: appController.audioSource === "ring"
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                                 Layout.preferredHeight: 44
-                                model: ["稳定优先（推荐）", "平衡模式", "原始音质"]
+                                model: ["ADPCM（固件语音）"]
                                 enabled: !runtimeSettingsDialog.deviceSettingsLocked
-                                currentIndex: Math.max(0, ["opus", "adpcm", "pcm"].indexOf(appController.audioEncoding))
-                                onActivated: appController.audioEncoding = ["opus", "adpcm", "pcm"][currentIndex]
+                                currentIndex: 0
+                                onActivated: appController.audioEncoding = "adpcm"
                             }
                             Label {
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                                 visible: appController.audioSource === "ring"
-                                text: appController.audioEncoding === "pcm"
-                                      ? "原始 PCM 带宽最高，BLE 链路繁忙时更容易出现音频停流。"
-                                      : appController.audioEncoding === "adpcm"
-                                        ? "BLE 带宽较低，但有损压缩可能改变近点模型的 Stage2 分数分布。"
-                                        : "默认使用 Opus 降低 BLE 带宽；SDK 解码后仍向模型提供 16 kHz PCM。"
+                                text: "戒指以 ADPCM 传输语音，解码后以 16 kHz PCM 送入近点检测和语音识别。"
                                 color: root.textMuted
                                 font.pixelSize: 11
                                 wrapMode: Text.Wrap
@@ -2397,6 +2261,90 @@ ApplicationWindow {
                                 description: "查看组件状态、输入法选择和系统权限"
                                 onClicked: inputMethodSetupDialog.open()
                             }
+                            Rectangle {
+                                objectName: "screenRecordingPermissionCard"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                implicitHeight: screenPermissionContent.implicitHeight + 32
+                                visible: Qt.platform.os === "osx"
+                                radius: 12; color: root.panel; border.color: root.border
+                                ColumnLayout {
+                                    id: screenPermissionContent
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                                    spacing: 10
+                                    Label {
+                                        text: "屏幕录制权限"
+                                        color: root.textMain; font.bold: true; font.pixelSize: 15
+                                    }
+                                    Label {
+                                        objectName: "screenRecordingPermissionStatus"
+                                        Layout.fillWidth: true
+                                        text: appController.inlineInput.permissions.screenRecordingStatus
+                                        color: appController.inlineInput.permissions.screenRecordingGranted ? root.textMain : "#E6B879"
+                                        wrapMode: Text.Wrap
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: "用于显示窗口选择层的实时画面。开启权限后返回这里，会继续验证一次预览。"
+                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Button {
+                                            objectName: "openScreenRecordingPermissionsButton"
+                                            text: appController.inlineInput.permissions.screenRecordingRequesting ? "正在打开…" : "打开屏幕录制设置"
+                                            enabled: !appController.inlineInput.permissions.screenRecordingRequesting && !appController.inlineInput.permissions.screenPreviewBusy
+                                            onClicked: appController.inlineInput.permissions.openScreenRecordingSettings()
+                                        }
+                                        Button {
+                                            objectName: "refreshScreenRecordingPermissionsButton"
+                                            text: "重新检测"
+                                            onClicked: appController.inlineInput.permissions.refreshScreenRecording()
+                                        }
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: appController.inlineInput.permissions.screenRecordingInstructions
+                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                                    }
+                                    Label {
+                                        objectName: "screenRecordingPermissionMessage"
+                                        Layout.fillWidth: true
+                                        visible: text.length > 0
+                                        text: appController.inlineInput.permissions.screenRecordingMessage
+                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                                    }
+                                    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: root.border }
+                                    Label {
+                                        text: "实时预览确认"
+                                        color: root.textMain; font.bold: true
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: "验证会短暂读取当前桌面一个应用窗口，取得画面后立即停止，不录音、不保存。macOS 可能另弹出含 bypass 的确认，需要你点击 Allow／允许。"
+                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                                    }
+                                    RowLayout {
+                                        Button {
+                                            objectName: "verifyScreenPreviewButton"
+                                            text: appController.inlineInput.permissions.screenPreviewBusy ? "验证中…" : "验证实时预览"
+                                            enabled: appController.inlineInput.permissions.screenRecordingGranted && !appController.inlineInput.permissions.screenRecordingRequesting && !appController.inlineInput.permissions.screenPreviewBusy
+                                            onClicked: appController.inlineInput.permissions.verifyScreenPreview()
+                                        }
+                                        Button {
+                                            objectName: "cancelScreenPreviewButton"
+                                            text: "取消验证"
+                                            visible: appController.inlineInput.permissions.screenPreviewBusy
+                                            onClicked: appController.inlineInput.permissions.cancelScreenPreview()
+                                        }
+                                    }
+                                    Label {
+                                        objectName: "screenPreviewCheckMessage"
+                                        Layout.fillWidth: true
+                                        text: appController.inlineInput.permissions.screenPreviewMessage
+                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                                    }
+                                }
+                            }
                             Switch {
                                 id: desktopOutputSwitch
                                 objectName: "desktopOutputSwitch"
@@ -2604,603 +2552,6 @@ ApplicationWindow {
     }
 
     Window {
-        id: transcriptOverlay
-        objectName: "transcriptOverlay"
-        transientParent: null
-        readonly property bool llmProcessing: appController.llmTextProcessing
-        readonly property bool showsRecognizedInstruction:
-            appController.transcriptText.indexOf(" · 指令：") >= 0
-        readonly property bool showsProcessingModeSwitch:
-            showsRecognizedInstruction
-            || appController.processingModeCorrectionAvailable
-        readonly property string statusText: {
-            var marker = appController.transcriptText.indexOf(" · 指令：")
-            return marker >= 0
-                ? appController.transcriptText.substring(0, marker)
-                : appController.transcriptText
-        }
-        width: showsProcessingModeSwitch
-            ? Math.min(620, Screen.width - 32)
-            : (appController.interactionCanCancel
-               ? 284 + cancelUtteranceButton.Layout.preferredWidth : 300)
-        readonly property real availableScreenHeight: Screen.desktopAvailableHeight > 0
-            ? Screen.desktopAvailableHeight : Screen.height
-        readonly property real maximumContentHeight: Math.max(64, Math.floor(availableScreenHeight * 0.7))
-        readonly property real naturalHeight: 20 + Math.max(
-            44, overlayStatusRow.implicitHeight
-                + (overlayText.text.length > 0 ? 4 + overlayText.implicitHeight : 0))
-        readonly property bool textOverflows: naturalHeight > maximumContentHeight
-        height: Math.min(maximumContentHeight, naturalHeight)
-        Behavior on height {
-            enabled: transcriptOverlay.visible
-            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-        }
-        x: Math.round((Screen.width - width) / 2)
-        // desktopAvailableHeight excludes the macOS Dock / Windows taskbar.
-        // Keep an additional breathing gap so an auto-revealed Dock cannot
-        // cover the cancellation button.
-        y: Math.round(Math.max(
-            12,
-            (Screen.desktopAvailableHeight > 0
-                ? Screen.desktopAvailableHeight
-                : Screen.height) - height - 20
-        ))
-        visible: !appController.inlineInput.enabled && appController.transcriptVisible
-        color: "transparent"
-        Material.theme: Material.Dark
-        Material.accent: root.primary
-        flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool)
-               | Qt.FramelessWindowHint
-               | Qt.WindowStaysOnTopHint
-               | Qt.WindowDoesNotAcceptFocus
-
-        Rectangle {
-            objectName: "transcriptOverlayPanel"
-            anchors.fill: parent
-            radius: 16
-            color: transcriptOverlay.llmProcessing ? "#F0211935" : "#E9111620"
-            border.color: transcriptOverlay.llmProcessing
-                          ? "#B497FF"
-                          : (appController.transcriptFinal ? "#594DD4AC" : "#477892FF")
-            border.width: transcriptOverlay.llmProcessing ? 2 : 1
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 18
-                anchors.rightMargin: 12
-                anchors.topMargin: 10
-                anchors.bottomMargin: 10
-                spacing: 10
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumWidth: 0
-                    spacing: 4
-                    RowLayout {
-                        id: overlayStatusRow
-                        Layout.fillWidth: true
-                        spacing: 8
-                        BusyIndicator {
-                            objectName: "llmProcessingSpinner"
-                            visible: transcriptOverlay.llmProcessing
-                            running: transcriptOverlay.visible && visible
-                            Layout.preferredWidth: 22
-                            Layout.preferredHeight: 22
-                            Material.accent: "#C5ADFF"
-                        }
-                        Label {
-                            id: overlayStatusText
-                            objectName: "statusOverlayText"
-                            Layout.fillWidth: true
-                            text: transcriptOverlay.llmProcessing
-                                  ? "LLM 正在处理文本…" : transcriptOverlay.statusText
-                            color: transcriptOverlay.llmProcessing ? "#E0D2FF" : "#93A0B4"
-                            font.family: root.uiFontFamily
-                            font.pixelSize: transcriptOverlay.llmProcessing ? 14 : 10
-                            font.bold: transcriptOverlay.llmProcessing
-                            elide: Text.ElideRight
-                        }
-                    }
-                    Flickable {
-                        id: transcriptViewport
-                        objectName: "transcriptViewport"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.minimumHeight: 0
-                        visible: overlayText.text.length > 0
-                        contentWidth: width
-                        contentHeight: overlayText.implicitHeight
-                        clip: true
-                        boundsBehavior: Flickable.StopAtBounds
-                        flickableDirection: Flickable.VerticalFlick
-                        interactive: transcriptOverlay.textOverflows
-                        property bool followTail: true
-                        property bool updatingScroll: false
-
-                        function updateScrollPosition() {
-                            updatingScroll = true
-                            if (!transcriptOverlay.textOverflows) {
-                                contentY = 0
-                                followTail = true
-                            } else if (followTail) {
-                                contentY = Math.max(0, contentHeight - height)
-                            }
-                            updatingScroll = false
-                        }
-                        onContentYChanged: {
-                            if (!updatingScroll)
-                                followTail = contentY >= Math.max(0, contentHeight - height) - 2
-                        }
-                        onContentHeightChanged: Qt.callLater(updateScrollPosition)
-                        onHeightChanged: Qt.callLater(updateScrollPosition)
-                        onVisibleChanged: {
-                            if (!visible) {
-                                followTail = true
-                                contentY = 0
-                            }
-                        }
-                        ScrollBar.vertical: ScrollBar {
-                            objectName: "transcriptScrollBar"
-                            policy: transcriptOverlay.textOverflows ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
-                        }
-                        Label {
-                            id: overlayText
-                            objectName: "asrOverlayText"
-                            // Reserve a small scrollbar gutter so overflow
-                            // never changes the wrap width during streaming.
-                            width: Math.max(0, transcriptViewport.width - 10)
-                            text: appController.transcriptPrimaryText
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                            elide: Text.ElideNone
-                            color: appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB"
-                            font.family: root.uiFontFamily
-                            font.pixelSize: 15
-                            lineHeightMode: Text.FixedHeight
-                            lineHeight: 22
-                        }
-                    }
-                }
-                OverlayActionButton {
-                    id: processingSwitchModeButton
-                    objectName: "processingSwitchModeButton"
-                    // Reserve the slot as soon as the edit instruction is
-                    // known. After three seconds only opacity changes, so the
-                    // status text and window do not visibly jump or resize.
-                    visible: transcriptOverlay.showsProcessingModeSwitch
-                    enabled: appController.processingModeCorrectionAvailable
-                    opacity: enabled ? 1 : 0
-                    Layout.preferredWidth: Math.max(132, implicitWidth)
-                    Layout.preferredHeight: 44
-                    Layout.alignment: Qt.AlignBottom
-                    title: "刚刚是输入内容"
-                    shortcut: appController.modeCorrectionShortcut
-                    gestureHint: appController.gestureButtonHints.switch_mode
-                    fillColor: "#17302D"
-                    hoverColor: "#1D3D38"
-                    pressedColor: "#244B44"
-                    outlineColor: "#35675F"
-                    titleColor: "#A7ECD7"
-                    shortcutColor: "#73AD9D"
-                    onTriggered: appController.dispatchVoiceAction("switch_mode")
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: 180
-                            easing.type: Easing.OutCubic
-                        }
-                    }
-                }
-                OverlayActionButton {
-                    id: cancelUtteranceButton
-                    objectName: "cancelUtteranceButton"
-                    visible: appController.interactionCanCancel
-                    Layout.preferredWidth: implicitWidth
-                    Layout.preferredHeight: 44
-                    Layout.alignment: Qt.AlignBottom
-                    title: "取消"
-                    shortcut: "Esc"
-                    gestureHint: appController.gestureButtonHints.undo
-                    fillColor: "#2A1E24"
-                    hoverColor: "#3B252E"
-                    pressedColor: "#4B2934"
-                    outlineColor: "#75404C"
-                    titleColor: "#FFD6DC"
-                    shortcutColor: "#D696A0"
-                    onTriggered: appController.dispatchVoiceAction("cancel")
-                }
-            }
-        }
-    }
-
-    Window {
-        id: appliedActionOverlay
-        objectName: "appliedActionOverlay"
-        property bool userPositioned: false
-        property bool systemDragActive: false
-        property real userX: 0
-        property real userY: 0
-        property var rememberedApplicationPositions: ({})
-        readonly property string placementKey:
-            appController.appliedPopupPlacementKey
-        readonly property string applicationKey:
-            appController.appliedPopupApplicationKey
-        readonly property bool compactStyle:
-            appController.appliedOverlayStyle === "compact"
-        // AX positions and QWindow positions are global logical coordinates.
-        // Keep the monitor origin and exclude its Dock/menu bar/taskbar.
-        readonly property var screenArea: appController.appliedPopupScreenGeometry
-        readonly property real screenLeft: screenArea.x !== undefined
-            ? screenArea.x : Screen.virtualX
-        readonly property real screenTop: screenArea.y !== undefined
-            ? screenArea.y : Screen.virtualY
-        readonly property real screenWidth: screenArea.width || Screen.width
-        readonly property real screenHeight: screenArea.height || Screen.height
-        readonly property real screenRight: screenLeft + screenWidth
-        readonly property real screenBottom: screenTop + screenHeight
-        readonly property bool showsModeCorrection:
-            appController.modeCorrectionAvailable
-            || appController.modeCorrectionFailed
-        transientParent: null
-        readonly property bool hasTargetBounds:
-            appController.appliedPopupTargetWidth > 0
-            && appController.appliedPopupTargetHeight > 0
-        readonly property bool hasCaretBounds:
-            appController.appliedPopupCaretHeight > 0
-            && appController.appliedPopupCaretX >= screenLeft
-            && appController.appliedPopupCaretX <= screenRight
-            && appController.appliedPopupCaretY >= screenTop
-            && appController.appliedPopupCaretY < screenBottom
-        width: Math.min(
-            compactStyle
-                ? 44 + undoAppliedButton.Layout.preferredWidth
-                  + (showsModeCorrection ? 6 + switchModeButton.Layout.preferredWidth : 0)
-                : (showsModeCorrection ? 430 : 360),
-            screenWidth - 16
-        )
-        height: compactStyle ? 56 : 120
-        function automaticX() {
-            if (!hasCaretBounds)
-                return Math.round(screenLeft + (screenWidth - width) / 2)
-            var right = appController.appliedPopupCaretX
-                      + appController.appliedPopupCaretWidth + 8
-            var left = appController.appliedPopupCaretX - width - 8
-            if (right >= screenLeft + 8 && right + width <= screenRight - 8)
-                return Math.round(right)
-            if (left >= screenLeft + 8 && left + width <= screenRight - 8)
-                return Math.round(left)
-            return Math.round(Math.max(screenLeft + 8,
-                Math.min(screenRight - width - 8, right)))
-        }
-        function automaticY() {
-            if (!hasCaretBounds)
-                return Math.round(Math.max(screenTop + 8, screenBottom - height - 120))
-            var gap = 40
-            var preferred = appController.appliedPopupCaretY - height - gap
-            if (hasTargetBounds) {
-                var targetLeft = appController.appliedPopupTargetX
-                var targetRight = targetLeft + appController.appliedPopupTargetWidth
-                var horizontallyOverlaps = x < targetRight
-                                           && x + width > targetLeft
-                if (horizontallyOverlaps)
-                    preferred = Math.min(
-                        preferred,
-                        appController.appliedPopupTargetY - height - gap
-                    )
-                if (preferred < screenTop + 8 && horizontallyOverlaps)
-                    preferred = appController.appliedPopupTargetY
-                              + appController.appliedPopupTargetHeight + gap
-            }
-            if (preferred < screenTop + 8)
-                preferred = appController.appliedPopupCaretY
-                          + appController.appliedPopupCaretHeight + gap
-            return Math.round(Math.max(screenTop + 8,
-                Math.min(screenBottom - height - 8, preferred)))
-        }
-        function finishSystemDrag() {
-            userX = appliedActionOverlay.x
-            userY = appliedActionOverlay.y
-            if (applicationKey !== "") {
-                rememberedApplicationPositions[applicationKey] = {
-                    "x": userX,
-                    "y": userY
-                }
-            }
-            systemDragActive = false
-            appliedActionDragSafetyTimer.stop()
-            appController.endAppliedOverlayDrag()
-        }
-        function restoreApplicationPosition() {
-            var remembered = applicationKey !== ""
-                           ? rememberedApplicationPositions[applicationKey]
-                           : undefined
-            // A saved position on a disconnected/different monitor must not
-            // pin the pill against the edge of the current screen.
-            if (remembered !== undefined
-                && remembered.x >= screenLeft
-                && remembered.y >= screenTop
-                && remembered.x + width <= screenRight
-                && remembered.y + height <= screenBottom) {
-                userX = remembered.x
-                userY = remembered.y
-                userPositioned = true
-            } else {
-                userPositioned = false
-                userX = 0
-                userY = 0
-            }
-        }
-        x: userPositioned
-            ? Math.round(Math.max(screenLeft + 8, Math.min(screenRight - width - 8, userX)))
-            : automaticX()
-        y: userPositioned
-            ? Math.round(Math.max(screenTop + 8, Math.min(screenBottom - height - 8, userY)))
-            : automaticY()
-        onXChanged: {
-            if (systemDragActive)
-                userX = x
-        }
-        onYChanged: {
-            if (systemDragActive)
-                userY = y
-        }
-        onPlacementKeyChanged: {
-            if (systemDragActive) {
-                systemDragActive = false
-                appliedActionDragSafetyTimer.stop()
-                appController.endAppliedOverlayDrag()
-            }
-            // A new utterance in the same application reuses the position the
-            // user chose there. A different application keeps an independent
-            // position and otherwise starts from its live caret.
-            restoreApplicationPosition()
-        }
-        onApplicationKeyChanged: {
-            if (!systemDragActive)
-                restoreApplicationPosition()
-        }
-        onScreenAreaChanged: {
-            if (!systemDragActive)
-                restoreApplicationPosition()
-        }
-        visible: !appController.inlineInput.enabled && appController.appliedActionVisible
-        color: "transparent"
-        // The controller hides this when the target app leaves the foreground;
-        // while visible it must float over that app instead of behind it.
-        flags: Qt.Window
-               | Qt.FramelessWindowHint
-               | Qt.WindowStaysOnTopHint
-               | Qt.WindowDoesNotAcceptFocus
-
-        Timer {
-            id: appliedActionDragSafetyTimer
-            interval: 3000
-            repeat: false
-            onTriggered: appliedActionOverlay.finishSystemDrag()
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            radius: appliedActionOverlay.compactStyle ? 14 : 16
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: "#F2161C27" }
-                GradientStop { position: 1.0; color: "#F0111720" }
-            }
-            border.width: 1
-            border.color: appliedActionOverlay.compactStyle ? "#465267" : "#52627A"
-
-            Rectangle {
-                visible: !appliedActionOverlay.compactStyle
-                width: 3
-                height: parent.height - 28
-                anchors.left: parent.left
-                anchors.leftMargin: 1
-                anchors.verticalCenter: parent.verticalCenter
-                radius: 1.5
-                color: appController.modeCorrectionPending ? "#F0B85A" : "#7892FF"
-            }
-
-            Rectangle {
-                visible: !appliedActionOverlay.compactStyle
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.leftMargin: 18
-                anchors.rightMargin: 18
-                height: 1
-                color: "#53647D"
-                opacity: 0.45
-            }
-
-            // Every exposed part of the pill moves the native window.  The
-            // button MouseAreas are declared above this background handler and
-            // therefore retain their normal click behavior.
-            MouseArea {
-                id: appliedActionBackgroundDragArea
-                objectName: "appliedActionBackgroundDragArea"
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.SizeAllCursor
-                onPressed: function(mouse) {
-                    appliedActionOverlay.userX = appliedActionOverlay.x
-                    appliedActionOverlay.userY = appliedActionOverlay.y
-                    appliedActionOverlay.userPositioned = true
-                    appliedActionOverlay.systemDragActive = true
-                    appController.beginAppliedOverlayDrag()
-                    appliedActionOverlay.startSystemMove()
-                    appliedActionDragSafetyTimer.restart()
-                    mouse.accepted = true
-                }
-                onReleased: {
-                    appliedActionOverlay.finishSystemDrag()
-                }
-                onCanceled: {
-                    appliedActionOverlay.finishSystemDrag()
-                }
-            }
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: appliedActionOverlay.compactStyle ? 6 : 10
-                spacing: appliedActionOverlay.compactStyle ? 0 : 8
-
-                RowLayout {
-                    id: appliedActionSummaryRow
-                    objectName: "appliedActionSummaryRow"
-                    visible: !appliedActionOverlay.compactStyle
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? 48 : 0
-                    spacing: 10
-
-                    Rectangle {
-                        Layout.preferredWidth: 30
-                        Layout.preferredHeight: 30
-                        radius: 15
-                        color: appController.modeCorrectionPending ? "#362D1D" : "#1B2A42"
-                        border.width: 1
-                        border.color: appController.modeCorrectionPending ? "#7A6231" : "#3D5682"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: appController.modeCorrectionPending ? "↻" : "✓"
-                            color: appController.modeCorrectionPending ? "#F0C56D" : "#9DB3FF"
-                            font.family: root.uiFontFamily
-                            font.pixelSize: 16
-                            font.weight: Font.DemiBold
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 2
-
-                        Text {
-                            id: appliedActionTitle
-                            objectName: "appliedActionTitle"
-                            Layout.fillWidth: true
-                            text: appController.appliedActionTitle
-                            color: "#F5F7FB"
-                            font.family: root.uiFontFamily
-                            font.pixelSize: 13
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            id: appliedActionSummary
-                            objectName: "appliedActionSummary"
-                            Layout.fillWidth: true
-                            text: appController.appliedActionText
-                            color: "#AAB6C8"
-                            font.family: root.uiFontFamily
-                            font.pixelSize: 11
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 44
-                    spacing: 6
-
-                    Item {
-                        id: appliedActionDragSpace
-                        objectName: "appliedActionDragSpace"
-                        Layout.preferredWidth: appliedActionOverlay.compactStyle ? 26 : 70
-                        Layout.fillWidth: !appliedActionOverlay.compactStyle
-                        Layout.preferredHeight: 44
-
-                        Grid {
-                            visible: appliedActionOverlay.compactStyle
-                            anchors.centerIn: parent
-                            columns: 2
-                            spacing: 3
-                            Repeater {
-                                model: 6
-                                Rectangle {
-                                    width: 2
-                                    height: 2
-                                    radius: 1
-                                    color: "#68758A"
-                                }
-                            }
-                        }
-
-                        Row {
-                            visible: !appliedActionOverlay.compactStyle
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 6
-
-                            Grid {
-                                anchors.verticalCenter: parent.verticalCenter
-                                columns: 2
-                                spacing: 3
-                                Repeater {
-                                    model: 6
-                                    Rectangle {
-                                        width: 2
-                                        height: 2
-                                        radius: 1
-                                        color: "#718097"
-                                    }
-                                }
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "拖动"
-                                color: "#718097"
-                                font.family: root.uiFontFamily
-                                font.pixelSize: 10
-                            }
-                        }
-                    }
-
-                    OverlayActionButton {
-                        id: undoAppliedButton
-                        objectName: "undoAppliedButton"
-                        Layout.preferredWidth: Math.max(
-                            appliedActionOverlay.compactStyle ? 90 : 104, implicitWidth)
-                        Layout.preferredHeight: 44
-                        title: "撤销"
-                        shortcut: "Esc"
-                        gestureHint: appController.gestureButtonHints.undo
-                        onTriggered: appController.dispatchVoiceAction("undo")
-                    }
-                    OverlayActionButton {
-                        id: switchModeButton
-                        objectName: "switchModeButton"
-                        visible: appliedActionOverlay.showsModeCorrection
-                        enabled: appController.modeCorrectionAvailable
-                                 && !appController.modeCorrectionPending
-                        Layout.preferredWidth: Math.max(176, implicitWidth)
-                        Layout.preferredHeight: 44
-                        title: appController.modeCorrectionFailed
-                               ? "指令转换失败"
-                               : appController.modeCorrectionLabel
-                        shortcut: appController.modeCorrectionShortcut
-                        gestureHint: appController.gestureButtonHints.switch_mode
-                        busy: appController.modeCorrectionPending
-                        fillColor: appController.modeCorrectionFailed
-                                   ? "#382027" : "#17302D"
-                        hoverColor: appController.modeCorrectionFailed
-                                    ? "#382027" : "#1D3D38"
-                        pressedColor: appController.modeCorrectionFailed
-                                      ? "#382027" : "#244B44"
-                        outlineColor: appController.modeCorrectionFailed
-                                      ? "#8D4757" : "#35675F"
-                        titleColor: appController.modeCorrectionFailed
-                                    ? "#FFB5C1" : "#A7ECD7"
-                        shortcutColor: appController.modeCorrectionFailed
-                                       ? "#D57C8B" : "#73AD9D"
-                        onTriggered: appController.dispatchVoiceAction("switch_mode")
-                    }
-                }
-            }
-        }
-    }
-
-    Window {
         id: associationRecommendationOverlay
         objectName: "associationRecommendationOverlay"
         readonly property bool hasTargetBounds:
@@ -3216,11 +2567,7 @@ ApplicationWindow {
                 var left = appController.associationPopupTargetX - width - 12
                 var rightFits = right + width <= Screen.width - 12
                 var leftFits = left >= 12
-                // The result actions prefer the right side. When both are
-                // visible, put this recommendation on the opposite side.
-                if (appController.appliedActionVisible && leftFits)
-                    preferred = left
-                else if (rightFits)
+                if (rightFits)
                     preferred = right
                 else if (leftFits)
                     preferred = left
@@ -3243,7 +2590,7 @@ ApplicationWindow {
                     var above = appController.associationPopupTargetY - height - 12
                     var appliedBelowFits = appController.associationPopupTargetY
                                            + appController.associationPopupTargetHeight
-                                           + 12 + appliedActionOverlay.height
+                                           + 12
                                            <= Screen.height - 20
                     preferred = appliedBelowFits
                                 ? above
@@ -3251,9 +2598,7 @@ ApplicationWindow {
                                   + appController.associationPopupTargetHeight + 12
                 }
             }
-            var maximum = appController.transcriptVisible
-                    ? transcriptOverlay.y - height - 12
-                    : Screen.height - height - 20
+            var maximum = Screen.height - height - 20
             return Math.round(Math.max(20, Math.min(maximum, preferred)))
         }
         visible: appController.associationRecommendationVisible
@@ -3339,9 +2684,7 @@ ApplicationWindow {
         minimumWidth: 540
         minimumHeight: 420
         x: Math.round((Screen.width - width) / 2)
-        y: appController.transcriptVisible
-           ? Math.round(Math.max(20, transcriptOverlay.y - height - 16))
-           : Math.round((Screen.height - height) / 2)
+        y: Math.round((Screen.height - height) / 2)
         visible: appController.associationDetailVisible
         title: "推荐关联详情"
         color: root.color
@@ -3460,9 +2803,7 @@ ApplicationWindow {
         minimumWidth: 640
         minimumHeight: 520
         x: Math.round((Screen.width - width) / 2)
-        y: appController.transcriptVisible
-           ? Math.round(Math.max(20, transcriptOverlay.y - height - 16))
-           : Math.round((Screen.height - height) / 2)
+        y: Math.round((Screen.height - height) / 2)
         visible: appController.associationCenterVisible
         title: "数据关联中心"
         color: root.color

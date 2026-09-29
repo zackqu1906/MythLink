@@ -10,7 +10,7 @@ def processing_controller(tmp_path, monkeypatch):
 
     controller = _controller(tmp_path, monkeypatch)
     controller._latest_asr_session_id = 1
-    controller._transcript_visible = True
+    controller._transcript_active = True
     controller._interaction_state = "processing"
     controller._pending_text_requests.update((11, 12))
     controller._pending_interactions.update({

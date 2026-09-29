@@ -610,15 +610,23 @@ def test_direct_abort_discards_partial_session():
     assert worker.closed
 
 
-def test_gesture_waits_for_input_method_without_buffering_preparation_audio():
+def test_gesture_waits_for_input_method_without_buffering_preparation_audio(monkeypatch):
     sink = StreamingRecorder()
     gate = make_gate(sink, start_on_gesture=True)
+    original_begin = gate._begin_manual
+    def begin(block, **kwargs):
+        assert gate.gesture_busy  # No idle gap while audio takes the queued start.
+        original_begin(block, **kwargs)
+    monkeypatch.setattr(gate, "_begin_manual", begin)
     callbacks = []
+    assert not gate.gesture_busy
     assert gate.request_gesture_toggle(callbacks.append) == 'start'
+    assert gate.gesture_busy  # Preparation is busy before any audio begins.
     for _ in range(10):
         gate.process(np.full(320, .1, dtype=np.float32), [])
     assert not gate.active and not sink.started
     callbacks[0](True)
+    assert gate.gesture_busy  # Queued start is still busy before process().
     gate.process(np.full(320, .8, dtype=np.float32), [])
     assert gate.active and len(sink.started) == 1
     np.testing.assert_allclose(sink.started[0], .8)
@@ -626,6 +634,7 @@ def test_gesture_waits_for_input_method_without_buffering_preparation_audio():
     assert gate.request_gesture_toggle(callbacks.append) == 'end'
     gate.process(np.ones(320, dtype=np.float32), [])
     assert not gate.active and len(sink.started) == 1
+    assert not gate.gesture_busy
 
 
 @pytest.mark.parametrize('action', ['cancel', 'abort', 'failure'])

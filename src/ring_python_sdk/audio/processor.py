@@ -18,6 +18,7 @@ from ring_python_sdk.core.constants import (
 )
 from ring_python_sdk.core.mic_capture_assembler import MicCaptureAssembler
 from ring_python_sdk.core.seq_tracker import SeqTracker
+from ring_python_sdk.public_protocol import MicBlockAssembler
 
 PCM16_MIN = -32768
 PCM16_MAX = 32767
@@ -67,6 +68,8 @@ class AudioProcessor:
         self._live_plot = live_plot
         self.on_pcm = on_pcm
         self._assembler = MicCaptureAssembler()
+        self._public_adpcm = MicBlockAssembler()
+        self._encoding = encoding or "adpcm"
         self._buffer = OrderedMicBuffer()
         self._frame_seq = SeqTracker(bits=16)
         self._opus = OrderedOpusDecoder(eager=encoding == "opus")
@@ -128,7 +131,24 @@ class AudioProcessor:
             self._write_pcm(pcm)
 
     def handle_notification(self, _: int, data: bytearray) -> None:
+        if self._closed:
+            return
         self.stats.packet_count += 1
+        if self._encoding == "adpcm":
+            frame = self._public_adpcm.accept(bytes(data))
+            if frame is not None:
+                self._frame_seq.observe(frame.sequence)
+                self.stats.frame_count += 1
+                # Public blocks are independently decoded and retired in order;
+                # write immediately instead of retaining an entire session.
+                self._write_pcm(frame.pcm)
+                if self.on_pcm is not None:
+                    self.on_pcm(frame.sequence, frame.pcm)
+                if self._live_plot is not None:
+                    self._live_plot.add_pcm(frame.pcm)
+            elif data[:2] != b"\x20\x03":
+                self.stats.dropped_packet_count += 1
+            return
         assembled = self._assembler.add_packet(bytes(data))
         if assembled is None:
             if (

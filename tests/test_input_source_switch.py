@@ -45,7 +45,7 @@ def wait_result(service):
 
 
 def prepare(monkeypatch, service):
-    assert service.setInputSourceGesture("swipe-down")
+    assert service.setInputSourceGesture("snap")
     import proximic_ring.ui.app_gesture_controller as module
     calls = []
     monkeypatch.setattr(module, 'foreground_pid', lambda: 123)
@@ -53,18 +53,18 @@ def prepare(monkeypatch, service):
     return calls
 
 
-def test_user_bound_down_switches_with_asr_paused_and_no_supported_app(route, monkeypatch):
+def test_user_bound_snap_switches_with_asr_paused_and_no_supported_app(route, monkeypatch):
     controller, service, inline, backend, keys, messages, emit = route
     calls = prepare(monkeypatch, service)
     backend.target = None  # global action, independent of app profiles or AX
-    assert service.inputSourceGesture == 'swipe-down'
+    assert service.inputSourceGesture == 'snap'
     assert not controller._recognition_enabled
-    emit('swipe-down')
+    emit('snap')
     wait_result(service)
     assert calls == [123]
     assert not keys and not messages
     assert service.notice == '已切换到 ProxiMic Voice'
-    emit('swipe-down')  # duplicate model event, no second dispatch
+    emit('snap')  # duplicate model event, no second dispatch
     assert calls == [123]
 
 
@@ -74,7 +74,7 @@ def test_switch_does_not_gate_on_cached_sentence_state(route, monkeypatch, phase
     calls = prepare(monkeypatch, service)
     inline._view['phase'] = phase
     monkeypatch.setattr(service, 'phase_state', lambda: pytest.fail('input-source switch must not inspect sentence state'))
-    emit('swipe-down')
+    emit('snap')
     wait_result(service)
     assert calls == [123]
     assert not messages and not keys
@@ -93,38 +93,41 @@ def test_pending_operations_do_not_block_source_selection(route, monkeypatch, bu
     elif busy == 'audio':
         controller._utterance_active = True
     elif busy == 'model':
-        controller._inline_requests['old'] = object()
+        controller._inline_requests[1] = object()
     else:
         controller._undo_running = True
-    emit('swipe-down')
+    emit('snap')
     wait_result(service)
     assert calls == [123] and not keys and not messages
 
 
 def test_binding_conflicts_are_rejected_in_both_directions(route):
     controller, service, *_ = route
-    assert service.setInputSourceGesture('swipe-down')
+    assert service.setInputSourceGesture('snap')
     assert not service.setInputSourceGesture('tap')
     assert not service.setInputSourceGesture('swipe-up')
-    assert not controller.setGestureBinding('undo', 1, 'swipe-down')
-    assert not service.setBinding('codex', 'send', 'swipe-down', 'Return', True)
+    assert not controller.setGestureBinding('undo', 1, 'snap')
+    assert not service.setBinding('codex', 'previous', 'snap', 'Cmd+Shift+[', True)
     assert service.setInputSourceGesture('')
-    assert controller.setGestureBinding('undo', 1, 'swipe-down')
-    assert not service.setInputSourceGesture('swipe-down')
-    assert service.setInputSourceGesture('clench')
-    assert controller._settings.value('gestures/inputSourceGesture') == 'clench'
+    assert controller.setGestureBinding('undo', 1, 'snap')
+    assert not service.setInputSourceGesture('snap')
+    assert not service.setInputSourceGesture('clench')  # Reserved by the global menu.
+    assert controller.setGestureBinding('undo', 1, '')
+    assert service.setInputSourceGesture('snap')
+    assert controller._settings.value('gestures/inputSourceGesture') == 'snap'
 
 
 def test_stale_and_disconnected_gestures_do_not_select(route, monkeypatch):
     controller, service, inline, backend, keys, messages, emit = route
     calls = prepare(monkeypatch, service)
     from types import SimpleNamespace
-    event = service.envelope(SimpleNamespace(name='swipe-down'))
+    event = service.envelope(SimpleNamespace(name='snap'))
     controller._apply_gesture(replace(event, created=event.created - 2), controller._disconnect_event)
-    assert service.setInputSourceGesture('clench')
+    assert service.setInputSourceGesture('')
+    assert service.setInputSourceGesture('snap')
     controller._apply_gesture(event, controller._disconnect_event)
     controller._connected = False
-    emit('clench')
+    emit('snap')
     assert not calls
 
 
@@ -135,7 +138,7 @@ def test_error_feedback_has_no_false_success(route, monkeypatch):
     def fail(pid):
         raise RuntimeError('未找到 ProxiMic Voice，请先安装')
     monkeypatch.setattr(module, 'select_voice_input_source', fail)
-    emit('swipe-down')
+    emit('snap')
     wait_result(service)
     assert service.notice == '未找到 ProxiMic Voice，请先安装'
 
@@ -144,11 +147,11 @@ def test_initial_selection_preserves_existing_custom_bindings(route):
     controller, service, *_ = route
     from proximic_ring.ui.app_gesture_controller import AppGestureController
     controller._settings.remove('gestures/inputSourceGesture')
-    controller._gesture_bindings = GestureBindings(undo=('swipe-down', ''))
+    controller._gesture_bindings = GestureBindings(undo=('snap', ''))
     second = AppGestureController(controller)
     try:
         assert second.inputSourceGesture == ''
-        assert controller._gesture_bindings.undo == ('swipe-down', '')
+        assert controller._gesture_bindings.undo == ('snap', '')
         second.setInputSourceGesture('')
     finally:
         second.close()
@@ -166,7 +169,7 @@ def test_default_unbound_never_selects_or_starts_audio(route, monkeypatch):
     monkeypatch.setattr(module, 'select_voice_input_source', lambda pid: calls.append(pid))
     assert service.inputSourceGesture == ''
     assert controller._settings.value('gestures/inputSourceGesture') == ''
-    emit('swipe-down')
+    emit('snap')
     assert not calls and not messages and not keys
     assert not controller._utterance_active and not controller._recognition_enabled
 
@@ -174,9 +177,9 @@ def test_default_unbound_never_selects_or_starts_audio(route, monkeypatch):
 def test_user_selected_binding_survives_restart(route):
     controller, service, *_ = route
     from proximic_ring.ui.app_gesture_controller import AppGestureController
-    assert service.setInputSourceGesture('swipe-down')
+    assert service.setInputSourceGesture('snap')
     second = AppGestureController(controller)
     try:
-        assert second.inputSourceGesture == 'swipe-down'
+        assert second.inputSourceGesture == 'snap'
     finally:
         second.close()

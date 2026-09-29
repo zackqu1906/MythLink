@@ -278,3 +278,23 @@ def test_focus_recovery_command_is_separate_and_cancellable(tmp_path):
     wait_until(lambda: bool(events))
     assert events[0]['focus_restored'] is True
     source.cancel(); app.processEvents()
+
+
+@pytest.mark.parametrize('isolation', ['custom_socket', 'package_self_check'])
+def test_isolated_host_never_launches_installed_input_method(tmp_path, monkeypatch, isolation):
+    from proximic_ring.ui import input_source_activation as module
+    bundle = tmp_path / 'Library/Input Methods/ProxiMicInput.app/Contents/MacOS/ProxiMicInput'
+    bundle.parent.mkdir(parents=True)
+    bundle.touch()
+    monkeypatch.setattr(module.Path, 'home', lambda: tmp_path)
+    monkeypatch.delenv('PROXIMIC_IME_SOCKET', raising=False)
+    monkeypatch.setattr(module.sys, 'argv', ['ProximicVoice'])
+    if isolation == 'custom_socket':
+        monkeypatch.setenv('PROXIMIC_IME_SOCKET', str(tmp_path / 'smoke/bridge.sock'))
+    else:
+        monkeypatch.setattr(module.sys, 'argv', ['ProximicVoice', '--self-check-package'])
+    class Process:
+        @staticmethod
+        def startDetached(*args): pytest.fail('isolated host must not launch the installed IME')
+    monkeypatch.setattr(module, 'QProcess', Process)
+    module.warm_input_method()

@@ -58,7 +58,7 @@ Ring 非主动断开时，会在当前使用的屏幕弹出独立置顶提示；
   - 两个模式及输入设备需断开连接后修改；确认手势仍可即时调整。纯手势模式不启用右 Alt 按住说话。
     macOS 首次使用 DJI 需允许应用访问麦克风。历史记录标明音频来源和启停方式，纯手势不产生近点训练标签。
 - ProxiMic 模型路径和 Stage1 threshold，当前训练模型建议从 `0.005` 开始。
-- Ring 音频编码默认选择 PCM，以匹配近点模型训练和阈值校准使用的波形分布。
+- Ring 音频编码固定为 public 固件的 ADPCM，SDK 解码为 16 kHz PCM16；旧编码设置自动迁移。
 - ASR 后端、模型、运行设备和 0 至 +12 dB 输入增益；增益在近点模型之后应用，语音记录保存同一增强波形。
 - `streaming-sensevoice` 默认使用 `third_party/streaming-sensevoice` 源码快照。
 - 选择 `funasr_nano` 时默认使用 `third_party/Fun-ASR`；目录必须包含 `model.py`。ASR 模型
@@ -99,9 +99,8 @@ NVIDIA 显卡、但环境仍是 CPU 版 PyTorch 时，可以点击“安装 NVID
 
 首次连接在模型加载期间保持 MIC 关闭，避免模型初始化阻塞 Windows BLE 通知回调；模型完成
 后开启 MIC，收到真实 PCM 才进入准备状态。ADPCM 会由 SDK 解码
-成 16 kHz PCM，但有损压缩仍可能改变 Stage2 分数分布。Windows 安装脚本会把 Opus
-1.6.1 运行库放入项目 `.runtime/opus`，并安装 `opuslib`；已有环境可单独运行
-`scripts/install-opus-runtime.ps1`，然后安装 `.[ring-opus]`。
+成 16 kHz PCM，但有损压缩仍可能改变 Stage2 分数分布。ADPCM 解码不需要额外原生运行库。
+手势由固件识别，电脑只分发确认事件，不再加载手势模型。
 
 音频流短暂停顿时，stream monitor 会打印底层收包诊断但保留仍然在线的 BLE 会话，等待音频
 自行恢复，不再因为 watchdog 主动断链并制造 WinError 995/1223。若长时间没有恢复，用户可

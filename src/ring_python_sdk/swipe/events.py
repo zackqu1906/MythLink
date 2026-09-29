@@ -32,6 +32,7 @@ class SwipeResult:
     probabilities: tuple[float, ...] = ()
     center_uptime_ms: int | None = None
     event_mass: float | None = None
+    confirmed_confidence: float | None = None
 
     @property
     def name(self) -> str:
@@ -43,6 +44,8 @@ class SwipeResult:
 
     @property
     def confidence(self) -> float | None:
+        if self.confirmed_confidence is not None:
+            return self.confirmed_confidence
         if not self.probabilities:
             return None
         return self.probabilities[SWIPE_GESTURE_IDS_V2.index(self.class_id)]

@@ -26,6 +26,7 @@ class InlineInputController(QObject):
     diagnostic = Signal(object)
     _received = Signal(object)
     _installationFinished = Signal(str)
+    editIntentConfirmed = Signal(int)
     editRequested = Signal(object, str, str, object)
     audioEndRequested = Signal()
     interrupted = Signal()
@@ -53,6 +54,7 @@ class InlineInputController(QObject):
         self._shortcut = "F8"
         self._multi_undo_enabled = False
         self._utterance_sessions = {}
+        self._edit_intents = {}
         self.settled_session_id = None
         self._bridge = None
         self._transport_error = ""
@@ -250,6 +252,11 @@ class InlineInputController(QObject):
                     safe_readback[key] = readback[key]
             if type(readback.get("text_matches")) is bool:
                 safe_readback["text_matches"] = readback["text_matches"]
+            if type(readback.get("key_acknowledged")) is bool:
+                safe_readback["key_acknowledged"] = readback["key_acknowledged"]
+            if readback.get("operation_stage") in {"context_whole", "context_caret", "capture", "written",
+                    "sentence_selected", "sentence_written", "native_caret", "native_restore_caret", "verify"}:
+                safe_readback["operation_stage"] = readback["operation_stage"]
             for key in ("operation_ms", "post_write_ms", "context_prepare_ms"):
                 if type(readback.get(key)) in (int, float):
                     safe_readback[key] = readback[key]
@@ -321,20 +328,40 @@ class InlineInputController(QObject):
         if sys.platform != "darwin":
             return None
         try:
-            from AppKit import NSWorkspace
-            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            from ..mac_workspace import frontmost_application
+            app = frontmost_application()
             if app and app.bundleIdentifier():
                 return (str(app.bundleIdentifier()), int(app.processIdentifier()))
         except Exception:
             pass
         return None
 
-    def _startup_focus_matches(self):
-        if self._foreground_identity() == self._begin_origin:
+    def _startup_context(self):
+        return (self._epoch, self._client_id, self._utterance_id, self._begin_origin,
+                self._source_activation, self._source_pending, self._reply_stage, self._closed)
+
+    def _startup_focus_matches(self, *, allow_source=True):
+        """Return None if callbacks advanced/replaced startup during the read."""
+        context = self._startup_context()
+        origin = self._begin_origin
+        foreground = self._foreground_identity()
+        if context != self._startup_context():
+            return None
+        if foreground == origin:
             return True
         source = self._source_activation
-        return bool(self._source_pending and source is not None
-                    and getattr(source, "owns_foreground", lambda: False)())
+        matches = bool(allow_source and self._source_pending and source is not None
+                       and getattr(source, "owns_foreground", lambda: False)())
+        if context != self._startup_context():
+            return None
+        if not matches:
+            self.diagnostic.emit({"type": "startup_focus_changed",
+                                  "expected_application": origin[0] if origin else "",
+                                  "expected_pid": origin[1] if origin else 0,
+                                  "actual_application": foreground[0] if foreground else "",
+                                  "actual_pid": foreground[1] if foreground else 0,
+                                  "utterance_id": self._utterance_id})
+        return matches if context == self._startup_context() else None
 
     def _recover_selected_source(self):
         if self._focus_recovery_attempted or self._source_activation is None:
@@ -352,7 +379,10 @@ class InlineInputController(QObject):
         if self._closed or self._begin_origin is None:
             self._activation_timer.stop()
             return
-        if not self._startup_focus_matches():
+        focus_matches = self._startup_focus_matches()
+        if focus_matches is None:
+            return
+        if not focus_matches:
             self._transport_failed("已切换应用，本句已取消")
             return
         if time.monotonic() >= self._startup_deadline:
@@ -376,7 +406,10 @@ class InlineInputController(QObject):
     def _source_event(self, source, message):
         if self._closed or source is not self._source_activation or self._begin_origin is None:
             return
-        if self._foreground_identity() != self._begin_origin:
+        focus_matches = self._startup_focus_matches(allow_source=False)
+        if focus_matches is None:
+            return
+        if not focus_matches:
             self._transport_failed("已切换应用，本句已取消")
             return
         kind = message.get("event")
@@ -523,9 +556,22 @@ class InlineInputController(QObject):
             self._session_id = int(session_id)
             self._remember_session()
 
+    def _confirm_edit_intent(self):
+        utterance = self._utterance_id
+        if not utterance:
+            return
+        recorded_session = self._edit_intents.setdefault(utterance, 0)
+        if self._session_id and recorded_session != self._session_id:
+            self._edit_intents[utterance] = self._session_id
+            self.editIntentConfirmed.emit(self._session_id)
+        while len(self._edit_intents) > 256:
+            self._edit_intents.pop(next(iter(self._edit_intents)))
+
     def _remember_session(self):
         if self._utterance_id and self._session_id:
             self._utterance_sessions[self._utterance_id] = self._session_id
+            if self._utterance_id in self._edit_intents:
+                self._confirm_edit_intent()
             while len(self._utterance_sessions) > 256:
                 self._utterance_sessions.pop(next(iter(self._utterance_sessions)))
 
@@ -677,7 +723,10 @@ class InlineInputController(QObject):
             return  # Ignore obsolete native replies from the removed cycling path.
         if kind == "state":
             if self._begin_origin is not None:
-                if not self._startup_focus_matches():
+                focus_matches = self._startup_focus_matches()
+                if focus_matches is None:
+                    return
+                if not focus_matches:
                     self._transport_failed("已切换应用，本句已取消")
                     return
                 if self._source_pending:
@@ -752,6 +801,8 @@ class InlineInputController(QObject):
             if not utterance_id and self._utterance_id and message.get("phase") == "idle":
                 self._utterance_id = ""
             self._view = {**self._view, **message}
+            if utterance_id == self._utterance_id and (message.get("edit_requested") or message.get("phase") in {"editing", "edited"}):
+                self._confirm_edit_intent()
             if self._action_pending is not None:
                 pending_id, pending_revision, pending_phase = self._action_pending
                 if (utterance_id != pending_id or self._view.get("revision", 0) != pending_revision
@@ -838,6 +889,7 @@ class InlineInputController(QObject):
             if (key not in self._requested and self._view.get("phase") == "editing"
                     and message.get("edit_context_available", self._view.get("context_complete"))):
                 self._requested.add(key)
+                self._confirm_edit_intent()
                 original = message.get("original", self._view.get("original", ""))
                 self.editRequested.emit(key, str(message.get("instruction", "")), str(original), self.target_reference())
         elif kind == "settled":
@@ -847,6 +899,8 @@ class InlineInputController(QObject):
             key = (utterance_id, phase, message.get("revision", self._view.get("revision", 0)), str(message.get("text", "")))
             if key not in self._settled:
                 self._settled.add(key)
+                if "error" in message:
+                    self._view["error"] = str(message.get("error") or "")
                 source = message.get("source_utterance_id", utterance_id)
                 self.settled_session_id = (self._session_id if source == utterance_id
                                            else self._utterance_sessions.get(source, 0))
@@ -895,5 +949,7 @@ class InlineInputController(QObject):
         self._clear_startup()
         self._closed = True
         self._permissions.close()
+        from ..native_access import native_access
+        native_access().close()
         if self._bridge:
             self._bridge.close()

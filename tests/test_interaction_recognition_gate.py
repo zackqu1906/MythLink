@@ -51,7 +51,6 @@ def test_final_utterance_resumes_immediately_after_direct_dictation_finishes(
             model_output="dictation",
         )
     )
-    assert controller.modeCorrectionAvailable is False
     assert controller._interaction_recognition_suspended is False
     assert controller._recognition_event.is_set() is True
     controller._voice_history.close(wait=True)

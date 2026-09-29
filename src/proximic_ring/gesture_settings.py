@@ -19,6 +19,20 @@ GESTURE_LABELS = {
     "circle-counterclockwise": "逆时针画圈",
 }
 GESTURE_ACTION_LABELS = {"confirm": "确认", "undo": "撤销", "switch_mode": "类型转换"}
+RING_RESERVED_GESTURES = frozenset({"index-pinch", "middle-pinch", "clench", "swipe-down", "swipe-up"})
+
+
+def reserve_ring_gestures(bindings: GestureBindings) -> GestureBindings:
+    """Retire only conflicting slots; leave all other deliberate choices intact."""
+    values = {action: tuple("" if name in RING_RESERVED_GESTURES else name for name in names)
+              for action, names in bindings.as_dict().items()}
+    if not any(values["confirm"]):
+        # There must always be a way to start/end the sentence. If tap was
+        # previously reused for undo/edit, release that slot for confirmation.
+        values = {action: tuple("" if name == "tap" else name for name in names)
+                  for action, names in values.items()}
+        values["confirm"] = ("tap", "")
+    return GestureBindings(**values)
 
 
 @dataclass(frozen=True)

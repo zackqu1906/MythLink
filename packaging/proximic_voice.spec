@@ -13,13 +13,6 @@ streaming_root = project_root / "third_party" / "streaming-sensevoice"
 funasr_root = project_root / "third_party" / "Fun-ASR"
 
 datas = collect_data_files("proximic_ring")
-datas += collect_data_files(
-    "ring_python_sdk.gestures", includes=["assets/*.pt", "assets/*.json", "NOTICE.md"]
-)
-datas += collect_data_files(
-    "ring_python_sdk.ringo", includes=["NOTICE.md", "gestures/*.md", "gestures/*.json",
-                                      "gestures/_upstream/swipe_density/assets/*/*.pt"]
-)
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
 datas += collect_data_files("funasr", includes=["version.txt"])
@@ -32,29 +25,6 @@ datas += [
 ]
 
 binaries = []
-if os.name == "nt":
-    opus_dll = project_root / ".runtime" / "opus" / "opus.dll"
-    opus_license = project_root / ".runtime" / "opus" / "COPYING.libopus"
-    if not opus_dll.is_file() or not opus_license.is_file():
-        raise SystemExit(
-            "Missing .runtime/opus runtime files; run scripts/setup.ps1"
-        )
-    binaries.append((str(opus_dll), "opus"))
-    datas.append((str(opus_license), "opus"))
-elif platform.system() == "Darwin":
-    configured_opus = os.environ.get("PROXIMIC_OPUS_DYLIB", "").strip()
-    candidates = ([Path(configured_opus)] if configured_opus else []) + [
-        project_root / ".runtime" / "opus" / "lib" / "libopus.0.dylib",
-        project_root / ".runtime" / "opus" / "libopus.0.dylib",
-    ]
-    opus_dylib = next((item for item in candidates if item.is_file()), None)
-    if opus_dylib is None:
-        raise SystemExit("Missing libopus; run: ./scripts/install-opus-macos.sh")
-    binaries.append((str(opus_dylib), "opus"))
-    opus_license = project_root / ".runtime" / "opus" / "COPYING.libopus"
-    if opus_license.is_file():
-        datas.append((str(opus_license), "opus"))
-
 notices = project_root / "THIRD_PARTY_NOTICES.md"
 if notices.is_file():
     datas.append((str(notices), "."))
@@ -71,7 +41,6 @@ hiddenimports += [
     "funasr.tokenizer.whisper_tokenizer",
     "streaming_sensevoice",
     "transformers",
-    "opuslib",
     "websocket",
     "sounddevice",
     "asr_decoder",
@@ -238,5 +207,6 @@ if platform.system() == "Darwin":
             "NSBluetoothAlwaysUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSBluetoothPeripheralUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSMicrophoneUsageDescription": "Proximic Voice 使用你选定的电脑麦克风（例如 DJI）采集语音并转写。",
+            "NSScreenCaptureUsageDescription": "用于 Ring 窗口选择层的实时预览和用户主动发起的预览验证，不录音、不保存或上传画面。",
         },
     )

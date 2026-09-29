@@ -60,6 +60,7 @@ final class WeChatCompatibility {
     private var contextInstruction = ""
     private var contextSelectedText = ""
     private var contextPrefix = ""
+    private var contextCaret = 0
     private var contextWhole = ""
     private var contextOriginal: EditorSnapshot?
     private var contextSource: EditorTextRange?
@@ -105,7 +106,7 @@ final class WeChatCompatibility {
         cancel(); failure = nil; readbackDiagnostics = [:]
         contextInstruction = instruction; contextSelectedText = selectedText
         contextSource = source; contextCandidate = candidate
-        contextPrefix = ""; contextWhole = ""
+        contextPrefix = ""; contextWhole = ""; contextCaret = 0
         operationStartedAt = clock()
         pending = true; stage = "context_committed"
         deadline = clock() + 2.5; earliest = clock(); keyAcknowledged = true
@@ -224,6 +225,8 @@ final class WeChatCompatibility {
 
     private func key(_ command: String, count: Int = 0, next: String) {
         stage = next; keyAcknowledged = false
+        readbackDiagnostics["operation_stage"] = next
+        readbackDiagnostics["key_acknowledged"] = false
         eventTag = Int64.random(in: 1...(1 << 50))
         keyDeliveryDeadline = clock() + 0.5
         switch command {
@@ -242,6 +245,7 @@ final class WeChatCompatibility {
             guard let self, self.pending, self.generation == token else { return }
             if let error { self.fail(error); return }
             self.keyAcknowledged = true
+            self.readbackDiagnostics["key_acknowledged"] = true
             // Posting isn't delivery. Also require selection/text readback.
             self.earliest = self.clock() + 0.04
         }
@@ -251,6 +255,11 @@ final class WeChatCompatibility {
 
     private func selectedDocument() -> String? {
         let probe = client.probe()
+        readbackDiagnostics["operation_stage"] = stage
+        readbackDiagnostics["observed_selection"] = isValidRange(probe.selection)
+            ? [probe.selection.location, probe.selection.length] : [-1, -1]
+        readbackDiagnostics["observed_marked"] = isValidRange(probe.markedRange)
+            ? [probe.markedRange.location, probe.markedRange.length] : [-1, -1]
         guard !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
               isValidRange(probe.selection), probe.selection.location == 0,
               probe.selection.length <= 512 * 1024,
@@ -308,21 +317,20 @@ final class WeChatCompatibility {
             let probe = client.probe()
             guard pending, generation == token, isValidRange(probe.selection), probe.selection.length == 0,
                   !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }
-            key("select_to_start", next: "context_prefix")
-        case "context_prefix":
-            let probe = client.probe()
-            guard isValidRange(probe.selection), probe.selection.location == 0,
-                  let prefix = client.readText(in: probe.selection),
-                  pending, generation == token else { return }
-            guard prefix.hasSuffix(contextInstruction) else {
-                fail("当前选区未包含刚才的口述指令，未调用模型"); return
-            }
-            contextPrefix = prefix
+            // Cmd+Shift+Up is not a portable selection command in web editors.
+            // Preserve the committed caret and select the document once. This
+            // position alone never authorizes a write: verify the instruction
+            // and the entire original against the selected text below.
+            contextCaret = probe.selection.location
             key("select_all", next: "context_whole")
         case "context_whole":
             guard let whole = selectedDocument(), pending, generation == token else { return }
-            guard whole.hasPrefix(contextPrefix) else {
-                fail("当前正文在读取期间发生变化，未调用模型"); return
+            guard contextCaret <= (whole as NSString).length else {
+                fail("输入框光标与当前原文不一致，未执行编辑"); return
+            }
+            contextPrefix = (whole as NSString).substring(to: contextCaret)
+            guard contextPrefix.hasSuffix(contextInstruction) else {
+                fail("当前选区未包含刚才的口述指令，未执行编辑"); return
             }
             contextWhole = whole
             let instructionRange = NSRange(location: (contextPrefix as NSString).length - (contextInstruction as NSString).length,
@@ -341,9 +349,12 @@ final class WeChatCompatibility {
                 // selected; no restore/reselect cycle, clipboard, or second read.
                 preparedEditContext = PreparedEditContext(original: original, dictatedText: whole,
                     caret: NSRange(location: (contextPrefix as NSString).length, length: 0))
-                result = candidate
-                resultCaret = (result as NSString).length
-                requestedReplacement = EditorTextRange(text: result, range: NSRange(location: 0, length: resultCaret))
+                // Model output covers only the text before the instruction's
+                // original insertion point. Restore the initial selection and
+                // keep all following text verbatim, using this existing read.
+                result = candidate + (source as NSString).substring(from: instructionRange.location)
+                resultCaret = (candidate as NSString).length
+                requestedReplacement = EditorTextRange(text: result, range: NSRange(location: 0, length: (result as NSString).length))
                 writeSelected(whole)
                 return
             }
@@ -452,6 +463,8 @@ final class WeChatCompatibility {
                   client.readText(in: NSRange(location: 0, length: (result as NSString).length)) == result,
                   client.readText(in: NSRange(location: (result as NSString).length, length: 1)) == nil,
                   client.readText(in: NSRange(location: (result as NSString).length, length: 2)) == nil else { return }
+            verifiedReplacement = requestedReplacement
+            verifiedReplacementCaret = probe.selection
             pending = false; stage = ""
         default: break
         }

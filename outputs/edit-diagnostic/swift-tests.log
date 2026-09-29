@@ -1,0 +1,248 @@
+PASS long wait and repeated edit rounds preserve position and size
+PASS settled result follows the replacement caret and retries missing geometry
+PASS returning to the same edit retains anchor
+PASS new utterance resumes tracking without an old caret
+PASS edit before initial geometry waits for one valid anchor
+PASS distinct failures display short causes with complete details
+PASS failed edit after dictation remains an error
+PASS normal completion, cancellation and user takeover are not errors
+PASS unknown long errors stay bounded without inventing a cause
+PASS native palette becomes red on failure and restores normal appearance
+PASS native panel freezes during editing, follows the result caret and follows undo
+PASS hidden background process shows listening palette without taking focus
+PASS Chinese partial revisions replace one native marked range and commit exactly once
+PASS UTF16 middle insertion preserves emoji and surrounding lines
+PASS Speaking undo restores selected original and stops audio
+PASS Empty final after partial still permits restoring replaced selection
+PASS No-text final never erases a selected original
+PASS Convert while speaking ends audio, waits final and passes original separately
+PASS Cancel conversion while final pending becomes ordinary dictation
+PASS Cancel pending model invalidates late revision
+PASS Applied edit cancel restores dictation, second cancel restores original
+PASS Failed model restores dictated content and rejects postfinal relabeling
+PASS ASR failure preserves partial as reversible dictation
+PASS Manual caret takeover stops late writes without moving it back
+PASS Manual text changes prevent applying or undoing committed snapshots
+PASS Final preserves changes outside composition and disables whole-document operations
+PASS Local composition readback rejects client-modified marked text
+PASS Unsupported complete context allows basic composition but no full edit
+PASS Client that ignores replacement fails closed after one write
+PASS Lifecycle interruption commits visible partial and rejects later model or ASR
+PASS Client composition flush before first ASR text does not cancel listening
+PASS Lifecycle deactivation still cancels before any ASR text
+PASS Native sequence counter rejects duplicate and out-of-order commands
+PASS New sentence captures latest edited document and starts dictation
+PASS Delayed marked ACK coalesces partials and preserves the final barrier without replaying writes
+PASS Commit ACK waits for cleared marked range and never repeats insertText
+PASS Readback timeout fails closed after one native mark
+PASS Cancel while mark ACK is pending stops audio and restores original selection after ACK
+PASS Convert during delayed mark ends audio immediately and waits for final then edits
+PASS Cancel conversion during delayed mark retains queued final as dictation
+PASS Lifecycle interruption invalidates pending writes and late readback
+PASS A mouse-selected caret during delayed ACK is never adopted as our own
+PASS Final commits owned composition while a stale document snapshot waits for native commit ACK
+PASS Cancel while result-triggered instruction removal ACK is pending restores dictation
+PASS Cancel model preflight prevents the first edit write
+PASS Cancel after edit write awaits replacement ACK then restores dictation once
+PASS Client may report the entire owned marked range as selected
+PASS Only the entire owned marked range is a valid nonempty selection
+PASS A client exposing full context only outside composition can finish and retain safe undo
+PASS Missing postcommit full context degrades dictation without attempting model conversion or undo
+PASS A changed marked range is rejected even when whole-document reads are unavailable
+PASS An invalid selected range is not a writable target and cannot start a transaction
+PASS An old composition is not a startup gate
+PASS Host lifetime reset clears transaction identity before callbacks and rejects deferred old work
+PASS Empty final settles after finish without writing or waiting for native readback
+PASS Exact marked text can confirm a client that preserves the insertion anchor while composing
+PASS Learned anchor does not authorize later external caret movement
+PASS Learned anchor does not authorize changed marked text
+PASS An anchor is not learned without exact positive marked-text readback
+PASS A confirmed normal client cannot relearn a user-moved caret as anchor
+PASS Lifecycle commits only its owned composition without requiring full document access
+PASS Lifecycle never commits composition after range or text takeover
+PASS Error recovery commits an exactly owned visible mark once and permits the next sentence
+PASS Recovery waits for positive text ownership and never commits a missing marked-text read
+PASS Recovery does not replay a commit whose acknowledgement timed out
+PASS A recovery timeout permits only read-only observation and manual clearing afterwards
+PASS Recovery never clears a foreign marked string even at the same range
+PASS Recovery does not adopt a changed caret as a different client convention
+PASS User interruption cancels error recovery without any cleanup write
+PASS System composition callback cancels error recovery without replaying input
+PASS Anchored listening undo works without whole-document access and permits the next sentence
+PASS Listening undo restores the original selection when full text is unavailable during composition
+PASS Local listening undo never overwrites an externally changed marked string
+PASS An empty ASR utterance preserves an unreadable document's selected original
+PASS An anchored empty partial clears visible preedit and still permits subsequent ASR revisions
+PASS An anchored empty final after a partial settles without requiring readable empty marked text
+PASS Cancelling after an anchored empty partial restores selected original without whole context
+PASS Committed sentence undo uses its exact range without whole-document access
+PASS Local committed undo restores a selected original and preserves changes outside its range
+PASS Local committed undo refuses changed sentence, moved caret, or another active composition
+PASS Local undo checks replacement acknowledgement and never replays a failed deletion
+PASS Local undo needs exact readable text and advertised range access
+PASS Committed dictation cannot be relabeled as an edit
+PASS Tap then conversion before final still identifies the underlined utterance
+PASS Scoped IMK context edits only the verified original and restores dictation then selected text
+PASS Scoped pending edit cancellation and model error restore dictation and reject late results
+PASS An altered original scope keeps dictated instruction and does not call the model
+PASS Scoped context outside original selection does not grant edit capability
+PASS Unreadable suffix cannot make an insertion at scope start look like replacement
+77 native composition tests passed
+PASS Three dictations undo in LIFO order including Unicode and line breaks
+PASS Mixed edit restores dictation, then reaches previous dictation and edit
+PASS Disabled mode keeps only current sentence, including two-stage edit cancellation
+PASS Toggle off clears older entries, toggling on cannot resurrect them
+PASS Empty/live cancelled sentence leaves earlier undo history reachable
+PASS New utterance after undo creates a new history branch
+PASS Same-length external text change is rejected before deletion
+PASS Moved caret invalidates the stack at the next BEGIN
+PASS Capacity and memory budgets evict oldest entries without gaps
+PASS History capture/restore performs no additional client reads and stores compact dictation
+PASS Late model/ASR results cannot mutate a restored historical operation
+PASS Historical replacement restores selected text, not just an empty deletion
+PASS Empty edit result remains undoable after a later sentence
+13 history tests passed
+8 native lifecycle reentry tests passed
+PASS Empty commit clears only owned preedit and preserves UTF-16 neighbours
+PASS Empty commit still clears preedit when empty insertion is swallowed
+PASS Nonempty commit retains ordinary insertion without a preliminary clear
+PASS Already-cleared composition does not create another marked range
+PASS Invalid or zero-length marked ranges never trigger a clearing write
+PASS Real NSTextView retains instruction until model result and restores dictation on cancellation
+PASS Real NSTextView exact committed-range undo works without whole-document context
+7 native commit tests passed
+PASS Every preedit revision uses the system raw-text marking for Chinese and digits
+PASS Real bridge trace: one-past-end is empty, last character follows growth and wrap
+PASS Late layout does not stop later caret updates
+PASS Caret follows preedit tail instead of stationary candidate anchor
+PASS Composition geometry uses live marked range with cached relative selection
+PASS No composition queries current insertion point
+PASS Unavailable or mismatched caret geometry uses native candidate fallback
+PASS Caret geometry rejects off-screen and nonfinite rectangles
+PASS Real NSTextView follows growing marked text across a wrapped line
+PASS Negative controls reproduce logged nil context and swallowed committed undo
+PASS Production adapter reads original when oversized query is rejected
+PASS Codex stale substring cache does not block partials, final or live cancellation
+PASS Codex only normalizes the full relative composition selection
+PASS Codex committed undo uses empty insertText, then the next sentence streams normally
+PASS Negative control reproduces VS Code cancelling composition without deleting committed text
+PASS VS Code committed undo deletes only its sentence and permits the next dictation
+PASS VS Code can undo past an edited history entry without abandoning earlier dictation
+PASS VS Code ignores a failed committed deletion only once and never marks undo successful
+PASS Codex editing starts despite stale composing context, then verifies original after model response
+PASS Negative control reproduces an expanded committed replacement retaining the old caret
+PASS Geometry-only composition still rejects wrong ranges and manual caret takeover
+PASS Every client streams past stale text and relative selection, including both logged VS Code failures
+PASS Default geometry ACK still rejects shifted marks and a real caret move
+PASS Stale or unavailable selection never delays otherwise confirmed partials
+PASS Delayed marked range is retried beyond half a second without repeating a write
+PASS A marked range regression after confirmation is transient even with an unchanged caret
+PASS Explicit user or focus takeover still ends immediately during coordinate recovery
+PASS Default geometry ACK does not bypass committed text checks during undo
+PASS Default geometry ACK does not apply an edit against contradictory committed context
+PASS Production adapter undo replaces the exact committed range without creating preedit
+PASS Production adapter conversion removes instruction, edits original and cancels back to dictation
+PASS A swallowed explicit deletion fails once and records the real desired caret
+PASS Context reader accepts bounded windows and rejects inconsistent range evidence
+PASS Unknown or invalid context never becomes an empty document
+PASS Deletion delivery never falls back to an unspecified range or repeats a write
+PASS Default client configuration selects before replacement in every application
+PASS A default client's dropped sentence-selection key never deletes neighbouring text
+PASS Negative control reproduces Codex appending an explicit marked-text replacement
+PASS Codex edits write once without marked replacement and continue at the new end
+PASS Codex mixed history continues after an edit restore receives the stale pre-replacement caret
+PASS Codex restore does not repeat a move while selection readback is unchanged
+PASS Codex caret waits for result text and never resends a replacement
+PASS Codex bounded replacement also puts the caret at the full document end without changing its suffix
+PASS Codex independently delayed caret acknowledgement is observed without extra writes or keys
+PASS Codex visual end is accepted when IMK exposes a trailing paragraph sentinel
+PASS Codex leaves editing immediately after caret delivery without waiting for EOF timeout
+PASS Codex dropped caret motion fails without duplicate text or a pending composition
+PASS Codex controller takeover or cancellation prevents late movement
+PASS Codex caret commands are admitted only while the exact native motion is pending
+PASS Negative control reproduces Qt ignoring a nonempty replacement range
+PASS WeChat edits original full text and cancel restores dictation then undoes only that sentence
+PASS WeChat committed undo selects only the sentence and uses one Backspace regardless of undo history
+PASS WeChat live cancellation clears only the IME composition without any shortcut
+PASS WeChat sentence undo handles emoji, suffix and original replaced selection
+PASS A dropped sentence selection never sends Backspace
+PASS WeChat undo preserves suffix and UTF16 caret with emoji
+PASS WeChat empty result and original empty document do not leave a composition
+PASS WeChat denied keys do not append model result
+PASS WeChat takeover invalidates pending compatibility work
+PASS Dropped select-all cannot mistake a prefix for the full document
+PASS Qt missing key tags admit only the pending exact native command once
+PASS WeChat and Codex historical dictation undo selects only each sentence then Backspace
+PASS Historical edit restores dictation and supports deleting it with both adapters
+PASS Default selected replacement cannot leave the ignored explicit-range suffix behind
+PASS A missing post-edit document cache does not keep the successful edit loading
+PASS Selected replacement still recovers an old caret without re-reading the result
+PASS Default selection or insertion loss cannot apply or duplicate a model result
+PASS Default mixed undo history crosses edits and then continues deleting older dictation
+PASS Default selection replacement preserves a bounded context's prefix and suffix
+PASS Source comparison distinguishes terminal paragraph metadata from changed content
+PASS Logged extra IMK paragraph separators do not reject valid edits in any default client
+PASS Post-model source mismatch preserves dictation without a second model request
+PASS Long model wait retains marked instruction with no selection until one replacement
+PASS Cancelling during model wait retains dictation without another full selection
+PASS Cancelling after the model but before selected replacement never writes its candidate
+PASS Actual source change is rejected at replacement without retrying the model
+PASS Model failure keeps the visible instruction and never selects the document
+PASS Empty model result replaces the selected document once and undo restores dictation
+PASS Confirmed context follows own dictation and undo without reusing a stale suffix
+PASS Committed dictation rebases cached composition coordinates and remains undoable
+PASS Commit settles without granting undo when local coordinates are unconfirmed
+PASS Commit coordinate recovery does not follow a moved caret to an earlier identical sentence
+PASS Live composition range follows coherent client coordinates across partials and polling
+PASS Cancelling a live draft ends the owned composition after its coordinate origin changes
+PASS Undo history retains committed spans without rewriting original context snapshots
+PASS Every native app ignores cached caret positions through streaming and commit
+PASS Starting snapshot skips old marks and preserves selected text for undo
+PASS Editing does not depend on a web editor accepting Cmd Shift Up
+PASS A swallowed select all still cannot authorize an edit
+PASS Stale committed caret cannot authorize replacing a different instruction
+90 production input adapter tests passed
+PASS No mark becomes ready without writing
+PASS A readable previous preedit is committed unchanged after two distinct ticks
+PASS A stable detached unreadable cache receives one explicit zero replacement
+PASS Unicode previous composition is checked using UTF-16 and preserved
+PASS Lacking document access never falls back to unspecified empty insertion
+PASS Readable preedit without document access waits without a duplicating default insertion
+PASS Unreadable live preedit at the caret remains untouched
+PASS Readable but detached preedit is not committed at another caret
+PASS Changed observations restart stabilization
+PASS System completion during handoff needs no extra commit
+PASS A delayed acknowledgement never replays the write or changes its strategy
+PASS Cancellation prevents writes including cancellation inside a client callback
+PASS Synchronous client reentry cannot count as another stable tick or duplicate delivery
+PASS Invalid, noncollapsed, oversized, and mismatched-length observations do not reset
+PASS AppKit empty marking at the current explicit caret preserves text and collapsed selection
+PASS AppKit precise readable-range commit preserves both live and already-committed Unicode text
+PASS AppKit empty marking at an explicit zero range preserves Unicode and the middle caret
+PASS Negative control proves unspecified replacement can delete the real preedit
+18 handoff tests passed
+PASS reentrant activation at super
+PASS reentrant activation at bundle
+PASS reentrant activation at configure
+PASS reentrant activation at snapshot
+PASS same-controller reactivation
+PASS reactivation during composition cleanup
+PASS transient activation never queries or writes
+PASS reentrant state reads coalesced
+PASS 8 activation lifecycle regressions
+PASS input-source recovery normal
+PASS input-source recovery busy
+PASS input-source recovery other_source
+PASS input-source recovery target_changed
+PASS input-source recovery source_changed
+PASS input-source recovery failed
+PASS asynchronous recovery fences cancelled
+PASS asynchronous recovery fences source_changed
+PASS asynchronous recovery fences target_changed
+PASS reused controller discards old sender but accepts current deactivation
+PASS activation/BEGIN reads selection but never old composition
+PASS retired remote snapshot stops immediately
+PASS queued deactivate retires preparation before first remote read
+SWIFT_IPC_WELCOME
+SWIFT_IPC_PING 1
+PASS actual Swift IPCClient ↔ Python IMEBridge: handshake, epoch, UTF-8 context, request/reply, command

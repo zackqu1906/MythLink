@@ -12,8 +12,8 @@ from .input_method_install import BUNDLE_ID, payload_directory
 def foreground_pid() -> int:
     if sys.platform != "darwin":
         raise RuntimeError("输入法切换仅支持 macOS")
-    from AppKit import NSWorkspace
-    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    from .mac_workspace import frontmost_application
+    app = frontmost_application()
     if app is None:
         raise RuntimeError("未找到前台应用，请点入文本框后重试")
     return int(app.processIdentifier())

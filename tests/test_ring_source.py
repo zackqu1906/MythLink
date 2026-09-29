@@ -148,7 +148,7 @@ def test_ring_pcm_callback_becomes_float32_audio():
     assert isinstance(source.last_read_end_monotonic_ns, int)
 
     diagnostics = source.diagnostic_summary()
-    assert "encoding=opus" in diagnostics
+    assert "encoding=adpcm" in diagnostics
     assert "callbacks=1" in diagnostics
     assert "samples=4" in diagnostics
     assert "last_frame_seq=7" in diagnostics
@@ -547,3 +547,81 @@ def test_windows_cancel_during_cleanup_does_not_escape():
     asyncio.run(source._shutdown_session(FakeSession()))
 
     assert calls["disconnect"] == 1
+
+
+def test_imu_starts_before_mic_and_does_not_wait_for_battery_reply(monkeypatch, tmp_path):
+    import asyncio
+    import ring_python_sdk
+    from proximic_ring.audio import ring as ring_module
+
+    battery_pending = threading.Event()
+    battery_cancelled = threading.Event()
+    imu_started = threading.Event()
+    mic_started = threading.Event()
+    release_pcm = threading.Event()
+    failures = []
+
+    class Session:
+        def __init__(self, **_kwargs):
+            self.client = SimpleNamespace(is_connected=True)
+            self.mic_active = self.imu_active = False
+            self.mic = None
+
+        async def connect(self):
+            return True
+
+        async def query_battery(self):
+            battery_pending.set()
+            try:
+                await asyncio.Future()  # A missing battery reply must not delay gestures.
+            finally:
+                battery_cancelled.set()
+
+        async def imu_on(self, **_kwargs):
+            assert not mic_started.is_set()
+            self.imu_active = True
+            imu_started.set()
+
+        async def mic_on(self, encoding, *, on_pcm):
+            assert imu_started.is_set()
+            mic_started.set()
+            while not release_pcm.is_set():
+                await asyncio.sleep(0.01)
+            self.mic_active = True
+            self.mic = SimpleNamespace(output_path=tmp_path / "early-imu.wav")
+            on_pcm(0, struct.pack("<320h", *([1024] * 320)))
+
+        async def imu_off(self):
+            self.imu_active = False
+
+        async def mic_off(self):
+            self.mic_active = False
+
+        async def disconnect(self):
+            self.client.is_connected = False
+
+    monkeypatch.setattr(ring_python_sdk, "RingSession", Session)
+    monkeypatch.setattr(ring_module, "_INITIAL_MIC_SETTLE_S", 0)
+    source = RingAudioSource(data_root=tmp_path, encoding="pcm", imu_sample_observer=lambda _s: None)
+    def start():
+        try:
+            source.start_stream()
+        except BaseException as exc:
+            failures.append(exc)
+    starter = threading.Thread(target=start)
+    try:
+        source.connect()
+        starter.start()
+        assert battery_pending.wait(1) and imu_started.wait(1) and mic_started.wait(1)
+        assert not source._ready.is_set()  # IMU is active even while PCM is unavailable.
+        assert not battery_cancelled.is_set()
+        release_pcm.set()
+        starter.join(2)
+        assert not starter.is_alive() and not failures
+        assert source.read(320) is not None
+    finally:
+        release_pcm.set()
+        if starter.ident is not None:
+            starter.join(2)
+        source.close()
+    assert battery_cancelled.is_set()

@@ -525,6 +525,48 @@ class ModificationDatasetCollector:
                 },
             )
 
+    def record_inline_edit_intent(self, session_id: int) -> None:
+        """Record native-confirmed conversion, including failures before an LLM call."""
+        if int(session_id) <= 0:
+            return
+        with self._lock:
+            interaction_id = self._ensure_interaction_locked(int(session_id))
+            record = self._interaction_data(interaction_id)
+            if record["mode"].get("user_intent") == "edit":
+                return
+            occurred_at = _utc_now()
+            record["mode"].update({"user_intent": "edit", "selected": "edit",
+                                   "intent_source": "input_method_conversion",
+                                   "intent_confirmed_at": occurred_at})
+            record["updated_at"] = occurred_at
+            self._write_json(self._interaction_path(interaction_id), record)
+            self._append_event_locked(interaction_id, {
+                "type": "mode_intent", "mode": "edit", "session_id": int(session_id),
+                "source": "input_method_conversion", "occurred_at": occurred_at,
+            })
+
+    def finish_pending_llm_request(self, request_id: int, *, status: str = "cancelled", reason: str = "") -> None:
+        """Close only live requests; cancelling application cannot undo model completion."""
+        if status not in {"cancelled", "failed"}:
+            raise ValueError(status)
+        with self._lock:
+            interaction_id = self._request_interactions.get(int(request_id))
+            if interaction_id is None:
+                return
+            record = self._interaction_data(interaction_id)
+            request = next((r for r in record["llm"].get("requests", [])
+                            if r.get("request_id") == int(request_id)), None)
+            if request is None or request.get("status") != "processing":
+                return
+            completed_at = _utc_now()
+            self._update_llm_request_locked(interaction_id, int(request_id), {
+                "status": status, "completed_at": completed_at, "end_reason": reason,
+            })
+            self._append_event_locked(interaction_id, {
+                "type": "llm_" + status, "request_id": int(request_id),
+                "occurred_at": completed_at, "reason": reason,
+            })
+
     def record_text_request(self, request) -> None:
         """Bind every dictation/edit LLM call to the utterance record."""
         request_id = int(getattr(request, "request_id", 0))
@@ -577,6 +619,10 @@ class ModificationDatasetCollector:
                     int(getattr(result, "session_id", 0))
                 )
             if interaction_id is None:
+                return
+            record = self._interaction_data(interaction_id)
+            if any(r.get("request_id") == int(request_id) and r.get("status") == "cancelled"
+                   for r in record["llm"].get("requests", [])):
                 return
             updates = {
                 "completed_at": _utc_now(),
@@ -755,6 +801,22 @@ class ModificationDatasetCollector:
             record = self._interaction_data(interaction_id)
             normalized_action = str(action)
             normalized_mode = str(mode)
+            explicit_edit = method == "input_method" and record["mode"].get("user_intent") == "edit"
+            if explicit_edit:
+                normalized_mode = "edit"
+                # Native restores the instruction as dictated text on failure or
+                # cancellation. That is not a successful dictation intent label.
+                if normalized_action == "applied" and mode == "dictation":
+                    normalized_action = ("apply_failed" if error else "undone"
+                                         if record["mode"].get("final_applied") == "edit" else "cancelled")
+                    event["restored_dictation"] = True
+                event.update(mode=normalized_mode, action=normalized_action)
+                if normalized_action == "apply_failed":
+                    record["mode"].update({
+                        "final_applied": "", "final_applied_at": None,
+                        "training_target": "edit",
+                        "training_target_source": "explicit_edit_intent",
+                    })
             if normalized_mode:
                 record["mode"]["selected"] = normalized_mode
             if normalized_action == "applied" and normalized_mode in {
@@ -790,6 +852,7 @@ class ModificationDatasetCollector:
             record["outcome"].update(
                 {
                     "status": normalized_action,
+                    "error": str(error) if error else None,
                     "application_method": str(method),
                     "final_text": (
                         str(final_text) if final_text is not None else None
@@ -1416,7 +1479,8 @@ class ModificationDatasetCollector:
                 "final_recorded": True,
             }
         )
-        record["outcome"]["status"] = "recognized"
+        if record["outcome"].get("status") in {None, "", "pending", "collecting", "recording", "recognized"}:
+            record["outcome"]["status"] = "recognized"
         record["updated_at"] = _utc_now()
         self._write_json(self._interaction_path(interaction_id), record)
 
@@ -1515,7 +1579,7 @@ class ModificationDatasetCollector:
                 if imu_path.is_file() and imu_sample_count > 0
                 else "音频已保存 · IMU 未采集"
             ),
-            "error": str(asr.get("error", "") or ""),
+            "error": str(record.get("outcome", {}).get("error") or asr.get("error") or ""),
             "mode": display_mode,
             "modeLabel": (
                 "编辑指令"

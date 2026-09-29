@@ -62,6 +62,16 @@ def test_frozen_installer_command_does_not_start_ui_or_require_python(monkeypatc
     assert calls == [["install"]]
 
 
+def test_native_access_worker_does_not_launch_ui_or_another_asr_host(monkeypatch):
+    from proximic_ring import native_access_worker
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, "argv", ["ProximicVoice", "--native-access-worker"])
+    monkeypatch.setattr(launcher.multiprocessing, "freeze_support", lambda: None)
+    monkeypatch.setattr(launcher, "run", lambda: pytest.fail("worker must not launch UI"))
+    monkeypatch.setattr(native_access_worker, "main", lambda: 17)
+    assert launcher._entrypoint() == 17
+
+
 def test_open_startup_log_rotates_oversized_previous_run(
     monkeypatch, tmp_path
 ) -> None:
@@ -103,10 +113,6 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
     runtime_paths.resource_root = lambda: tmp_path
     monkeypatch.setitem(sys.modules, "proximic_ring.runtime_paths", runtime_paths)
 
-    opus_codec = types.ModuleType("ring_python_sdk.audio.opus_codec")
-    opus_codec.OpusBlockDecoder = lambda: types.SimpleNamespace(decode_block=lambda block: bytes(3200))
-    monkeypatch.setitem(sys.modules, "ring_python_sdk.audio.opus_codec", opus_codec)
-
     ui_main = types.ModuleType("proximic_ring.ui.main")
 
     def fake_main(argv):
@@ -124,5 +130,5 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
     finally:
         sys.stdout, sys.stderr = original_stdout, original_stderr
 
-    assert "bundled Opus decoder ready" in output.getvalue()
+    assert "bundled ADPCM decoder ready" in output.getvalue()
     assert "bundled QML files ready" in output.getvalue()

@@ -822,6 +822,7 @@ final class WeChatFixture {
     var undoText = ""
     var keyError: String?
     var dropSelectAll = false
+    var dropSelectToStart = false
     var dropSentenceSelection = false
     var dropCaretMovement = false
     var reportedEndOffset = 0
@@ -841,7 +842,7 @@ final class WeChatFixture {
             if let keyError { done(keyError); return }
             switch command {
             case "select_to_start":
-                proxy.view.moveToBeginningOfDocumentAndModifySelection(nil)
+                if !dropSelectToStart { proxy.view.moveToBeginningOfDocumentAndModifySelection(nil) }
             case "select_all":
                 if !dropSelectAll { proxy.view.setSelectedRange(NSRange(location: 0, length: (proxy.view.string as NSString).length)) }
             case "undo":
@@ -896,10 +897,12 @@ test("Default client configuration selects before replacement in every applicati
         check(f.adapter.nativeCompatibility != nil && f.adapter.compatibility == nil,
               "default client did not receive native key operations")
         let s = try f.session()
+        s.onEdit = { source, _, _ in check(source == "前😀", "default model received text after the caret") }
         s.update("扩写", final: false); s.convert(); s.update("扩写", final: true)
         s.applyEdit(text: "扩写后的完整内容😀\n末尾。", revision: s.revision, error: nil); f.drain(s)
-        check(s.phase == .edited && f.proxy.view.selectedRange().location == (f.proxy.view.string as NSString).length,
-              "default replacement did not recover the retained old caret")
+        check(f.proxy.view.string == "扩写后的完整内容😀\n末尾。原文后缀", "default edit changed the suffix")
+        check(s.phase == .edited && f.proxy.view.selectedRange() == NSRange(location: ("扩写后的完整内容😀\n末尾。" as NSString).length, length: 0),
+              "default replacement did not restore the boundary before the unchanged suffix")
         s.cancel(); f.drain(s)
         check(s.phase == .dictated && f.proxy.view.string == "前😀扩写原文后缀" && f.proxy.view.selectedRange().location == 5,
               "default edit undo did not restore the middle insertion point")
@@ -922,6 +925,35 @@ test("A default client's dropped sentence-selection key never deletes neighbouri
           "default undo deleted an unconfirmed range or repeated keys")
 }
 
+test("Production edit paths preserve selected text and suffix when editing before the selection") {
+    for bundle in ["com.tencent.xinWeChat", "com.microsoft.VSCode", "com.openai.codex"] {
+        for candidate in ["新的前文😀", ""] {
+            let prefix = "前文😀\n"
+            let suffix = "选中后文\n保留😀"
+            let selection = NSRange(location: (prefix as NSString).length, length: 2)
+            let f = WeChatFixture(prefix + suffix, codex: bundle != "com.tencent.xinWeChat", application: bundle, directRange: false)
+            f.proxy.view.setSelectedRange(selection)
+            let s = try f.session()
+            var requests = 0
+            s.onEdit = { source, instruction, _ in
+                check(source == prefix && instruction == "修改前文", "model received selected text or suffix")
+                requests += 1
+            }
+            s.update("修改", final: false); s.convert(); s.update("修改前文", final: true)
+            s.applyEdit(text: candidate, revision: s.revision, error: nil); f.drain(s)
+            check(requests == 1 && s.phase == .edited && f.proxy.view.string == candidate + suffix,
+                  "native edit lost selected text or suffix: \(bundle), \(s.error)")
+            check(f.proxy.view.selectedRange() == NSRange(location: (candidate as NSString).length, length: 0),
+                  "edit caret did not return before preserved selection: \(bundle)")
+            s.cancel(); f.drain(s)
+            check(s.phase == .dictated && f.proxy.view.string == prefix + "修改前文后文\n保留😀", "native edit undo lost instruction")
+            s.cancel(); f.drain(s)
+            check(s.phase == .undone && f.proxy.view.string == prefix + suffix,
+                  "native sentence undo lost original selection: bundle=\(bundle), candidate=\(candidate), phase=\(s.phase), error=\(s.error), body=\(f.proxy.view.string.debugDescription), keys=\(f.keys), selection=\(f.proxy.view.selectedRange()), diagnostics=\(s.readbackDiagnostics)")
+        }
+    }
+}
+
 test("Negative control reproduces Codex appending an explicit marked-text replacement") {
     let f = WeChatFixture(String(repeating: "原", count: 67), caret: 65, codex: true)
     f.proxy.setMarkedText(String(repeating: "新", count: 55), selectionRange: NSRange(location: 55, length: 0),
@@ -939,23 +971,24 @@ test("Codex edits write once without marked replacement and continue at the new 
         (14, 7, String(repeating: "长", count: 2000))]
     for (size, caret, result) in cases {
         let original = String(repeating: "原", count: size)
+        let document = result + (original as NSString).substring(from: caret)
         let f = WeChatFixture(original, caret: caret, codex: true)
         let s = try f.session()
         s.update("修改原文", final: false); s.convert(); s.update("修改原文", final: true)
         let writes = f.proxy.insertCount
         s.applyEdit(text: result, revision: s.revision, error: nil); f.drain(s)
-        check(s.phase == .edited && f.proxy.view.string == result,
+        check(s.phase == .edited && f.proxy.view.string == document,
               "Codex edit failed: size=\(size) caret=\(caret) result=\((result as NSString).length) phase=\(s.phase) error=\(s.error) selection=\(f.proxy.view.selectedRange()) keys=\(f.keys) body=\((f.proxy.view.string as NSString).length) diagnostics=\(s.readbackDiagnostics)")
         check(f.proxy.insertCount == writes + 2 && f.proxy.explicitNonemptyMarks == 0 && !f.proxy.view.hasMarkedText(),
               "result was rewritten or left in composition")
-        check(f.proxy.view.selectedRange() == NSRange(location: (result as NSString).length, length: 0), "caret not at result end")
-        check(f.keys.allSatisfy { $0 == "caret_to_end" } && f.keys.count <= 1, "caret positioning used full selection or repeated keys")
+        check(f.proxy.view.selectedRange() == NSRange(location: (result as NSString).length, length: 0), "caret not at edited prefix end")
+        check(f.keys == (caret == size ? ["caret_to_end"] : ["caret_to_end", "caret_backward"]), "caret positioning used full selection or repeated keys")
         let record = s.undoRecord()!
         let next = try f.session()
         next.update("下一句", final: true)
-        check(f.proxy.view.string == result + "下一句", "next dictation inserted in the middle")
+        check(f.proxy.view.string == result + "下一句" + (original as NSString).substring(from: caret), "next dictation did not continue before preserved suffix")
         next.cancel(); f.drain(next)
-        check(next.phase == .undone && f.proxy.view.string == result, "next dictation undo failed")
+        check(next.phase == .undone && f.proxy.view.string == document, "next dictation undo failed")
         let restored = CompositionSession(client: f.adapter, undo: record, utteranceID: "history", sequence: 2, revision: 2,
                                           clock: { f.now })
         restored.cancel(); f.drain(restored)
@@ -1314,7 +1347,7 @@ test("Default selected replacement cannot leave the ignored explicit-range suffi
                   "selected replacement delayed the loading indicator after writing")
             check(!f.proxy.view.hasMarkedText(), "edit left a composition behind")
         }
-        check(f.keys == Array(repeating: ["select_to_start", "select_all"], count: 3).flatMap { $0 }, "edits copied text or repeated native selection")
+        check(f.keys == Array(repeating: "select_all", count: 3), "edits copied text or repeated native selection")
     }
 }
 
@@ -1428,7 +1461,7 @@ test("Logged extra IMK paragraph separators do not reject valid edits in any def
                 var requests = 0
                 s.onEdit = { source, _, _ in
                     requests += 1
-                    check(source == original + "\n\n", "fixture did not reproduce cached paragraph suffix")
+                    check(source == (original as NSString).substring(to: caret), "model received suffix or cached paragraph markers")
                 }
                 s.update("润色一下。", final: false); s.convert(); s.update("润色一下。", final: true)
                 let dictated = f.proxy.view.string
@@ -1436,11 +1469,12 @@ test("Logged extra IMK paragraph separators do not reject valid edits in any def
                 check(requests == 1 && f.keys.isEmpty && f.proxy.view.hasMarkedText(), "waiting selected the field or lost underline")
                 let candidate = "修改后的正文😀\n\n"
                 s.applyEdit(text: candidate, revision: s.revision, error: nil); f.drain(s)
-                check(s.phase == .edited && s.error.isEmpty && f.proxy.view.string == candidate && requests == 1,
+                check(s.phase == .edited && s.error.isEmpty && f.proxy.view.string == candidate + (original as NSString).substring(from: caret) && requests == 1,
                       "terminal paragraph metadata blocked editing or trimmed model output: \(s.error)")
                 check(f.keys.filter { $0 == "select_all" }.count == 1, "representation match caused another selection")
+                check(f.proxy.view.selectedRange() == NSRange(location: (candidate as NSString).length, length: 0), "paragraph metadata shifted the restored caret")
                 // The undo source must come from the actual native selection,
-                // not the longer IMK substring window sent to the model.
+                // not the longer cached IMK substring window.
                 s.cancel(); f.drain(s)
                 check(s.phase == .dictated && f.proxy.view.string == dictated, "edit undo reintroduced cached terminal paragraphs")
                 s.cancel(); f.drain(s)
@@ -1485,7 +1519,7 @@ test("Long model wait retains marked instruction with no selection until one rep
         var requests = 0
         s.onEdit = { source, instruction, _ in
             requests += 1
-            check(source == "前文后文" && instruction == "扩写", "model context changed")
+            check(source == ("前文后文" as NSString).substring(to: caret) && instruction == "扩写", "model context included suffix")
         }
         s.update("扩写", final: false); s.convert(); s.update("扩写", final: true)
         let dictated = f.proxy.view.string
@@ -1495,7 +1529,7 @@ test("Long model wait retains marked instruction with no selection until one rep
               f.proxy.view.markedRange() == mark && f.proxy.view.string == dictated,
               "long model wait changed the field or repeated a request")
         s.applyEdit(text: "扩写后的正文", revision: s.revision, error: nil); f.drain(s)
-        check(s.phase == .edited && requests == 1 && f.proxy.view.string == "扩写后的正文" &&
+        check(s.phase == .edited && requests == 1 && f.proxy.view.string == "扩写后的正文" + ("前文后文" as NSString).substring(from: caret) &&
               !f.proxy.view.hasMarkedText() && f.keys.filter { $0 == "select_all" }.count == 1,
               "result did not apply in a single selection")
         s.cancel(); f.drain(s)
@@ -1518,7 +1552,9 @@ test("Cancelling during model wait retains dictation without another full select
 }
 
 test("Cancelling after the model but before selected replacement never writes its candidate") {
-    for ticks in [0, 1, 2] {
+    // One selection now replaces the old prefix + whole-document pair.
+    // Tick 2 performs the write; cancellation-before-write is ticks 0 and 1.
+    for ticks in [0, 1] {
         let f = WeChatFixture("前文后文", caret: 2, codex: true, directRange: false)
         let s = try f.session()
         s.update("修改", final: false); s.convert(); s.update("修改", final: true)
@@ -1568,7 +1604,7 @@ test("Empty model result replaces the selected document once and undo restores d
     let s = try f.session()
     s.update("清空", final: false); s.convert(); s.update("清空", final: true)
     s.applyEdit(text: "", revision: s.revision, error: nil); f.drain(s)
-    check(s.phase == .edited && f.proxy.view.string.isEmpty && f.keys == ["select_to_start", "select_all", "delete"],
+    check(s.phase == .edited && f.proxy.view.string.isEmpty && f.keys == ["select_all", "delete"],
           "empty result failed or deleted twice")
     s.cancel(); f.drain(s)
     check(s.phase == .dictated && f.proxy.view.string == "全部删除清空", "empty edit could not restore dictation")
@@ -1753,6 +1789,44 @@ test("Starting snapshot skips old marks and preserves selected text for undo") {
     check(proxy.view.string == "甲新字丙", "native input failed to replace selection")
     session.cancel()
     check(proxy.view.string == "甲乙丙", "cancel failed to restore selected original")
+}
+
+
+
+test("Editing does not depend on a web editor accepting Cmd Shift Up") {
+    for caret in [2, 5] {
+        let f = WeChatFixture("前文原文后", caret: caret, codex: true, application: "com.apple.Safari", directRange: false)
+        f.dropSelectToStart = true
+        let s = try f.session()
+        s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+        s.applyEdit(text: "确认后的新原文", revision: s.revision, error: nil); f.drain(s)
+        check(s.phase == .edited && f.proxy.view.string == "确认后的新原文" + ("前文原文后" as NSString).substring(from: caret),
+              "a swallowed selection arrow prevents editing")
+        check(f.keys == (caret == 5 ? ["select_all"] : ["select_all", "caret_from_end"]), "edit selected the prefix or repeated caret movement")
+    }
+}
+
+test("A swallowed select all still cannot authorize an edit") {
+    let f = WeChatFixture("原文后缀", codex: true, application: "com.apple.Safari", directRange: false)
+    f.dropSelectAll = true
+    let s = try f.session()
+    s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+    s.applyEdit(text: "不应写入", revision: s.revision, error: nil); f.drain(s)
+    check(s.phase == .error && f.proxy.view.string == "原文后缀改写", "missing native selection authorized replacement")
+}
+
+
+test("Stale committed caret cannot authorize replacing a different instruction") {
+    for caret in [0, 500] {
+        let f = WeChatFixture("原文后缀", codex: true, application: "com.apple.Safari", directRange: false)
+        let s = try f.session()
+        s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+        s.applyEdit(text: "不应写入", revision: s.revision, error: nil)
+        f.proxy.reportedSelections = [NSRange(location: caret, length: 0)]
+        f.drain(s)
+        check(s.phase == .error && f.proxy.view.string == "原文后缀改写", "stale caret authorized replacement")
+        check(f.proxy.insertCount == 1, "invalid context wrote more than the committed instruction")
+    }
 }
 
 print("\(passed) production input adapter tests passed")

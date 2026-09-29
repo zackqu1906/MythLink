@@ -12,9 +12,9 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from ..app_gestures import (ACTION_LABELS, APP_LABELS, AppBinding, action_phase,
                             default_profiles, profiles_from_json,
-                            profiles_to_json, validate_profiles)
+                            profiles_to_json, validate_profiles, reserve_ring_profiles)
 from ..app_shortcuts import MacAppShortcuts
-from ..gesture_settings import BoundGestureEvent, GESTURE_LABELS
+from ..gesture_settings import BoundGestureEvent, GESTURE_LABELS, RING_RESERVED_GESTURES
 from ..input_source_switch import foreground_pid, select_voice_input_source
 from ..wechat_setup import (KEYBOARD_SETTINGS_URL, MENU_TITLES,
                             KeyboardShortcutsNavigator, detect_wechat_menu)
@@ -77,13 +77,18 @@ class AppGestureController(QObject):
         try:
             self._profiles = profiles_from_json(owner._settings.value(
                 "gestures/appProfiles", profiles_to_json(default_profiles())))
+            reserved = reserve_ring_profiles(self._profiles)
+            if reserved != self._profiles:
+                self._profiles = reserved
+                owner._settings.setValue("gestures/appProfiles", profiles_to_json(reserved))
+                self._error = "全局手势的旧绑定已更新；输入模式上滑统一为 Enter"
             validate_profiles(self._profiles, owner._gesture_bindings)
         except (ValueError, TypeError, KeyError):
             self._profiles = default_profiles()
             # Preserve a user's custom start/end gestures, disabling colliding
             # defaults instead of silently rebinding the voice controls.
             self._profiles = {app: {action: AppBinding(b.gesture, b.shortcut,
-                              b.gesture not in owner._gesture_bindings.confirm)
+                              b.enabled and b.gesture not in owner._gesture_bindings.confirm)
                               for action, b in actions.items()}
                               for app, actions in self._profiles.items()}
             self._error = "应用手势已恢复默认；与开始／结束听写冲突的项已关闭"
@@ -114,12 +119,15 @@ class AppGestureController(QObject):
 
     @Property("QVariantList", constant=True)
     def gestures(self):
-        return [{"value": key, "label": value} for key, value in GESTURE_LABELS.items()]
+        return [{"value": "", "label": "未绑定"}] + [
+            {"value": key, "label": value} for key, value in GESTURE_LABELS.items()
+            if key not in RING_RESERVED_GESTURES]
 
     @Property("QVariantMap", notify=changed)
     def profiles(self):
         return {app: [{"action": action, "label": ACTION_LABELS[action], **vars(binding)}
-                       for action, binding in actions.items()] for app, actions in self._profiles.items()}
+                       for action, binding in actions.items() if action != "send"]
+                for app, actions in self._profiles.items()}
 
     @Property(str, notify=changed)
     def error(self):
@@ -197,11 +205,14 @@ class AppGestureController(QObject):
         self.changed.emit()
 
     def validate_voice(self, bindings):
+        if any(name in RING_RESERVED_GESTURES for pair in bindings.as_dict().values() for name in pair):
+            raise ValueError("该手势已保留给 Ring 全局菜单")
         validate_profiles(self._profiles, bindings)
         self._validate_source_conflict(self._profiles, bindings)
 
     def _unused_source_gestures(self):
         used = {g for pair in self.owner._gesture_bindings.as_dict().values() for g in pair}
+        used.update(RING_RESERVED_GESTURES)
         used.update(b.gesture for actions in self._profiles.values() for b in actions.values() if b.enabled)
         return [g for g in GESTURE_LABELS if g not in used]
 
@@ -284,7 +295,11 @@ class AppGestureController(QObject):
         try:
             if app not in self._profiles or action not in self._profiles[app]:
                 raise ValueError("应用操作不存在")
-            binding = AppBinding(gesture, shortcut, enabled)
+            if action == "send":
+                raise ValueError("输入模式上滑固定为 Enter，适用于所有应用")
+            if gesture in RING_RESERVED_GESTURES:
+                raise ValueError("该手势已保留给 Ring 全局菜单")
+            binding = AppBinding(gesture, shortcut, enabled if gesture else False)
             profiles = {key: dict(value) for key, value in self._profiles.items()}
             profiles[app][action] = binding
             validate_profiles(profiles, self.owner._gesture_bindings)
@@ -303,7 +318,7 @@ class AppGestureController(QObject):
             return
         defaults = default_profiles()[app]
         self._profiles = {**self._profiles, app: {
-            action: AppBinding(b.gesture, b.shortcut, b.gesture not in self.owner._gesture_bindings.confirm
+            action: AppBinding(b.gesture, b.shortcut, b.enabled and b.gesture not in self.owner._gesture_bindings.confirm
                               and b.gesture != self._source_gesture)
             for action, b in defaults.items()}}
         self._save()
@@ -427,20 +442,20 @@ class AppGestureController(QObject):
         """Capture the destination and phase at recognition, before Qt queues it."""
         source = event.event if isinstance(event, BoundGestureEvent) else event
         name = str(getattr(source, "name", ""))
-        if name and name == self._source_gesture:
+        if name != "swipe-up" and name and name == self._source_gesture:
             created, generation = time.monotonic(), self._generation
             try:
                 pid, error = foreground_pid(), ""
             except Exception as exc:
                 pid, error = 0, str(exc)
             return InputSourceGestureEvent(event, generation, created, pid, error)
-        if not any(b.enabled and b.gesture == name for actions in self._profiles.values() for b in actions.values()):
+        if name != "swipe-up" and not any(b.enabled and b.gesture == name for actions in self._profiles.values() for b in actions.values()):
             return event
         created = time.monotonic()
         state, sentence, generation = self.phase_state(), self.sentence(), self._generation
         capture_error = ""
         try:
-            target = self.backend.capture()
+            target = self.backend.capture(plain_enter=True) if name == "swipe-up" else self.backend.capture()
         except Exception as exc:
             target = None
             capture_error = f"{type(exc).__name__}: {exc}"
@@ -458,7 +473,8 @@ class AppGestureController(QObject):
             return True
         if target is None:
             return False
-        actions = self._profiles[target.profile]
+        actions = ({"send": AppBinding("swipe-up", "Return")} if name == "swipe-up"
+                   else self._profiles.get(target.profile, {}))
         action = next((key for key, b in actions.items() if b.enabled and b.gesture == name), None)
         if action is None:
             return False
@@ -518,7 +534,7 @@ class AppGestureController(QObject):
         if self._last_dispatch and self._last_dispatch[0] == signature and now - self._last_dispatch[1] < 0.35:
             return
         try:
-            if action == "send" and target.role and target.role not in {"AXTextArea", "AXTextField"}:
+            if action == "send" and not target.plain_enter and target.role and target.role not in {"AXTextArea", "AXTextField"}:
                 raise RuntimeError("请先点入消息输入框，再上滑发送")
             self.backend.post(target, binding.shortcut, require_focus=action == "send")
             self._last_dispatch = (signature, now)

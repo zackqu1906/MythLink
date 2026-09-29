@@ -39,6 +39,34 @@ The Voice History UI is a projection of InteractionRecords. New utterances are
 written only to this unified representation; no Episode/Attempt compatibility
 directories or duplicate edit records are created.
 
+## Inline edit intent and terminal results
+
+For new input-method records, native acceptance of “convert to edit” records
+`mode.user_intent = edit` with `intent_source = input_method_conversion`.
+This happens before the LLM request, so missing context or cancellation while
+ASR is finishing cannot silently become a dictation label. A speculative LLM
+request alone does not set this intent.
+
+- Successful dictation/edit: `outcome.status = applied`, with the actual mode.
+- Failed edit that restores the instruction as dictation: `mode.selected = edit`,
+  `outcome.status = apply_failed`, `outcome.error` contains the reason, and
+  `final_applied` is empty. Its **intent classification** target is `edit`, with
+  source `explicit_edit_intent`; this is not a successful-edit training example.
+- Cancelled edit: mode stays `edit`, outcome is `cancelled`.
+- Undoing an applied edit (including restoring its dictated instruction): mode
+  stays `edit`, outcome is `undone`. Cancel/undo clear the positive training target.
+
+`final_text` describes the remaining text, not the user's intended mode.
+Application events flag `restored_dictation` when the IME restores an instruction.
+Model execution and desktop application are separate: a completed LLM request
+remains `completed` even if applying or later undoing its result fails. Requests
+still running at cancellation, interruption, or normal shutdown receive a terminal
+status, completion time, and reason; late model replies cannot revive a cancelled
+request. Late ASR finals update recognition data without overwriting terminal
+application/cancellation outcomes.
+
+These changes apply to new runtime records only; there is no historical rewrite.
+
 ## Association index
 
 Association does not copy audio, rewrite interactions, or generate processed

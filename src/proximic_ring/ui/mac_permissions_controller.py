@@ -11,8 +11,10 @@ import threading
 from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
-from ..mac_permissions import (MacPermissionError, PermissionState, read_permission_state,
-                               request_post_event_access, running_identity)
+from ..mac_permissions import (MacPermissionError, PermissionState,
+                               request_post_event_access, running_identity,
+                               read_screen_capture_access, request_screen_capture_access)
+from ..native_access import read_control_permission_state
 
 
 class MacPermissionsController(QObject):
@@ -22,11 +24,13 @@ class MacPermissionsController(QObject):
     changed = Signal()
     diagnostic = Signal(object)
     _result = Signal(int, object)
+    _screenRequestFinished = Signal()
+    _screenPreviewFinished = Signal(object, str)
 
     def __init__(self, parent=None, *, enabled=True, reader=None):
         super().__init__(parent)
         self._enabled = enabled and sys.platform == "darwin"
-        self._reader = reader or read_permission_state
+        self._reader = reader or read_control_permission_state
         self._state = PermissionState()
         self._checked = False
         self._checking = False
@@ -34,7 +38,17 @@ class MacPermissionsController(QObject):
         self._generation = 0
         self._identity = running_identity()
         self._action_message = ""
+        self._screen_access = None
+        self._screen_checked = False
+        self._screen_requesting = False
+        self._screen_message = ""
+        self._screen_setup_pending = False
+        self._screen_preview_cancel = None
+        self._screen_preview_verified = False
+        self._screen_preview_message = "尚未验证实时预览"
         self._result.connect(self._apply)
+        self._screenRequestFinished.connect(self._finish_screen_request, Qt.QueuedConnection)
+        self._screenPreviewFinished.connect(self._finish_screen_preview, Qt.QueuedConnection)
         self._timer = QTimer(self)
         self._timer.setInterval(self.WAITING_INTERVAL_MS)
         self._timer.timeout.connect(self.refresh)
@@ -79,15 +93,153 @@ class MacPermissionsController(QObject):
         prefix = "请先将 App 拖入“应用程序”，退出当前副本，再从“应用程序”打开。" if self._identity["temporary_location"] else ""
         return prefix + ("请为下方路径的 Proximic Voice 授权，程序会自动检测。"
                          "更新后若已勾选但持续未生效，请核对是否授权了当前副本；必要时重新添加新版 App，"
-                         "系统仍未放行时再退出重开。输入法更新与此权限独立。")
+                         "按键通道会自动重新连接，无需退出主程序。输入法更新与此权限独立。")
 
     @Property(str, notify=changed)
     def actionMessage(self):
         return self._action_message
 
+    @Property(str, notify=changed)
+    def screenRecordingStatus(self):
+        if not self._screen_checked:
+            return "尚未检测屏幕录制权限"
+        if self._screen_access is None:
+            return "暂时无法确认屏幕录制权限"
+        return "屏幕录制权限已生效" if self._screen_access else "屏幕录制权限尚未生效"
+
+    @Property(bool, notify=changed)
+    def screenRecordingGranted(self):
+        return self._screen_access is True
+
+    @Property(bool, notify=changed)
+    def screenRecordingRequesting(self):
+        return self._screen_requesting
+
+    @Property(str, constant=True)
+    def screenRecordingInstructions(self):
+        if not self._identity["frozen"]:
+            return ("源码运行时，系统可能显示 VS Code、终端或 Python，请以授权弹窗中的名称为准。"
+                    "开启后若仍未生效，请重新启动对应程序。")
+        return ("请在系统设置中允许当前使用的 Proximic Voice，无需分别给被预览的应用授权。"
+                "如系统提示，请退出并重新打开应用。")
+
+    @Property(str, notify=changed)
+    def screenRecordingMessage(self):
+        return self._screen_message
+
+    @Property(bool, notify=changed)
+    def screenPreviewBusy(self):
+        return self._screen_preview_cancel is not None
+
+    @Property(str, notify=changed)
+    def screenPreviewMessage(self):
+        return self._screen_preview_message
+
     def _on_application_state(self, state):
         if state == Qt.ApplicationActive:
             self.refresh()
+            self.refreshScreenRecording()
+            if self._screen_setup_pending and self._screen_access and not self._screen_requesting:
+                self.verifyScreenPreview()
+
+    @Slot()
+    def refreshScreenRecording(self):
+        if not self._enabled or self._closed:
+            return
+        try:
+            self._screen_access = read_screen_capture_access()
+        except Exception:
+            self._screen_access = None
+        self._screen_checked = True
+        if self._screen_access:
+            self._screen_message = ("本次预览验证已通过。" if self._screen_preview_verified else
+                                    "屏幕录制权限已生效，请继续完成下方的实时预览验证。")
+        elif self._screen_message:
+            self._screen_message = "权限尚未生效。请确认已开启正确的程序；如系统提示，请重新启动该程序。"
+        if self._screen_access is not True:
+            self._screen_preview_verified = False
+        self.changed.emit()
+
+    @Slot()
+    def openScreenRecordingSettings(self):
+        if not self._enabled or self._closed or self._screen_requesting or self.screenPreviewBusy:
+            return
+        self._screen_setup_pending = True
+        self._screen_requesting = True
+        self._screen_message = "请在系统提示或设置中确认授权。"
+        self.changed.emit()
+
+        def request():
+            try:
+                request_screen_capture_access()
+            except Exception:
+                pass  # The settings pane remains a usable fallback.
+            try:
+                self._screenRequestFinished.emit()
+            except RuntimeError:
+                pass
+        threading.Thread(target=request, name="ProxiMicScreenPermission", daemon=True).start()
+
+    @Slot()
+    def verifyScreenPreview(self):
+        if not self._enabled or self._closed or self.screenPreviewBusy or self._screen_requesting:
+            return
+        self._screen_setup_pending = False
+        self.refreshScreenRecording()
+        if not self._screen_access:
+            self._screen_preview_message = "请先完成屏幕录制授权，再验证预览。"
+            self.changed.emit()
+            return
+        self._screen_preview_verified = False
+        cancel = threading.Event()
+        self._screen_preview_cancel = cancel
+        self._screen_preview_message = "正在验证预览；如弹出含 bypass 的系统提示，请亲自点击 Allow／允许。"
+        self.changed.emit()
+        def work():
+            try:
+                from ..screen_preview_check import verify_screen_preview
+                result = verify_screen_preview(cancel)
+            except Exception:
+                result = "unavailable"
+            try:
+                self._screenPreviewFinished.emit(cancel, result)
+            except RuntimeError:
+                pass
+        threading.Thread(target=work, name="ProxiMicPreviewCheck", daemon=True).start()
+
+    @Slot(object, str)
+    def _finish_screen_preview(self, cancel, result):
+        if self._closed or cancel is not self._screen_preview_cancel:
+            return
+        self._screen_preview_cancel = None
+        self._screen_preview_verified = result == "verified"
+        self._screen_preview_message = {
+            "verified": "本次实时预览验证通过，测试已停止。系统以后仍可能再次要求确认。",
+            "permission": "屏幕录制权限尚未生效，请核对授权并按系统提示重新启动。",
+            "no_window": "请在当前屏幕打开另一个应用窗口，再点击验证。",
+            "timeout": "尚未完成预览验证。请处理系统授权提示后重试。",
+            "cancelled": "已取消预览验证。",
+        }.get(result, "未能取得预览画面，请确认系统提示已允许，或换一个应用窗口重试。")
+        self.refreshScreenRecording()
+
+    @Slot()
+    def cancelScreenPreview(self):
+        self._screen_setup_pending = False
+        if self._screen_preview_cancel is not None:
+            self._screen_preview_cancel.set()
+            self._screen_preview_cancel = None
+            self._screen_preview_message = "已取消预览验证。"
+            self.changed.emit()
+
+    @Slot()
+    def _finish_screen_request(self):
+        if self._closed:
+            return
+        self._screen_requesting = False
+        self.refreshScreenRecording()
+        if not QDesktopServices.openUrl(QUrl("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")):
+            self._screen_message = "请手动打开系统设置 → 隐私与安全性 → 屏幕与系统音频录制。"
+        self.changed.emit()
 
     @Slot()
     def refresh(self):
@@ -172,6 +324,7 @@ class MacPermissionsController(QObject):
 
     def close(self):
         self._closed = True
+        self.cancelScreenPreview()
         self._timer.stop()
         app = QGuiApplication.instance()
         if self._enabled and isinstance(app, QGuiApplication):

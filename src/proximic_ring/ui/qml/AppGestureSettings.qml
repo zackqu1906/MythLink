@@ -19,7 +19,7 @@ ColumnLayout {
 
     Label {
         Layout.fillWidth: true
-        text: "根据前台应用自动切换。连接设备后即可使用，暂停语音或切回拼音也有效。"
+        text: "输入模式：上滑固定按一次 Enter，适用于所有应用和浏览器的当前输入框。发送、换行或搜索由该输入框决定；听写中会先定稿。\n下方仅设置各应用的聊天／任务操作；操作模式上滑仍为页面滚动。"
         color: "#8D98AA"; wrapMode: Text.Wrap; font.pixelSize: 12
     }
     ComboBox {
@@ -58,6 +58,7 @@ ColumnLayout {
                         objectName: "appGestureEnabled_" + row.modelData.action
                         Layout.preferredHeight: 32
                         checked: row.modelData.enabled
+                        enabled: row.modelData.gesture.length > 0
                         Accessible.name: "启用" + row.modelData.label
                         onClicked: row.save(row.modelData.gesture, row.modelData.shortcut, checked)
                     }
@@ -93,7 +94,7 @@ ColumnLayout {
     }
     Label {
         Layout.fillWidth: true; wrapMode: Text.Wrap
-        text: "发送：听写中先定稿再发送。切换对话：本句处理完成后生效。\n手势可以复用；有可撤销或转编辑的语音时，优先处理语音操作。"
+        text: "切换对话：本句处理完成后生效。\n手势可以复用；有可撤销或转编辑的语音时，优先处理语音操作。"
         color: "#8D98AA"; font.pixelSize: 11
     }
     Button {

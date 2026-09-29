@@ -11,7 +11,6 @@ from argparse import Namespace
 from collections import deque
 import ctypes
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -46,24 +45,20 @@ ASR_GAIN_DB_MIN = 0.0
 ASR_GAIN_DB_MAX = 12.0
 ASR_GAIN_DB_DEFAULT = 0.0
 IMU_SAMPLE_RATE_HZ = 50
-GESTURE_SAMPLE_RATE_HZ = 200
 GESTURE_STATUS_INTERVAL_S = 5.0
+GESTURE_HEALTH_INTERVAL_S = 0.1
+GESTURE_HEALTH_HEARTBEAT_S = 1.0
 IMU_BUFFER_SECONDS = 45.0
 IMU_LEAD_IN_MS = 300.0
 _ASR_CONTEXT_CAPTURE_MAX_CHARS = 1600
 
 
-def _configure_gesture_cpu_threads(recognizer: object, backend: str) -> int | None:
-    torch = getattr(getattr(recognizer, "classifier", None), "_torch", None)
-    if torch is None:
-        return None
-    # The online ASR path has only two small local CNNs: near-field detection
-    # and gestures. Eight-way intra-op work on both stalled the gesture queue
-    # for ~1 s. Match the SDK test's single-thread configuration for this path.
-    # Local ASR models retain their own existing CPU-thread policy.
-    if backend == "volcengine" and torch.get_num_threads() > 1:
-        torch.set_num_threads(1)
-    return int(torch.get_num_threads())
+def _gesture_health_status(stats: dict, failed: bool = False) -> str:
+    if failed or stats.get("error"):
+        return "error"
+    # Firmware sends confirmed events only. Silence is normal, not a stalled
+    # inference stream. START readiness and link health govern availability.
+    return "running" if stats.get("stream_ready") else "starting"
 
 
 class _ReadOnlyContextClipboard:
@@ -422,10 +417,8 @@ class RuntimeSettings:
     ring_selector: str | None = None
     ring_device: object | None = None
     ring_timeout_s: float = 8.0
-    # Opus is the production default because it keeps BLE traffic low enough
-    # for reliable continuous streaming on Windows.  The SDK still exposes
-    # decoded 16 kHz PCM16 to the detector, regardless of transport codec.
-    encoding: str = "opus"
+    # Public 1.4.0 firmware supplies independent ADPCM blocks; consumers get PCM16.
+    encoding: str = "adpcm"
     data_dir: Path = Path("data")
     audio_source: str = "ring"
     microphone_device: str = ""  # Empty means explicitly auto-detect DJI only.
@@ -461,7 +454,7 @@ class RuntimeSettings:
     # lookup inside that backend remains available for CLI compatibility.
     asr_api_key: str = ""
     # Dataset capture is optional. Gesture consumers independently request IMU.
-    collect_imu: bool = True
+    collect_imu: bool = False
     imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
 
     def to_namespace(self) -> Namespace:
@@ -561,6 +554,7 @@ class RecognitionRuntime:
         on_raw_audio: Callable[[int, object], None] | None = None,
         on_raw_imu: Callable[[int, object, dict], None] | None = None,
         on_gesture: Callable[[object], None] | None = None,
+        on_gesture_health: Callable[[bool], None] | None = None,
         on_battery: Callable[
             [int | None, int | None, int | None], None
         ]
@@ -570,6 +564,7 @@ class RecognitionRuntime:
         asr_gain_db_provider: Callable[[], float] | None = None,
         stage1_threshold_provider: Callable[[], float] | None = None,
         gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
+        gesture_filter: Callable[[object, bool], bool] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
         gesture_control = self.settings.speech_control_mode == "gesture"
@@ -582,13 +577,8 @@ class RecognitionRuntime:
             if selected_backend == "volcengine"
             else None
         )
-        # One physical stream serves both consumers. Record its actual rate in
-        # dataset metadata; the supplied gesture model requires exactly 200 Hz.
-        imu_hz = (
-            GESTURE_SAMPLE_RATE_HZ
-            if on_gesture is not None or end_on_gesture
-            else self.settings.imu_sample_rate_hz
-        )
+        # Optional dataset IMU collection is independent of firmware gestures.
+        imu_hz = self.settings.imu_sample_rate_hz
         imu_buffer = (
             _ImuSampleBuffer(sample_rate_hz=imu_hz)
             if self.settings.collect_imu and on_raw_imu is not None
@@ -752,13 +742,10 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            if on_gesture is not None or end_on_gesture:
-                on_state("正在加载电脑端手势模型…")
+            if on_gesture is not None or end_on_gesture or gesture_filter is not None:
+                on_state("正在准备固件手势事件通道…")
                 try:
-                    from ring_python_sdk.gestures import GestureWorker
-                    from proximic_ring.host_gestures import (
-                        GestureRecognizer, MODEL_PATH, MODEL_NAME, SDK_REVISION,
-                    )
+                    from proximic_ring.firmware_gestures import FirmwareGestureWorker
 
                     def publish_gesture(event: object) -> None:
                         bindings = (
@@ -772,6 +759,11 @@ class RecognitionRuntime:
                             and source.error is None
                             and (microphone is None or microphone.error is None)
                         )
+                        # Global modes must gate even confirm gestures before
+                        # they can prepare/start/end audio on this thread.
+                        global_handled = accepted and gesture_filter is not None and not gesture_filter(
+                            event, bool(getattr(controller, "gesture_busy", getattr(controller, "active", False)))
+                        )
                         is_confirm_endpoint = (
                             end_on_gesture
                             and bool(name) and name in bindings.confirm
@@ -779,7 +771,7 @@ class RecognitionRuntime:
                         confirm_requested = False
                         requested_action = "end"
                         blocked_reason = ""
-                        if accepted and is_confirm_endpoint:
+                        if accepted and not global_handled and is_confirm_endpoint:
                             # Do this before logging or queuing any GUI work.
                             # The audio producer owns END and closes the normal
                             # interaction gate before submitting final ASR.
@@ -802,7 +794,7 @@ class RecognitionRuntime:
                                     if cancel_utterance_event is not None and cancel_utterance_event.is_set()
                                     else "recognition_gate_closed"
                                 )
-                        # Record model output before application state gating.
+                        # Record firmware output before application state gating.
                         on_state("[GESTURE_RECOGNIZED] " + json.dumps({
                             "name": getattr(event, "name", ""),
                             "confidence": getattr(event, "confidence", None),
@@ -810,6 +802,7 @@ class RecognitionRuntime:
                             "forwarded": accepted,
                             "reason": (
                                 "runtime_stopped" if not accepted else
+                                "global_mode_route" if global_handled else
                                 f"confirm_{requested_action}_requested" if confirm_requested else
                                 blocked_reason if blocked_reason else
                                 "no_active_utterance_or_duplicate" if is_confirm_endpoint else
@@ -820,48 +813,28 @@ class RecognitionRuntime:
                             action_label = {"start": "准备本句" if prepare_gesture_start else "开始本句",
                                             "cancel_start": "取消准备", "end": "结束本句"}[requested_action]
                             on_state(f"[手势] {name} → {action_label}")
-                        if accepted and not is_confirm_endpoint and on_gesture is not None:
+                        if accepted and not global_handled and not is_confirm_endpoint and on_gesture is not None:
                             on_gesture(
                                 BoundGestureEvent(event, bindings)
                                 if gesture_bindings_provider else event
                             )
 
-                    recognizer = GestureRecognizer(on_gesture=publish_gesture)
-                    gesture_threads = _configure_gesture_cpu_threads(recognizer, selected_backend)
-                    # Warm up before starting MIC/IMU.
-                    recognizer.classifier.predict(
-                        np.zeros((recognizer.classifier.window_size, 6), dtype=np.float32)
-                    )
-                    gesture_worker = GestureWorker(recognizer)
+                    gesture_worker = FirmwareGestureWorker(on_gesture=publish_gesture)
                     gesture_worker.start()
-                    source.imu_sample_observer = gesture_worker.submit
+                    source.gesture_observer = gesture_worker.submit
+                    source.gesture_state_observer = on_gesture_health
                     gestures_enabled.set()
-                    model_path = MODEL_PATH
-                    on_state("[GESTURE_MODEL] " + json.dumps({
-                        "model": MODEL_NAME,
-                        "backend": "pytorch-cpu",
-                        "source": "host",
-                        "sdk_revision": SDK_REVISION,
-                        "path": str(model_path),
-                        "sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
-                        "sample_hz": GESTURE_SAMPLE_RATE_HZ,
-                        "cpu_intra_threads": gesture_threads,
-                        "packet_timestamp_tolerance_ms": getattr(
-                            recognizer, "packet_timestamp_tolerance_ms", None
-                        ),
-                    }, ensure_ascii=False))
-                    on_state(
-                        "电脑端手势已就绪，使用设置中的手势分配"
-                    )
+                    on_state('[GESTURE_SOURCE] {"source":"firmware","protocol":"26 06 / 26 07"}')
+                    on_state("固件手势事件通道已准备，使用设置中的手势分配")
                 except Exception as exc:
                     gestures_enabled.clear()
                     gesture_error_reported = True
                     if gesture_control:
-                        raise RuntimeError(f"纯手势模式无法启动：手势模型不可用：{exc}") from exc
+                        raise RuntimeError(f"纯手势模式无法启动：固件事件通道不可用：{exc}") from exc
                     on_state(
-                        f"电脑端手势不可用，确认手势无法结束语音，请用 Esc 取消本句并重连：{exc}"
+                        f"固件手势不可用，确认手势无法结束语音，请用 Esc 取消本句并重连：{exc}"
                         if end_on_gesture else
-                        f"电脑端手势不可用，按键和语音继续工作：{exc}"
+                        f"固件手势不可用，按键和语音继续工作：{exc}"
                     )
             if disconnect_event.is_set():
                 return
@@ -882,6 +855,10 @@ class RecognitionRuntime:
             else:
                 on_state("音频来源：Ring 麦克风")
             next_gesture_status_at = time.monotonic() + GESTURE_STATUS_INTERVAL_S
+            next_gesture_health_at = 0.0
+            last_gesture_health_sent = -float("inf")
+            last_gesture_status = ""
+            last_gesture_health = None
             recognition_was_enabled = False
             on_started()
             while not disconnect_event.is_set():
@@ -896,32 +873,37 @@ class RecognitionRuntime:
                 if disconnect_event.is_set():
                     break
                 if gesture_worker is not None and not gesture_error_reported:
-                    gesture_error = gesture_worker.error or getattr(
-                        source, "imu_sample_error", None
-                    ) or getattr(
-                        source, "imu_stream_error", None
-                    )
+                    gesture_error = gesture_worker.error or getattr(source, "gesture_error", None)
                     if gesture_error is not None:
                         gesture_error_reported = True
                         gestures_enabled.clear()
+                        if on_gesture_health is not None:
+                            on_gesture_health(False)
                         if gesture_control:
                             raise RuntimeError(f"纯手势模式已停止：{gesture_error}") from gesture_error
                         on_state(
-                            f"电脑端手势已停止，确认手势无法结束语音，请用 Esc 取消本句并重连：{gesture_error}"
+                            f"固件手势已停止，确认手势无法结束语音，请用 Esc 取消本句并重连：{gesture_error}"
                             if end_on_gesture else
-                            f"电脑端手势已停止，按键和语音继续工作：{gesture_error}"
+                            f"固件手势已停止，按键和语音继续工作：{gesture_error}"
                         )
-                if gesture_worker is not None and time.monotonic() >= next_gesture_status_at:
+                gesture_now = time.monotonic()
+                if gesture_worker is not None and gesture_now >= next_gesture_health_at:
                     stats = gesture_worker.snapshot()
-                    stats["status"] = (
-                        "error" if gesture_error_reported else
-                        "no_imu" if not stats["received_samples"] else
-                        "imu_stalled" if (stats["last_input_age_ms"] or 0) > 2000 else
-                        "inference_backlog" if stats["last_queue_wait_ms"] > 250 else
-                        "running"
-                    )
-                    on_state("[GESTURE_STATUS] " + json.dumps(stats, ensure_ascii=False))
-                    next_gesture_status_at = time.monotonic() + GESTURE_STATUS_INTERVAL_S
+                    stats["stream_ready"] = bool(getattr(source, "gestures_active", False))
+                    stats["status"] = _gesture_health_status(stats, gesture_error_reported)
+                    if stats["status"] != last_gesture_status or gesture_now >= next_gesture_status_at:
+                        on_state("[GESTURE_STATUS] " + json.dumps(stats, ensure_ascii=False))
+                        next_gesture_status_at = gesture_now + GESTURE_STATUS_INTERVAL_S
+                    healthy = stats["status"] == "running"
+                    # Readiness is independent of the slower diagnostic log. A
+                    # idle firmware correctly emits no gesture notifications.
+                    if on_gesture_health is not None and (healthy != last_gesture_health
+                            or gesture_now - last_gesture_health_sent >= GESTURE_HEALTH_HEARTBEAT_S):
+                        on_gesture_health(healthy)
+                        last_gesture_health_sent = gesture_now
+                    last_gesture_status = stats["status"]
+                    last_gesture_health = healthy
+                    next_gesture_health_at = gesture_now + GESTURE_HEALTH_INTERVAL_S
                 block_end_monotonic_ns = int(
                     getattr(audio_source, "last_read_end_monotonic_ns", 0)
                     or time.monotonic_ns()
@@ -1045,9 +1027,9 @@ class RecognitionRuntime:
                 if gesture_worker is not None:
                     try:
                         gesture_worker.close()
-                        on_state(f"电脑端手势统计：{gesture_worker.snapshot()}")
+                        on_state(f"固件手势统计：{gesture_worker.snapshot()}")
                     except Exception as exc:
-                        on_state(f"电脑端手势清理异常：{exc}")
+                        on_state(f"固件手势清理异常：{exc}")
                 if watcher is not threading.current_thread():
                     watcher.join(timeout=1.0)
                 if controller is not None:

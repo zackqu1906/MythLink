@@ -88,6 +88,10 @@ final class FakeClient: CompositionClient {
         selected = NSRange(location: effective.location + (text as NSString).length, length: 0)
         marked = unspecifiedRange
     }
+    func replaceEditing(_ range: NSRange, with text: String, restoringCaret: Int?) {
+        replace(range, with: text)
+        if let restoringCaret { selected = NSRange(location: restoringCaret, length: 0) }
+    }
 }
 
 var passed = 0
@@ -211,10 +215,47 @@ test("Applied edit cancel restores dictation, second cancel restores original") 
     session.convert()
     session.update("指令", final: true)
     session.applyEdit(text: "编辑结果", revision: session.revision, error: nil)
+    check(client.body == "编辑结果尾巴" && session.phase == .edited, "edit changed text after the original caret")
     session.cancel()
     check(client.body == "原来指令尾巴" && session.phase == .dictated, "cancel didn't restore D")
     session.cancel()
     check(client.body == "原来尾巴" && session.phase == .undone, "second cancel didn't restore B")
+}
+
+test("Edit model sees only the prefix and preserves selection, emoji and suffix through undo") {
+    for selectionLength in [0, 2] {
+        for result in ["新的前文😀", ""] {
+            let prefix = "第一行😀\n原文"
+            let suffix = "选中后文\n保留😀"
+            let position = (prefix as NSString).length
+            let selection = NSRange(location: position, length: selectionLength)
+            let client = FakeClient(prefix + suffix, selection: selection)
+            let session = try begin(client)
+            var requests = 0
+            session.onEdit = { original, instruction, _ in
+                check(original == prefix && instruction == "重写前文", "model received selection, suffix or spoken instruction")
+                requests += 1
+            }
+            session.update("重写", final: false); session.convert(); session.update("重写前文", final: true)
+            check(requests == 1 && session.editScope == "before_caret", "prefix request missing")
+            session.applyEdit(text: result, revision: session.revision, error: nil)
+            check(session.phase == .edited && client.body == result + suffix, "suffix or selected text changed")
+            check(client.selected == NSRange(location: (result as NSString).length, length: 0), "caret did not return to the preserved suffix boundary")
+            session.cancel()
+            check(session.phase == .dictated && client.body == ((prefix + suffix) as NSString).replacingCharacters(in: selection, with: "重写前文"), "edit undo lost dictated instruction")
+            session.cancel()
+            check(session.phase == .undone && client.body == prefix + suffix, "sentence undo lost original selection")
+        }
+    }
+}
+
+test("Caret at the beginning never submits the following document as edit source") {
+    let client = FakeClient("全部是后文", selection: NSRange(location: 0, length: 0))
+    let session = try begin(client)
+    var requests = 0
+    session.onEdit = { _, _, _ in requests += 1 }
+    session.update("重写", final: false); session.convert(); session.update("重写", final: true)
+    check(requests == 0 && session.phase == .dictated && client.body == "重写全部是后文", "empty prefix expanded to the full document")
 }
 
 test("Failed model restores dictated content and rejects postfinal relabeling") {
@@ -1112,17 +1153,17 @@ test("Tap then conversion before final still identifies the underlined utterance
     check(requests == 1 && session.phase == .editing, "underlined conversion was ignored")
 }
 
-test("Scoped IMK context edits only the verified original and restores dictation then selected text") {
+test("Readable prefix context edits only text before the selection and restores dictation") {
     let client = FakeClient("前缀😀明天三点开会。保留后缀", selection: NSRange(location: 6, length: 1))
     client.fullContext = false
     client.rangeReads = true
-    client.contextRange = NSRange(location: 4, length: 7)
+    client.contextRange = NSRange(location: 0, length: 11)
     let before = client.body
     let session = try begin(client)
-    check(session.editScope == "readable_range" && !session.original.complete, "partial context was called whole")
+    check(session.editScope == "before_caret" && !session.original.complete, "prefix context unavailable")
     var requested = 0
     session.onEdit = { original, instruction, _ in
-        check(original == "明天三点开会。" && instruction == "改为四", "instruction mixed into original context")
+        check(original == "前缀😀明天" && instruction == "改为四", "selection or suffix mixed into model original")
         check(client.body == (before as NSString).replacingCharacters(in: NSRange(location: 6, length: 1), with: "改为四") && isValidRange(client.marked), "instruction disappeared before model")
         requested += 1
     }
@@ -1131,8 +1172,8 @@ test("Scoped IMK context edits only the verified original and restores dictation
     session.update("改为四", final: true)
     check(requested == 1 && session.phase == .editing, "range context could not enter model")
     client.body = "前缀😀明天改为四点开会。新的后缀"
-    session.applyEdit(text: "明天四点开会。", revision: session.revision, error: nil)
-    check(client.body == "前缀😀明天四点开会。新的后缀" && session.phase == .edited, "edit changed outside its scope")
+    session.applyEdit(text: "前缀😀后天", revision: session.revision, error: nil)
+    check(client.body == "前缀😀后天三点开会。新的后缀" && session.phase == .edited, "edit changed outside its scope")
     session.cancel()
     check(client.body == "前缀😀明天改为四点开会。新的后缀" && session.phase == .dictated, "cancel did not restore dictation in range")
     session.cancel()
@@ -1144,7 +1185,7 @@ test("Scoped pending edit cancellation and model error restore dictation and rej
         let client = FakeClient("前原文后", selection: NSRange(location: 3, length: 0))
         client.fullContext = false
         client.rangeReads = true
-        client.contextRange = NSRange(location: 1, length: 2)
+        client.contextRange = NSRange(location: 0, length: 3)
         let session = try begin(client)
         session.update("指令", final: false)
         session.convert()
@@ -1184,6 +1225,17 @@ test("Scoped context outside original selection does not grant edit capability")
     session.convert()
     session.update("指令", final: true)
     check(!session.editContextAvailable && session.phase == .dictated && client.body == "前原文后指令", "unrelated context accepted")
+}
+
+test("A partial context missing the start never pretends to include all text before the caret") {
+    let client = FakeClient("缺失前文可读后文", selection: NSRange(location: 6, length: 0))
+    client.fullContext = false; client.rangeReads = true
+    client.contextRange = NSRange(location: 4, length: 4)
+    let session = try begin(client)
+    var requests = 0
+    session.onEdit = { _, _, _ in requests += 1 }
+    session.update("重写", final: false); session.convert(); session.update("重写", final: true)
+    check(requests == 0 && !session.editContextAvailable && session.phase == .dictated, "partial prefix was offered as complete original")
 }
 
 test("Unreadable suffix cannot make an insertion at scope start look like replacement") {

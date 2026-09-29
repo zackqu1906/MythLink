@@ -7,6 +7,8 @@ The UI waits for native BEGIN before starting gesture-controlled ASR.
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
@@ -15,6 +17,11 @@ from ..input_method_install import payload_directory
 
 def warm_input_method():
     """Launch our accessory IME in the background without hiding its palettes."""
+    # `open` can pass the smoke-test environment to the long-lived installed
+    # IME. That process would keep reconnecting to a deleted temporary socket
+    # even after a normal host starts. Isolated hosts must not launch it.
+    if os.environ.get("PROXIMIC_IME_SOCKET", "").strip() or "--self-check-package" in sys.argv:
+        return
     bundle = Path.home() / "Library/Input Methods/ProxiMicInput.app"
     if (bundle / "Contents/MacOS/ProxiMicInput").is_file():
         QProcess.startDetached("/usr/bin/open", ["-g", str(bundle)])
@@ -50,8 +57,8 @@ class InputSourceActivation(QObject):
         if self._stage != "probing" or pid <= 0:
             return False
         try:
-            from AppKit import NSWorkspace
-            front = NSWorkspace.sharedWorkspace().frontmostApplication()
+            from ..mac_workspace import frontmost_application
+            front = frontmost_application()
             return front is not None and int(front.processIdentifier()) == pid
         except Exception:
             return False

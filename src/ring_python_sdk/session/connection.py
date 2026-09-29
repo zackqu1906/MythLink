@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import sys
 from typing import Any
 
 from bleak import BleakClient, BleakError, BleakScanner
@@ -73,6 +74,15 @@ class ConnectionMixin:
     async def connect_target(self, selector: str) -> bool:
         """Switch to one ring (disconnects current). selector: index / name / address."""
         sel = selector.strip()
+        if sys.platform == "darwin":
+            from ring_python_sdk.ble.macos_device import retrieve_device
+            try:
+                target = await retrieve_device(sel, timeout=min(self.timeout_s, 5.0))
+            except Exception as exc:
+                print(f"Remembered device lookup failed: {exc}; trying discovery ...")
+                target = None
+            if target is not None:
+                return await self._connect_device(target, new_session=True)
         # The UI already has an exact platform identifier: a MAC on Windows or
         # an opaque CoreBluetooth UUID on macOS. Resolve it again inside this
         # long-lived BLE loop instead of reusing a cross-thread BLEDevice.
@@ -342,7 +352,18 @@ class ConnectionMixin:
                 f"buffered_blocks={buffered_blocks}",
             ]
         )
-        assembler = getattr(mic, "_assembler", None)
+        public_adpcm = getattr(mic, "_public_adpcm", None)
+        if getattr(mic, "_encoding", None) == "adpcm" and public_adpcm is not None:
+            parts.extend([
+                "codec=adpcm",
+                f"last_seq={public_adpcm.sequence}",
+                f"inflight_frames={int(bool(public_adpcm.parts))}",
+                f"inflight_bytes={public_adpcm.byte_count if public_adpcm.parts else 0}",
+                f"assembled_frames={stats.frame_count}",
+            ])
+            assembler = None
+        else:
+            assembler = getattr(mic, "_assembler", None)
         if assembler is not None:
             parts.extend(
                 [
@@ -409,6 +430,8 @@ class ConnectionMixin:
         self.ble_test = None
         self.mic_active = False
         self.imu_active = False
+        self.quaternion_active = False
+        self.quaternion_callback = None
         self.ppg_active = False
         self.ppg_mode = ""
         self.ppg_send_raw = False
@@ -661,6 +684,8 @@ class ConnectionMixin:
         self.audio_plot_enabled = False
 
     async def stop_all(self) -> None:
+        if self.quaternion_active:
+            await self.quaternion_off()
         if self.mic_active:
             await self.mic_off()
         if self.imu_active:

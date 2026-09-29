@@ -16,3 +16,17 @@ The important MIC findings are:
 
 Because the SDK already solves the hardware protocol, the previous generic
 `ble.py`, `serial.py`, and `udp.py` adapters were removed from ProxiMic.
+
+## Public SDK 1.4.0 update (2026-09-28)
+
+The application now defaults to ADPCM everywhere (UI, runtime, CLI and dataset
+capture). Its decoder validates the public firmware header, bounds fragments to
+one 806-byte block and writes decoded PCM immediately. Default audio has no
+libopus dependency. Saved codec preferences migrate to ADPCM.
+
+Firmware-confirmed `26 06` / compact `26 07` events drive all gesture actions;
+intermediate classifications do not. Host gesture models/parameters/weights are
+removed. Raw IMU logging is optional and off by default. Quaternion frames are
+available through `RingSession.quaternion_on(on_frame=...)` and
+`quaternion_off()`, independently of firmware gestures; raw IMU and quaternion
+capture share a stream and cannot run together.

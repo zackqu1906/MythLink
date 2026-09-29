@@ -614,3 +614,47 @@ def test_activation_trace_does_not_change_input_state_or_log_text(component):
     count = len(events)
     c._accept({'type': 'activation_trace', 'epoch': 'obsolete', 'event': 'deactivate'})
     assert len(events) == count
+
+
+def test_native_conversion_intent_survives_cancel_and_does_not_leak_to_next_sentence(component):
+    c, _ = component
+    intents = []
+    c.editIntentConfirmed.connect(intents.append)
+    c.begin()
+    receive(c, phase="listening", ready=True)
+    # Native toolbar/F8 conversion can arrive before audio START binds its ID.
+    receive(c, phase="finishing", edit_requested=True, ready=True)
+    assert intents == []
+    c.bind_session(11)
+    receive(c, phase="finishing", edit_requested=True, ready=True)
+    receive(c, phase="dictated", edit_requested=False, ready=True)
+    assert intents == [11]
+    c.begin(); c.bind_session(12)
+    receive(c, phase="listening", edit_requested=False, ready=True)
+    receive(c, phase="dictated", edit_requested=False, ready=True)
+    assert intents == [11]
+
+
+def test_settlement_uses_its_own_failure_reason(component):
+    c, _ = component
+    c.begin(); c.bind_session(11)
+    receive(c, phase="editing", ready=True, error="")
+    errors = []
+    c.settled.connect(lambda *_: errors.append(c.error))
+    receive(c, "settled", phase="dictated", text="扩写", error="模型超时")
+    receive(c, "settled", phase="undone", text="", revision=2, error="")
+    assert errors == ["模型超时", ""]
+
+
+def test_selection_diagnostics_expose_stage_and_ack_but_not_arbitrary_text(component):
+    c, events = component
+    assert c.begin()
+    receive(c, phase="editing", ready=True, readback_diagnostics={
+        "operation_stage": "context_whole", "key_acknowledged": True,
+        "observed_selection": [32, 0], "text": "private editor contents"})
+    assert events[-1]["readback_diagnostics"] == {
+        "operation_stage": "context_whole", "key_acknowledged": True,
+        "observed_selection": [32, 0]}
+    receive(c, phase="error", readback_diagnostics={
+        "operation_stage": "private text", "key_acknowledged": "private text"})
+    assert events[-1]["readback_diagnostics"] == {}

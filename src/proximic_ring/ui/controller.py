@@ -52,10 +52,12 @@ from ..desktop_target import (
 )
 from ..diagnostic_log import RotatingDiagnosticLog
 from ..gesture_settings import (
-    BoundGestureEvent, GestureBindings, GESTURE_LABELS,
+    BoundGestureEvent, GestureBindings, GESTURE_LABELS, RING_RESERVED_GESTURES,
+    reserve_ring_gestures,
 )
 from ..app_gestures import migrate_voice_defaults
 from .app_gesture_controller import AppGestureController, AppGestureEvent, InputSourceGestureEvent
+from .ring_gesture_controller import ModeGestureEvent, RingGestureController
 from ..model_packages import install_default_local_model
 from ..interaction_associations import (
     ASSOCIATION_ASR,
@@ -243,7 +245,6 @@ class _ModeSwitchApplication:
 
 
 _DICTATION_CORRECTION_GRACE_MS = 700
-_PROCESSING_MODE_CORRECTION_DELAY_MS = 3000
 
 
 def _is_explicit_emptying_edit_response(
@@ -359,6 +360,7 @@ class AppController(QObject):
     associationChanged = Signal()
 
     _runtimeStatus = Signal(str)
+    _runtimeGestureHealth = Signal(object, bool)
     _runtimeConnected = Signal()
     _runtimeBatteryChanged = Signal(int, int, int)
     _runtimeDisconnected = Signal()
@@ -387,6 +389,7 @@ class AppController(QObject):
     def __init__(self, *, inline_input_enabled: bool | None = None) -> None:
         super().__init__()
         self._settings = QSettings("ProxiMic", "ProxiMic Voice")
+        self._menu_bar_status_info = self._settings.value("ui/menuBarStatusInfo", True, type=bool)
         self._connected = False
         self._battery_percentage = -1
         self._battery_millivolts = -1
@@ -406,7 +409,7 @@ class AppController(QObject):
         self._transcript_primary_text = ""
         self._transcript_mode = ""
         self._transcript_final = False
-        self._transcript_visible = False
+        self._transcript_active = False
         self._session_history_lines: list[str] = []
         self._voice_history_entries: list[dict[str, object]] = []
         self._playing_voice_path = ""
@@ -427,15 +430,10 @@ class AppController(QObject):
         self._undo_writer = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="native-undo-save"
         )
-        self._applied_action_visible = False
         self._applied_target_foreground = True
-        self._applied_target_mismatch_count = 0
-        self._applied_overlay_drag_active = False
-        self._applied_overlay_foreground_grace_until = 0.0
         self._pending_applied_mode_switches: dict[str, tuple[int, str]] = {}
         self._mode_switch_application: _ModeSwitchApplication | None = None
         self._active_auto_interaction: _AutoInteraction | None = None
-        self._processing_mode_correction_revealed = False
         self._pending_dictation_result: tuple[
             TextProcessingResult, DesktopTargetRef | None
         ] | None = None
@@ -469,6 +467,10 @@ class AppController(QObject):
         self._manual_association_candidate_since = 0.0
         self._log_lines: list[str] = []
         self._gesture_health_status = ""
+        self._proximity_gesture_healthy_at = 0.0
+        self._proximity_reconnect_after = 0.0
+        self._proximity_reconnect_attempts = 0
+        self._proximity_reconnect_cancelled = False
         self._diagnostic_run_id = uuid.uuid4().hex[:8]
         self._diagnostic_log = RotatingDiagnosticLog(
             app_data_root() / "logs" / "diagnostic.log"
@@ -515,23 +517,11 @@ class AppController(QObject):
             self._gesture_bindings = GestureBindings()
             self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
             self._gesture_settings_error = "原手势设置无效，已恢复默认分配"
-        saved_applied_overlay_style = str(
-            self._settings.value("ui/appliedOverlayStyle", "normal")
-        ).strip().lower()
-        self._applied_overlay_style = (
-            saved_applied_overlay_style
-            if saved_applied_overlay_style in {"normal", "compact"}
-            else "normal"
-        )
-        try:
-            saved_applied_overlay_duration = round(
-                float(self._settings.value("ui/appliedOverlayDurationSeconds", 1.5)) * 2
-            ) / 2
-        except (TypeError, ValueError, OverflowError):
-            saved_applied_overlay_duration = 1.5
-        self._applied_overlay_duration_seconds = max(
-            1, min(saved_applied_overlay_duration, 10)
-        )
+        reserved = reserve_ring_gestures(self._gesture_bindings)
+        if reserved != self._gesture_bindings:
+            self._gesture_bindings = reserved
+            self._settings.setValue("input/gestureBindings", reserved.to_json())
+            self._gesture_settings_error = "食指／中指捏合、握拳和下滑已保留给全局菜单；冲突绑定已解除"
         # This switch controls only optional post-processing for dictation.
         # Edit mode always needs the selected text model.
         self._llm_enabled = self._bool_setting("llm/enabled", True)
@@ -671,28 +661,11 @@ class AppController(QObject):
         default_funasr_repo = project_root / "third_party" / "Fun-ASR"
         self._device_name = str(self._settings.value("ring/name", "Ringo"))
         self._selector = str(self._settings.value("ring/selector", ""))
-        try:
-            encoding_default_version = int(
-                self._settings.value("ring/audioEncodingDefaultVersion", 0)
-            )
-        except (TypeError, ValueError):
-            encoding_default_version = 0
-        if encoding_default_version < 2:
-            # Move existing installations to the transport verified by the
-            # firmware receiver.  Users can still explicitly select PCM/ADPCM
-            # after this one-time reliability migration.
-            saved_audio_encoding = "opus"
-            self._settings.setValue("ring/audioEncoding", saved_audio_encoding)
-            self._settings.setValue("ring/audioEncodingDefaultVersion", 2)
-        else:
-            saved_audio_encoding = str(
-                self._settings.value("ring/audioEncoding", "opus")
-            ).strip().lower()
-        self._audio_encoding = (
-            saved_audio_encoding
-            if saved_audio_encoding in {"adpcm", "pcm", "opus"}
-            else "opus"
-        )
+        # Public firmware 1.2.133 uses ADPCM. Migrate old saved Opus/PCM
+        # choices instead of silently reconnecting with an unsupported codec.
+        self._audio_encoding = "adpcm"
+        self._settings.setValue("ring/audioEncoding", "adpcm")
+        self._settings.setValue("ring/audioEncodingDefaultVersion", 3)
         saved_model_path = str(self._settings.value("detector/model", "")).strip()
         try:
             saved_bundled_version = int(
@@ -802,31 +775,10 @@ class AppController(QObject):
             and self._bool_setting("input/pushToTalk", True)
         )
 
-        self._hide_overlay_timer = QTimer(self)
-        self._hide_overlay_timer.setSingleShot(True)
-        self._hide_overlay_timer.timeout.connect(self._hide_transcript)
         self._dictation_commit_timer = QTimer(self)
         self._dictation_commit_timer.setSingleShot(True)
         self._dictation_commit_timer.timeout.connect(
             self._commit_pending_dictation
-        )
-        self._processing_mode_correction_timer = QTimer(self)
-        self._processing_mode_correction_timer.setSingleShot(True)
-        self._processing_mode_correction_timer.timeout.connect(
-            self._reveal_processing_mode_correction
-        )
-        self._applied_action_hide_timer = QTimer(self)
-        self._applied_action_hide_timer.setSingleShot(True)
-        self._applied_action_hide_timer.setInterval(
-            round(self._applied_overlay_duration_seconds * 1000)
-        )
-        self._applied_action_hide_timer.timeout.connect(
-            self._hide_applied_action_overlay
-        )
-        self._applied_target_timer = QTimer(self)
-        self._applied_target_timer.setInterval(300)
-        self._applied_target_timer.timeout.connect(
-            self._poll_applied_target_foreground
         )
         self._undo_queue_timer = QTimer(self)
         self._undo_queue_timer.setSingleShot(True)
@@ -841,6 +793,7 @@ class AppController(QObject):
         self._quit_timer.setInterval(100)
         self._quit_timer.timeout.connect(self._finish_quit)
         self._runtimeStatus.connect(self._apply_runtime_status)
+        self._runtimeGestureHealth.connect(self._apply_proximity_gesture_health)
         self._runtimeConnected.connect(self._apply_runtime_connected)
         self._runtimeBatteryChanged.connect(self._apply_runtime_battery)
         self._runtimeDisconnected.connect(self._apply_runtime_disconnected)
@@ -884,8 +837,10 @@ class AppController(QObject):
         from .inline_controller import InlineInputController
         self._inline_input = InlineInputController(self, enabled=inline_input_enabled)
         self._inline_requests: dict[int, object] = {}
+        self._inline_unsettled_edits: set[int] = set()
         self._inline_interruption_logged = False
         self._inline_input.began.connect(self._inline_gesture_start_ready)
+        self._inline_input.editIntentConfirmed.connect(self._record_inline_edit_intent)
         self._inline_input.editRequested.connect(self._submit_inline_edit)
         self._inline_input.audioEndRequested.connect(self._finish_utterance_event.set)
         self._inline_input.interrupted.connect(self._interrupt_inline_audio)
@@ -896,6 +851,14 @@ class AppController(QObject):
         self._inline_input.configure(self._mode_correction_shortcut,
                                      multi_undo_enabled=self._multi_undo_enabled)
         self._app_gestures = AppGestureController(self)
+        self._ring_gestures = RingGestureController(self)
+        from .proximity_controller import ProximityController
+        self._proximity = ProximityController(self, settings=self._settings)
+        self._proximity.diagnostic.connect(lambda info: self._event_log("PROXIMITY", **info))
+        self._proximity.lockPreparing.connect(self.pauseRecognition)
+        self._proximity.locked.connect(self.pauseRecognition)
+        self._proximity.changed.connect(self._ring_gestures.lock_state_changed)
+        self._proximity.reconnectRequested.connect(self._reconnect_for_proximity)
         self._inline_input.settled.connect(self._app_gestures.settled)
         self._inline_input.changed.connect(self._app_gestures.state_changed)
         self._inline_input.interrupted.connect(self._app_gestures.cancel_pending)
@@ -1035,6 +998,19 @@ class AppController(QObject):
         return self._battery_charge_status == 2
 
     @Property(bool, notify=settingsChanged)
+    def menuBarStatusInfo(self) -> bool:
+        return self._menu_bar_status_info
+
+    @menuBarStatusInfo.setter
+    def menuBarStatusInfo(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if self._menu_bar_status_info == enabled:
+            return
+        self._menu_bar_status_info = enabled
+        self._settings.setValue("ui/menuBarStatusInfo", enabled)
+        self.settingsChanged.emit()
+
+    @Property(bool, notify=settingsChanged)
     def hasSelectedDevice(self) -> bool:
         return bool(self._selector.strip())
 
@@ -1102,13 +1078,13 @@ class AppController(QObject):
 
     @Property(str, notify=transcriptChanged)
     def transcriptPrimaryText(self) -> str:
-        """Latest ASR text shown as the overlay's primary content."""
+        """Latest recognized text, separate from the interaction status."""
 
         return self._transcript_primary_text
 
     @Property(str, notify=transcriptChanged)
     def transcriptMode(self) -> str:
-        """Resolved mode for the utterance currently shown in the overlay."""
+        """Resolved mode for the current utterance."""
 
         return self._transcript_mode
 
@@ -1116,9 +1092,6 @@ class AppController(QObject):
     def transcriptFinal(self) -> bool:
         return self._transcript_final
 
-    @Property(bool, notify=transcriptChanged)
-    def transcriptVisible(self) -> bool:
-        return self._transcript_visible
 
     @Property(QObject, constant=True)
     def inlineInput(self) -> QObject:
@@ -1127,6 +1100,14 @@ class AppController(QObject):
     @Property(QObject, constant=True)
     def appGestures(self) -> QObject:
         return self._app_gestures
+
+    @Property(QObject, constant=True)
+    def ringGestures(self) -> QObject:
+        return self._ring_gestures
+
+    @Property(QObject, constant=True)
+    def proximity(self) -> QObject:
+        return self._proximity
 
     def _inline_enabled(self) -> bool:
         inline = getattr(self, "_inline_input", None)
@@ -1169,12 +1150,41 @@ class AppController(QObject):
             self._set_status(title,
                              inline.error or f"{self.confirmGestureHint} 开始下一句", "running")
 
+    def _record_inline_edit_intent(self, session_id: int) -> None:
+        self._inline_unsettled_edits.add(session_id)
+        try:
+            self._modification_dataset.record_inline_edit_intent(session_id)
+        except BaseException as exc:
+            self._append_log(f"编辑意图保存失败：{exc}")
+
+    def _record_interrupted_inline_edits(self, reason: str, *, failed: bool = False) -> None:
+        for session_id in tuple(self._inline_unsettled_edits):
+            try:
+                self._modification_dataset.record_application(
+                    session_id=session_id, action="apply_failed" if failed else "cancelled",
+                    mode=INPUT_MODE_EDIT, method="input_method", error=reason if failed else None)
+                self._inline_unsettled_edits.discard(session_id)
+            except BaseException as exc:
+                self._append_log(f"编辑中断状态保存失败：{exc}")
+
+    def _cancel_inline_requests(self, reason: str, *, failed: bool = False) -> None:
+        for request_id in tuple(self._inline_requests):
+            self._text_processing_worker.cancel_request(request_id)
+            self._pending_text_requests.discard(request_id)
+            self._pending_interactions.pop(request_id, None)
+            try:
+                self._modification_dataset.finish_pending_llm_request(
+                    request_id, status="failed" if failed else "cancelled", reason=reason)
+            except BaseException as exc:
+                self._append_log(f"编辑请求结束状态保存失败：{exc}")
+        self._inline_requests.clear()
+
     def _submit_inline_edit(self, key, instruction, original, target) -> None:
         self._suspend_recognition_for_interaction()
         self._submit_text_processing(
             instruction, self._latest_asr_session_id, INPUT_MODE_EDIT,
             target_text=original, target=target,
-            snapshot=DesktopTextSnapshot(target, original), update_overlay=False,
+            snapshot=DesktopTextSnapshot(target, original), update_interaction=False,
         )
         self._inline_requests[self._text_request_id] = key
         self._set_interaction_state("processing")
@@ -1244,11 +1254,9 @@ class AppController(QObject):
         self._ignore_asr_updates_until_next_start = True
         if self._latest_asr_session_id:
             self._cancelled_asr_session_ids.add(self._latest_asr_session_id)
-        for request_id in self._inline_requests:
-            self._text_processing_worker.cancel_request(request_id)
-            self._pending_text_requests.discard(request_id)
-            self._pending_interactions.pop(request_id, None)
-        self._inline_requests.clear()
+        self._cancel_inline_requests(reason, failed=inline._view.get("phase") == "error")
+        if inline._view.get("phase") != "undone":
+            self._record_interrupted_inline_edits(reason, failed=inline._view.get("phase") == "error")
         self._set_interaction_state("applied")
         self.textProcessingChanged.emit()
         self.llmTextProcessingChanged.emit()
@@ -1258,20 +1266,18 @@ class AppController(QObject):
         source_session_id = self._inline_input.settled_session_id
         if source_session_id is None:
             source_session_id = self._latest_asr_session_id
+        self._inline_unsettled_edits.discard(source_session_id)
         if phase == "undone":
             # Cancelling dictation discards the rest of the audio. Ending it
             # normally would let its late endpoint close the next-sentence gate.
             self._interrupt_inline_audio()
         if phase != "edited":
-            for request_id in self._inline_requests:
-                self._text_processing_worker.cancel_request(request_id)
-                self._pending_text_requests.discard(request_id)
-                self._pending_interactions.pop(request_id, None)
-            self._inline_requests.clear()
+            self._cancel_inline_requests(self._inline_input.error or "编辑已取消／撤销",
+                                         failed=phase == "error" or bool(self._inline_input.error))
         self.textProcessingChanged.emit()
         self.llmTextProcessingChanged.emit()
         self._utterance_active = False
-        self._transcript_visible = False
+        self._transcript_active = False
         self._set_interaction_state("error" if phase == "error" else "applied")
         self.transcriptChanged.emit()
         self._resume_recognition_after_interaction()
@@ -1879,7 +1885,7 @@ class AppController(QObject):
 
         interaction = self._active_auto_interaction
         if (
-            not self._transcript_visible
+            not self._transcript_active
             or self._interaction_state != "error"
             or interaction is None
             or not interaction.classified
@@ -2173,7 +2179,7 @@ class AppController(QObject):
             return False
         # A changed AX/UIA wrapper is accepted only when the currently focused
         # field still contains the exact state created by this operation. This
-        # keeps the green button actionable while refusing another field in the
+        # keeps the retained operation actionable while refusing another field in the
         # same application when its contents differ.
         try:
             # macOS web editors can change both AX identity and geometry when
@@ -2202,34 +2208,11 @@ class AppController(QObject):
             operation.applied_text,
         )
 
-    def _hide_applied_action_for_focus_mismatch(self) -> None:
+    def _mark_undo_target_unfocused(self) -> None:
         if self._applied_target_foreground:
             self._applied_target_foreground = False
             self.interactionChanged.emit()
 
-    @Slot()
-    def _hide_applied_action_overlay(self) -> None:
-        """Hide only the action window; keep its undo operation intact."""
-        self._applied_action_hide_timer.stop()
-        if not self._applied_action_visible:
-            return
-        self._applied_action_visible = False
-        self._applied_target_mismatch_count = 0
-        # Presentation timeout must not make conversion stale. Keep tracking the target
-        # while the operation remains current, even though its window is hidden.
-        self.interactionChanged.emit()
-
-    def _restore_applied_action_overlay(self) -> None:
-        """Restore the undo entry after an utterance ends without an application."""
-        if not self._native_undo_targets:
-            return
-        self._applied_action_visible = True
-        self._applied_target_foreground = True
-        self._applied_target_mismatch_count = 0
-        if not self._applied_target_timer.isActive():
-            self._applied_target_timer.start()
-        self._applied_action_hide_timer.start()
-        self._poll_applied_target_foreground()
 
     @staticmethod
     def _short_text(value: str, limit: int = 28) -> str:
@@ -2237,7 +2220,7 @@ class AppController(QObject):
         return text if len(text) <= limit else f"{text[:limit]}…"
 
     @classmethod
-    def _processing_overlay_text(cls, mode: str, raw_text: str) -> str:
+    def _processing_status_text(cls, mode: str, raw_text: str) -> str:
         """Show the recognized command only once an utterance is known as edit."""
         if normalize_input_mode(mode) != INPUT_MODE_EDIT:
             return "正在处理文本"
@@ -2275,7 +2258,7 @@ class AppController(QObject):
 
     @Property(bool, notify=interactionChanged)
     def nativeUndoAvailable(self) -> bool:
-        """Keyboard/gestures do not depend on popup timeout or voice-stack depth."""
+        """Keyboard/gestures remain available after the voice stack is exhausted."""
         if getattr(self, "_inline_input", None) is not None and self._inline_input.enabled:
             return self._inline_input.canUndo
         target = self._active_undo_target()
@@ -2308,17 +2291,6 @@ class AppController(QObject):
             in {"listening", "processing"}
         )
 
-    @Property(bool, notify=interactionChanged)
-    def modeCorrectionAvailable(self) -> bool:
-        operation = self._latest_operation()
-        return bool(
-            self._applied_action_visible
-            and self._applied_target_foreground
-            and operation is not None
-            and operation.auto_context is not None
-            and self._operation_can_switch_mode(operation)
-            and not self._operation_mode_correction_failure(operation)
-        )
 
     @Property(bool, notify=interactionChanged)
     def modeCorrectionHotkeyAvailable(self) -> bool:
@@ -2341,19 +2313,6 @@ class AppController(QObject):
             and self._operation_can_switch_mode(operation)
         )
 
-    @Property(bool, notify=interactionChanged)
-    def modeCorrectionFailed(self) -> bool:
-        """Keep a failed conversion visible, but make it non-actionable."""
-
-        operation = self._latest_operation()
-        return bool(
-            self._applied_action_visible
-            and self._applied_target_foreground
-            and operation is not None
-            and operation.auto_context is not None
-            and self._operation_can_switch_mode(operation)
-            and self._operation_mode_correction_failure(operation)
-        )
 
     @Property(bool, notify=interactionChanged)
     def processingModeCorrectionAvailable(self) -> bool:
@@ -2362,8 +2321,7 @@ class AppController(QObject):
         return bool(
             failed_edit_fallback is not None
             or (
-                self._processing_mode_correction_revealed
-                and self._transcript_visible
+                self._transcript_active
                 and self._interaction_state == "processing"
                 and interaction is not None
                 and interaction.classified
@@ -2372,165 +2330,11 @@ class AppController(QObject):
             )
         )
 
-    @Property(str, notify=interactionChanged)
-    def modeCorrectionLabel(self) -> str:
-        operation = self._latest_operation()
-        if operation is None:
-            return ""
-        return (
-            "刚刚是输入内容"
-            if operation.mode == INPUT_MODE_EDIT
-            else "刚刚是指令"
-        )
-
-    @Property(bool, notify=interactionChanged)
-    def modeCorrectionPending(self) -> bool:
-        pending = self._pending_applied_mode_switches.get(
-            self._active_operation_target_key
-        )
-        operation = self._latest_operation()
-        return bool(
-            pending is not None
-            and operation is not None
-            and operation.auto_context is not None
-            and pending[0] == operation.auto_context.route_id
-        )
-
-    @Property(bool, notify=interactionChanged)
-    def appliedActionVisible(self) -> bool:
-        return bool(
-            self._applied_action_visible
-            and self._applied_target_foreground
-            and self.undoAvailable
-        )
-
-    @Property(str, notify=interactionChanged)
-    def appliedActionText(self) -> str:
-        operation = self._latest_operation()
-        if operation is None:
-            return ""
-        summary = " ".join(str(operation.summary or "").split())
-        limit = 42
-        if len(summary) <= limit:
-            return summary
-        return summary[: limit - 3].rstrip() + "..."
-
-    @Property(str, notify=interactionChanged)
-    def appliedActionTitle(self) -> str:
-        operation = self._latest_operation()
-        if operation is None:
-            return "原生撤销" if self.undoAvailable else ""
-        if operation.mode == INPUT_MODE_EDIT:
-            return "已应用上一次修改"
-        return "已输入文本"
 
     @Property(int, notify=interactionChanged)
     def undoDepth(self) -> int:
         return len(self._active_operation_stack())
 
-    @Property(str, notify=interactionChanged)
-    def appliedPopupPlacementKey(self) -> str:
-        """Stable for one utterance, including its mode reinterpretations."""
-
-        operation = self._latest_operation()
-        return (
-            str(operation.session_id) if operation is not None
-            else f"undo:{self._active_operation_target_key}" if self.undoAvailable else ""
-        )
-
-    @Property(str, notify=interactionChanged)
-    def appliedPopupApplicationKey(self) -> str:
-        """Identify the application that owns the active undo overlay."""
-
-        target = self._active_undo_target()
-        if target is None:
-            return ""
-        application_name = str(
-            target.process_name or target.window_title or ""
-        ).strip().casefold()
-        if application_name:
-            return f"application:{application_name}"
-        if target.process_id:
-            return f"process:{int(target.process_id)}"
-        if target.window_handle:
-            return f"window:{int(target.window_handle)}"
-        return ""
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupTargetX(self) -> int:
-        target = self._active_undo_target()
-        return target.screen_x if target is not None else 0
-
-    @Property("QVariantMap", notify=interactionChanged)
-    def appliedPopupScreenGeometry(self) -> dict:
-        from PySide6.QtGui import QCursor, QGuiApplication
-        from .overlay_geometry import popup_screen
-
-        app = QGuiApplication.instance()
-        if not isinstance(app, QGuiApplication):
-            return {}
-        screen = popup_screen(self._active_undo_target(), app.screens(), QCursor.pos())
-        if screen is None:
-            return {}
-        area = screen.availableGeometry()
-        return dict(x=area.x(), y=area.y(), width=area.width(), height=area.height())
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupTargetY(self) -> int:
-        target = self._active_undo_target()
-        return target.screen_y if target is not None else 0
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupTargetWidth(self) -> int:
-        target = self._active_undo_target()
-        return target.screen_width if target is not None else 0
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupTargetHeight(self) -> int:
-        target = self._active_undo_target()
-        return target.screen_height if target is not None else 0
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupCaretX(self) -> int:
-        target = self._active_undo_target()
-        if target is None:
-            return 0
-        if target.caret_height > 0:
-            return target.caret_x
-        if target.screen_width > 0 and target.screen_height > 0:
-            return target.screen_x + target.screen_width
-        return 0
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupCaretY(self) -> int:
-        target = self._active_undo_target()
-        if target is None:
-            return 0
-        if target.caret_height > 0:
-            return target.caret_y
-        if target.screen_width > 0 and target.screen_height > 0:
-            return target.screen_y
-        return 0
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupCaretWidth(self) -> int:
-        target = self._active_undo_target()
-        if target is None:
-            return 0
-        if target.caret_height > 0:
-            return target.caret_width
-        return 2 if target.screen_width > 0 and target.screen_height > 0 else 0
-
-    @Property(int, notify=interactionChanged)
-    def appliedPopupCaretHeight(self) -> int:
-        target = self._active_undo_target()
-        if target is None:
-            return 0
-        if target.caret_height > 0:
-            return target.caret_height
-        if target.screen_width > 0 and target.screen_height > 0:
-            return min(24, target.screen_height)
-        return 0
 
     @Property(str, notify=logChanged)
     def logText(self) -> str:
@@ -2588,18 +2392,6 @@ class AppController(QObject):
         label = "自动判断" if mode == INPUT_ROUTING_AUTO else "手动切换"
         self._append_log(f"听写/指令路由已切换为：{label}")
 
-    @Property(str, notify=settingsChanged)
-    def appliedOverlayStyle(self) -> str:
-        return self._applied_overlay_style
-
-    @appliedOverlayStyle.setter
-    def appliedOverlayStyle(self, value: str) -> None:
-        style = str(value).strip().lower()
-        if style not in {"normal", "compact"}:
-            return
-        self._set_setting(
-            "_applied_overlay_style", style, "ui/appliedOverlayStyle"
-        )
 
     @Property(str, notify=settingsChanged)
     def modeCorrectionShortcut(self) -> str:
@@ -2758,6 +2550,7 @@ class AppController(QObject):
             if name and (key != action or index != slot)
         }
         used.add(self._app_gestures.inputSourceGesture)
+        used.update(RING_RESERVED_GESTURES)
         return [{"value": "", "label": "未设置"}] + [
             {"value": name, "label": label}
             for name, label in GESTURE_LABELS.items() if name not in used
@@ -2781,6 +2574,8 @@ class AppController(QObject):
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
+            if name in RING_RESERVED_GESTURES:
+                raise ValueError("该手势已保留给 Ring 全局菜单")
             bindings = self._gesture_bindings.with_slot(action, slot, name)
             self._app_gestures.validate_voice(bindings)
         except ValueError as exc:
@@ -2800,32 +2595,6 @@ class AppController(QObject):
             return
         self._save_gesture_bindings(GestureBindings())
 
-    @Property(float, notify=settingsChanged)
-    def appliedOverlayDurationSeconds(self) -> float:
-        return self._applied_overlay_duration_seconds
-
-    @appliedOverlayDurationSeconds.setter
-    def appliedOverlayDurationSeconds(self, value: float) -> None:
-        try:
-            duration = round(float(value) * 2) / 2
-        except (TypeError, ValueError, OverflowError):
-            return
-        duration = max(1, min(duration, 10))
-        if duration == self._applied_overlay_duration_seconds:
-            return
-        self._applied_overlay_duration_seconds = duration
-        self._settings.setValue("ui/appliedOverlayDurationSeconds", duration)
-        self._applied_action_hide_timer.setInterval(round(duration * 1000))
-        if self._applied_action_visible:
-            # Treat a live adjustment as a fresh display interval. This keeps
-            # the setting predictable without touching the retained undo op.
-            self._applied_action_hide_timer.start()
-        self.settingsChanged.emit()
-        self._event_log(
-            "USER_SETTING",
-            setting="undo_overlay_duration_seconds",
-            value=duration,
-        )
 
     @Property(bool, notify=textProcessingChanged)
     def textProcessing(self) -> bool:
@@ -2839,7 +2608,7 @@ class AppController(QObject):
         and desktop writes must not be presented as text-model processing.
         """
         if (
-            not self._transcript_visible
+            not self._transcript_active
             or self._interaction_state != "processing"
             or self._disconnect_event.is_set()
             or self._quitting
@@ -2892,7 +2661,7 @@ class AppController(QObject):
     @audioEncoding.setter
     def audioEncoding(self, value: str) -> None:
         normalized = str(value).strip().lower()
-        if normalized not in {"adpcm", "pcm", "opus"}:
+        if normalized != "adpcm":
             return
         self._set_setting("_audio_encoding", normalized, "ring/audioEncoding")
 
@@ -3288,6 +3057,38 @@ class AppController(QObject):
         if not self.canReconnect:
             self.requestDevicePicker()
             return
+        self._proximity_reconnect_cancelled = False
+        self._start_selected_device()
+
+    @property
+    def proximity_gesture_ready(self) -> bool:
+        return bool(self._connected and self._runtime_active and not self._disconnect_event.is_set()
+                    and str(self._selector).lower() == self._proximity._target
+                    and self._proximity_gesture_healthy_at > 0
+                    and time.monotonic() - self._proximity_gesture_healthy_at < 3)
+
+    @Slot(object, bool)
+    def _apply_proximity_gesture_health(self, connection, healthy):
+        if connection is not self._disconnect_event or connection.is_set():
+            return
+        self._proximity_gesture_healthy_at = time.monotonic() if healthy else 0.0
+        self._proximity.syncGestureReadiness()
+
+    @Slot(str)
+    def _reconnect_for_proximity(self, target):
+        # Only a live, owned lock may recover the selected ring in the background.
+        # The native monitor remains alive throughout, retaining its one-lock token.
+        if (not target or target != self._proximity.reconnect_target
+                or target != str(self._selector).lower() or self._quitting
+                or self._disconnect_requested_by_user or self._proximity_reconnect_cancelled
+                or self._audio_input_failed or self._connected or self._runtime_active
+                or self._busy or self._scan_busy
+                or (self._worker is not None and self._worker.is_alive())
+                or time.monotonic() < self._proximity_reconnect_after):
+            return
+        self._proximity_reconnect_attempts += 1
+        self._proximity_reconnect_after = time.monotonic() + min(30, 3 * 2 ** min(self._proximity_reconnect_attempts - 1, 4))
+        self._event_log("PROXIMITY_RECONNECT", attempt=self._proximity_reconnect_attempts)
         self._start_selected_device()
 
     @Slot()
@@ -3382,6 +3183,8 @@ class AppController(QObject):
             return
         display_name = str(name).strip() or "未命名设备"
         self._selected_device = self._device_handles.get(identifier.casefold())
+        self._proximity_reconnect_cancelled = False
+        self._proximity_reconnect_attempts = 0
         self._selector = identifier
         self._device_name = display_name
         self._settings.setValue("ring/selector", identifier)
@@ -3405,7 +3208,7 @@ class AppController(QObject):
         if self._worker is not None and self._worker.is_alive():
             return
         self._clear_undo_stack_for_device_boundary()
-        self._close_floating_overlays_for_device_boundary()
+        self._reset_transcript_for_device_boundary()
         try:
             settings = self._runtime_settings()
         except BaseException as exc:
@@ -3427,6 +3230,7 @@ class AppController(QObject):
         self._reset_battery_state()
 
         self._disconnect_event = threading.Event()
+        self._proximity_gesture_healthy_at = 0.0
         self._recognition_event = threading.Event()
         self._cancel_utterance_event = threading.Event()
         self._finish_utterance_event.clear()
@@ -3482,7 +3286,11 @@ class AppController(QObject):
                     on_raw_audio=self._record_raw_interaction_audio,
                     on_raw_imu=self._record_raw_imu_samples,
                     on_gesture=lambda event: self._gestureRecognized.emit(
-                        self._app_gestures.envelope(event), gesture_connection
+                        self._ring_gestures.envelope(event), gesture_connection
+                    ),
+                    on_gesture_health=lambda healthy: self._runtimeGestureHealth.emit(gesture_connection, healthy),
+                    gesture_filter=lambda event, busy: self._ring_gestures.filter(
+                        event, busy, gesture_connection
                     ),
                     on_battery=self._publish_battery_status,
                     ime_context_provider=(self._inline_input.context_provider if self._inline_enabled() else None),
@@ -3598,6 +3406,7 @@ class AppController(QObject):
     def startRecognition(self) -> None:
         accepted = bool(
             self._connected and not self._busy and not self._recognition_enabled
+            and not self._proximity.gestures_blocked
         )
         self._event_log(
             "USER_ACTION",
@@ -3606,7 +3415,7 @@ class AppController(QObject):
             connected=self._connected,
             busy=self._busy,
         )
-        if not self._connected or self._busy or self._recognition_enabled:
+        if not accepted:
             return
         self._interaction_recognition_suspended = False
         self._recognition_event.set()
@@ -3676,6 +3485,7 @@ class AppController(QObject):
 
     @Slot()
     def disconnectDevice(self) -> None:
+        self._proximity_reconnect_cancelled = True
         worker = self._worker
         self._event_log(
             "USER_ACTION",
@@ -4006,6 +3816,7 @@ class AppController(QObject):
 
     @Slot()
     def requestQuit(self) -> None:
+        self._proximity.close()
         self._event_log(
             "USER_ACTION",
             action="quit_application",
@@ -4057,11 +3868,13 @@ class AppController(QObject):
         if self._voice_history_closed:
             return
         self._voice_history_closed = True
+        self._cancel_inline_requests("主程序已退出")
+        self._record_interrupted_inline_edits("主程序已退出")
         self._app_gestures.close()
+        self._ring_gestures.close()
         self._undo_queue_timer.stop()
         self._undo_queue.clear()
         self._undo_writer.shutdown(wait=True)
-        self._applied_target_timer.stop()
         self._stop_manual_association_watch()
         if self._voice_player is not None:
             self._voice_player.stop()
@@ -4193,14 +4006,14 @@ class AppController(QObject):
             return
         if self._disconnect_event.is_set():
             # Late START/END/model callbacks may still arrive during cleanup.
-            # Retain diagnostics without reopening any interaction or overlay.
+            # Retain diagnostics without reopening any interaction.
             self._append_background_diagnostic(text)
             return
         summary = text.splitlines()[0].strip()
-        if summary.startswith(("[GESTURE_", "电脑端手势统计：")):
+        if summary.startswith(("[GESTURE_", "固件手势统计：")):
             # Keep detailed telemetry searchable on disk, outside the live log.
             self._append_background_diagnostic(text)
-            if summary.startswith("[GESTURE_MODEL]"):
+            if summary.startswith("[GESTURE_SOURCE]"):
                 self._gesture_health_status = ""
             elif summary.startswith("[GESTURE_STATUS]"):
                 try:
@@ -4208,9 +4021,8 @@ class AppController(QObject):
                 except (ValueError, AttributeError):
                     return
                 warnings = {
-                    "no_imu": "尚未收到 IMU 数据",
-                    "imu_stalled": "IMU 数据中断",
-                    "inference_backlog": "识别延迟偏高",
+                    "starting": "正在开启固件手势",
+                    "error": "固件手势通道异常，请重连",
                 }
                 previous = self._gesture_health_status
                 self._gesture_health_status = status
@@ -4305,7 +4117,7 @@ class AppController(QObject):
                     self._append_log(f"ASR 时序证据保存失败：{exc}")
         if summary.startswith("[ASR] START"):
             # Stage2 activation is the authoritative start of a detected voice
-            # session.  Show the overlay now, before ASR has any text to emit.
+            # session. Enter listening state before ASR has any text to emit.
             if self._failed_edit_fallback_interaction() is not None:
                 # Error presentation no longer holds the recognition gate.
                 # Retire its fallback and pending callbacks before a new
@@ -4313,8 +4125,6 @@ class AppController(QObject):
                 self._finish_auto_interaction(INPUT_MODE_EDIT, retain=False)
             self._stop_manual_association_watch()
             self._inline_interruption_logged = False
-            self._applied_action_visible = False
-            self._applied_action_hide_timer.stop()
             self._ignore_asr_updates_until_next_start = False
             self._latest_asr_session_id = 0
             self._utterance_active = True
@@ -4339,8 +4149,7 @@ class AppController(QObject):
             self._transcript_text = f"正在收听语音 · {self.confirmGestureHint} 结束"
             self._transcript_mode = ""
             self._transcript_final = False
-            self._transcript_visible = True
-            self._hide_overlay_timer.stop()
+            self._transcript_active = True
             self._set_interaction_state("listening")
             self.transcriptChanged.emit()
             self.interactionChanged.emit()
@@ -4406,13 +4215,15 @@ class AppController(QObject):
             return
         self._connected = True
         self._runtime_had_connection = True
+        self._proximity.useDevice(self._selector, self._device_name)
         self.connectedChanged.emit()
         self._set_status(
             "设备已连接",
             "蓝牙与设备服务验证通过，正在准备识别组件",
             "starting",
         )
-        self._append_log("设备连接验证通过；不会在异常后自动重连")
+        self._proximity_reconnect_attempts = 0
+        self._append_log("设备连接验证通过；本功能锁屏期间可自动恢复戒指手势连接")
         self._event_log("RUNTIME_CONNECTED", device_name=self._device_name)
 
     def _publish_battery_status(
@@ -4499,7 +4310,6 @@ class AppController(QObject):
         had_action_state = bool(
             depth
             or self._native_undo_targets
-            or self._applied_action_visible
             or self._pending_applied_mode_switches
         )
         if not had_action_state:
@@ -4507,15 +4317,9 @@ class AppController(QObject):
         self._operation_stacks.clear()
         self._native_undo_targets.clear()
         self._active_operation_target_key = ""
-        self._applied_action_visible = False
         self._applied_target_foreground = True
-        self._applied_target_mismatch_count = 0
-        self._applied_overlay_drag_active = False
-        self._applied_overlay_foreground_grace_until = 0.0
         self._pending_applied_mode_switches.clear()
         self._mode_switch_application = None
-        self._applied_action_hide_timer.stop()
-        self._applied_target_timer.stop()
         self._provisional_association_recommendations.clear()
         if self._interaction_state == "applied":
             self._set_interaction_state("idle")
@@ -4525,12 +4329,12 @@ class AppController(QObject):
                 f"设备会话结束，已清空 {depth} 条跨应用撤销记录"
             )
 
-    def _close_floating_overlays_for_device_boundary(self) -> None:
-        """Close every voice/result overlay when the Ring session ends."""
+    def _reset_transcript_for_device_boundary(self) -> None:
+        """Clear the current transcript when the Ring session ends."""
         if self._inline_enabled():
             self._inline_input.reset()
         transcript_changed = bool(
-            self._transcript_visible or self._transcript_mode
+            self._transcript_active or self._transcript_mode
         )
         association_changed = bool(
             self._association_recommendation is not None
@@ -4538,9 +4342,7 @@ class AppController(QObject):
             or self._association_detail_visible
             or self._association_center_visible
         )
-        self._hide_overlay_timer.stop()
-        self._processing_mode_correction_timer.stop()
-        self._transcript_visible = False
+        self._transcript_active = False
         self._transcript_mode = ""
         self._association_queue.clear()
         self._association_recommendation = None
@@ -4558,6 +4360,7 @@ class AppController(QObject):
         if self._device_stop_handled:
             return
         self._device_stop_handled = True
+        self._proximity_gesture_healthy_at = 0.0
         was_connected = self._connected
         was_recognizing = self._recognition_enabled
         had_attempt = self._runtime_active or was_connected or self._runtime_had_connection
@@ -4576,7 +4379,7 @@ class AppController(QObject):
         self._reset_battery_state()
         self._clear_undo_stack_for_device_boundary()
         self._cancel_pending_text_processing()
-        self._close_floating_overlays_for_device_boundary()
+        self._reset_transcript_for_device_boundary()
         self._set_interaction_state("idle")
         if was_connected:
             self.connectedChanged.emit()
@@ -4670,7 +4473,7 @@ class AppController(QObject):
             if session_id:
                 self._latest_asr_session_id = int(session_id)
             self._transcript_primary_text = str(text)
-            self._transcript_visible = False
+            self._transcript_active = False
             if error:
                 self._interrupt_inline_audio(str(error))
             accepted = self._inline_input.update(str(text), is_final, int(session_id), str(error or ""))
@@ -4705,11 +4508,9 @@ class AppController(QObject):
             self._transcript_text = "语音识别失败"
             self._transcript_mode = ""
             self._transcript_final = True
-            self._transcript_visible = True
-            self._restore_applied_action_overlay()
+            self._transcript_active = True
             self._set_interaction_state("error")
             self.transcriptChanged.emit()
-            self._hide_overlay_timer.start(3500)
             elapsed_ms = self._session_elapsed_ms(int(session_id))
             elapsed_detail = (
                 f"；会话耗时 {elapsed_ms / 1000:.3f}s"
@@ -4785,18 +4586,14 @@ class AppController(QObject):
                 self._transcript_text = "未识别到语音"
                 self._transcript_mode = ""
                 self._transcript_final = True
-                self._transcript_visible = True
+                self._transcript_active = True
                 # This utterance did not apply anything, so resurfacing an
                 # older undo action would misleadingly associate it with the
                 # empty result. Keep the operation available in its stack, but
                 # leave its presentation hidden until a later real operation.
-                self._applied_action_visible = False
-                self._applied_action_hide_timer.stop()
-                self._applied_target_timer.stop()
                 self._set_interaction_state("no_result")
                 self.transcriptChanged.emit()
                 self.interactionChanged.emit()
-                self._hide_overlay_timer.start(1500)
                 if self._recognition_enabled:
                     self._set_status(
                         "自动监听中", "未识别到文字，等待下一段语音", "running"
@@ -4808,10 +4605,9 @@ class AppController(QObject):
             self._transcript_mode = ""
             self._transcript_text = f"正在收听语音 · {self.confirmGestureHint} 结束"
             self._transcript_final = False
-            self._transcript_visible = True
+            self._transcript_active = True
             self._set_interaction_state("listening")
             self.transcriptChanged.emit()
-            self._hide_overlay_timer.stop()
             if self._recognition_enabled:
                 self._set_status("正在识别", "正在接收语音", "listening")
             return
@@ -4838,11 +4634,11 @@ class AppController(QObject):
         if routing_mode == INPUT_ROUTING_AUTO:
             self._transcript_text = "正在判断听写或指令"
         elif mode == INPUT_MODE_EDIT or self._llm_enabled:
-            self._transcript_text = self._processing_overlay_text(mode, text)
+            self._transcript_text = self._processing_status_text(mode, text)
         else:
             self._transcript_text = "正在输入文字"
         self._transcript_final = is_final
-        self._transcript_visible = True
+        self._transcript_active = True
         self._set_interaction_state("listening" if not is_final else "processing")
         self.transcriptChanged.emit()
         if is_final:
@@ -4932,10 +4728,9 @@ class AppController(QObject):
             self.textProcessingChanged.emit()
         self._transcript_text = "正在判断听写或指令"
         self._transcript_final = False
-        self._transcript_visible = True
+        self._transcript_active = True
         self._set_interaction_state("processing")
         self.transcriptChanged.emit()
-        self._hide_overlay_timer.stop()
         self._pipeline_log(
             f"自动路由判断开始：{text}（模型：{request.settings.provider}/"
             f"{request.settings.model}）",
@@ -5063,7 +4858,7 @@ class AppController(QObject):
                 target=target,
                 snapshot=(interaction.snapshot if mode == INPUT_MODE_EDIT else None),
                 auto_route_id=route_id,
-                update_overlay=False,
+                update_interaction=False,
             )
 
         interaction.preparing = False
@@ -5095,16 +4890,14 @@ class AppController(QObject):
 
         self._transcript_mode = ""
         if selected == INPUT_MODE_EDIT or self._llm_enabled:
-            self._transcript_text = self._processing_overlay_text(
+            self._transcript_text = self._processing_status_text(
                 selected, interaction.raw_text
             )
             self._transcript_final = False
-            self._transcript_visible = True
+            self._transcript_active = True
             self._set_interaction_state("processing")
             self.transcriptChanged.emit()
             self.interactionChanged.emit()
-            self._hide_overlay_timer.stop()
-        self._schedule_processing_mode_correction(selected, interaction)
         if selected in interaction.results or selected in interaction.candidate_errors:
             self._present_auto_selection(target)
         if not self.textProcessing:
@@ -5113,10 +4906,9 @@ class AppController(QObject):
     def _reject_edit_request(self, message: str) -> None:
         self._transcript_text = message
         self._transcript_final = True
-        self._transcript_visible = True
+        self._transcript_active = True
         self._set_interaction_state("error")
         self.transcriptChanged.emit()
-        self._hide_overlay_timer.start(3500)
         self._append_log(f"修改未执行：{message}")
         self._record_history("修改 · 未执行", detail=message)
         if self._recognition_enabled:
@@ -5133,7 +4925,7 @@ class AppController(QObject):
         target: DesktopTargetRef | None = None,
         snapshot: DesktopTextSnapshot | None = None,
         auto_route_id: int = 0,
-        update_overlay: bool = True,
+        update_interaction: bool = True,
     ) -> None:
         normalized_mode = normalize_input_mode(mode)
         if normalized_mode != INPUT_MODE_EDIT and not self._llm_enabled:
@@ -5180,15 +4972,14 @@ class AppController(QObject):
             self.textProcessingChanged.emit()
         self.llmTextProcessingChanged.emit()
         label = "修改" if normalized_mode == INPUT_MODE_EDIT else "输入"
-        if update_overlay:
-            self._transcript_text = self._processing_overlay_text(
+        if update_interaction:
+            self._transcript_text = self._processing_status_text(
                 normalized_mode, text
             )
             self._transcript_final = False
-            self._transcript_visible = True
+            self._transcript_active = True
             self._set_interaction_state("processing")
             self.transcriptChanged.emit()
-            self._hide_overlay_timer.stop()
         self._pipeline_log(
             f"LLM {label}处理已提交：{text}（模型："
             f"{request.settings.provider}/{request.settings.model}）",
@@ -5196,7 +4987,7 @@ class AppController(QObject):
             request_id=request.request_id,
             mode=normalized_mode,
         )
-        if self._recognition_enabled and update_overlay:
+        if self._recognition_enabled and update_interaction:
             self._set_status("正在处理文本", f"大模型正在处理{label}内容", "starting")
         self._text_processing_worker.submit(request)
 
@@ -5205,6 +4996,10 @@ class AppController(QObject):
         if not isinstance(result, TextProcessingResult):
             return
         if result.request_id in self._inline_requests:
+            if self._quitting or self._disconnect_event.is_set():
+                self._cancel_inline_requests("主程序已退出或设备已断开")
+                self._record_interrupted_inline_edits("主程序已退出或设备已断开")
+                return
             key = self._inline_requests.pop(result.request_id)
             self._pending_text_requests.discard(result.request_id)
             self._pending_interactions.pop(result.request_id, None)
@@ -5383,10 +5178,7 @@ class AppController(QObject):
                     operation is not None
                     and self._operation_target_is_focused(operation)
                 ):
-                    self._show_mode_correction_feedback(
-                        feedback_key,
-                        pending=False,
-                    )
+                    self._activate_operation_target(feedback_key)
                 else:
                     self.interactionChanged.emit()
                 return
@@ -5421,12 +5213,11 @@ class AppController(QObject):
                 else "未能处理文本"
             )
             self._transcript_final = True
-            self._transcript_visible = True
+            self._transcript_active = True
             self._set_interaction_state("error")
             self.transcriptChanged.emit()
             self.interactionChanged.emit()
             self._append_log(f"文本处理失败：{error}")
-            self._hide_overlay_timer.start(3500)
             if self._recognition_enabled:
                 if self._failed_edit_fallback_interaction() is not None:
                     self._set_status(
@@ -5444,7 +5235,7 @@ class AppController(QObject):
         result = interaction.results.get(mode)
         if result is None:
             self._transcript_mode = ""
-            self._transcript_text = self._processing_overlay_text(
+            self._transcript_text = self._processing_status_text(
                 mode, interaction.raw_text
             )
             self._transcript_final = False
@@ -5586,8 +5377,6 @@ class AppController(QObject):
             # before normal recognition resumes again.
             self._suspend_recognition_for_interaction()
             processing.selected_mode = INPUT_MODE_DICTATION
-            self._processing_mode_correction_timer.stop()
-            self._processing_mode_correction_revealed = False
             self._pending_dictation_result = None
             self._dictation_commit_timer.stop()
             self._stop_manual_association_watch()
@@ -5654,10 +5443,7 @@ class AppController(QObject):
                 session=operation.session_id,
                 reason="target_not_focused",
             )
-            self._show_mode_correction_feedback(
-                self._active_operation_target_key,
-                pending=False,
-            )
+            self._activate_operation_target(self._active_operation_target_key)
             return
         target_key = self._active_operation_target_key
         if target_key in self._pending_applied_mode_switches:
@@ -5667,7 +5453,7 @@ class AppController(QObject):
                 session=operation.session_id,
                 reason="already_processing",
             )
-            self._show_mode_correction_feedback(target_key, pending=True)
+            self._activate_operation_target(target_key)
             return
         operation.mode_switch_error = ""
         interaction = operation.auto_context
@@ -5686,7 +5472,7 @@ class AppController(QObject):
                     interaction.candidate_errors[alternate_mode], limit=34
                 )
             )
-            self._show_mode_correction_feedback(target_key, pending=False)
+            self._activate_operation_target(target_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="failed",
@@ -5707,7 +5493,7 @@ class AppController(QObject):
                 if alternate_mode == INPUT_MODE_EDIT
                 else "正在准备输入结果…"
             )
-            self._show_mode_correction_feedback(target_key, pending=True)
+            self._activate_operation_target(target_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="pending",
@@ -5734,7 +5520,7 @@ class AppController(QObject):
                 return
             reason = self._short_text(str(result.error), limit=34)
             operation.summary = f"另一种处理方式不可用：{reason}"
-            self._show_mode_correction_feedback(target_key, pending=False)
+            self._activate_operation_target(target_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="failed",
@@ -5767,7 +5553,7 @@ class AppController(QObject):
             and not str(result.final_text or result.raw_text or "").strip()
         ):
             operation.summary = "没有可应用的输入结果"
-            self._show_mode_correction_feedback(target_key, pending=False)
+            self._activate_operation_target(target_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="failed",
@@ -5814,7 +5600,7 @@ class AppController(QObject):
         snapshot = interaction.snapshot or operation.original_snapshot
         if snapshot is None:
             operation.summary = "无法转换：缺少编辑前文本快照"
-            self._show_mode_correction_feedback(target_key, pending=False)
+            self._activate_operation_target(target_key)
             return
 
         # The failed candidate was speculative.  Once the user explicitly says
@@ -5829,7 +5615,7 @@ class AppController(QObject):
             INPUT_MODE_EDIT,
         )
         operation.summary = "正在重新处理指令…"
-        self._show_mode_correction_feedback(target_key, pending=True)
+        self._activate_operation_target(target_key)
         self._append_log("用户已指明“刚刚是指令”，重新提交编辑处理")
         self._submit_text_processing(
             interaction.raw_text,
@@ -5839,32 +5625,17 @@ class AppController(QObject):
             target=operation.target,
             snapshot=snapshot,
             auto_route_id=interaction.route_id,
-            update_overlay=False,
+            update_interaction=False,
         )
 
-    def _show_mode_correction_feedback(
-        self,
-        target_key: str,
-        *,
-        pending: bool,
-    ) -> None:
-        """Show conversion feedback without changing the undo stack."""
+    def _activate_operation_target(self, target_key: str) -> None:
+        """Select the operation's target without changing its undo stack."""
 
         stack = self._operation_stacks.get(target_key, [])
         if not stack:
             return
         self._active_operation_target_key = target_key
-        self._applied_action_visible = True
         self._applied_target_foreground = True
-        self._applied_target_mismatch_count = 0
-        if not self._applied_target_timer.isActive():
-            self._applied_target_timer.start()
-        if pending:
-            # A real LLM retry may outlive the configured presentation timeout.
-            # Keep its progress visible until it resolves.
-            self._applied_action_hide_timer.stop()
-        else:
-            self._applied_action_hide_timer.start()
         self.interactionChanged.emit()
 
     def _schedule_alternate_result(
@@ -5912,7 +5683,7 @@ class AppController(QObject):
         # A late alternate result stays bound to its original field. Do not
         # pull the visible action window away from a newer active field.
         if target_key == self._active_operation_target_key:
-            self._show_mode_correction_feedback(target_key, pending=True)
+            self._activate_operation_target(target_key)
         else:
             self.interactionChanged.emit()
 
@@ -5971,10 +5742,10 @@ class AppController(QObject):
             operation.mode_switch_error = "无法确认仍是原文本框"
             operation.summary = "无法转换：请把光标放回原文本框后重试"
             if selected_key == self._active_operation_target_key:
-                self._show_mode_correction_feedback(selected_key, pending=False)
+                self._activate_operation_target(selected_key)
             else:
-                # A late result for an older field must not pull the floating
-                # controls away from the field the user is working in now.
+                # A late result for an older field must not change the
+                # currently active operation target.
                 self.interactionChanged.emit()
             self._event_log(
                 "MODE_SWITCH_RESULT",
@@ -5995,7 +5766,7 @@ class AppController(QObject):
                 else "另一种处理方式不可用"
             )
             operation.summary = "另一种处理方式不可用"
-            self._show_mode_correction_feedback(selected_key, pending=False)
+            self._activate_operation_target(selected_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="failed",
@@ -6013,7 +5784,7 @@ class AppController(QObject):
             ):
                 operation.mode_switch_error = "没有可应用的编辑结果"
                 operation.summary = "没有可应用的编辑结果"
-                self._show_mode_correction_feedback(selected_key, pending=False)
+                self._activate_operation_target(selected_key)
                 self._event_log(
                     "MODE_SWITCH_RESULT",
                     status="failed",
@@ -6026,7 +5797,7 @@ class AppController(QObject):
         elif not str(result.final_text or result.raw_text or "").strip():
             operation.mode_switch_error = "没有可应用的听写结果"
             operation.summary = "没有可应用的听写结果"
-            self._show_mode_correction_feedback(selected_key, pending=False)
+            self._activate_operation_target(selected_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="failed",
@@ -6041,7 +5812,7 @@ class AppController(QObject):
         if self._mode_switch_application is not None:
             operation.mode_switch_error = "另一项类型转换仍在应用"
             operation.summary = "正在完成上一次类型转换"
-            self._show_mode_correction_feedback(selected_key, pending=True)
+            self._activate_operation_target(selected_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="pending",
@@ -6070,7 +5841,7 @@ class AppController(QObject):
             operation.mode_switch_error = str(exc)
             operation.summary = f"无法切换：{exc}"
             self._append_log(f"类型转换未执行：{exc}")
-            self._show_mode_correction_feedback(selected_key, pending=False)
+            self._activate_operation_target(selected_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="failed",
@@ -6083,7 +5854,7 @@ class AppController(QObject):
 
         # The alternate result is a new representation of the same utterance,
         # not a new user operation. Bind the generic application path to this
-        # exact stack slot so _show_applied_interaction() replaces it in place.
+        # exact stack slot so _register_applied_interaction() replaces it in place.
         # This remains stable even if the target app rebuilds its accessibility
         # object after a paste.
         mode_switch = _ModeSwitchApplication(
@@ -6131,8 +5902,6 @@ class AppController(QObject):
                 self._append_log(f"切换失败且原结果恢复失败：{exc}")
             else:
                 self._active_operation_target_key = selected_key
-                self._applied_action_visible = True
-                self._applied_action_hide_timer.start()
                 try:
                     self._modification_dataset.record_application(
                         action="applied",
@@ -6162,7 +5931,7 @@ class AppController(QObject):
                     )
                 except BaseException as exc:
                     self._append_log(f"切换恢复状态保存失败：{exc}")
-            self._show_mode_correction_feedback(selected_key, pending=False)
+            self._activate_operation_target(selected_key)
             self._event_log(
                 "MODE_SWITCH_RESULT",
                 status="failed_restored_original",
@@ -6289,7 +6058,7 @@ class AppController(QObject):
             return False
         if normalize_input_mode(result.mode) == INPUT_MODE_DICTATION:
             self._copy_text_to_clipboard(final_text)
-        # Stage2 normally locks the target before the overlay appears. If that
+        # Stage2 normally locks the target at the start of speech. If that
         # first capture raced a focus transition, make one last attempt at the
         # actual commit point instead of silently discarding valid dictation.
         if self._desktop_output and target is None:
@@ -6297,10 +6066,9 @@ class AppController(QObject):
         if result.used_llm:
             self._transcript_text = "正在处理文本"
             self._transcript_final = False
-            self._transcript_visible = True
+            self._transcript_active = True
             self._set_interaction_state("processing")
             self.transcriptChanged.emit()
-            self._hide_overlay_timer.stop()
         applied = False
         detail = ""
         if not self._desktop_output:
@@ -6399,7 +6167,6 @@ class AppController(QObject):
             self._set_interaction_state("error")
             self.transcriptChanged.emit()
             self.interactionChanged.emit()
-            self._hide_overlay_timer.start(3500)
         self._record_history(
             f"输入 · {status}",
             raw=result.raw_text,
@@ -6408,7 +6175,7 @@ class AppController(QObject):
         )
         if applied_interaction is not None:
             self._finish_auto_interaction(INPUT_MODE_DICTATION, retain=True)
-            self._show_applied_interaction(
+            self._register_applied_interaction(
                 applied_interaction,
                 message="听写已应用到原文本框",
             )
@@ -6474,11 +6241,11 @@ class AppController(QObject):
             proposed_text=proposed,
             snapshot=snapshot,
         )
-        self._transcript_text = self._processing_overlay_text(
+        self._transcript_text = self._processing_status_text(
             INPUT_MODE_EDIT, result.raw_text
         )
         self._transcript_final = False
-        self._transcript_visible = True
+        self._transcript_active = True
         self._set_interaction_state("processing")
         self.transcriptChanged.emit()
         self.interactionChanged.emit()
@@ -6535,7 +6302,7 @@ class AppController(QObject):
         )
         self._transcript_text = f"修改失败：{self._short_text(error, limit=48)}"
         self._transcript_final = True
-        self._transcript_visible = True
+        self._transcript_active = True
         self._set_interaction_state("error")
         self.transcriptChanged.emit()
         self.interactionChanged.emit()
@@ -6562,7 +6329,6 @@ class AppController(QObject):
         )
         if not has_dictation_fallback:
             self._finish_auto_interaction(INPUT_MODE_EDIT, retain=False)
-        self._hide_overlay_timer.start(2200)
         if self._recognition_enabled:
             detail = "原文本保持不变"
             if has_dictation_fallback:
@@ -6606,7 +6372,7 @@ class AppController(QObject):
             except BaseException as collection_exc:
                 self._append_log(f"修改数据反馈保存失败：{collection_exc}")
             self._finish_edit_application(
-                message=f"修改未应用：{exc}", state="error", hide_ms=4000
+                message=f"修改未应用：{exc}", state="error"
             )
             return
         try:
@@ -6675,7 +6441,7 @@ class AppController(QObject):
             summary=self._edit_result_summary(review.snapshot.text, final_text),
         )
         self._finish_auto_interaction(INPUT_MODE_EDIT, retain=True)
-        self._show_applied_interaction(
+        self._register_applied_interaction(
             applied_interaction,
             message="修改已应用到原文本框",
         )
@@ -6725,6 +6491,10 @@ class AppController(QObject):
     def _apply_gesture(self, event: object, connection: object) -> None:
         # Resolve state on the GUI thread, including target focus and visibility.
         # Pending notifications from a disconnected/replaced Ring are inert.
+        if not self._ring_gestures.accepts(event):
+            return
+        if isinstance(event, ModeGestureEvent):
+            event = event.source
         app_event = event if isinstance(event, AppGestureEvent) else None
         source_event = event if isinstance(event, InputSourceGestureEvent) else None
         if app_event is not None or source_event is not None:
@@ -6747,6 +6517,16 @@ class AppController(QObject):
                 confidence=getattr(event, "confidence", None),
                 _live_message="",
             )
+            return
+        # Also protect direct GUI dispatchers; the normal runtime reserves
+        # these gestures before confirmation and before native target capture.
+        if name == "swipe-up":
+            # Mode/selection/lock boundaries have already accepted this event.
+            # This fixed action precedes all configurable voice/app bindings.
+            self._app_gestures.handle(app_event or self._app_gestures.envelope(event))
+            return
+        if name in RING_RESERVED_GESTURES:
+            self._ring_gestures.filter(event, False, connection)
             return
         if source_event is not None:
             self._app_gestures.handle_input_source(source_event)
@@ -6837,22 +6617,21 @@ class AppController(QObject):
             self.undoLastApplied()
 
     def _finish_edit_application(
-        self, *, message: str, state: str, hide_ms: int
+        self, *, message: str, state: str
     ) -> None:
         self._edit_review = None
         self._transcript_text = message
         self._transcript_final = True
-        self._transcript_visible = True
+        self._transcript_active = True
         self._set_interaction_state(state)
         self.transcriptChanged.emit()
         self.interactionChanged.emit()
-        self._hide_overlay_timer.start(hide_ms)
         self._append_log(message)
         if self._recognition_enabled:
             self._set_status("自动监听中", message, "running")
         self._resume_recognition_after_interaction()
 
-    def _show_applied_interaction(
+    def _register_applied_interaction(
         self,
         interaction: _AppliedInteraction,
         *,
@@ -6862,7 +6641,7 @@ class AppController(QObject):
         self._edit_review = None
         interaction = replace(
             interaction,
-            target=self._target_with_live_caret(interaction.target),
+            target=self._refresh_operation_target(interaction.target),
             dataset_interaction_id=(
                 self._modification_dataset.interaction_id_for_session(
                     interaction.session_id
@@ -6917,20 +6696,14 @@ class AppController(QObject):
         # ordinary undo keeps this destination even after the final stack pop.
         self._native_undo_targets[target_key] = _NativeUndoTarget(interaction.target)
         self._active_operation_target_key = target_key
-        self._applied_action_visible = True
         self._applied_target_foreground = True
-        self._applied_target_mismatch_count = 0
-        if not self._applied_target_timer.isActive():
-            self._applied_target_timer.start()
-        self._applied_action_hide_timer.start()
         if not is_mode_switch:
             self._pending_applied_mode_switches.pop(target_key, None)
         self._transcript_mode = ""
         self._transcript_text = ""
         self._transcript_final = True
-        self._transcript_visible = False
+        self._transcript_active = False
         self._set_interaction_state("applied")
-        self._hide_overlay_timer.stop()
         if not is_mode_switch:
             self._record_association_success(interaction)
             try:
@@ -6968,11 +6741,11 @@ class AppController(QObject):
             )
         )
         if self._recognition_enabled:
-            self._set_status("自动监听中", "结果已应用，可在光标旁撤销", "running")
+            self._set_status("自动监听中", "结果已应用，已保留撤销记录", "running")
         self._resume_recognition_after_interaction()
 
-    def _target_with_live_caret(self, target: DesktopTargetRef) -> DesktopTargetRef:
-        """Refresh the post-application field identity and compact-pill anchor."""
+    def _refresh_operation_target(self, target: DesktopTargetRef) -> DesktopTargetRef:
+        """Refresh the post-application field identity used by undo and records."""
         try:
             adapter = self._desktop_target_adapter()
         except RuntimeError:
@@ -7064,27 +6837,7 @@ class AppController(QObject):
                         accessibility_id=live_target.accessibility_id,
                     )
 
-        locator = getattr(adapter, "caret_bounds", None)
-        if not callable(locator):
-            return target
-        try:
-            bounds = tuple(int(value) for value in locator(target))
-        except BaseException as exc:
-            self._append_log(f"输入光标定位失败，改用文本框边缘：{exc}")
-            return target
-        if len(bounds) != 4 or bounds[3] <= 0:
-            if target.screen_width <= 0 or target.screen_height <= 0:
-                self._append_log(
-                    "当前应用未提供输入光标或文本框坐标；操作条改用安全的底部位置"
-                )
-            return target
-        return replace(
-            target,
-            caret_x=bounds[0],
-            caret_y=bounds[1],
-            caret_width=max(2, bounds[2]),
-            caret_height=max(1, bounds[3]),
-        )
+        return target
 
     def _commit_associated_result(
         self,
@@ -7113,9 +6866,6 @@ class AppController(QObject):
         self._pending_applied_mode_switches.pop(target_key, None)
         if self._active_operation_target_key == target_key:
             self._active_operation_target_key = ""
-        self._applied_action_visible = bool(self._native_undo_targets)
-        if not self._native_undo_targets:
-            self._applied_target_timer.stop()
         self._provisional_association_recommendations.pop(target_key, None)
         self.interactionChanged.emit()
         if self._recognition_enabled:
@@ -7229,9 +6979,8 @@ class AppController(QObject):
         if original is None:
             raise RuntimeError("本次操作没有可恢复的文本快照")
         expected_text = str(original.text)
-        # The stack's target may contain a refreshed post-application caret
-        # used only to place the action pill.  Text I/O must keep using the
-        # original captured control identity.
+        # The stack may contain refreshed post-application target metadata.
+        # Text I/O must keep using the original captured control identity.
         target = original.target
         current_text = self._read_target_text_for_undo(
             target,
@@ -7355,6 +7104,60 @@ class AppController(QObject):
         if after is not None and not macos_texts_equivalent(after, expected):
             raise RuntimeError("目标文本没有恢复；已保留撤销记录")
 
+    def _refresh_undo_target(self) -> None:
+        """Resolve the active undo destination on demand, without a floating UI."""
+        if self._inline_enabled() or not self._native_undo_targets:
+            return
+        try:
+            adapter = self._desktop_target_adapter()
+        except RuntimeError:
+            return
+        is_foreground = getattr(adapter, "is_foreground", None)
+        matched_key = ""
+        if callable(is_foreground):
+            ordered_keys = list(self._native_undo_targets)
+            active_key = self._active_operation_target_key
+            if active_key in self._native_undo_targets:
+                ordered_keys.remove(active_key)
+                ordered_keys.insert(0, active_key)
+            for key in ordered_keys:
+                target = self._native_undo_targets[key].target
+                try:
+                    if is_foreground(target):
+                        matched_key = key
+                        break
+                except BaseException:
+                    continue
+        if not matched_key:
+            is_application_foreground = getattr(
+                adapter, "is_application_foreground", None
+            )
+            if callable(is_application_foreground):
+                active_target = self._active_undo_target()
+                if active_target is not None:
+                    try:
+                        if is_application_foreground(active_target):
+                            matched_key = self._active_operation_target_key
+                    except BaseException:
+                        pass
+                if not matched_key:
+                    application_keys: list[str] = []
+                    for key, destination in self._native_undo_targets.items():
+                        try:
+                            if is_application_foreground(destination.target):
+                                application_keys.append(key)
+                        except BaseException:
+                            continue
+                    if len(application_keys) == 1:
+                        matched_key = application_keys[0]
+        changed = bool(matched_key) != self._applied_target_foreground
+        self._applied_target_foreground = bool(matched_key)
+        if matched_key and matched_key != self._active_operation_target_key:
+            self._active_operation_target_key = matched_key
+            changed = True
+        if changed:
+            self.interactionChanged.emit()
+
     @Slot()
     def undoLastApplied(self) -> None:
         """Queue one native shortcut; voice records are optional logging metadata."""
@@ -7371,6 +7174,7 @@ class AppController(QObject):
             or self._interaction_state in {"listening", "processing", "review"}
         ):
             return
+        self._refresh_undo_target()
         target_key = self._active_operation_target_key
         destination = self._native_undo_targets.get(target_key)
         if destination is None:
@@ -7432,7 +7236,7 @@ class AppController(QObject):
                 session=interaction.session_id if interaction is not None else 0,
                 reason="target_not_focused",
             )
-            self._hide_applied_action_for_focus_mismatch()
+            self._mark_undo_target_unfocused()
             return
         # Focus adapters may themselves dispatch callbacks. A disconnect or
         # shutdown must invalidate the reserved operation before the shortcut.
@@ -7449,7 +7253,6 @@ class AppController(QObject):
         ):
             self._undo_queue.clear()
             return
-        self._hide_overlay_timer.stop()
         try:
             adapter = self._desktop_target_adapter()
             sender = getattr(adapter, "send_native_undo", None)
@@ -7460,7 +7263,7 @@ class AppController(QObject):
             self._undo_queue.clear()
             self._transcript_text = f"撤销发送失败：{exc}"
             self._transcript_final = True
-            self._transcript_visible = True
+            self._transcript_active = True
             self._set_interaction_state("error")
             self.transcriptChanged.emit()
             self.interactionChanged.emit()
@@ -7512,12 +7315,7 @@ class AppController(QObject):
         # No native success acknowledgement exists here. Keep the destination
         # and the retry entry even when there is no voice metadata left to pop.
         self._active_operation_target_key = target_key
-        self._applied_action_visible = True
         self._applied_target_foreground = True
-        self._applied_target_mismatch_count = 0
-        if not self._applied_target_timer.isActive():
-            self._applied_target_timer.start()
-        self._applied_action_hide_timer.start()
         self._pending_applied_mode_switches.pop(target_key, None)
         # The external undo may remove a manual edit, or a differently grouped
         # edit. Do not invent a restored baseline or a negative model label.
@@ -7525,7 +7323,7 @@ class AppController(QObject):
         self._transcript_mode = ""
         self._transcript_text = ""
         self._transcript_final = True
-        self._transcript_visible = False
+        self._transcript_active = False
         self._set_interaction_state("applied")
         self.transcriptChanged.emit()
         self.interactionChanged.emit()
@@ -7669,15 +7467,13 @@ class AppController(QObject):
         self._speech_start_target = None
         if was_processing != self.textProcessing:
             self.textProcessingChanged.emit()
-        self._restore_applied_action_overlay()
         self._transcript_mode = ""
         self._transcript_text = "已取消，等待下一句话"
         self._transcript_final = True
-        self._transcript_visible = True
+        self._transcript_active = True
         self._set_interaction_state("cancelled")
         self.transcriptChanged.emit()
         self.interactionChanged.emit()
-        self._hide_overlay_timer.start(1200)
         self._record_history("本句 · 已取消")
         self._append_log("用户已取消当前语句；旧识别和文本处理结果将被忽略")
         self._event_log(
@@ -7706,116 +7502,6 @@ class AppController(QObject):
                 self._desktop_target = WindowsDesktopTextTarget(QtClipboardBridge())
         return self._desktop_target
 
-    @Slot()
-    def _poll_applied_target_foreground(self) -> None:
-        if not self._native_undo_targets:
-            if self._applied_target_timer.isActive():
-                self._applied_target_timer.stop()
-            self._applied_target_mismatch_count = 0
-            if self._applied_target_foreground:
-                self._applied_target_foreground = False
-                self.interactionChanged.emit()
-            return
-        if (
-            self._applied_overlay_drag_active
-            or time.monotonic() < self._applied_overlay_foreground_grace_until
-        ):
-            if (
-                self.undoAvailable
-                and not self._applied_target_foreground
-            ):
-                self._applied_target_foreground = True
-                self.interactionChanged.emit()
-            return
-        try:
-            adapter = self._desktop_target_adapter()
-        except RuntimeError:
-            self._applied_target_timer.stop()
-            return
-        is_foreground = getattr(adapter, "is_foreground", None)
-        matched_key = ""
-        if callable(is_foreground):
-            ordered_keys = list(self._native_undo_targets)
-            active_key = self._active_operation_target_key
-            if active_key in self._native_undo_targets:
-                ordered_keys.remove(active_key)
-                ordered_keys.insert(0, active_key)
-            for key in ordered_keys:
-                target = self._native_undo_targets[key].target
-                try:
-                    if is_foreground(target):
-                        matched_key = key
-                        break
-                except BaseException:
-                    continue
-        if not matched_key:
-            # Exact AX/UIA field identity is preferred, but macOS web editors
-            # sometimes expose a fresh or incomplete accessibility element
-            # after every paste. Keep the current field's actions visible
-            # while its owning application is still frontmost. If focus moved
-            # to another application with exactly one known stack, activate
-            # that stack. User undo checks focus without reading text;
-            # conversion separately validates the saved text state.
-            is_application_foreground = getattr(
-                adapter, "is_application_foreground", None
-            )
-            if callable(is_application_foreground):
-                active_target = self._active_undo_target()
-                if active_target is not None:
-                    try:
-                        if is_application_foreground(active_target):
-                            matched_key = self._active_operation_target_key
-                    except BaseException:
-                        pass
-                if not matched_key:
-                    application_keys: list[str] = []
-                    for key, destination in self._native_undo_targets.items():
-                        try:
-                            if is_application_foreground(destination.target):
-                                application_keys.append(key)
-                        except BaseException:
-                            continue
-                    if len(application_keys) == 1:
-                        matched_key = application_keys[0]
-        visible = bool(matched_key)
-        if visible:
-            self._applied_target_mismatch_count = 0
-        elif self._applied_target_foreground:
-            # Pasting into Electron/WebKit editors can briefly rebuild the AX
-            # focus object (or report no focused object at all).  A single
-            # 300 ms miss must not make the freshly shown action flash away.
-            # Mutating actions still perform their own synchronous exact-field
-            # check, so this visual grace period cannot undo another editor.
-            self._applied_target_mismatch_count += 1
-            if self._applied_target_mismatch_count < 3:
-                return
-        changed = visible != self._applied_target_foreground
-        if matched_key and matched_key != self._active_operation_target_key:
-            self._active_operation_target_key = matched_key
-            changed = True
-        if changed:
-            self._applied_target_foreground = bool(visible)
-            if visible and self._interaction_state not in {"listening", "processing", "review"}:
-                self._applied_action_visible = True
-                self._applied_action_hide_timer.start()
-            self.interactionChanged.emit()
-
-    @Slot()
-    def beginAppliedOverlayDrag(self) -> None:
-        self._applied_overlay_drag_active = True
-        self._applied_overlay_foreground_grace_until = float("inf")
-        self._applied_target_mismatch_count = 0
-        if not self._applied_target_foreground:
-            self._applied_target_foreground = True
-            self.interactionChanged.emit()
-
-    @Slot()
-    def endAppliedOverlayDrag(self) -> None:
-        self._applied_overlay_drag_active = False
-        # macOS can briefly report the overlay process/focused element while a
-        # non-activating window finishes its native move. Ignore that transient
-        # state so the result actions do not disappear under the target app.
-        self._applied_overlay_foreground_grace_until = time.monotonic() + 1.0
 
     def _capture_desktop_reference(self) -> DesktopTargetRef | None:
         if self._inline_enabled():
@@ -7830,55 +7516,9 @@ class AppController(QObject):
 
     def _set_interaction_state(self, state: str) -> None:
         state = str(state)
-        correction_changed = False
-        if state != "processing":
-            self._processing_mode_correction_timer.stop()
-            correction_changed = self._processing_mode_correction_revealed
-            self._processing_mode_correction_revealed = False
         if state == self._interaction_state:
-            if correction_changed:
-                self.interactionChanged.emit()
             return
         self._interaction_state = state
-        self.interactionChanged.emit()
-
-    def _schedule_processing_mode_correction(
-        self,
-        selected_mode: str,
-        interaction: _AutoInteraction,
-    ) -> None:
-        self._processing_mode_correction_timer.stop()
-        was_revealed = self._processing_mode_correction_revealed
-        self._processing_mode_correction_revealed = False
-        if normalize_input_mode(selected_mode) == INPUT_MODE_EDIT:
-            elapsed_ms = int(
-                max(0.0, time.monotonic() - interaction.prepared_at) * 1000
-            )
-            remaining_ms = max(
-                0, _PROCESSING_MODE_CORRECTION_DELAY_MS - elapsed_ms
-            )
-            if remaining_ms:
-                self._processing_mode_correction_timer.start(remaining_ms)
-            else:
-                self._reveal_processing_mode_correction()
-                return
-        if was_revealed:
-            self.interactionChanged.emit()
-
-    @Slot()
-    def _reveal_processing_mode_correction(self) -> None:
-        interaction = self._active_auto_interaction
-        should_reveal = bool(
-            self._transcript_visible
-            and self._interaction_state == "processing"
-            and interaction is not None
-            and interaction.classified
-            and interaction.selected_mode == INPUT_MODE_EDIT
-            and INPUT_MODE_DICTATION in getattr(interaction, "results", {})
-        )
-        if should_reveal == self._processing_mode_correction_revealed:
-            return
-        self._processing_mode_correction_revealed = should_reveal
         self.interactionChanged.emit()
 
     def _record_history(
@@ -7908,8 +7548,6 @@ class AppController(QObject):
 
     def _cancel_pending_text_processing(self) -> None:
         self._dictation_commit_timer.stop()
-        self._processing_mode_correction_timer.stop()
-        self._processing_mode_correction_revealed = False
         self._pending_dictation_result = None
         had_pending = bool(self._pending_text_requests or self._pending_mode_routes)
         for request_id in tuple(self._pending_text_requests | self._pending_mode_routes):
@@ -7965,7 +7603,7 @@ class AppController(QObject):
         self._ptt_active = False
         self._reset_battery_state()
         self._clear_undo_stack_for_device_boundary()
-        self._close_floating_overlays_for_device_boundary()
+        self._reset_transcript_for_device_boundary()
         self._worker = None
         self.busyChanged.emit()
         if error:
@@ -8001,21 +7639,6 @@ class AppController(QObject):
         elif self._recognition_enabled:
             self._set_status("自动监听中", "已恢复靠近检测", "running")
 
-    def _hide_transcript(self) -> None:
-        if self._utterance_active or self._interaction_state == "processing":
-            # A stale error timeout must not hide the next utterance or change
-            # its state; that utterance owns its own completion/hide timer.
-            return
-        failed_edit_fallback = self._failed_edit_fallback_interaction()
-        self._transcript_visible = False
-        self._transcript_mode = ""
-        if self._edit_review is None and self._interaction_state != "processing":
-            self._set_interaction_state("idle")
-        self.transcriptChanged.emit()
-        if failed_edit_fallback is not None:
-            # Recognition was reopened when the error appeared. Expiring the
-            # presentation only retires this failed interaction's fallback.
-            self._finish_auto_interaction(INPUT_MODE_EDIT, retain=False)
 
     def _set_status(self, title: str, detail: str, kind: str) -> None:
         if title == "自动监听中" and self._speech_control_mode == "gesture":

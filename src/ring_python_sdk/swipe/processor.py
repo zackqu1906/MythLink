@@ -28,6 +28,7 @@ from ring_python_sdk.core.constants import (
 )
 from ring_python_sdk.swipe.v2 import SwipeTriggerV2, parse_swipe_event_v2, parse_swipe_trigger_v2
 from ring_python_sdk.swipe.events import SwipeResult
+from ring_python_sdk.public_protocol import parse_gesture
 
 from ring_python_sdk.core.data_paths import MODE_SWIPE, new_session_dir, resolve_capture_path
 
@@ -250,6 +251,32 @@ class SwipeProcessor:
 
     def handle_notification(self, _sender, data: bytearray) -> None:
         if self._file is None:
+            return
+        if data[:2] == b"\x26\x07":
+            confirmed = parse_gesture(bytes(data))
+            if confirmed is None:
+                self.stats.invalid_packet_count += 1
+                return
+            result = SwipeResult(
+                protocol_version=2, kind="trigger", seq=confirmed.sequence,
+                class_id=confirmed.class_id, uptime_ms=confirmed.center_uptime_ms,
+                center_uptime_ms=confirmed.center_uptime_ms,
+                confirmed_confidence=confirmed.confidence,
+            )
+            self.stats.packet_count += 1
+            self.stats.trigger_count += 1
+            self._last_trigger_seq = self._note_seq_gap(result.seq, self._last_trigger_seq)
+            if self._writer is not None:
+                self._writer.writerow([
+                    "confirmed", result.seq, result.class_id, result.name, result.name,
+                    *([""] * SWIPE_NUM_SCORES), result.uptime_ms,
+                    *([""] * len(SWIPE_GESTURE_IDS_V2)), result.confidence,
+                    result.center_uptime_ms, "",
+                ])
+            if self.print_triggers:
+                self._emit(f"swipe confirmed seq={result.seq} class={result.class_id} "
+                           f"name={result.name} confidence={result.confidence:.6f}")
+            self._publish(result)
             return
         result = parse_swipe_trigger_v2(data) or parse_swipe_event_v2(data)
         if result is not None:

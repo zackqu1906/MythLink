@@ -35,6 +35,7 @@ from ring_python_sdk.core.constants import (
     LED_MODE_PACKET_LEN,
     LED_SET_PACKET_LEN,
     MIC_ENCODE_OPUS,
+    MIC_ENCODE_ADPCM,
     MIC_GAIN_DEFAULT_DB_X2,
     MIC_HARDWARE_GAIN_DB_MAX,
     MIC_HARDWARE_GAIN_DB_MIN,
@@ -245,53 +246,26 @@ def ensure_nus_characteristics(client: BleakClient) -> tuple[str, str]:
 
 
 async def send_mic_control(
-    client: BleakClient,
-    rx_uuid: str,
-    on: bool,
-    *,
-    encode: int = MIC_ENCODE_OPUS,
+    client: BleakClient, rx_uuid: str, on: bool, *,
+    encode: int = MIC_ENCODE_ADPCM,
     hardware_gain_db: float | None = None,
     software_gain_db: float | None = None,
 ) -> None:
+    from ring_python_sdk.public_protocol import mic_start_command
     if not client.is_connected:
-        print(f"mic {'ON' if on else 'OFF'} skipped (BLE disconnected)")
-        return
-
-    try:
-        if on:
-            fields = [CMD_MIC, SUBCMD_MIC_START, encode & 0xFF]
-            if hardware_gain_db is not None or software_gain_db is not None:
-                hardware_gain_db_x2 = _mic_gain_db_x2(
-                    hardware_gain_db,
-                    name="hardware_gain_db",
-                    minimum=MIC_HARDWARE_GAIN_DB_MIN,
-                    maximum=MIC_HARDWARE_GAIN_DB_MAX,
-                )
-                software_gain_db_x2 = _mic_gain_db_x2(
-                    software_gain_db,
-                    name="software_gain_db",
-                    minimum=MIC_SOFTWARE_GAIN_DB_MIN,
-                    maximum=MIC_SOFTWARE_GAIN_DB_MAX,
-                )
-                fields.extend(
-                    [hardware_gain_db_x2 & 0xFF, software_gain_db_x2 & 0xFF]
-                )
-            packet = bytes(fields)
-            if len(packet) not in {
-                MIC_START_PACKET_LEN,
-                MIC_START_PACKET_WITH_GAIN_LEN,
-            }:
-                raise RuntimeError(
-                    f"mic start packet length mismatch: {len(packet)}"
-                )
-            await client.write_gatt_char(rx_uuid, packet, response=False)
-            print(f"mic ON command sent (encode={encode})")
-        else:
-            packet = bytes([CMD_MIC, SUBCMD_MIC_STOP])
-            await client.write_gatt_char(rx_uuid, packet, response=False)
-            print("mic OFF command sent")
-    except BleakError as exc:
-        print(f"mic {'ON' if on else 'OFF'} failed: {exc}")
+        raise ConnectionError("MIC command requires a connected Ring")
+    if not on:
+        packet = bytes([CMD_MIC, SUBCMD_MIC_STOP])
+    elif encode == MIC_ENCODE_ADPCM:
+        packet = mic_start_command(hardware_gain_db, software_gain_db)
+    else:
+        # Legacy diagnostic codecs are opt-in; public firmware uses ADPCM.
+        packet = bytes([CMD_MIC, SUBCMD_MIC_START, encode])
+        if hardware_gain_db is not None or software_gain_db is not None:
+            packet += mic_start_command(hardware_gain_db, software_gain_db)[3:]
+    await client.write_gatt_char(rx_uuid, packet, response=False)
+    await asyncio.sleep(0.05)
+    print(f"mic {'ON' if on else 'OFF'} command sent (encode={encode})")
 
 
 def _mic_gain_db_x2(
@@ -471,19 +445,19 @@ async def send_wear_calibration_get(client: BleakClient, rx_uuid: str) -> None:
 
 async def send_swipe_start(client: BleakClient, rx_uuid: str) -> None:
     if not client.is_connected:
-        print("swipe START skipped (BLE disconnected)")
-        return
+        raise ConnectionError("swipe START requires a connected Ring")
     packet = bytes([CMD_SWIPE, SUBCMD_SWIPE_START])
     await client.write_gatt_char(rx_uuid, packet, response=False)
+    await asyncio.sleep(0.05)
     print("swipe START sent")
 
 
 async def send_swipe_stop(client: BleakClient, rx_uuid: str) -> None:
     if not client.is_connected:
-        print("swipe STOP skipped (BLE disconnected)")
-        return
+        raise ConnectionError("swipe STOP requires a connected Ring")
     packet = bytes([CMD_SWIPE, SUBCMD_SWIPE_STOP])
     await client.write_gatt_char(rx_uuid, packet, response=False)
+    await asyncio.sleep(0.05)
     print("swipe STOP sent")
 
 

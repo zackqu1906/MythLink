@@ -77,9 +77,28 @@ def main(argv: list[str] | None = None) -> int:
         detail = "\n".join(qml_errors) or "QML engine did not create a root window"
         raise RuntimeError(f"主界面加载失败：{detail}")
     window = engine.rootObjects()[0]
+    controller.ringGestures.windowSelector.set_main_window(window)
     from .notifications import install_ring_disconnect_notice
 
     install_ring_disconnect_notice(window, controller)
+    from .gesture_hud import GestureHud
+
+    gesture_hud = GestureHud(app, diagnostic=controller._append_background_diagnostic)
+    text_fields = controller.ringGestures.textFields
+    from .focus_band import FocusBand
+    focus_band = FocusBand(text_fields.picker, app, diagnostic=controller._append_background_diagnostic)
+    controller.ringGestures.showRequested.connect(
+        lambda mode, message: gesture_hud.show_mode(
+            mode, message=message, input_fields_available=text_fields.available,
+            input_fields_hint=text_fields.hint)
+    )
+    text_fields.changed.connect(
+        lambda: gesture_hud.update_input_fields(text_fields.available, text_fields.hint)
+    )
+    controller.ringGestures.hideRequested.connect(gesture_hud.hide)
+    from .window_selector_overlay import WindowSelectorOverlay
+    window_selector = WindowSelectorOverlay(controller.ringGestures.windowSelector, app,
+                                            diagnostic=controller._append_background_diagnostic)
     print("[startup] QML root window ready")
     # Load model weights and seed both stable prompt prefixes after the first
     # frame instead of making the user's first utterance pay this cost.
@@ -109,16 +128,30 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(True)
     tray = None
     if tray_available:
-        tray = QSystemTrayIcon(icon, app)
-        tray.setToolTip("ProxiMic Voice · 准备就绪")
+        if sys.platform == "darwin":
+            try:
+                from .menu_bar import MacMenuBar
+
+                tray = MacMenuBar(icon)
+            except Exception as exc:
+                print(f"[menu-bar] 原生文字不可用，保留图标菜单：{exc}", file=sys.stderr)
+        if tray is None:
+            tray = QSystemTrayIcon(icon, app)
         menu = QMenu()
         show_action = QAction("显示主窗口", menu)
         connection_action = QAction("连接设备", menu)
         recognition_action = QAction("开启语音识别", menu)
+        gesture_menu_action = QAction("显示当前手势菜单 · 输入模式", menu)
+        preview_input_action = QAction("预览手势菜单 · 输入模式", menu)
+        preview_operation_action = QAction("预览手势菜单 · 操作模式", menu)
         quit_action = QAction("退出", menu)
         menu.addAction(show_action)
         menu.addAction(connection_action)
         menu.addAction(recognition_action)
+        menu.addSeparator()
+        menu.addAction(gesture_menu_action)
+        menu.addAction(preview_input_action)
+        menu.addAction(preview_operation_action)
         menu.addSeparator()
         menu.addAction(quit_action)
         tray.setContextMenu(menu)
@@ -153,27 +186,40 @@ def main(argv: list[str] | None = None) -> int:
                 "暂停语音识别" if controller.recognitionEnabled else "开启语音识别"
             )
             recognition_action.setEnabled(controller.connected and not controller.busy)
+            gesture_menu_action.setText(f"显示当前手势菜单 · {controller.ringGestures.modeLabel}")
             tray.setToolTip(f"ProxiMic Voice · {controller.statusTitle}")
+            if hasattr(tray, "setConnectionStatus"):
+                tray.setConnectionStatus(
+                    controller.connected, controller.batteryAvailable,
+                    controller.batteryPercentage, controller.batteryCharging,
+                    controller.menuBarStatusInfo,
+                )
 
         show_action.triggered.connect(show_window)
         connection_action.triggered.connect(toggle_connection)
         recognition_action.triggered.connect(controller.toggleRecognition)
+        gesture_menu_action.triggered.connect(controller.ringGestures.showMenu)
+        preview_input_action.triggered.connect(lambda: gesture_hud.preview("input"))
+        preview_operation_action.triggered.connect(lambda: gesture_hud.preview("operation"))
         quit_action.triggered.connect(controller.requestQuit)
         controller.connectedChanged.connect(refresh_tray)
+        controller.ringGestures.changed.connect(refresh_tray)
         controller.recognitionEnabledChanged.connect(refresh_tray)
         controller.busyChanged.connect(refresh_tray)
         controller.scanBusyChanged.connect(refresh_tray)
         controller.settingsChanged.connect(refresh_tray)
         controller.reconnectAvailabilityChanged.connect(refresh_tray)
         controller.statusChanged.connect(refresh_tray)
-        tray.activated.connect(
-            lambda reason: show_window()
-            if reason in (
-                QSystemTrayIcon.ActivationReason.Trigger,
-                QSystemTrayIcon.ActivationReason.DoubleClick,
+        controller.batteryChanged.connect(refresh_tray)
+        if isinstance(tray, QSystemTrayIcon):
+            tray.activated.connect(
+                lambda reason: show_window()
+                if reason in (
+                    QSystemTrayIcon.ActivationReason.Trigger,
+                    QSystemTrayIcon.ActivationReason.DoubleClick,
+                )
+                else None
             )
-            else None
-        )
         app.aboutToQuit.connect(tray.hide)
         refresh_tray()
         tray.show()

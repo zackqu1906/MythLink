@@ -73,7 +73,7 @@ def _prepare_failed_edit(controller, reason):
 def test_error_reopens_gate_and_next_speech_retires_old_callbacks(controller, reason):
     interaction, cancelled = _prepare_failed_edit(controller, reason)
     assert controller.interactionState == "error"
-    assert controller.transcriptVisible is True
+    assert controller._transcript_active is True
     assert controller.processingModeCorrectionAvailable is True
     assert controller._recognition_event.is_set() is True
 
@@ -82,15 +82,13 @@ def test_error_reopens_gate_and_next_speech_retires_old_callbacks(controller, re
     assert cancelled == [11]
     assert controller._active_auto_interaction is None
     assert controller.interactionState == "listening"
-    assert controller._hide_overlay_timer.isActive() is False
     assert controller.processingModeCorrectionAvailable is False
 
     controller._apply_text_processed(TextProcessingResult(
         11, 10, "dictation", "旧语音", "迟到的旧结果", 3.0, True,
     ))
-    controller._hide_transcript()  # Simulate an old timeout already dispatched.
     assert controller.interactionState == "listening"
-    assert controller.transcriptVisible is True
+    assert controller._transcript_active is True
     assert controller.transcriptText == "正在收听语音 · tap 结束"
     assert controller._recognition_event.is_set() is True
 
@@ -101,9 +99,8 @@ def test_error_timeout_cannot_reopen_the_next_processing_gate(controller):
     controller._utterance_active = False
     controller._suspend_recognition_for_interaction()
     controller._set_interaction_state("processing")
-    controller._hide_transcript()
     assert controller.interactionState == "processing"
-    assert controller.transcriptVisible is True
+    assert controller._transcript_active is True
     assert controller._recognition_event.is_set() is False
 
 

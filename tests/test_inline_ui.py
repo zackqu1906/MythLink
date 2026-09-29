@@ -64,6 +64,9 @@ def test_app_gesture_settings_layout_and_shortcut_recorder(inline_ui, tmp_path, 
         QTest.qWait(30)
         assert section.property("selectedApp") == app
         for action in controller.appGestures._profiles[app]:
+            if action == "send":
+                assert visual_child(section, "appGestureShortcut_send") is None
+                continue
             field = visual_child(section, "appGestureShortcut_" + action)
             assert field is not None and field.width() >= 140
             pos = field.mapToItem(section, QPointF(0, 0))
@@ -107,13 +110,13 @@ def test_app_gesture_settings_layout_and_shortcut_recorder(inline_ui, tmp_path, 
     QMetaObject.invokeMethod(root.findChild(QObject, "settingsBackButton"), "click")
     QTest.qWait(30)
     assert dialog.property("currentPage") == 7
-    field = visual_child(section, "appGestureShortcut_send")
+    field = visual_child(section, "appGestureShortcut_next")
     point = field.mapToScene(QPointF(field.width() / 2, field.height() / 2)).toPoint()
     QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, point)
     assert field.property("activeFocus") and controller.appGestures.recording
     QTest.keyClick(root, Qt.Key_Return, Qt.ControlModifier)
     QTest.qWait(30)
-    assert controller.appGestures._profiles["wechat"]["send"].shortcut == "Cmd+Return"
+    assert controller.appGestures._profiles["wechat"]["next"].shortcut == "Cmd+Return"
     assert not controller.appGestures.recording
     # Render the QML component itself (not the user's desktop) for visual QA.
     grab = section.grabToImage()
@@ -149,7 +152,7 @@ def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_
     def field():
         section = root.findChild(QObject, "appGestureSettingsSection")
         def find(item):
-            if item.objectName() == "appGestureShortcut_send":
+            if item.objectName() == "appGestureShortcut_next":
                 return item
             for child in item.childItems():
                 result = find(child)
@@ -165,24 +168,24 @@ def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_
     click_field()
     QTest.keyClick(root, Qt.Key_A)
     assert c.appGestures.recording and c.appGestures.recordingError
-    assert c.appGestures._profiles["codex"]["send"].shortcut == "Return"
+    assert c.appGestures._profiles["codex"]["next"].shortcut == "Cmd+Shift+]"
     QTest.keyClick(root, Qt.Key_Escape)
     assert not c.appGestures.recording and dialog.property("opened")
-    assert c.appGestures._profiles["codex"]["send"].shortcut == "Return"
+    assert c.appGestures._profiles["codex"]["next"].shortcut == "Cmd+Shift+]"
     conflict = QShortcut(QKeySequence("Ctrl+N"), root)
     activated = []
     conflict.activated.connect(lambda: activated.append(True))
     click_field()
     QTest.keyClick(root, Qt.Key_N, Qt.ControlModifier)
     QTest.qWait(20)
-    assert c.appGestures._profiles["codex"]["send"].shortcut == "Cmd+N"
+    assert c.appGestures._profiles["codex"]["next"].shortcut == "Cmd+N"
     assert not activated and not c.appGestures.recording
     click_field()
     event = QKeyEvent(QEvent.KeyPress, Qt.Key_BraceLeft, Qt.ControlModifier | Qt.ShiftModifier,
                       0, 33, 0x120000, "{")
     QCoreApplication.sendEvent(root, event)
     QTest.qWait(20)
-    assert c.appGestures._profiles["codex"]["send"].shortcut == "Cmd+Shift+["
+    assert c.appGestures._profiles["codex"]["next"].shortcut == "Cmd+Shift+["
     click_field()
     QMetaObject.invokeMethod(root.findChild(QObject, "settingsBackButton"), "click")
     QTest.qWait(20)
@@ -282,8 +285,8 @@ def test_native_component_is_only_input_route_and_qml_has_no_overlay(inline_ui):
     assert bridge.messages[-1]["type"] == "update"
     assert root.findChild(QQuickWindow, "inlineActionWindow") is None
     assert root.findChild(QQuickWindow, "inlineUnderlineWindow") is None
-    assert not root.findChild(QQuickWindow, "transcriptOverlay").isVisible()
-    assert not root.findChild(QQuickWindow, "appliedActionOverlay").isVisible()
+    assert root.findChild(QQuickWindow, "transcriptOverlay") is None
+    assert root.findChild(QQuickWindow, "appliedActionOverlay") is None
     assert requests == []
     assert controller._speech_start_target.accessibility_id.startswith("ime:")
     assert controller._desktop_target is None
@@ -701,7 +704,43 @@ def test_permission_warning_updates_and_settings_remain_usable(inline_ui, monkey
     QMetaObject.invokeMethod(dialog, 'close')
 
 
-def test_gesture_asr_starts_only_after_native_begin_ack(inline_ui, monkeypatch):
+def test_screen_preview_setup_button_and_closing_settings_cancel_capture(inline_ui, monkeypatch):
+    import threading
+    from PySide6.QtCore import QObject, QMetaObject
+    from PySide6.QtTest import QTest
+    from proximic_ring import screen_preview_check
+    from proximic_ring.ui import mac_permissions_controller as permissions
+    controller, _, _, root, _ = inline_ui
+    monitor = controller.inlineInput.permissions
+    monkeypatch.setattr(permissions, "read_screen_capture_access", lambda: True)
+    monkeypatch.setattr(permissions, "request_screen_capture_access", lambda: pytest.fail("no passive prompt"))
+    started = threading.Event()
+    def verify(cancel):
+        started.set(); cancel.wait(2)
+        return "verified"  # Simulate a late success after the UI cancels.
+    monkeypatch.setattr(screen_preview_check, "verify_screen_preview", verify)
+    root.resize(940,700); root.show()
+    dialog = root.findChild(QObject,"runtimeSettingsDialog")
+    QMetaObject.invokeMethod(dialog,"open"); QTest.qWait(100)
+    QMetaObject.invokeMethod(root.findChild(QObject,"settingsCategory6"),"click")
+    QTest.qWait(50)
+    assert not started.is_set()
+    button = root.findChild(QObject,"verifyScreenPreviewButton")
+    assert button.property("enabled")
+    QMetaObject.invokeMethod(button,"click")
+    for _ in range(100):
+        QTest.qWait(10)
+        if started.is_set(): break
+    assert started.is_set() and monitor.screenPreviewBusy
+    pending = monitor._screen_preview_cancel
+    QMetaObject.invokeMethod(dialog,"close"); QTest.qWait(150)
+    assert pending.is_set() and not monitor.screenPreviewBusy
+    assert not monitor._screen_preview_verified
+    assert "取消" in monitor.screenPreviewMessage
+
+
+@pytest.mark.parametrize('nested_ack', [False, True])
+def test_gesture_asr_starts_only_after_native_begin_ack(inline_ui, monkeypatch, nested_ack):
     from test_input_source_activation import FakeSource
     from proximic_ring.asr.controller import ProximityASRController
     from test_asr_controller import StreamingRecorder
@@ -724,13 +763,23 @@ def test_gesture_asr_starts_only_after_native_begin_ack(inline_ui, monkeypatch):
     event(phase='idle', ready=True, utterance_id='', application='test.editor')
     gate.process(np.ones(320, dtype=np.float32), [])
     assert not sink.started
-    event(phase='listening', ready=True, raw='', revision=0)
+    if nested_ack:
+        def lookup():
+            monkeypatch.setattr(inline, '_foreground_identity', lambda: ('test.editor', 123))
+            event(phase='listening', ready=True, raw='', revision=0)
+            return ('test.editor', 123)
+        monkeypatch.setattr(inline, '_foreground_identity', lookup)
+        inline._refresh_activation()
+    else:
+        event(phase='listening', ready=True, raw='', revision=0)
     utterance = inline._utterance_id
     begins = sum(m['type'] == 'begin' for m in bridge.messages)
     gate.process(np.ones(320, dtype=np.float32), [])
     assert len(sink.started) == 1 and inline._utterance_id == utterance
     assert sum(m['type'] == 'begin' for m in bridge.messages) == begins
     assert controller.statusTitle == '听写 · 可以说话'
+    assert controller._pending_inline_audio_start is None
+    assert not controller._cancel_utterance_event.is_set()
 
 
 @pytest.mark.parametrize('reason', ['cancel', 'timeout', 'old_connection'])
@@ -763,3 +812,133 @@ def test_gesture_audio_start_cannot_restart_a_retired_native_sentence(inline_ui)
     assert controller._cancel_utterance_event.is_set()
     assert len(bridge.messages) == count
     assert "输入法连接已变化" in controller.statusDetail
+
+
+def _recording_test_begin_edit(controller, event, requests):
+    from types import SimpleNamespace
+    import numpy as np
+    controller._connected = True
+    controller._apply_runtime_update("扩写", False, "", 1)
+    dataset = controller._modification_dataset
+    dataset.record_audio(1, np.zeros(1600, dtype=np.float32))
+    dataset.record_asr_update(SimpleNamespace(session_id=1, text="扩写", is_final=True, error=None))
+    event(phase="finishing", ready=True, edit_requested=True, revision=0)
+    event(phase="editing", ready=True, edit_requested=True, revision=1, edit_context_available=True)
+    event("edit_requested", instruction="扩写", original="原文", revision=1, edit_context_available=True)
+    assert requests
+    return requests[-1]
+
+
+def _recording_test_record(controller, session_id=1):
+    import json
+    dataset = controller._modification_dataset
+    return json.loads(dataset._interaction_path(dataset._session_interactions[session_id]).read_text())
+
+
+@pytest.mark.parametrize("error", ["模型超时", "编辑原文读取不一致，已保留听写"])
+def test_recorded_inline_fallback_is_edit_failure(inline_ui, error):
+    from proximic_ring.text_processing import TextProcessingResult
+    controller, _, requests, _, event = inline_ui
+    request = _recording_test_begin_edit(controller, event, requests)
+    model_error = error if error == "模型超时" else None
+    controller._apply_text_processed(TextProcessingResult(request.request_id, 1, "edit", "扩写", "模型结果", .1, True, error=model_error))
+    event(phase="dictated", ready=True, revision=2, edit_requested=False)
+    event("settled", phase="dictated", text="扩写", revision=2, error=error)
+    record = _recording_test_record(controller)
+    assert record["mode"]["training_target"] == "edit"
+    assert record["outcome"]["status"] == "apply_failed"
+    assert record["outcome"]["error"] == error
+    assert record["llm"]["requests"][0]["status"] == ("failed" if model_error else "completed")
+
+
+@pytest.mark.parametrize("termination", ["cancel", "undo", "interrupted", "disconnect", "close"])
+def test_recorded_inline_cancellation_finishes_model_request(inline_ui, termination):
+    from proximic_ring.text_processing import TextProcessingResult
+    controller, bridge, requests, _, event = inline_ui
+    request = _recording_test_begin_edit(controller, event, requests)
+    if termination == "close":
+        controller._close_voice_history()
+    elif termination == "disconnect":
+        event("disconnected")
+    elif termination == "interrupted":
+        event("interrupted", reason="手动输入")
+    else:
+        phase = "undone" if termination == "undo" else "dictated"
+        event(phase=phase, ready=True, revision=2, edit_requested=False)
+        event("settled", phase=phase, text="扩写" if phase == "dictated" else "", revision=2, error="")
+    count = len(bridge.messages)
+    controller._apply_text_processed(TextProcessingResult(request.request_id, 1, "edit", "扩写", "迟到结果", .1, True))
+    assert len(bridge.messages) == count
+    record = _recording_test_record(controller)
+    assert record["mode"]["selected"] == "edit"
+    assert record["mode"]["training_target"] != "dictation"
+    assert record["outcome"]["status"] in {"cancelled", "undone", "apply_failed"}
+    assert record["llm"]["requests"][0]["status"] == "cancelled"
+    assert record["llm"]["requests"][0]["completed_at"]
+    assert not controller._inline_requests
+
+
+def test_conversion_cancel_before_model_starts_is_still_recorded_as_edit(inline_ui):
+    controller, _, requests, _, event = inline_ui
+    controller._apply_runtime_update("扩写", False, "", 1)
+    event(phase="finishing", ready=True, edit_requested=True)
+    event(phase="finishing", ready=True, edit_requested=False, revision=1)
+    event(phase="dictated", ready=True, edit_requested=False, revision=1)
+    event("settled", phase="dictated", text="扩写", error="", revision=1)
+    assert not requests
+    record = _recording_test_record(controller)
+    assert record["mode"]["selected"] == "edit"
+    assert record["outcome"]["status"] == "cancelled"
+
+
+def test_conversion_failure_before_model_starts_keeps_edit_class(inline_ui):
+    controller, _, requests, _, event = inline_ui
+    controller._apply_runtime_update("扩写", False, "", 1)
+    event(phase="finishing", ready=True, edit_requested=True)
+    event(phase="dictated", ready=True, edit_requested=False, revision=1)
+    event("settled", phase="dictated", text="扩写", error="当前输入框未提供可读的编辑原文，已保留听写", revision=1)
+    record = _recording_test_record(controller)
+    assert not requests
+    assert record["mode"]["selected"] == "edit"
+    assert record["mode"]["training_target"] == "edit"
+    assert record["outcome"]["status"] == "apply_failed"
+
+
+def test_undo_applied_edit_restoring_instruction_keeps_edit_mode(inline_ui):
+    from proximic_ring.text_processing import TextProcessingResult
+    controller, _, requests, _, event = inline_ui
+    request = _recording_test_begin_edit(controller, event, requests)
+    controller._apply_text_processed(TextProcessingResult(request.request_id, 1, "edit", "扩写", "结果", .1, True))
+    event(phase="edited", ready=True, revision=1)
+    event("settled", phase="edited", text="结果", revision=1, error="")
+    assert _recording_test_record(controller)["outcome"]["status"] == "applied"
+    event(phase="dictated", ready=True, revision=2, edit_requested=False)
+    event("settled", phase="dictated", text="扩写", revision=2, error="")
+    record = _recording_test_record(controller)
+    assert record["mode"]["selected"] == "edit"
+    assert record["mode"]["training_target"] is None
+    assert record["outcome"]["status"] == "undone"
+    assert record["llm"]["requests"][0]["status"] == "completed"
+
+
+def test_removed_floating_ui_has_no_windows_settings_or_timers(inline_ui):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    controller, _, _, root, event = inline_ui
+    controller._transcript_active = True
+    controller._transcript_primary_text = "测试状态更新不会创建旧浮窗" * 100
+    controller.transcriptChanged.emit()
+    controller.interactionChanged.emit()
+    QTest.qWait(20)
+    for name in ("legacyTranscriptLoader", "legacyAppliedActionLoader", "transcriptOverlay",
+                 "appliedActionOverlay", "asrOverlayText", "cancelUtteranceButton",
+                 "undoAppliedButton", "appliedActionDragSpace", "appliedOverlayStyleCombo",
+                 "appliedOverlayDurationSlider"):
+        assert root.findChild(QObject, name) is None
+    for name in ("_hide_overlay_timer", "_processing_mode_correction_timer",
+                 "_applied_action_hide_timer", "_applied_target_timer", "appliedOverlayStyle",
+                 "appliedOverlayDurationSeconds", "beginAppliedOverlayDrag"):
+        assert not hasattr(controller, name)
+    controller._reset_transcript_for_device_boundary()
+    assert not controller._transcript_active
+    assert root.findChild(QObject, "associationRecommendationOverlay") is not None

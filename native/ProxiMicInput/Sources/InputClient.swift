@@ -40,7 +40,7 @@ final class NativeInputClient: HandoffClient {
     var clientOperationPending: Bool { pendingCompatibility?.pending ?? false }
     var clientOperationFailure: String? { pendingCompatibility?.failure }
     var clientOperationDiagnostics: [String: Any] { pendingCompatibility?.readbackDiagnostics ?? [:] }
-    var verifiedReplacementCaret: NSRange? { nativeCompatibility?.verifiedReplacementCaret }
+    var verifiedReplacementCaret: NSRange? { pendingCompatibility?.verifiedReplacementCaret }
     var verifiedReplacement: EditorTextRange? { pendingCompatibility?.verifiedReplacement }
     var preparesEditContext: Bool { nativeCompatibility?.selectBeforeReplacing ?? false }
     var preparedEditContext: PreparedEditContext? { nativeCompatibility?.preparedEditContext }
@@ -50,7 +50,9 @@ final class NativeInputClient: HandoffClient {
     }
     func discardEditCandidate() { nativeCompatibility?.discardEditCandidate() }
     func replaceEditing(_ range: NSRange, with text: String, restoringCaret: Int?, expected: String) {
-        if let nativeCompatibility, nativeCompatibility.selectBeforeReplacing {
+        if let compatibility {
+            compatibility.replaceSelected(range, before: expected, with: text, restoringCaret: restoringCaret)
+        } else if let nativeCompatibility, nativeCompatibility.selectBeforeReplacing {
             nativeCompatibility.replaceSelected(range, before: expected, with: text, restoringCaret: restoringCaret)
         } else { replaceEditing(range, with: text, restoringCaret: restoringCaret) }
     }

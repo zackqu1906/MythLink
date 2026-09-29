@@ -145,7 +145,7 @@ def collect_ring_dataset(
     name_keyword: str = "Ringo",
     selector: str | None = None,
     timeout_s: float = 8.0,
-    encoding: str = "pcm",
+    encoding: str = "adpcm",
     phrases_path: Path | None = None,
 ) -> int:
     cfg = cfg.validate()

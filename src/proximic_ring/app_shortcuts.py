@@ -35,20 +35,21 @@ class ShortcutTarget:
     focus: object = field(default=None, repr=False)
     role: str = ""
     blocked: bool = False
+    remote_id: str = ""
+    plain_enter: bool = False
 
 
-class MacAppShortcuts:
-    def capture(self) -> ShortcutTarget | None:
+class LocalMacAppShortcuts:
+    def capture(self, *, plain_enter: bool = False) -> ShortcutTarget | None:
         if sys.platform != "darwin":
             return None
-        import AppKit
-
-        app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+        from .mac_workspace import frontmost_application
+        app = frontmost_application()
         if app is None:
             return None
         bundle, pid = str(app.bundleIdentifier() or ""), int(app.processIdentifier())
         profile = profile_for_application(bundle, str(app.localizedName() or ""))
-        if not profile:
+        if not profile and not plain_enter:
             return None
         import ApplicationServices as AX
         element = AX.AXUIElementCreateApplication(pid)
@@ -66,6 +67,11 @@ class MacAppShortcuts:
         window = attr(element, "AXFocusedWindow")
         focus = attr(element, "AXFocusedUIElement")
         role = str(attr(focus, "AXRole") or "")
+        if plain_enter:
+            # Enter follows the focused control's own semantics, including web
+            # editors, search fields and address bars. No app/role whitelist.
+            return ShortcutTarget(bundle, pid, profile, window, focus, role,
+                                  plain_enter=True)
         subrole = str(attr(window, "AXSubrole") or "")
         # Do not turn a chat shortcut into a dialog confirmation or terminal input.
         description = str(attr(focus, "AXDescription") or "").casefold()
@@ -75,7 +81,7 @@ class MacAppShortcuts:
         return ShortcutTarget(bundle, pid, profile, window, focus, role, blocked)
 
     def same_target(self, target: ShortcutTarget, *, require_focus: bool = False) -> bool:
-        current = self.capture()
+        current = self.capture(plain_enter=target.plain_enter)
         if current is None or (current.bundle, current.pid) != (target.bundle, target.pid) or current.blocked:
             return False
         if target.window is not None and current.window != target.window:
@@ -87,6 +93,8 @@ class MacAppShortcuts:
     def post(self, target: ShortcutTarget, shortcut: str, *, require_focus: bool = False) -> None:
         import Quartz
         parts = normalize_shortcut(shortcut).split("+")
+        if target.plain_enter and parts != ["Return"]:
+            raise RuntimeError("全局上滑仅允许 Enter")
         if not self.same_target(target, require_focus=require_focus):
             raise RuntimeError("目标窗口已变化，请在目标对话中重新操作")
         require_post_event_access()
@@ -103,3 +111,21 @@ class MacAppShortcuts:
             Quartz.CGEventSetIntegerValueField(event, Quartz.kCGEventSourceUserData, 0x50524F584147)
         for event in events:
             Quartz.CGEventPostToPid(target.pid, event)
+
+
+class MacAppShortcuts:
+    def capture(self, *, plain_enter=False):
+        if sys.platform != "darwin":
+            return None
+        from .native_access import native_access
+        value = native_access().call("capture", plain_enter=plain_enter)
+        return ShortcutTarget(**value) if value is not None else None
+
+    def same_target(self, target, *, require_focus=False):
+        from .native_access import native_access
+        return native_access().call("same_target", target=target.remote_id, require_focus=require_focus)
+
+    def post(self, target, shortcut, *, require_focus=False):
+        from .native_access import native_access
+        native_access().call("shortcut", target=target.remote_id,
+                             shortcut=normalize_shortcut(shortcut), require_focus=require_focus)

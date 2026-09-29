@@ -24,12 +24,6 @@ if [[ "$REQUIRE_SIGNED_RELEASE" == "1" ]]; then
         exit 1
     fi
 fi
-OPUS_DYLIB="$PROJECT_ROOT/.runtime/opus/lib/libopus.0.dylib"
-if [[ ! -f "$OPUS_DYLIB" ]]; then
-    MACOSX_DEPLOYMENT_TARGET=12.0 "$PROJECT_ROOT/scripts/install-opus-macos.sh"
-fi
-export PROXIMIC_OPUS_DYLIB="$OPUS_DYLIB"
-
 if [[ -n "${PROXIMIC_PYTHON:-}" ]]; then
     PYTHON_BIN="$PROXIMIC_PYTHON"
 elif command -v python3.11 >/dev/null 2>&1; then
@@ -45,10 +39,11 @@ if [[ "${PROXIMIC_SKIP_DEPENDENCY_INSTALL:-0}" != "1" ]]; then
     "$PYTHON" -m pip install --upgrade \
         "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
     "$PYTHON" -m pip install -c requirements-macos.lock \
-        ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
+        ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
         -r requirements-packaging.txt
 fi
 PROXIMIC_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" /bin/zsh scripts/build-input-method.sh
+PROXIMIC_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" /bin/zsh scripts/build-proximity.sh
 PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" -m PyInstaller --noconfirm --clean packaging/proximic_voice.spec
 
@@ -58,6 +53,7 @@ APP="$PROJECT_ROOT/dist/Proximic Voice.app"
 mkdir -p "$APP/Contents/Helpers"
 ditto "$PROJECT_ROOT/.build/input-method/ProxiMicInput.app" "$APP/Contents/Helpers/ProxiMicInput.app"
 cp "$PROJECT_ROOT/.build/input-method/InputMethodAdmin" "$APP/Contents/Helpers/InputMethodAdmin"
+ditto "$PROJECT_ROOT/.build/proximity/ProxiMicPresence.app" "$APP/Contents/Helpers/ProxiMicPresence.app"
 # Audited libraries only; leave the executable/Python archive and all features
 # intact. Validate exports and linkage before the final bundle signature.
 "$PYTHON" tools/strip_macos_runtime.py "$APP" --report "$PROJECT_ROOT/.build/macos-runtime-size.json"
@@ -91,7 +87,7 @@ PROXIMIC_DATA_HOME="$SMOKE_DATA_ROOT" \
     "$APP_EXECUTABLE" --self-check-package
 SMOKE_LOG="$SMOKE_DATA_ROOT/logs/startup.log"
 if [[ ! -f "$SMOKE_LOG" ]] \
-    || ! grep -q "bundled Opus decoder ready" "$SMOKE_LOG" \
+    || ! grep -q "bundled ADPCM decoder ready" "$SMOKE_LOG" \
     || ! grep -q "bundled QML files ready" "$SMOKE_LOG" \
     || ! grep -q "macOS input method transport ready" "$SMOKE_LOG" \
     || ! grep -q "bundled input method installer ready" "$SMOKE_LOG" \

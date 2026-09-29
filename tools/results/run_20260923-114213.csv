@@ -1,0 +1,2 @@
+﻿id,expected,predicted,correct,p_听写,p_编辑,confidence,information_sufficient,latency_ms,utterance,note,error,model_compute_ms
+cli,,编辑,,0.16066789627075195,0.839332103729248,,,63169,实则是我规划好的,,,63137.35695900004

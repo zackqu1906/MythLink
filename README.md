@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1 -
 
 当前只提供 Apple Silicon（M1/M2/M3/M4 等 arm64）构建，不支持 Intel Mac。
 构建机需要联网并安装 Xcode Command Line Tools；构建脚本会在项目目录自动准备固定版本的
-Python 3.11 和 libopus，不要求 Homebrew，也不会修改系统 Python：
+Python 3.11，不要求 Homebrew，也不会修改系统 Python：
 
 ```bash
 xcode-select --install
@@ -114,19 +114,19 @@ macOS 源码现在通过 ProxiMic Voice 输入法在文本框中流式听写；�
 微信使用原生选区快捷键兼容其范围替换限制；Codex 定稿听写撤销使用本句选区＋退格，编辑通过 IME 直接替换，文字确认后用一次 Cmd+Down 定位到全文末尾。其他应用通过 IME 范围替换。
 具体行为和当前验收情况见[行内听写说明](docs/INLINE_DICTATION.md)。右 `Alt` 按住说话仍仅在 Windows 上提供。
 
-连接戒指后也支持电脑端手势：默认左滑/下滑等同 `Esc`（取消或撤销），右滑/上滑等同
+连接戒指后也支持固件端手势：默认左滑/下滑等同 `Esc`（取消或撤销），右滑/上滑等同
 当前配置的类型转换键（默认 `F8`）。按键与手势可交替使用，均沿用现有操作的可用
 条件。在“设置 → 手势操作”中，确认、撤销、转换各有两个可选位置，支持 tap、弹指、
 左/下/右/上滑、握拳、食指/中指捏合和顺/逆时针画圈，禁止同一手势重复分配。确认默认 tap，第二个位置未设置；确认至少
 保留一个手势。设置自动保存，连接期间修改即时生效，可一键恢复默认。
-手势使用 `ring-python-sdk` 的 `ringo` 分支 `d735304` 中的密度模型
-`density-pw64-dh96-swipe3-rot-0913`，在电脑 CPU 上通过 PyTorch 推理；模型权重随项目和安装包提供。
-SDK 的 `swipe-tap` 在应用中继续叫 `tap`，兼容已有分配；分指捏合是独立的可选手势。
+手势使用 public SDK 1.4.0 协议，由戒指固件完成识别，电脑只接收 `26 06` / `26 07` 确认事件。
+电脑端手势推理代码、权重和参数已移除；保留 `tap`、`clench` 等已有动作名称与设置。
+语音默认 ADPCM，在 SDK 内解码为 16 kHz、单声道 PCM16，供近点检测和 ASR 使用。
 主程序仍由 `ACTIVATE` 开始收听，由配置的确认手势结束本句；未确认就继续接收音频，
 停用连续 REJECT、静默超时和 15 秒上限自动结束。收听期间不再运行后续 Stage2 检测。
 确认后先暂停下一句识别，再提交 ASR final、类型判断及文本处理，完成或报错后恢复监听。
 重复确认、空闲和处理期间的确认手势不触发下一句；撤销手势在收听和处理期间仍用于取消。
-命令行/离线检测工具保留原自动结束方式。见[手势使用与独立测试](docs/HOST_GESTURE_TEST.md)。
+命令行/离线检测工具保留原自动结束方式。见[手势使用与独立测试](docs/FIRMWARE_GESTURE_TEST.md)。
 
 ## 当前可以做什么
 
@@ -382,14 +382,15 @@ App Key。它与“线上大模型 API Key”是两个独立设置，不能混�
 
 ## 音频编码与录音保存
 
-桌面产品默认使用 `Opus` 传输，降低 Windows BLE 链路负载；SDK 解码后仍向模型提供
-16 kHz、单声道 PCM。采集训练集时可显式选择 `PCM` 保留原始波形分布。
+桌面产品使用 public 固件的 `ADPCM` 传输；SDK 解码后向近点检测和 ASR 提供
+16 kHz、单声道 PCM16。已保存的旧编码设置自动迁移，界面统一使用 ADPCM。
+命令行保留显式旧编码，仅适用于支持它们的旧固件。
 
 | 编码 | 特点 |
 | --- | --- |
 | PCM | 适合训练数据采集；质量和模型一致，BLE 带宽占用最高 |
-| ADPCM | 带宽较低，但有损压缩可能改变 Stage2 分数和 ASR 输入 |
-| Opus | 桌面产品默认；带宽更低，需要系统存在可用的 libopus 运行库 |
+| ADPCM | 桌面产品默认；纯 Python 解码，有损压缩可能改变 Stage2 分数和 ASR 输入 |
+| Opus | 旧固件诊断选项，需要 libopus 运行库 |
 
 SDK 会保存每次麦克风会话的解码后连续录音：
 
@@ -485,7 +486,7 @@ CLI 入口：
 
 数据采集、训练和验证说明见：
 
-- [电脑端手势识别测试（200 Hz IMU、独立终端与记录重放）](docs/HOST_GESTURE_TEST.md)
+- [固件手势测试（确认事件与独立终端）](docs/FIRMWARE_GESTURE_TEST.md)
 - [固件端手势测试（独立终端、实时触发与 CSV）](docs/FIRMWARE_GESTURE_TEST.md)
 - [docs/DATASET_TRAINING.md](docs/DATASET_TRAINING.md)
 - [docs/VALIDATION.md](docs/VALIDATION.md)
@@ -539,7 +540,7 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -c requirements-windows.lock -e ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
+python -m pip install -c requirements-windows.lock -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
 python -m proximic_ring.ui
 ```
 

@@ -66,11 +66,13 @@ class RingAudioSource(AudioSource):
         selector: str | None = None,
         device: object | None = None,
         timeout_s: float = 8.0,
-        encoding: str = "opus",
+        encoding: str = "adpcm",
         data_root: str | Path = "data",
         queue_blocks: int = 256,
         imu_observer: Callable[[dict], None] | None = None,
         imu_sample_observer: Callable[[object], None] | None = None,
+        gesture_observer: Callable[[object], None] | None = None,
+        gesture_state_observer: Callable[[bool], None] | None = None,
         battery_observer: Callable[
             [int | None, int | None, int | None], None
         ]
@@ -96,6 +98,10 @@ class RingAudioSource(AudioSource):
         self.data_root = Path(data_root)
         self.imu_observer = imu_observer
         self.imu_sample_observer = imu_sample_observer
+        self.gesture_observer = gesture_observer
+        self.gesture_state_observer = gesture_state_observer
+        self.gestures_active = False
+        self.gesture_error = None
         self.battery_observer = battery_observer
         self.imu_hz = int(imu_hz)
         self.audio_enabled = bool(audio_enabled)
@@ -160,6 +166,8 @@ class RingAudioSource(AudioSource):
         self.imu_error = None
         self.imu_stream_error = None
         self.imu_sample_error = None
+        self.gestures_active = False
+        self.gesture_error = None
         self._stop.clear()
         self._connected_ready.clear()
         self._start_stream.clear()
@@ -595,6 +603,11 @@ class RingAudioSource(AudioSource):
                 return
             await self._print_battery_status(session)
 
+    async def _battery_updates(self, session) -> None:
+        """Battery replies must not hold up IMU or audio startup."""
+        await self._print_battery_status(session)
+        await self._battery_refresh_loop(session)
+
     def _publish_battery_status(
         self,
         battery_pct: int | None,
@@ -672,6 +685,14 @@ class RingAudioSource(AudioSource):
 
     async def _shutdown_session(self, session) -> None:
         """Best-effort BLE shutdown that never hides the stream failure."""
+        self.gestures_active = False
+        if self.gesture_state_observer is not None:
+            self.gesture_state_observer(False)
+        if bool(getattr(session, "swipe_active", False)):
+            try:
+                await session.swipe_off()
+            except Exception as exc:
+                print(f"Ring cleanup: gesture STOP failed: {exc}")
         if bool(getattr(session, "imu_active", False)):
             try:
                 await session.imu_off()
@@ -752,9 +773,8 @@ class RingAudioSource(AudioSource):
             # BLE and the required NUS service are now validated.  Release the
             # connection phase before doing battery queries or starting audio.
             self._connected_ready.set()
-            await self._print_battery_status(session)
             battery_refresh_task = asyncio.create_task(
-                self._battery_refresh_loop(session),
+                self._battery_updates(session),
                 name="proximic-ring-battery-refresh",
             )
 
@@ -767,12 +787,15 @@ class RingAudioSource(AudioSource):
             if self._stop.is_set():
                 return
 
+            # Firmware recognition has its own START; it never needs raw IMU.
+            await self._start_gestures(session)
+            await self._start_imu_best_effort(session)
+
             if not self.audio_enabled:
                 # DJI supplies PCM independently; this BLE session only owns
-                # battery/IMU. Never issue MIC ON or arm the PCM watchdog.
-                await self._start_imu_best_effort(session)
-                if self.imu_stream_error is not None:
-                    raise RuntimeError(f"Ring 手势数据启动失败：{self.imu_stream_error}")
+                # battery/gestures. Never issue MIC ON or arm the PCM watchdog.
+                if self.gesture_error is not None:
+                    raise RuntimeError(f"Ring 固件手势启动失败：{self.gesture_error}")
                 self._ready.set()
                 while not self._stop.is_set():
                     client = getattr(session, "client", None)
@@ -810,8 +833,6 @@ class RingAudioSource(AudioSource):
                     "Ring connected, but no microphone audio was received. "
                     f"The device was disconnected; reconnect manually.{hint}"
                 )
-
-            await self._start_imu_best_effort(session)
 
             # Start the stall timer from MIC ON.  If the Ring never sends the
             # first callback, that is treated exactly like a stream stall.
@@ -979,6 +1000,23 @@ class RingAudioSource(AudioSource):
                 except asyncio.CancelledError:
                     pass
             await self._shutdown_session(session)
+
+    async def _start_gestures(self, session) -> None:
+        if self.gesture_observer is None:
+            return
+        try:
+            await session.swipe_on(on_trigger=self.gesture_observer, print_events=False,
+                                   print_triggers=False, print_profile=False)
+            self.gestures_active = True
+            if self.gesture_state_observer is not None:
+                self.gesture_state_observer(True)
+            print("Ring firmware gestures enabled (26 06 / 26 07)")
+        except Exception as exc:
+            self.gesture_error = exc
+            self.gestures_active = False
+            if self.gesture_state_observer is not None:
+                self.gesture_state_observer(False)
+            raise RuntimeError(f"Ring 固件手势启动失败：{exc}") from exc
 
     async def _start_imu_best_effort(self, session) -> None:
         """Start the shared IMU stream, but never fail the audio session."""

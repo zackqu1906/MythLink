@@ -22,7 +22,7 @@ def _push(controller, session=1, *, mode="edit", before="old"):
     from proximic_ring.ui.controller import _AppliedInteraction
 
     target = DesktopTargetRef(1, 2, "微信", process_id=123)
-    controller._show_applied_interaction(
+    controller._register_applied_interaction(
         _AppliedInteraction(
             mode, target, session, 0, "修改", f"new-{session}",
             original_snapshot=(
@@ -100,7 +100,6 @@ def test_clicking_back_into_field_allows_gesture_retry_even_after_stack_exhausti
     assert desktop.effective_undos == 0
     assert controller.undoDepth == (1 if reports_text_focus else 0)
     # Also cover a popup that timed out while focus was elsewhere.
-    controller._hide_applied_action_overlay()
     controller._applied_target_foreground = False
     desktop.caret_in_text = True
     assert controller.nativeUndoAvailable  # Does not wait for the 300 ms poll.
@@ -110,8 +109,6 @@ def test_clicking_back_into_field_allows_gesture_retry_even_after_stack_exhausti
     assert desktop.effective_undos == 1
     assert desktop.calls == [target] * (1 if reports_text_focus else 2)
     assert controller.undoDepth == 0
-    assert controller.appliedActionVisible and controller.nativeUndoAvailable
-    assert not controller.modeCorrectionAvailable
     controller.dispatchVoiceAction("undo")  # Same retry path from keyboard/button.
     assert desktop.effective_undos == 2
 
@@ -127,8 +124,7 @@ def test_native_retry_keeps_focus_protection_and_clears_at_device_boundary(contr
     assert desktop.calls == [target]
     assert not controller.nativeUndoAvailable
     desktop.focused = True
-    controller._poll_applied_target_foreground()
-    assert controller.appliedActionVisible
+    controller._refresh_undo_target()
     controller.undoLastApplied()
     assert desktop.calls == [target, target]
     controller._clear_undo_stack_for_device_boundary()
@@ -185,17 +181,17 @@ def test_exhausted_targets_remain_independent_when_switching_applications(contro
     desktop = Desktop()
     controller._desktop_target = desktop
     for session, target in enumerate((first, second), 1):
-        controller._show_applied_interaction(
+        controller._register_applied_interaction(
             _AppliedInteraction("dictation", target, session, 0, "语音", "文本"),
             message="已应用",
         )
     controller.undoLastApplied()
     desktop.current_target = first
-    controller._poll_applied_target_foreground()
+    controller._refresh_undo_target()
     controller.undoLastApplied()
     assert not controller._operation_stacks
     desktop.current_target = second
-    controller._poll_applied_target_foreground()
+    controller._refresh_undo_target()
     controller.undoLastApplied()
     assert desktop.calls == [second, first, second]
 

@@ -1,0 +1,54 @@
+{
+  "timestamp": "20260922-121326",
+  "model": "jev-1.13.0",
+  "summary": {
+    "total": 1,
+    "scored": 0,
+    "correct": 0,
+    "accuracy": null,
+    "errors": 0,
+    "confusion": {
+      "听写": {
+        "听写": 0,
+        "编辑": 0
+      },
+      "编辑": {
+        "听写": 0,
+        "编辑": 0
+      }
+    },
+    "per_class": {
+      "听写": {
+        "support": 0,
+        "precision": null,
+        "recall": null
+      },
+      "编辑": {
+        "support": 0,
+        "precision": null,
+        "recall": null
+      }
+    },
+    "avg_confidence_correct": null,
+    "avg_confidence_wrong": null,
+    "low_information_sufficient": []
+  },
+  "results": [
+    {
+      "id": "cli",
+      "expected": null,
+      "predicted": "编辑",
+      "correct": null,
+      "probabilities": {
+        "听写": 0.0,
+        "编辑": 1.0
+      },
+      "confidence": 1.0,
+      "information_sufficient": null,
+      "latency_ms": 1495.2161669998532,
+      "utterance": "把明天改成周三",
+      "note": "",
+      "error": null
+    }
+  ]
+}

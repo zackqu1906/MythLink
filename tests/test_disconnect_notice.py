@@ -29,7 +29,7 @@ def test_unexpected_stop_alerts_once_and_retires_all_interaction(controller, mon
     controller._pending_mode_routes.add(102)
     controller._manual_association_watch = SimpleNamespace()
     controller._manual_association_timer.start()
-    controller._transcript_visible = True
+    controller._transcript_active = True
     controller._utterance_active = interaction == "listening"
     controller._set_interaction_state(interaction if interaction != "paused" else "idle")
     if interaction == "paused":
@@ -56,7 +56,7 @@ def test_unexpected_stop_alerts_once_and_retires_all_interaction(controller, mon
     assert not controller.interactionCanCancel
     assert not controller.nativeUndoAvailable
     assert not controller.modeCorrectionHotkeyAvailable
-    assert not controller.transcriptVisible
+    assert not controller._transcript_active
     assert controller._manual_association_watch is None
     assert not controller._manual_association_timer.isActive()
     assert controller.interactionState == "idle"
@@ -71,7 +71,7 @@ def test_unexpected_stop_alerts_once_and_retires_all_interaction(controller, mon
     controller.dispatchVoiceAction("switch_mode")
     controller.startRecognition()
     assert not controller.connected
-    assert not controller.transcriptVisible
+    assert not controller._transcript_active
     assert controller.interactionState == "idle"
 
     controller.dismissRingDisconnectNotice()

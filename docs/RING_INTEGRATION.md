@@ -101,16 +101,20 @@ disconnecting it.
 
 ## Codec choice
 
-The customer desktop UI defaults to `opus`, matching the firmware receiver path
-verified on Windows. The SDK decodes it back to 16 kHz mono PCM16 before the
-detector sees it. Dataset collection can still explicitly use `pcm` when exact
-training-waveform fidelity is required.
+The desktop UI and RingAudioSource default to ADPCM for public SDK 1.4.0.
+Saved PCM/Opus UI preferences are migrated to ADPCM. The SDK validates bounded
+fragmented IMA blocks and immediately decodes them to mono PCM16 at 16 kHz.
+No libopus or host gesture model is required. Explicit legacy codecs remain in
+the SDK/CLI only for compatible older firmware, not in the customer UI.
 
-- `pcm`: recommended for dataset collection, but creates much more BLE traffic;
-- `adpcm`: lower on-air bandwidth, but lossy compression can shift Stage2 scores;
-- `opus`: production default and efficient on-air. Windows setup installs `opuslib` plus a project-local
-  `.runtime/opus/opus.dll`; the SDK adds that directory only to the current
-  process DLL search path.
+Firmware recognition is started with `26 00` and stopped with `26 01` on the
+same BLE connection as audio. Only confirmed `26 06` / `26 07` events drive
+application actions; `26 05` intermediate events do not. Existing saved action
+names and assignments are preserved. There is no host IMU classification,
+threshold tuning, weight loading or model warmup. Raw IMU collection is optional
+and off by default; it is independent of gesture recognition.
 
-The detector receives PCM16 in all three cases, but lossy codecs need not preserve
-the same waveform or score distribution as raw PCM.
+The supplied DFU was verified separately on 8F56 as `1.2.133.public`, with
+ADPCM audio and compact confirmed gestures simultaneously. This project update
+is covered by offline protocol/lifecycle/routing tests; hardware acceptance is
+performed by the user. Other SDK diagnostic commands depend on firmware support.

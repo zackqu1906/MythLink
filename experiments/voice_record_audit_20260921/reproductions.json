@@ -1,0 +1,12 @@
+{
+  "failed_edit_fallback": {
+    "selected": "dictation",
+    "training_target": "dictation",
+    "outcome": "applied"
+  },
+  "late_asr_overwrites_terminal_outcome": {
+    "before": "undone",
+    "after": "recognized"
+  },
+  "empty_asr_training_target": "dictation"
+}

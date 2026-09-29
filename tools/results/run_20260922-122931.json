@@ -1,0 +1,54 @@
+{
+  "timestamp": "20260922-122931",
+  "model": "jev-1.13.0",
+  "summary": {
+    "total": 1,
+    "scored": 0,
+    "correct": 0,
+    "accuracy": null,
+    "errors": 0,
+    "confusion": {
+      "听写": {
+        "听写": 0,
+        "编辑": 0
+      },
+      "编辑": {
+        "听写": 0,
+        "编辑": 0
+      }
+    },
+    "per_class": {
+      "听写": {
+        "support": 0,
+        "precision": null,
+        "recall": null
+      },
+      "编辑": {
+        "support": 0,
+        "precision": null,
+        "recall": null
+      }
+    },
+    "avg_confidence_correct": null,
+    "avg_confidence_wrong": null,
+    "low_information_sufficient": []
+  },
+  "results": [
+    {
+      "id": "cli",
+      "expected": null,
+      "predicted": "编辑",
+      "correct": null,
+      "probabilities": {
+        "编辑": 0.72,
+        "听写": 0.28
+      },
+      "confidence": 0.43,
+      "information_sufficient": null,
+      "latency_ms": 1711.6580829997474,
+      "utterance": "“300年我还做了一件事”",
+      "note": "",
+      "error": null
+    }
+  ]
+}

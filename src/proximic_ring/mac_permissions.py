@@ -1,7 +1,7 @@
 """Current-process macOS permission checks; no events, TCC resets or prompts by default."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import sys
 
@@ -11,6 +11,8 @@ class PermissionState:
     accessibility: bool | None = None
     post_events: bool | None = None
     error: str = ""
+    control_channel: str = "current_process"
+    control_pid: int = field(default=0, compare=False)
 
     @property
     def ready(self) -> bool:
@@ -29,9 +31,9 @@ class PermissionState:
     @property
     def guidance(self) -> str:
         if self.ready:
-            return "当前进程可读取辅助功能信息并发送按键。"
+            return "按键通道可读取辅助功能信息并发送按键。"
         return ("编辑、撤销和发送可能无法完成。授权后程序会自动重新检测，生效后即可继续操作。"
-                "若持续未生效，请核对授权的是当前运行的应用；系统仍未放行时再退出重开。")
+                "若持续未生效，请核对授权的是当前运行的应用。")
 
 
 def read_permission_state(*, post_events: bool | None = None) -> PermissionState:
@@ -69,6 +71,18 @@ def request_post_event_access() -> None:
     """Only called by an explicit permission button, never by voice/gesture actions."""
     import Quartz
     Quartz.CGRequestPostEventAccess()
+
+
+def read_screen_capture_access() -> bool:
+    """Check the GUI process that actually owns the preview streams."""
+    import Quartz
+    return bool(Quartz.CGPreflightScreenCaptureAccess())
+
+
+def request_screen_capture_access() -> bool:
+    """Called only from an explicit permission button, never a passive check."""
+    import Quartz
+    return read_screen_capture_access() or bool(Quartz.CGRequestScreenCaptureAccess())
 
 
 def running_identity() -> dict:

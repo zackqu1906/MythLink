@@ -10,6 +10,9 @@ from proximic_ring.wechat_native_keys import send_input_method_key
 
 @pytest.fixture
 def desktop(monkeypatch):
+    import proximic_ring.wechat_native_keys as keys
+    monkeypatch.setattr(keys, "_send_key", keys._send_key_direct)
+    monkeypatch.setattr(keys, "_refresh_workspace", lambda: None)
     state = SimpleNamespace(bundle="com.tencent.xinWeChat", pid=42, permission=True, sent=[])
     app = SimpleNamespace(bundleIdentifier=lambda: state.bundle, processIdentifier=lambda: state.pid)
     workspace = SimpleNamespace(frontmostApplication=lambda: app)
@@ -197,3 +200,43 @@ def test_default_keys_stop_on_target_change_and_cannot_copy_or_send(desktop):
     with pytest.raises(RuntimeError):
         send_input_method_key("org.example.Editor", "select_previous", 4, 789)
     assert len(state.sent) == 2
+
+
+def test_worker_refreshes_cached_foreground_before_validation(desktop, monkeypatch):
+    import proximic_ring.wechat_native_keys as keys
+    state, _ = desktop
+    state.bundle = "com.apple.Safari"  # Cached before switching to WeChat.
+    monkeypatch.setattr(keys, "_refresh_workspace", lambda: setattr(state, "bundle", "com.tencent.xinWeChat"))
+    keys._send_key_direct("select_all", 0, 456, "com.tencent.xinWeChat", expected_pid=42)
+    assert len(state.sent) == 2
+
+
+def test_refresh_cannot_bypass_pinned_process(desktop, monkeypatch):
+    import proximic_ring.wechat_native_keys as keys
+    state, _ = desktop
+    monkeypatch.setattr(keys, "_refresh_workspace", lambda: setattr(state, "pid", 99))
+    with pytest.raises(RuntimeError, match="进程已变化"):
+        keys._send_key_direct("select_all", 0, 456, state.bundle, expected_pid=42)
+    assert not state.sent
+
+
+def test_foreground_change_waiting_in_runloop_stops_remaining_chords(desktop, monkeypatch):
+    import proximic_ring.wechat_native_keys as keys
+    state, _ = desktop
+    refreshes = []
+    def refresh():
+        refreshes.append(True)
+        if len(refreshes) == 3:
+            state.bundle = "com.apple.Safari"
+    monkeypatch.setattr(keys, "_refresh_workspace", refresh)
+    with pytest.raises(RuntimeError, match="输入目标已切换"):
+        send_wechat_key("select_previous", 3, 456)
+    assert len(state.sent) == 2
+
+
+def test_keyup_allocation_failure_posts_nothing(desktop):
+    state, quartz = desktop
+    quartz.CGEventCreateKeyboardEvent = lambda source, code, pressed: {"code": code} if pressed else None
+    with pytest.raises(RuntimeError, match="无法创建"):
+        send_wechat_key("select_all", 0, 456)
+    assert not state.sent

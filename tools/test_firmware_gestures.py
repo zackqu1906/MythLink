@@ -106,7 +106,8 @@ class GestureRecorder:
         self.last_packet_host = now
         if result.protocol_version not in self.protocols:
             self.protocols.add(result.protocol_version)
-            detail = "12 类（11 个有效手势）的概率结果" if result.protocol_version == 2 else "7 类旧版分数，无概率置信度"
+            detail = ("固件确认事件，直接置信度" if result.confirmed_confidence is not None else
+                      "12 类（11 个有效手势）的概率结果") if result.protocol_version == 2 else "7 类旧版分数，无概率置信度"
             print(f"[协议] 已收到 V{result.protocol_version}：{detail}", flush=True)
         row = {
             "source": self.source,

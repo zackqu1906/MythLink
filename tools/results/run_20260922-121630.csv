@@ -1,0 +1,2 @@
+﻿id,expected,predicted,correct,p_听写,p_编辑,confidence,information_sufficient,latency_ms,utterance,note,error
+cli,,听写,,0.63,0.37,0.26,,1926,“喝牛奶”,,

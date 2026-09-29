@@ -1030,3 +1030,64 @@ def test_raw_audio_observer_sink_persists_cancelled_waveform():
 
     assert observed[0][0] == 1
     np.testing.assert_array_equal(observed[0][1], raw)
+
+
+@pytest.mark.parametrize("error", ["模型请求超时", "编辑原文读取不一致，已保留听写"])
+def test_inline_failed_edit_keeps_explicit_intent_and_failure_reason(tmp_path, error):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "test")
+    collector.record_audio(1, np.zeros(1600, dtype=np.float32))
+    collector.record_asr_update(_update(1, "删掉最后一句", final=True))
+    collector.record_inline_edit_intent(1)
+    collector.record_application(session_id=1, action="applied", mode="dictation",
+                                 method="input_method", final_text="删掉最后一句", error=error)
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text())
+    assert record["mode"]["selected"] == "edit"
+    assert record["mode"]["final_applied"] == ""
+    assert record["mode"]["training_target"] == "edit"
+    assert record["mode"]["training_target_source"] == "explicit_edit_intent"
+    assert record["outcome"]["status"] == "apply_failed"
+    assert record["outcome"]["error"] == error
+    assert record["outcome"]["accepted"] is False
+    assert record["outcome"]["final_text"] == "删掉最后一句"
+    entry = collector.load_entries()[0]
+    assert entry["modeLabel"] == "编辑指令"
+    assert entry["error"] == error
+    assert not entry["candidateAvailable"]
+
+
+@pytest.mark.parametrize("applied", [False, True])
+def test_inline_edit_cancel_and_undo_do_not_become_positive_dictation(tmp_path, applied):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "test")
+    collector.record_asr_update(_update(1, "扩写", final=True))
+    collector.record_inline_edit_intent(1)
+    if applied:
+        collector.record_application(session_id=1, action="applied", mode="edit", method="input_method", final_text="结果")
+    collector.record_application(session_id=1, action="applied", mode="dictation", method="input_method", final_text="扩写")
+    # An endpoint arriving after cancellation must not erase its terminal result.
+    collector.record_asr_update(_update(1, "扩写", final=True))
+    record = json.loads(next(collector.interactions_root.glob("*/record.json")).read_text())
+    assert record["mode"]["selected"] == "edit"
+    assert record["mode"]["training_target"] is None
+    assert record["mode"]["final_applied"] == ""
+    assert record["outcome"]["status"] == ("undone" if applied else "cancelled")
+    collector.record_asr_update(_update(2, "明天开会", final=True))
+    collector.record_application(session_id=2, action="applied", mode="dictation", method="input_method", final_text="明天开会")
+    next_record = json.loads(collector._interaction_path(collector._session_interactions[2]).read_text())
+    assert next_record["mode"]["training_target"] == "dictation"
+
+
+def test_cancelled_model_request_is_terminal_but_completed_model_remains_completed(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "test")
+    for request_id in (10, 11):
+        collector.record_text_request(TextProcessingRequest(request_id=request_id, session_id=1, mode="edit", raw_text="扩写", settings=LLMSettings()))
+    collector.record_llm_result(11, _result(11, 1, "结果", "full"))
+    collector.finish_pending_llm_request(10, reason="用户取消")
+    collector.finish_pending_llm_request(11, reason="用户取消")
+    collector.record_llm_result(10, _result(10, 1, "迟到结果", "full"))
+    record = json.loads(next(collector.interactions_root.glob("*/record.json")).read_text())
+    cancelled, completed = record["llm"]["requests"]
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["completed_at"] and cancelled["end_reason"] == "用户取消"
+    assert "candidate_text" not in cancelled
+    assert completed["status"] == "completed"

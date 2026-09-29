@@ -110,8 +110,8 @@ class KeyboardShortcutsNavigator:
 
     @staticmethod
     def _front():
-        import AppKit
-        return AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+        from .mac_workspace import frontmost_application
+        return frontmost_application()
 
     def step(self):
         app = self._foreground()

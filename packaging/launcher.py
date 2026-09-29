@@ -12,7 +12,7 @@ import tempfile
 import traceback
 
 
-_SELF_CHECK_OPTIONS = {"--self-check-opus", "--self-check-package"}
+_SELF_CHECK_OPTIONS = {"--self-check-adpcm", "--self-check-package"}
 _BUNDLED_QML_FILES = (
     "QtQml/qmldir",
     "QtQuick/qmldir",
@@ -124,17 +124,13 @@ def run() -> int:
         configure_runtime_environment()
         print("[startup] runtime environment ready")
         package_self_check = "--self-check-package" in sys.argv[1:]
-        if "--self-check-opus" in sys.argv[1:] or package_self_check:
-            from ring_python_sdk.audio.opus_codec import OpusBlockDecoder
+        if "--self-check-adpcm" in sys.argv[1:] or package_self_check:
+            from ring_python_sdk.public_protocol import decode_adpcm
             import struct
-
-            # Five valid 20 ms silent Opus packets exercise native decoding at
-            # the ring's 16 kHz mono rate, not merely the Python import.
-            packet = b"\xf8\xff\xfe"
-            block = struct.pack("<HB", 1600, 5) + (struct.pack("<H", len(packet)) + packet) * 5
-            if len(OpusBlockDecoder().decode_block(block)) != 3200:
-                raise RuntimeError("内置 Opus 解码自检失败")
-            print("[startup] bundled Opus decoder ready")
+            block = struct.pack("<hBBH", 0, 0, 0, 1600) + bytes(800)
+            if len(decode_adpcm(block) or b"") != 3200:
+                raise RuntimeError("内置 ADPCM 解码自检失败")
+            print("[startup] bundled ADPCM decoder ready")
             if not package_self_check:
                 return 0
         if package_self_check:
@@ -156,6 +152,14 @@ def run() -> int:
 
                     InputMethodInstaller().verify_payload()
                     print("[startup] bundled input method installer ready")
+                    from proximic_ring.ui.proximity_controller import helper_path
+                    import subprocess
+                    presence = helper_path()
+                    if not presence.is_file():
+                        raise RuntimeError("missing bundled proximity helper")
+                    subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(presence.parents[2])],
+                                   check=True, capture_output=True, timeout=10)
+                    print("[startup] bundled proximity helper ready (not enabled)")
 
                 print(
                     "[startup] macOS input method transport ready; "
@@ -188,6 +192,10 @@ def run() -> int:
 
 def _entrypoint() -> int:
     multiprocessing.freeze_support()
+    if len(sys.argv) == 2 and sys.argv[1] == "--native-access-worker":
+        from proximic_ring.native_access_worker import main
+
+        return main()
     if len(sys.argv) >= 2 and sys.argv[1] == "--input-method":
         from proximic_ring.input_method_install import main
 

@@ -99,10 +99,10 @@ def route(tmp_path, monkeypatch):
     sent = []
     class Backend:
         target = ShortcutTarget("com.openai.codex", 42, "codex", "window", "composer", "AXTextArea")
-        def capture(self):
-            return self.target
+        def capture(self, *, plain_enter=False):
+            return replace(self.target, plain_enter=plain_enter) if self.target else None
         def same_target(self, target, *, require_focus=False):
-            return self.target == target
+            return self.target is not None and replace(target, plain_enter=False) == self.target
         def post(self, target, shortcut, *, require_focus=False):
             if not self.same_target(target, require_focus=require_focus):
                 raise RuntimeError("目标窗口已变化")
@@ -124,8 +124,6 @@ def route(tmp_path, monkeypatch):
     ("codex", "com.openai.codex", "circle-counterclockwise", "Cmd+Shift+["),
     ("workbuddy", "vendor.WorkBuddy", "circle-clockwise", "Cmd+]"),
     ("wechat", "com.tencent.xinWeChat", "circle-counterclockwise", "Cmd+Shift+["),
-    ("codex", "com.openai.codex", "index-pinch", "Cmd+N"),
-    ("workbuddy", "vendor.WorkBuddy", "index-pinch", "Cmd+N"),
 ])
 def test_idle_actions_work_with_recognition_paused_and_other_input_method(route, app, bundle, name, shortcut):
     c, s, inline, backend, sent, _, emit = route
@@ -166,7 +164,7 @@ def test_pending_send_does_not_escape_its_sentence(route, change):
     elif change == "disconnect":
         c._disconnect_event.set()
     elif change == "settings":
-        s.setBinding("codex", "send", "swipe-up", "Cmd+Return", True)
+        s.setBinding("codex", "next", "circle-clockwise", "Cmd+Alt+]", True)
     elif change == "sentence":
         inline._utterance_id = "new"
     elif change == "timeout":
@@ -178,7 +176,7 @@ def test_pending_send_does_not_escape_its_sentence(route, change):
 
 
 @pytest.mark.parametrize("phase", ["listening", "finishing", "editing"])
-@pytest.mark.parametrize("name", ["circle-counterclockwise", "circle-clockwise", "index-pinch"])
+@pytest.mark.parametrize("name", ["circle-counterclockwise", "circle-clockwise"])
 def test_busy_navigation_is_not_replayed_when_work_finishes(route, phase, name):
     _, s, inline, _, sent, _, emit = route
     inline._view.update(phase=phase)
@@ -192,7 +190,7 @@ def test_busy_navigation_is_not_replayed_when_work_finishes(route, phase, name):
 def test_recognition_time_stage_cannot_be_reinterpreted_after_queue_delay(route):
     c, s, inline, _, sent, _, _ = route
     inline._view.update(phase="editing")
-    event = s.envelope(BoundGestureEvent(SimpleNamespace(name="index-pinch"), c._gesture_bindings))
+    event = s.envelope(BoundGestureEvent(SimpleNamespace(name="circle-clockwise"), c._gesture_bindings))
     inline._view.update(phase="edited")
     c._apply_gesture(event, c._disconnect_event)
     assert not sent
@@ -200,10 +198,11 @@ def test_recognition_time_stage_cannot_be_reinterpreted_after_queue_delay(route)
 
 def test_shortcut_to_new_chat_is_not_queued_behind_pending_send(route):
     _, s, inline, _, sent, _, emit = route
+    assert s.setBinding("codex", "new", "snap", "Cmd+N", True)
     inline._view.update(phase="finishing")
     emit("swipe-up")
     inline._view.update(phase="dictated")
-    emit("index-pinch")
+    emit("snap")
     assert not sent and s._pending
 
 
@@ -259,7 +258,7 @@ def test_pending_send_focus_read_failure_does_not_escape_gui_callback(route, mon
 
 def test_capture_failure_is_reported_not_mislabeled_as_unmapped(route, monkeypatch):
     c, s, _, backend, sent, _, emit = route
-    def fail():
+    def fail(**kwargs):
         raise AttributeError("missing native bridge function")
     monkeypatch.setattr(backend, "capture", fail)
     emit("swipe-up")
@@ -297,9 +296,9 @@ def test_wechat_navigation_still_waits_for_text_operation_to_finish(route, phase
 
 def test_current_shortcut_settings_survive_restart(route, tmp_path, monkeypatch):
     c, s, *_ = route
-    assert s.setBinding("workbuddy", "send", "snap", "Cmd+Return", False)
+    assert s.setBinding("workbuddy", "new", "snap", "Cmd+Return", False)
     loaded = profiles_from_json(c._settings.value("gestures/appProfiles"))
-    assert loaded["workbuddy"]["send"] == AppBinding("snap", "Cmd+Return", False)
+    assert loaded["workbuddy"]["new"] == AppBinding("snap", "Cmd+Return", False)
 
 
 def test_detecting_changed_wechat_language_updates_guidance_without_disabling_gestures(route):
@@ -321,7 +320,7 @@ def test_stale_old_connection_settings_and_events_are_inert(route):
     event = s.envelope(BoundGestureEvent(SimpleNamespace(name="swipe-up"), c._gesture_bindings))
     c._apply_gesture(event, threading.Event())
     c._apply_gesture(replace(event, created=0), c._disconnect_event)
-    s.setBinding("codex", "send", "swipe-up", "Cmd+Return", True)
+    s.setBinding("codex", "next", "circle-clockwise", "Cmd+Alt+]", True)
     c._apply_gesture(event, c._disconnect_event)
     assert not sent
 
@@ -341,3 +340,41 @@ def test_unsupported_apps_cannot_use_profiles():
     assert profile_for_application("com.openai.codex") == "codex"
     assert profile_for_application("vendor.WorkBuddy", "WorkBuddy") == "workbuddy"
     assert profile_for_application("com.apple.Terminal", "Terminal") == ""
+
+
+@pytest.mark.parametrize("bundle,role", [
+    ("com.apple.Safari", "AXTextField"),
+    ("com.google.Chrome", "AXComboBox"),
+    ("org.mozilla.firefox", "AXSearchField"),
+    ("other.app", "AXWebArea"),
+    ("other.custom.editor", ""),
+    ("com.tencent.xinWeChat", "AXTextArea"),
+])
+def test_input_swipe_up_is_plain_enter_without_app_or_role_whitelist(route, bundle, role):
+    _, s, inline, backend, sent, _, emit = route
+    inline._view = {"ready": False, "phase": "idle"}
+    backend.target = replace(backend.target, bundle=bundle, profile="", role=role)
+    # Old disabled/customized profiles must not influence the global action.
+    for actions in s._profiles.values():
+        actions["send"] = AppBinding("swipe-up", "Cmd+Return", False)
+    emit("swipe-up")
+    assert sent == [("", "Return")]
+
+
+def test_swipe_up_settings_migrate_to_fixed_global_enter(route):
+    from proximic_ring.ui.app_gesture_controller import AppGestureController
+    from proximic_ring.gesture_settings import reserve_ring_gestures
+    c, s, *_ = route
+    profiles = default_profiles()
+    profiles["codex"]["send"] = AppBinding("snap", "Cmd+Return", False)
+    profiles["workbuddy"]["next"] = AppBinding("swipe-up", "Cmd+]")
+    c._settings.setValue("gestures/appProfiles", profiles_to_json(profiles))
+    restored = AppGestureController(c)
+    try:
+        assert all(actions["send"] == AppBinding("swipe-up", "Return")
+                   for actions in restored._profiles.values())
+        assert not restored._profiles["workbuddy"]["next"].enabled
+        assert not s.setBinding("codex", "send", "swipe-up", "Cmd+Return", True)
+        assert reserve_ring_gestures(GestureBindings(confirm=("swipe-up", ""))) == GestureBindings()
+    finally:
+        restored.close()

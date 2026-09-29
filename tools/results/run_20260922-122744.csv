@@ -1,0 +1,2 @@
+﻿id,expected,predicted,correct,p_听写,p_编辑,confidence,information_sufficient,latency_ms,utterance,note,error
+cli,,编辑,,0.29,0.71,0.42,,1242,“实际的实则是的则，春秋产是蝉鸣的蝉”,,
