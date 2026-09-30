@@ -29,9 +29,9 @@ ColumnLayout {
             text: "微信聊天切换：首次使用需添加两项系统快捷键"
             color: "#171C28"; font.bold: true
         }
-        Button {
+        UiAction {
             objectName: "openAppShortcutsButton"
-            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft
             text: "打开 App 快捷键设置"
             onClicked: settings.service.openSystemShortcuts()
         }

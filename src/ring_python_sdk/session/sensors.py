@@ -156,8 +156,8 @@ class SensorsMixin:
         command = quaternion_start_command(sample_rate_hz, frames_per_packet)
         if not callable(on_frame):
             raise TypeError("on_frame must be callable")
-        if self.imu_active or self.quaternion_active:
-            raise RuntimeError("Stop the current IMU/quaternion stream first")
+        if self.imu_active or self._imu_starting or self._imu_stopping or self.quaternion_active or self.touchpad_active:
+            raise RuntimeError("Stop the current IMU/quaternion/touchpad stream first")
         if self.client is None or not self.client.is_connected:
             raise RuntimeError("Ring is not connected")
         self.quaternion_rate_hz = sample_rate_hz
@@ -178,9 +178,13 @@ class SensorsMixin:
             return
         self.quaternion_active = False
         self.quaternion_callback = None
-        if self.client is not None and self.client.is_connected:
-            await self.client.write_gatt_char(self.rx_uuid, b"\x21\x01", response=False)
-            await asyncio.sleep(.05)
+        self._imu_stopping = True
+        try:
+            if self.client is not None and self.client.is_connected:
+                await self.client.write_gatt_char(self.rx_uuid, b"\x21\x01", response=False)
+                await asyncio.sleep(.05)
+        finally:
+            self._imu_stopping = False
 
     async def mic_recording_status_get(self):
         assert self.client is not None
@@ -293,11 +297,13 @@ class SensorsMixin:
         on_sample: Callable[[ImuSample], None] | None = None,
     ) -> None:
         assert self.client is not None
+        if self._imu_starting or self._imu_stopping:
+            raise RuntimeError("IMU mode is starting/stopping; wait before switching")
         if self.imu_active:
             print("imu already on")
             return
-        if self.quaternion_active:
-            raise RuntimeError("Stop quaternion capture before starting raw IMU")
+        if self.quaternion_active or self.touchpad_active:
+            raise RuntimeError("Stop quaternion/touchpad capture before starting raw IMU")
         if lp and encode_mode != IMU_ENCODE_RAW:
             raise ValueError("IMU LP mode only supports encode_mode=raw")
         path = self._seg_path("imu", DEFAULT_IMU_OUTPUT)
@@ -325,18 +331,22 @@ class SensorsMixin:
             lp=lp,
             on_sample=on_sample,
         )
-        await send_imu_start(
-            self.client,
-            self.rx_uuid,
-            gyro_hz,
-            accel_hz,
-            gyro_fs,
-            accel_fs,
-            frames_per_packet,
-            encode_mode,
-            lp=lp,
-        )
-        self.imu_active = True
+        self._imu_starting = True
+        try:
+            await send_imu_start(
+                self.client,
+                self.rx_uuid,
+                gyro_hz,
+                accel_hz,
+                gyro_fs,
+                accel_fs,
+                frames_per_packet,
+                encode_mode,
+                lp=lp,
+            )
+            self.imu_active = True
+        finally:
+            self._imu_starting = False
         mode_tag = f"{encode_name}+lp" if lp else encode_name
         print(f"imu capturing ({mode_tag}) -> {path}")
 

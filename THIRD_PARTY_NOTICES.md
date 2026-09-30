@@ -1,6 +1,6 @@
 # Third-party notices
 
-Proximic Voice connects to third-party projects without committing their downloaded model weights.
+Proximic Voice integrates the following third-party components. Most downloaded ASR/LLM weights remain outside Git; the provider-supplied touchpad asset below is bundled for offline SDK use.
 
 ## llama.cpp
 
@@ -43,3 +43,14 @@ Proximic Voice connects to third-party projects without committing their downloa
   must be confirmed with the SDK/device provider before this repository is made public.
 
 Third-party names and trademarks belong to their respective owners.
+
+## Ringo touchpad model and MNN
+
+- SDK location: `src/ring_python_sdk/touchpad`; model: `assets/touchpad_model.mnn`.
+- Original model from the supplied Android SDK 1.4.0 public AAR, unmodified. This
+  host touchpad model predicts cursor motion; it is separate from firmware gesture recognition.
+- Asset SHA-256 and provenance: `touchpad/assets/provenance.json`.
+- MNN runtime: 3.6.1 (Apache-2.0); original bundled notice in `assets/LICENSE-MNN.txt`.
+- The MNN license does not grant a license to the ring provider's model. No separate
+  model redistribution license was found in the supplied SDK; the existing provider
+  permission requirement above also applies to this asset.

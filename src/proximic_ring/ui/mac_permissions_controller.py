@@ -2,18 +2,20 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 import platform
 import sys
 import threading
 
-from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot, Qt
+from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot, Qt, QBluetoothPermission, QMicrophonePermission
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from ..mac_permissions import (MacPermissionError, PermissionState,
                                request_post_event_access, running_identity,
-                               read_screen_capture_access, request_screen_capture_access)
+                               read_screen_capture_access, request_screen_capture_access,
+                               request_accessibility_access)
 from ..native_access import read_control_permission_state
 
 
@@ -26,6 +28,8 @@ class MacPermissionsController(QObject):
     _result = Signal(int, object)
     _screenRequestFinished = Signal()
     _screenPreviewFinished = Signal(object, str)
+    systemPermissionRequestFinished = Signal(str, bool)
+    _systemRequestFinished = Signal(str, bool)
 
     def __init__(self, parent=None, *, enabled=True, reader=None):
         super().__init__(parent)
@@ -38,9 +42,11 @@ class MacPermissionsController(QObject):
         self._generation = 0
         self._identity = running_identity()
         self._action_message = ""
+        self._device_access = {"bluetooth": None, "microphone": None}
         self._screen_access = None
         self._screen_checked = False
         self._screen_requesting = False
+        self._system_request_kind = ""
         self._screen_message = ""
         self._screen_setup_pending = False
         self._screen_preview_cancel = None
@@ -49,6 +55,7 @@ class MacPermissionsController(QObject):
         self._result.connect(self._apply)
         self._screenRequestFinished.connect(self._finish_screen_request, Qt.QueuedConnection)
         self._screenPreviewFinished.connect(self._finish_screen_preview, Qt.QueuedConnection)
+        self._systemRequestFinished.connect(self._finish_system_request, Qt.QueuedConnection)
         self._timer = QTimer(self)
         self._timer.setInterval(self.WAITING_INTERVAL_MS)
         self._timer.timeout.connect(self.refresh)
@@ -65,6 +72,90 @@ class MacPermissionsController(QObject):
     @Property(bool, notify=changed)
     def warning(self):
         return self._enabled and self._checked and not self._state.ready
+
+    @Property(str, notify=changed)
+    def accessibilityWarningText(self):
+        if not self._enabled or not self._checked:
+            return ""
+        if self._state.accessibility is False:
+            return "未开启辅助功能权限，语音编辑与手势控制可能无法使用。"
+        if self._state.post_events is False:
+            return "按键控制权限尚未生效，发送与应用快捷键可能无法使用。"
+        return ""
+
+    @Property(bool, notify=changed)
+    def accessibilityGranted(self):
+        return self._enabled and self._checked and self._state.ready
+
+    @Property(str, constant=True)
+    def contactEmail(self):
+        return "zackqu1906@gmail.com"
+
+    @Slot(result=bool)
+    def copyContactEmail(self):
+        app = QGuiApplication.instance()
+        if not isinstance(app, QGuiApplication):
+            return False
+        app.clipboard().setText(self.contactEmail)
+        return True
+
+    @Property("QVariantList", notify=changed)
+    def essentialWarnings(self):
+        notices = []
+        if self.accessibilityWarningText:
+            notices.append(dict(kind="accessibility", text=self.accessibilityWarningText))
+        if self._enabled and self._device_access["bluetooth"] is False:
+            notices.append(dict(kind="bluetooth", text="未开启蓝牙权限，无法连接 Ring。"))
+        if self._enabled and self._device_access["microphone"] is False:
+            notices.append(dict(kind="microphone", text="未开启麦克风权限，无法使用电脑音频。"))
+        return notices
+
+    def _refresh_device_permissions(self):
+        # Passive checks only: never instantiate a Bluetooth manager or request
+        # microphone capture just to render a notice. Unknown is not denied.
+        app = QGuiApplication.instance()
+        if not self._enabled or app is None:
+            return
+        for kind, permission in (("bluetooth", QBluetoothPermission), ("microphone", QMicrophonePermission)):
+            try:
+                status = app.checkPermission(permission())
+                self._device_access[kind] = ({Qt.PermissionStatus.Granted: True,
+                                             Qt.PermissionStatus.Denied: False}).get(status)
+            except (RuntimeError, TypeError):
+                self._device_access[kind] = None
+
+    def permissionGranted(self, kind):
+        if kind == "accessibility":
+            return self.accessibilityGranted
+        if kind == "screen":
+            return self.screenRecordingGranted
+        return self._device_access.get(kind) is True
+
+    def refreshDevicePermissions(self):
+        self._refresh_device_permissions()
+        self.changed.emit()
+
+    @Slot(str)
+    def openPermissionSettings(self, kind):
+        if kind == "accessibility":
+            self.openSettings()
+            return
+        pane = {"bluetooth": "Privacy_Bluetooth", "microphone": "Privacy_Microphone"}.get(kind)
+        if pane and self._enabled and not self._closed:
+            QDesktopServices.openUrl(QUrl("x-apple.systempreferences:com.apple.preference.security?" + pane))
+
+    @Slot(result=bool)
+    def copyAppInfo(self):
+        app = QGuiApplication.instance()
+        if not isinstance(app, QGuiApplication):
+            return False
+        try:
+            app_version = version("proximic-ring")
+        except PackageNotFoundError:
+            app_version = "开发版"
+        app.clipboard().setText("MythLink\n版本：" + app_version + "\n系统：" + platform.system() + " "
+                               + (platform.mac_ver()[0] if sys.platform == "darwin" else platform.release()))
+        return True
 
     @Property(bool, notify=changed)
     def checking(self):
@@ -112,8 +203,47 @@ class MacPermissionsController(QObject):
         return self._screen_access is True
 
     @Property(bool, notify=changed)
+    def screenRecordingWarning(self):
+        return self._enabled and self._screen_checked and self._screen_access is False
+
+    @Property(bool, notify=changed)
     def screenRecordingRequesting(self):
         return self._screen_requesting
+
+    @Property(bool, notify=changed)
+    def systemPermissionRequesting(self):
+        return bool(self._system_request_kind) or self._screen_requesting or self.screenPreviewBusy
+
+    def requestSystemPermission(self, kind):
+        if (not self._enabled or self._closed or self.systemPermissionRequesting
+                or kind not in {"accessibility", "screen"}):
+            return False
+        self._system_request_kind = kind
+        self.changed.emit()
+
+        def request():
+            success = True
+            try:
+                (request_accessibility_access if kind == "accessibility" else request_screen_capture_access)()
+            except Exception:
+                success = False
+            try:
+                self._systemRequestFinished.emit(kind, success)
+            except RuntimeError:
+                pass
+        threading.Thread(target=request, name="ProxiMicNativePermission", daemon=True).start()
+        return True
+
+    @Slot(str, bool)
+    def _finish_system_request(self, kind, success):
+        if self._closed or self._system_request_kind != kind:
+            return
+        self._system_request_kind = ""
+        self.refresh()
+        if kind == "screen":
+            self.refreshScreenRecording()
+        self.changed.emit()
+        self.systemPermissionRequestFinished.emit(kind, success)
 
     @Property(str, constant=True)
     def screenRecordingInstructions(self):
@@ -139,8 +269,6 @@ class MacPermissionsController(QObject):
         if state == Qt.ApplicationActive:
             self.refresh()
             self.refreshScreenRecording()
-            if self._screen_setup_pending and self._screen_access and not self._screen_requesting:
-                self.verifyScreenPreview()
 
     @Slot()
     def refreshScreenRecording(self):
@@ -152,8 +280,7 @@ class MacPermissionsController(QObject):
             self._screen_access = None
         self._screen_checked = True
         if self._screen_access:
-            self._screen_message = ("本次预览验证已通过。" if self._screen_preview_verified else
-                                    "屏幕录制权限已生效，请继续完成下方的实时预览验证。")
+            self._screen_message = "屏幕录制权限已生效，可以返回窗口总览查看预览。"
         elif self._screen_message:
             self._screen_message = "权限尚未生效。请确认已开启正确的程序；如系统提示，请重新启动该程序。"
         if self._screen_access is not True:
@@ -162,7 +289,7 @@ class MacPermissionsController(QObject):
 
     @Slot()
     def openScreenRecordingSettings(self):
-        if not self._enabled or self._closed or self._screen_requesting or self.screenPreviewBusy:
+        if not self._enabled or self._closed or self.systemPermissionRequesting:
             return
         self._screen_setup_pending = True
         self._screen_requesting = True
@@ -182,7 +309,7 @@ class MacPermissionsController(QObject):
 
     @Slot()
     def verifyScreenPreview(self):
-        if not self._enabled or self._closed or self.screenPreviewBusy or self._screen_requesting:
+        if not self._enabled or self._closed or self.systemPermissionRequesting:
             return
         self._screen_setup_pending = False
         self.refreshScreenRecording()
@@ -246,6 +373,7 @@ class MacPermissionsController(QObject):
         if not self._enabled or self._closed or self._checking:
             return
         self._checking = True
+        self._refresh_device_permissions()
         self._generation += 1
         generation = self._generation
         self.changed.emit()
@@ -293,7 +421,7 @@ class MacPermissionsController(QObject):
 
     @Slot()
     def openSettings(self):
-        if not self._enabled or self._closed:
+        if not self._enabled or self._closed or self.systemPermissionRequesting:
             return
         try:
             request_post_event_access()

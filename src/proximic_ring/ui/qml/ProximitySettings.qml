@@ -78,7 +78,7 @@ ColumnLayout {
                 + (pane.hasCalibration ? "\n已保存校准，重连和重启后仍可使用。" : "\n当前戒指尚未校准。")
             UiAction {
                 objectName: "proximityCalibrate"
-                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignRight
                 text: pane.controller.calibrating ? "正在校准…" : pane.hasCalibration ? "重新校准（10 秒）" : "开始 10 秒校准"
                 primary: !pane.hasCalibration
                 enabled: !pane.controller.busy
@@ -120,14 +120,14 @@ ColumnLayout {
                 : "密码与访问授权已就绪；更改 Mac 登录密码后，请在这里更新。"
             UiAction {
                 objectName: "proximityConfigurePassword"
-                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignRight
                 text: pane.controller.passwordConfigured ? "更新解锁密码" : "设置解锁密码"
                 enabled: !pane.controller.busy
                 onClicked: pane.controller.configurePassword()
             }
             UiAction {
                 objectName: "proximityAuthorizePassword"
-                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignRight
                 text: "允许访问已存密码"
                 visible: pane.controller.passwordConfigured && !pane.controller.passwordAccessReady
                 enabled: !pane.controller.busy
@@ -147,19 +147,13 @@ ColumnLayout {
             descriptionObjectName: "proximityPermissionStatus"
             description: (pane.controller.permissionReady ? "辅助功能权限已就绪。" : "请允许距离锁屏组件使用辅助功能。")
                 + "开启功能时还需允许蓝牙权限。"
+            descriptionColor: pane.controller.passwordStatusChecked && !pane.controller.permissionReady ? "#9A6817" : theme.muted
             UiAction {
                 objectName: "proximityRequestPermissions"
-                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignRight
                 text: "打开权限设置"
                 enabled: !pane.controller.busy
                 onClicked: pane.controller.requestPermissions()
-            }
-            UiAction {
-                objectName: "proximityRefreshStatus"
-                Layout.alignment: Qt.AlignRight
-                text: "检查状态"; quiet: true
-                enabled: !pane.controller.busy
-                onClicked: pane.controller.refresh()
             }
         }
         Label {
@@ -178,13 +172,13 @@ ColumnLayout {
             description: pane.controller.lockScreenMessage
             UiAction {
                 objectName: "proximityCopyLockMessage"
-                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignRight
                 text: "复制提示文字"
                 onClicked: pane.controller.copyLockScreenMessage()
             }
             UiAction {
                 objectName: "proximityOpenLockSettings"
-                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignRight
                 text: "打开系统锁屏设置"
                 onClicked: pane.controller.openLockScreenSettings()
             }
@@ -205,9 +199,8 @@ ColumnLayout {
 
     UiAction {
         objectName: "proximityAdvancedButton"
-        Layout.fillWidth: true
+        Layout.alignment: Qt.AlignRight
         text: pane.showAdvanced ? "收起高级选项  ⌃" : "高级选项  ⌄"
-        quiet: true
         onClicked: pane.showAdvanced = !pane.showAdvanced
     }
     SettingsFormGroup {

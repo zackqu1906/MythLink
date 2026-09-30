@@ -1,0 +1,8 @@
+{
+  "source": "ringo-sdk-1.4.0-public-20260924 / aar/ring-sdk-release.aar / assets/touchpad_model.mnn",
+  "model_sha256": "b7595998f7aa6088181c9c856efd96255aa093e36666a1bc67dc12eae7c58ff8",
+  "aar_sha256": "2722c38b7786c6078e64632ce2a9d80231639846ca54c711275da835a7f1e480",
+  "runtime": "MNN 3.6.1",
+  "modified": false,
+  "model_license": "No separate model license supplied; provider redistribution permission required"
+}

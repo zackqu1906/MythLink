@@ -105,24 +105,8 @@ ColumnLayout {
 
     SettingsFormGroup {
         objectName: "asrAdvancedGroup"
-        title: "音量与性能"
-        SettingsFormRow {
-            title: "识别音量增强"
-            description: "声音较小时再调整。只增强送入识别和语音记录的音频，不影响靠近检测；连接期间也可修改。"
-            Slider {
-                objectName: "asrGainSlider"
-                Layout.fillWidth: true
-                Accessible.name: "识别音量增强"
-                from: 0; to: 12; stepSize: 1
-                value: pane.controller.asrGainDb
-                onMoved: pane.controller.asrGainDb = value
-            }
-            Label {
-                Layout.alignment: Qt.AlignRight
-                text: "+" + pane.controller.asrGainDb.toFixed(0) + " dB"
-                color: theme.muted; font.pixelSize: 12
-            }
-        }
+        title: "本地识别性能"
+        visible: pane.local
         SettingsFormRow {
             objectName: "asrPerformanceRow"
             visible: pane.local

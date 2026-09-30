@@ -164,7 +164,7 @@ def test_scene_editor_selection_does_not_change_routing_or_regular_settings(pres
     assert catalog.regularBindings[POWERPOINT] == {}
     assert not catalog.uses("tap") and catalog.for_target(POWERPOINT) == {}
     catalog.selectScene("regular")
-    assert s._generation == generation and not catalog.canBind("tap")
+    assert s._generation == generation and catalog.canBind("tap")
     assert not request(c, "swipe-right")
     assert sent == [(POWERPOINT, "Right")] and c.gestureBindings == before
     catalog.selectScene(PRESENTATION)
@@ -181,7 +181,7 @@ def test_scene_editor_selection_does_not_change_routing_or_regular_settings(pres
 
 @pytest.mark.parametrize("mode", ["input", "operation"])
 @pytest.mark.parametrize("gesture,shortcut", [("tap", "Escape"), ("swipe-left", "Left"), ("swipe-right", "Right"),
-                                             ("swipe-up", "Right"), ("swipe-down", "Right"), ("clench", "Right")])
+                                             ("swipe-up", "Right"), ("swipe-down", "Right")])
 def test_reserved_overrides_are_consumed_before_audio_focus_and_system_actions(presentation, mode, gesture, shortcut):
     c, s, inline, _, catalog, sent, messages = presentation
     if gesture in {"swipe-up", "swipe-down", "clench"}:
@@ -222,7 +222,7 @@ def test_queued_scene_gesture_is_dropped_without_replay_or_voice_fallback(presen
     assert sent == [] and messages == []
 
 
-@pytest.mark.parametrize("context", ["exit", "text", "unknown", "voice", "audio"])
+@pytest.mark.parametrize("context", ["exit", "text", "unknown"])
 def test_tap_retains_original_voice_endpoint_outside_eligible_scene(presentation, context):
     c, _, inline, backend, _, sent, _ = presentation
     if context == "exit": backend.target = replace(backend.target, scene="")
@@ -237,7 +237,8 @@ def test_clear_and_remove_cover_every_scene_and_never_restore_legacy(presentatio
     assert catalog.bindingCount(POWERPOINT) == 3
     catalog.selectScene("regular")
     assert catalog.clearApplicationBindings(POWERPOINT)
-    assert catalog.for_scene(POWERPOINT, PRESENTATION) == {} and not catalog.scene_bundles()
+    assert catalog.for_scene(POWERPOINT, PRESENTATION) == {} and catalog.scene_bundles() == [POWERPOINT]
+    assert not request(c, "tap")  # Active scenes suppress voice even without assigned actions.
     catalog.selectScene(PRESENTATION)
     assert catalog.setBinding(POWERPOINT, "tap", "powerpoint:end")
     assert catalog.removeApplication(POWERPOINT)
@@ -263,11 +264,12 @@ def test_scene_survives_menu_read_failure_and_can_inherit_without_menu(presentat
     ("org.openoffice.script", "openoffice", None),
     ("asc.onlyoffice.ONLYOFFICE", "onlyoffice", "Cmd+Shift+Return"),
 ])
-def test_all_known_presenters_get_scene_on_add_without_installing_defaults(route, monkeypatch, bundle, profile, start):
+def test_all_known_presenters_get_scene_and_only_wps_installs_defaults(route, monkeypatch, bundle, profile, start):
     c, s, _, _, _, _, _ = route
     catalog = configure(s, monkeypatch, bundle)
     assert catalog.supportsPresentation and catalog.selectedScene == "regular"
-    assert catalog.bindingCount(bundle) == 0 and not catalog.scene_bundles()
+    assert catalog.bindingCount(bundle) == (3 if profile == "wps" else 0)
+    assert catalog.scene_bundles() == [bundle]
     presets = [a for a in catalog.actions if a.get("preset")]
     assert all(a["id"].startswith(profile + ":") for a in presets)
     assert [a["shortcut"] for a in presets][0:1] == ([start] if start else [])
@@ -334,7 +336,7 @@ def test_wps_and_powerpoint_bindings_never_cross_app_boundaries(presentation, mo
     assert catalog.setBinding(wps, "swipe-left", "wps:previous")
     backend.target = replace(backend.target, bundle=wps)
     assert not request(c, "swipe-left") and sent == [(wps, "Backspace")]
-    assert request(c, "tap")  # Only PowerPoint has a Tap scene mapping.
+    assert not request(c, "tap")  # Unassigned Tap is silent in every active scene.
     assert not request(c, "swipe-left", deliver=False)
     backend.target = replace(backend.target, bundle=POWERPOINT)
     QCoreApplication.processEvents()
@@ -408,7 +410,8 @@ def test_native_capture_verifies_generic_installed_editor_and_fresh_focus(monkey
     focus["AXRole"] = "AXTextArea"
     assert not backend.same_target(captured)
     front.bundleIdentifier = lambda: "test.different.app"
-    assert backend.capture(menu_action=True, scene=True) is None
+    target = backend.capture(menu_action=True, scene=True)
+    assert target.bundle == "test.different.app" and not target.scene
 
 
 def test_native_wps_dialog_exception_is_scene_only_and_rechecks_focus_and_foreground(monkeypatch):
@@ -479,7 +482,9 @@ def test_scene_hud_reports_effective_bindings_and_respects_busy_state(presentati
     ring.sceneHudRequested.connect(lambda mode, items: scenes.append(items))
     ring.showRequested.connect(lambda mode, text: defaults.append((mode, text)))
     ring._show_scene_hud(ring._generation, time.monotonic(), c._disconnect_event, backend.target)
-    assert {item["action"] for item in scenes[0]} == {"上一个动画 / 上一页", "下一个动画 / 下一页", "结束放映"}
+    assert {item["action"] for item in scenes[0]} == {"上一个动画 / 上一页", "下一个动画 / 下一页", "结束放映",
+                                                    "未绑定", "手势提示", "切换交互模式", "窗口选择"}
+    assert all(item["voiceDisabled"] for item in scenes[0])
     inline._view["phase"] = "listening"
     ring._show_scene_hud(ring._generation, time.monotonic(), c._disconnect_event, backend.target)
     assert defaults == [("input", "")] and not sent and not messages

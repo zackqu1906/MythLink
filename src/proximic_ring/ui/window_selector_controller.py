@@ -10,6 +10,7 @@ from ..mac_permissions import MacPermissionError
 from ..native_access import NativeAccessChannel
 from ..text_focus import foreground_stamp
 from ..window_selector import MESSAGES, grid_move
+from ..gesture_settings import GESTURE_LABELS
 
 
 class WindowSelectorController(QObject):
@@ -26,6 +27,7 @@ class WindowSelectorController(QObject):
     def __init__(self, ring, *, enabled=None, channel=None, clock=time.monotonic, stamp_reader=None):
         super().__init__(ring)
         self.ring = ring
+        ring.changed.connect(self.changed)
         self._enabled = (sys.platform == "darwin" and os.environ.get("PROXIMIC_STARTUP_PROBE") != "1"
                          if enabled is None else enabled)
         self._channel = channel or NativeAccessChannel()
@@ -63,6 +65,9 @@ class WindowSelectorController(QObject):
     @Property(str, notify=cardsChanged)
     def heading(self):
         return "选择应用" if self.atApps else self._groups[self._app_index]["card"]["app"]
+    @Property("QVariantMap", notify=changed)
+    def globalLabels(self):
+        return {key: GESTURE_LABELS[value].split("（")[0] for key, value in self.ring.globalBindings.items()}
     @Property(int, notify=selectionChanged)
     def selected(self): return self._selected
     @Property(int, notify=changed)

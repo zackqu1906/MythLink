@@ -17,7 +17,8 @@ BROWSER_BUNDLES = {"com.apple.Safari", "com.apple.SafariTechnologyPreview", "com
                    "company.thebrowser.Browser", "com.brave.Browser", "org.mozilla.firefox",
                    "org.mozilla.firefoxdeveloperedition", "com.operasoftware.Opera", "com.kagi.kagimacOS"}
 MESSAGES = {
-    "presentation": "放映中，暂停自动选择输入框",
+    "presentation": "场景模式中，暂停自动选择输入框",
+    "voice_overridden": "此应用已覆盖语音手势，暂停选择输入框",
     "checking": "正在查找输入框",
     "no_fields": "当前窗口未提供文本框",
     "permission": "需要辅助功能权限",

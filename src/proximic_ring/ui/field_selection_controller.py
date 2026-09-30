@@ -110,7 +110,14 @@ class FieldSelectionController(QObject):
                         or not self.fields._eligible() or self.fields.ring.speech_busy())):
                     result = {"status": "cancelled", "count": 0, "index": 0}
                 else:
-                    result = self.fields._channel.call(operation, ignored_pid=os.getpid(), **params)
+                    catalog = self.fields.ring.owner._app_gestures.catalog
+                    options = {}
+                    if catalog.configured_scenes():
+                        options["scene_apps"] = catalog.configured_scenes()
+                    if catalog.voice_disabled_bundles():
+                        options["voice_disabled_apps"] = catalog.voice_disabled_bundles()
+                    result = self.fields._channel.call(operation, ignored_pid=os.getpid(),
+                                                       **options, **params)
             except MacPermissionError:
                 result = {"status": "permission", "count": 0, "index": 0}
             except Exception:

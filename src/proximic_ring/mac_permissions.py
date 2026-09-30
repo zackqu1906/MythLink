@@ -73,6 +73,15 @@ def request_post_event_access() -> None:
     Quartz.CGRequestPostEventAccess()
 
 
+def request_accessibility_access() -> bool:
+    """Ask macOS to present its own alert; never open Settings over that alert."""
+    import ApplicationServices as AX
+    if not AX.AXIsProcessTrusted():
+        return bool(AX.AXIsProcessTrustedWithOptions({AX.kAXTrustedCheckOptionPrompt: True}))
+    import Quartz
+    return bool(Quartz.CGPreflightPostEventAccess() or Quartz.CGRequestPostEventAccess())
+
+
 def read_screen_capture_access() -> bool:
     """Check the GUI process that actually owns the preview streams."""
     import Quartz
@@ -80,7 +89,7 @@ def read_screen_capture_access() -> bool:
 
 
 def request_screen_capture_access() -> bool:
-    """Called only from an explicit permission button, never a passive check."""
+    """Called by onboarding or a permission button, never a passive check."""
     import Quartz
     return read_screen_capture_access() or bool(Quartz.CGRequestScreenCaptureAccess())
 

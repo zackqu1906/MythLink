@@ -21,3 +21,6 @@ asr-decoder==0.1.2
 online-fbank==0.0.4
 kaldi-native-fbank==1.22.3
 websocket-client==1.9.0
+
+# Optional original-AAR touchpad inference.
+MNN==3.6.1

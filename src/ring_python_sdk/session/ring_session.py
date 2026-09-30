@@ -49,11 +49,12 @@ from ring_python_sdk.session.identity import IdentityMixin
 from ring_python_sdk.session.sensors import SensorsMixin
 from ring_python_sdk.session.status import StatusMixin
 from ring_python_sdk.session.types import PrintFlags
+from ring_python_sdk.session.touchpad import TouchpadMixin
 from ring_python_sdk.swipe.processor import SwipeProcessor
 
 
 @dataclass
-class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, StatusMixin):
+class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, StatusMixin, TouchpadMixin):
     name_keyword: str
     timeout_s: float
     imu_chip: str = DEFAULT_IMU_CHIP
@@ -94,6 +95,14 @@ class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, Stat
         default_factory=asyncio.Event, repr=False
     )
     imu_active: bool = False
+    _imu_starting: bool = False
+    _imu_stopping: bool = False
+    touchpad_active: bool = False
+    touchpad: Any = field(default=None, repr=False)
+    touchpad_error: Exception | None = None
+    _touchpad_stopped_cb: Any = field(default=None, repr=False)
+    _touchpad_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _touchpad_cleanup_tasks: set = field(default_factory=set, repr=False)
     quaternion_active: bool = False
     quaternion_rate_hz: int = 200
     quaternion_callback: Any = field(default=None, repr=False)

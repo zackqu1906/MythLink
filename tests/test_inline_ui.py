@@ -678,14 +678,14 @@ def test_permission_warning_updates_and_settings_remain_usable(inline_ui, monkey
     QTest.qWait(80)
     banner = root.findChild(QQuickItem, 'accessibilityPermissionWarning')
     card = root.findChild(QQuickItem, 'voiceInputCard')
-    assert banner.isVisible() and banner.height() >= 60
+    assert banner.isVisible() and banner.height() >= 36
     assert banner.mapToItem(card, QPointF()).y() + banner.height() < card.height()
     assert root.grabWindow().save('/private/tmp/proximic-permission-warning.png')
-    QMetaObject.invokeMethod(root.findChild(QObject, 'permissionWarningSettingsButton'), 'click')
+    QMetaObject.invokeMethod(root.findChild(QObject, 'inputMethodSetupButton'), 'click')
     QTest.qWait(80)
     dialog = root.findChild(QObject, 'inputMethodSetupDialog')
     assert dialog.property('visible')
-    assert '按键控制' in root.findChild(QObject, 'accessibilityPermissionStatus').property('text')
+    assert '按键控制' in root.findChild(QObject, 'inputMethodPermissionNotice').property('message')
     scroll = root.findChild(QQuickItem, 'inputMethodSetupScroll')
     assert scroll.height() <= root.height() - 200
     pos = scroll.mapToScene(QPointF())
@@ -694,7 +694,7 @@ def test_permission_warning_updates_and_settings_remain_usable(inline_ui, monkey
     monkeypatch.setattr(permission_module, 'request_post_event_access', lambda: calls.append('request'))
     monkeypatch.setattr(permission_module.QDesktopServices, 'openUrl', lambda url: calls.append(url.toString()) or True)
     assert not calls
-    QMetaObject.invokeMethod(root.findChild(QObject, 'openAccessibilityPermissionsButton'), 'click')
+    QMetaObject.invokeMethod(root.findChild(QObject, 'inputMethodPermissionNoticeButton'), 'click')
     QTest.qWait(30)
     assert calls == ['request', 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility']
     assert root.grabWindow().save('/private/tmp/proximic-permission-settings.png')
@@ -712,43 +712,40 @@ def test_permission_warning_updates_and_settings_remain_usable(inline_ui, monkey
         QTest.qWait(5)
     assert not monitor.checking
     assert not banner.isVisible()
-    assert '已生效' in root.findChild(QObject, 'accessibilityPermissionStatus').property('text')
+    assert not root.findChild(QObject, 'inputMethodPermissionNotice').property('visible')
     QMetaObject.invokeMethod(dialog, 'close')
 
 
-def test_screen_preview_setup_button_and_closing_settings_cancel_capture(inline_ui, monkeypatch):
-    import threading
-    from PySide6.QtCore import QObject, QMetaObject
+def test_permission_settings_are_compact_and_never_start_preview_capture(inline_ui, monkeypatch, tmp_path):
+    from PySide6.QtCore import QObject, QMetaObject, Qt
     from PySide6.QtTest import QTest
     from proximic_ring import screen_preview_check
     from proximic_ring.ui import mac_permissions_controller as permissions
     controller, _, _, root, _ = inline_ui
     monitor = controller.inlineInput.permissions
-    monkeypatch.setattr(permissions, "read_screen_capture_access", lambda: True)
+    monkeypatch.setattr(permissions, "read_screen_capture_access", lambda: False)
     monkeypatch.setattr(permissions, "request_screen_capture_access", lambda: pytest.fail("no passive prompt"))
-    started = threading.Event()
-    def verify(cancel):
-        started.set(); cancel.wait(2)
-        return "verified"  # Simulate a late success after the UI cancels.
-    monkeypatch.setattr(screen_preview_check, "verify_screen_preview", verify)
+    monkeypatch.setattr(screen_preview_check, "verify_screen_preview", lambda _: pytest.fail("no passive capture"))
     root.resize(940,700); root.show()
     dialog = root.findChild(QObject,"runtimeSettingsDialog")
     QMetaObject.invokeMethod(dialog,"open"); QTest.qWait(100)
     QMetaObject.invokeMethod(root.findChild(QObject,"settingsCategory6"),"click")
     QTest.qWait(50)
-    assert not started.is_set()
-    button = root.findChild(QObject,"verifyScreenPreviewButton")
-    assert button.property("enabled")
-    QMetaObject.invokeMethod(button,"click")
-    for _ in range(100):
-        QTest.qWait(10)
-        if started.is_set(): break
-    assert started.is_set() and monitor.screenPreviewBusy
-    pending = monitor._screen_preview_cancel
+    assert root.findChild(QObject, "screenRecordingPermissionNotice").property("visible")
+    import os
+    shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
+    shots.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(shots/'screen-permission-940.png'))
+    for name in ("verifyScreenPreviewButton", "refreshScreenRecordingPermissionsButton", "copyPermissionDiagnosticsButton", "permissionApplicationPath"):
+        assert root.findChild(QObject, name) is None
+    assert not monitor.screenPreviewBusy
+    monkeypatch.setattr(permissions, "read_screen_capture_access", lambda: True)
+    monitor._screen_setup_pending = True
+    monitor._on_application_state(Qt.ApplicationActive)
+    QTest.qWait(30)
+    assert not root.findChild(QObject, "screenRecordingPermissionNotice").property("visible")
+    assert not monitor.screenPreviewBusy
     QMetaObject.invokeMethod(dialog,"close"); QTest.qWait(150)
-    assert pending.is_set() and not monitor.screenPreviewBusy
-    assert not monitor._screen_preview_verified
-    assert "取消" in monitor.screenPreviewMessage
 
 
 @pytest.mark.parametrize('nested_ack', [False, True])

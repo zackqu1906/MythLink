@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..live_audio_settings import AudioConfiguration, LiveAudioSettings
+
 import asyncio
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -52,8 +54,8 @@ from ..desktop_target import (
 )
 from ..diagnostic_log import RotatingDiagnosticLog
 from ..gesture_settings import (
-    BoundGestureEvent, GestureBindings, GESTURE_LABELS, RING_RESERVED_GESTURES,
-    reserve_ring_gestures,
+    BoundGestureEvent, GestureBindings, GESTURE_LABELS,
+    reserve_ring_gestures, GlobalGestureBindings, GLOBAL_BINDINGS_KEY,
 )
 from ..app_gestures import migrate_voice_defaults
 from .app_gesture_controller import AppGestureController, AppGestureEvent, InputSourceGestureEvent
@@ -358,6 +360,9 @@ class AppController(QObject):
     inputModeChanged = Signal()
     inputRoutingModeChanged = Signal()
     textProcessingChanged = Signal()
+    audioSettingsChanged = Signal()
+    _audioConfiguring = Signal(object)
+    _audioConfigured = Signal(object, object, str)
     llmTextProcessingChanged = Signal()
     localModelInstallationChanged = Signal()
     associationChanged = Signal()
@@ -521,7 +526,13 @@ class AppController(QObject):
             self._gesture_bindings = GestureBindings()
             self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
             self._gesture_settings_error = "原手势设置无效，已恢复默认分配"
-        reserved = reserve_ring_gestures(self._gesture_bindings)
+        try:
+            self._global_gesture_bindings = GlobalGestureBindings.from_json(
+                self._settings.value(GLOBAL_BINDINGS_KEY, GlobalGestureBindings().to_json()))
+        except (ValueError, TypeError):
+            self._global_gesture_bindings = GlobalGestureBindings()
+        reserved = reserve_ring_gestures(self._gesture_bindings,
+                                        self._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
         if reserved != self._gesture_bindings:
             self._gesture_bindings = reserved
             self._settings.setValue("input/gestureBindings", reserved.to_json())
@@ -605,6 +616,9 @@ class AppController(QObject):
         self._desktop_target = None
         self._worker: threading.Thread | None = None
         self._runtime_active = False
+        self._audio_settings_changes = None
+        self._audio_settings_message = ""
+        self._audio_settings_error = False
         self._runtime_had_connection = False
         self._disconnect_requested_by_user = False
         self._device_stop_handled = False
@@ -799,6 +813,11 @@ class AppController(QObject):
         self._quit_timer = QTimer(self)
         self._quit_timer.setInterval(100)
         self._quit_timer.timeout.connect(self._finish_quit)
+        self._audio_settings_timer = QTimer(self)
+        self._audio_settings_timer.setInterval(50)
+        self._audio_settings_timer.timeout.connect(self._update_audio_settings_readiness)
+        self._audioConfiguring.connect(self._audio_configuration_started)
+        self._audioConfigured.connect(self._audio_configuration_finished)
         self._runtimeStatus.connect(self._apply_runtime_status)
         self._runtimeGestureHealth.connect(self._apply_proximity_gesture_health)
         self._runtimeConnected.connect(self._apply_runtime_connected)
@@ -843,6 +862,10 @@ class AppController(QObject):
         )
         from .inline_controller import InlineInputController
         self._inline_input = InlineInputController(self, enabled=inline_input_enabled)
+        from .permission_setup_controller import PermissionSetupController
+        self._permission_setup = PermissionSetupController(
+            self._inline_input.permissions, self._settings, self,
+        )
         self._inline_requests: dict[int, object] = {}
         self._inline_unsettled_edits: set[int] = set()
         self._inline_interruption_logged = False
@@ -965,6 +988,10 @@ class AppController(QObject):
     @Property(bool, notify=connectedChanged)
     def connected(self) -> bool:
         return self._connected
+
+    @Property(QObject, constant=True)
+    def permissionSetup(self):
+        return self._permission_setup
 
     @Property(bool, notify=ringDisconnectNoticeChanged)
     def ringDisconnectNoticeVisible(self) -> bool:
@@ -2463,10 +2490,8 @@ class AppController(QObject):
 
     @speechControlMode.setter
     def speechControlMode(self, value: str) -> None:
-        if self._connected or self._busy or self._runtime_active:
-            return
         if value in {"proximity", "gesture"}:
-            self._set_setting("_speech_control_mode", value, "input/speechControlMode")
+            self._select_audio_configuration(speech_control_mode=value)
 
     @Property(str, notify=settingsChanged)
     def audioSource(self) -> str:
@@ -2474,10 +2499,8 @@ class AppController(QObject):
 
     @audioSource.setter
     def audioSource(self, value: str) -> None:
-        if self._connected or self._busy or self._runtime_active:
-            return
         if value in {"ring", "microphone"}:
-            self._set_setting("_audio_source", value, "audio/source")
+            self._select_audio_configuration(audio_source=value)
 
     @Property(str, notify=settingsChanged)
     def microphoneDevice(self) -> str:
@@ -2485,22 +2508,207 @@ class AppController(QObject):
 
     @microphoneDevice.setter
     def microphoneDevice(self, value: str) -> None:
-        if self._connected or self._busy or self._runtime_active:
-            return
         if value and not any(row["value"] == value for row in self._microphone_devices):
             return
-        self._set_setting("_microphone_device", value, "audio/microphoneDevice")
+        self._select_audio_configuration(microphone_device=value)
         self.microphoneDevicesChanged.emit()
+
+    def _active_audio_configuration(self):
+        return AudioConfiguration(self._audio_source, self._microphone_device, self._speech_control_mode)
+
+    @Property("QVariantList", notify=microphoneDevicesChanged)
+    def audioInputs(self):
+        rows = [{"label": "Ring 麦克风", "value": "ring"}]
+        for device in self._microphone_devices:
+            name = device["name"]
+            matches = [item for item in self._microphone_devices if item["name"] == name]
+            label = name
+            if len(matches) > 1:
+                label += " · " + device["api"]
+                if sum(item["api"] == device["api"] for item in matches) > 1:
+                    label += f" ({device['index'] + 1})"
+            rows.append({"label": label, "value": device["value"]})
+        return rows
+
+    def _selected_microphone_choice(self, value):
+        exact = next((row for row in self._microphone_devices if row["value"] == value), None)
+        if exact is not None:
+            return exact
+        if value:
+            try:
+                saved = json.loads(value)
+                matches = [row for row in self._microphone_devices
+                           if row["name"] == saved["name"] and row["api"] == saved["api"]]
+            except (ValueError, TypeError, KeyError):
+                return None
+        else:
+            # Display the actual device for an older automatic-device setting;
+            # the menu itself only offers explicit, currently detected inputs.
+            matches = [row for row in self._microphone_devices if "dji" in row["name"].casefold()]
+            preferred = [row for row in matches if row["api"] in {"Windows WASAPI", "Core Audio"}]
+            matches = preferred or matches
+        return matches[0] if len(matches) == 1 else None
+
+    @Property(str, notify=audioSettingsChanged)
+    def audioInputSelection(self):
+        selection = self.audioSettings
+        if selection["audio_source"] == "ring":
+            return "ring"
+        value = selection["microphone_device"]
+        device = self._selected_microphone_choice(value)
+        return device["value"] if device is not None else value
+
+    @Property(str, notify=audioSettingsChanged)
+    def audioInputLabel(self):
+        selection = self.audioSettings
+        if selection["audio_source"] == "ring":
+            return "Ring 麦克风"
+        value = selection["microphone_device"]
+        device = self._selected_microphone_choice(value)
+        if device is not None:
+            return device["name"]
+        try:
+            return str(json.loads(value)["name"]) + "（未检测到）"
+        except (ValueError, TypeError, KeyError):
+            return "请选择音频设备"
+
+    @Slot(str)
+    def selectAudioInput(self, value):
+        if value == "ring":
+            self._select_audio_configuration(audio_source="ring")
+        elif any(row["value"] == value for row in self._microphone_devices):
+            # One request prevents a transient switch to the legacy automatic
+            # microphone before the selected device has been applied.
+            self._select_audio_configuration(audio_source="microphone", microphone_device=value)
+
+    @Property("QVariantMap", notify=audioSettingsChanged)
+    def audioSettings(self):
+        changes = self._audio_settings_changes
+        configuration = changes.desired if changes is not None else self._active_audio_configuration()
+        return dict(audio_source=configuration.audio_source, microphone_device=configuration.microphone_device,
+                    speech_control_mode=configuration.speech_control_mode)
+
+    @Property(str, notify=audioSettingsChanged)
+    def audioSettingsStatus(self):
+        changes = self._audio_settings_changes
+        if changes is not None and changes.applying:
+            return "正在应用设置，Ring 保持连接…"
+        if changes is not None and changes.pending:
+            if self._audio_change_needs_microphone():
+                return "请选择电脑麦克风，选择后自动切换；当前音频继续使用。"
+            return "等待应用设置…" if changes.allowed.is_set() else "已暂存，本轮语音处理完成后生效。"
+        return self._audio_settings_message
+
+    @Property(bool, notify=audioSettingsChanged)
+    def audioSettingsError(self):
+        return self._audio_settings_error
+
+    def _select_audio_configuration(self, **values):
+        if self._busy or self._quitting:
+            return
+        if self._runtime_active or self._connected:
+            changes = self._audio_settings_changes
+            if changes is None or self._disconnect_event.is_set():
+                return
+            changes.select(**values)
+            self._audio_settings_message = ""
+            self._audio_settings_error = False
+            self._update_audio_settings_readiness()
+        else:
+            keys = {"audio_source": "audio/source", "microphone_device": "audio/microphoneDevice",
+                    "speech_control_mode": "input/speechControlMode"}
+            for name, value in values.items():
+                self._set_setting("_" + name, value, keys[name])
+            self._audio_settings_message = ""
+            self._audio_settings_error = False
+        self.audioSettingsChanged.emit()
+
+    def _update_audio_settings_readiness(self):
+        changes = self._audio_settings_changes
+        if changes is None:
+            return
+        allowed = bool(self._connected and not self._busy and not self._quitting
+                       and not self._disconnect_event.is_set()
+                       and not self._ring_gestures.speech_busy()
+                       and not self._interaction_recognition_suspended
+                       and not self._pending_text_requests and not self._pending_mode_routes
+                       and self._mode_switch_application is None
+                       and self._undo_active is None
+                       and not self._audio_change_needs_microphone())
+        previous = changes.allowed.is_set()
+        if allowed:
+            changes.allowed.set()
+        else:
+            changes.allowed.clear()
+        if previous != allowed:
+            self.audioSettingsChanged.emit()
+
+    def _audio_change_needs_microphone(self):
+        changes = self._audio_settings_changes
+        if changes is None:
+            return False
+        desired = changes.desired
+        if (desired.audio_source != "microphone" or desired.microphone_device
+                or self._audio_source == "microphone"):
+            return False
+        # Preserve the existing automatic external-mic option when available.
+        # Otherwise keep the chooser visible until the user selects a device;
+        # attempting the empty selection immediately would fail and hide it.
+        automatic = [row for row in self._microphone_devices if "dji" in row.get("name", "").casefold()]
+        preferred = [row for row in automatic if row.get("api") in {"Windows WASAPI", "Core Audio"}]
+        return len(preferred or automatic) != 1
+
+    @Slot(object)
+    def _audio_configuration_started(self, changes):
+        if changes is self._audio_settings_changes and not self._disconnect_event.is_set():
+            self.audioSettingsChanged.emit()
+
+    @Slot(object, object, str)
+    def _audio_configuration_finished(self, changes, request, error):
+        if changes is not self._audio_settings_changes or self._disconnect_event.is_set() or self._quitting:
+            return
+        if not error:
+            applied = changes.applied
+            self._audio_source, self._microphone_device = applied.audio_source, applied.microphone_device
+            self._speech_control_mode = applied.speech_control_mode
+            for key, value in (("audio/source", self._audio_source), ("audio/microphoneDevice", self._microphone_device),
+                               ("input/speechControlMode", self._speech_control_mode)):
+                self._settings.setValue(key, value)
+            try:
+                self._modification_dataset.set_capture_configuration(
+                    audio_source=self._audio_source, microphone_device=self._microphone_device,
+                    speech_control_mode=self._speech_control_mode,
+                )
+            except Exception as exc:
+                self._append_log(f"录音配置信息更新失败：{exc}")
+            self._audio_settings_message = "设置已生效，Ring 保持连接。"
+            self.settingsChanged.emit()
+            self.microphoneDevicesChanged.emit()
+            if self._recognition_enabled:
+                detail = (f"{self.confirmGestureHint} 开始，再做一次结束本句" if self._speech_control_mode == "gesture"
+                          else f"靠近说话，{self.confirmGestureHint} 手势结束本句")
+                self._set_status("自动监听中", detail, "running")
+        else:
+            self._audio_settings_message = "切换未完成，已恢复原配置：" + error
+        self._audio_settings_error = bool(error)
+        self._append_log(self._audio_settings_message)
+        changes.acknowledge(request)
+        self.audioSettingsChanged.emit()
 
     @Property("QVariantList", notify=microphoneDevicesChanged)
     def microphoneDevices(self) -> list[dict]:
         rows = [{"label": "自动识别 DJI 麦克风", "value": ""}] + list(self._microphone_devices)
-        if self._microphone_device and not any(row["value"] == self._microphone_device for row in rows):
+        selected = [self._microphone_device]
+        if self._audio_settings_changes is not None:
+            selected.append(self._audio_settings_changes.desired.microphone_device)
+        for value in selected:
+            if not value or any(row["value"] == value for row in rows):
+                continue
             try:
-                name = str(json.loads(self._microphone_device)["name"])
+                name = str(json.loads(value)["name"])
             except (ValueError, TypeError, KeyError):
                 name = "已保存的麦克风"
-            rows.append({"label": f"{name}（未检测到，请刷新）", "value": self._microphone_device})
+            rows.append({"label": f"{name}（未检测到，请刷新）", "value": value})
         return rows
 
     @Property(bool, notify=microphoneDevicesChanged)
@@ -2513,7 +2721,8 @@ class AppController(QObject):
 
     @Slot()
     def refreshMicrophones(self) -> None:
-        if self._microphone_scan_busy or self._quitting or self._connected or self._busy:
+        # Enumeration does not reopen the running stream or change its device.
+        if self._microphone_scan_busy or self._quitting:
             return
         self._microphone_scan_busy = True
         self._microphone_devices_error = ""
@@ -2522,7 +2731,7 @@ class AppController(QObject):
         def scan() -> None:
             try:
                 rows = input_device_choices()
-                error = "" if rows else "没有检测到电脑输入设备，请连接 DJI 后刷新。"
+                error = "" if rows else "没有检测到电脑输入设备，请连接麦克风后刷新。"
             except Exception as exc:
                 rows, error = [], str(exc)
             if not self._quitting:
@@ -2536,7 +2745,7 @@ class AppController(QObject):
         self._microphone_devices = list(rows)
         self._microphone_devices_error = error
         # Refresh an explicitly selected device's transient PortAudio index.
-        if self._microphone_device and not (self._connected or self._busy):
+        if self._microphone_device and not (self._connected or self._busy or self._runtime_active):
             try:
                 saved = json.loads(self._microphone_device)
                 matches = [row for row in self._microphone_devices if row["name"] == saved["name"] and row["api"] == saved["api"]]
@@ -2545,6 +2754,7 @@ class AppController(QObject):
             except (ValueError, TypeError, KeyError):
                 pass
         self.microphoneDevicesChanged.emit()
+        self.audioSettingsChanged.emit()
 
     @Property("QVariantMap", notify=gestureSettingsChanged)
     def gestureBindings(self) -> dict:
@@ -2574,7 +2784,7 @@ class AppController(QObject):
             if name and (key != action or index != slot)
         }
         used.add(self._app_gestures.inputSourceGesture)
-        used.update(RING_RESERVED_GESTURES)
+        used.update(self._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
         return [{"value": "", "label": "未设置"}] + [
             {"value": name, "label": label}
             for name, label in GESTURE_LABELS.items() if name not in used
@@ -2589,6 +2799,7 @@ class AppController(QObject):
         self._gesture_settings_error = ""
         self.gestureSettingsChanged.emit()
         self._app_gestures.changed.emit()
+        self._app_gestures.catalog.changed.emit()
         if self._interaction_state == "listening":
             self._transcript_text = f"正在收听语音 · {self.confirmGestureHint} 结束"
             self.transcriptChanged.emit()
@@ -2598,7 +2809,7 @@ class AppController(QObject):
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
-            if name in RING_RESERVED_GESTURES:
+            if name in self._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"}:
                 raise ValueError("该手势已保留给 Ring 全局菜单")
             bindings = self._gesture_bindings.with_slot(action, slot, name)
             self._app_gestures.validate_voice(bindings)
@@ -3259,6 +3470,14 @@ class AppController(QObject):
         self._cancel_utterance_event = threading.Event()
         self._finish_utterance_event.clear()
         self._runtime_active = True
+        audio_changes = LiveAudioSettings(AudioConfiguration(
+            settings.audio_source, settings.microphone_device, settings.speech_control_mode,
+        ))
+        self._audio_settings_changes = audio_changes
+        self._audio_settings_message = ""
+        self._audio_settings_error = False
+        self._audio_settings_timer.start()
+        self.audioSettingsChanged.emit()
         self._runtime_had_connection = False
         self._disconnect_requested_by_user = False
         self._device_stop_handled = False
@@ -3324,6 +3543,9 @@ class AppController(QObject):
                     asr_gain_db_provider=lambda: self._asr_gain_db,
                     stage1_threshold_provider=lambda: self._stage1_threshold,
                     gesture_bindings_provider=lambda: self._gesture_bindings,
+                    audio_settings=audio_changes,
+                    on_audio_configuring=lambda: self._audioConfiguring.emit(audio_changes),
+                    on_audio_configured=lambda request, error: self._audioConfigured.emit(audio_changes, request, error),
                 )
             except BaseException as exc:
                 error = str(exc)
@@ -3886,6 +4108,8 @@ class AppController(QObject):
 
     @Slot()
     def requestQuit(self) -> None:
+        self._audio_settings_timer.stop()
+        self._permission_setup.close()
         self._proximity.close()
         self._event_log(
             "USER_ACTION",
@@ -4431,6 +4655,9 @@ class AppController(QObject):
         if self._device_stop_handled:
             return
         self._device_stop_handled = True
+        if self._audio_settings_changes is not None:
+            self._audio_settings_changes.close()
+        self._audio_settings_timer.stop()
         self._proximity_gesture_healthy_at = 0.0
         was_connected = self._connected
         was_recognizing = self._recognition_enabled
@@ -6589,6 +6816,9 @@ class AppController(QObject):
                 _live_message="",
             )
             return
+        if app_event is not None and app_event.exclusive:
+            self._app_gestures.handle_override(app_event)
+            return
         if app_event is not None and app_event.scene:
             self._app_gestures.handle_scene(app_event)
             return
@@ -6601,12 +6831,15 @@ class AppController(QObject):
             return
         # Also protect direct GUI dispatchers; the normal runtime reserves
         # these gestures before confirmation and before native target capture.
+        if name in self._global_gesture_bindings.reserved:
+            self._ring_gestures.filter(event, False, connection)
+            return
         if name == "swipe-up":
             # Mode/selection/lock boundaries have already accepted this event.
             # This fixed action precedes all configurable voice/app bindings.
             self._app_gestures.handle(app_event or self._app_gestures.envelope(event))
             return
-        if name in RING_RESERVED_GESTURES:
+        if name == "swipe-down":
             self._ring_gestures.filter(event, False, connection)
             return
         if source_event is not None:
@@ -7677,6 +7910,11 @@ class AppController(QObject):
         # Fallback for errors before source creation and failures during close.
         self._stop_device_interaction()
         self._runtime_active = False
+        changes, self._audio_settings_changes = self._audio_settings_changes, None
+        if changes is not None and changes.pending:
+            self._audio_settings_message = "设备已断开，未完成的设置修改已取消。"
+            self._audio_settings_error = True
+        self.audioSettingsChanged.emit()
         self._connected = False
         self._recognition_enabled = False
         self._interaction_recognition_suspended = False

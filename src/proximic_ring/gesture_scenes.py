@@ -11,7 +11,7 @@ PRESENTATION = "presentation"
 SCENE_ANCHORS = frozenset({"index-pinch", "middle-pinch"})
 
 # Microsoft Support: Use keyboard shortcuts to deliver PowerPoint presentations,
-# macOS section. These are suggestions, not automatically installed bindings.
+# macOS section. Default installation is opt-in via application_defaults.py.
 POWERPOINT_ACTIONS = {
     "regular": [("start-current", "从当前页放映", "Cmd+Return"),
                 ("start-first", "从头放映", "Cmd+Shift+Return")],

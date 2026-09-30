@@ -12,7 +12,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_runtime_environment()
     try:
         from PySide6.QtCore import QTimer, QUrl
-        from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+        from PySide6.QtGui import QAction, QIcon
         from PySide6.QtQml import QQmlApplicationEngine
         from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
     except ImportError as exc:
@@ -30,16 +30,11 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("ProxiMic")
 
     base = Path(__file__).resolve().parent
-    icon_path = base / "assets" / "proximic.svg"
+    icon_path = base / "assets" / "mythlink-app.png"
     icon = QIcon(str(icon_path))
+    tray_icon = QIcon(str(base / "assets" / "mythlink-mark.svg"))
     if icon.isNull():
-        pixmap = QPixmap(64, 64)
-        pixmap.fill(QColor("#6C8CFF"))
-        painter = QPainter(pixmap)
-        painter.setPen(QColor("white"))
-        painter.drawText(pixmap.rect(), 0x0084, "P")  # AlignCenter
-        painter.end()
-        icon = QIcon(pixmap)
+        icon = tray_icon
     app.setWindowIcon(icon)
 
     controller = AppController()
@@ -92,13 +87,13 @@ def main(argv: list[str] | None = None) -> int:
     controller.ringGestures.showRequested.connect(
         lambda mode, message: gesture_hud.show_mode(
             mode, message=message, input_fields_available=text_fields.available,
-            input_fields_hint=text_fields.hint)
+            input_fields_hint=text_fields.hint, global_bindings=controller.ringGestures.globalBindings)
     )
     text_fields.changed.connect(
         lambda: gesture_hud.update_input_fields(text_fields.available, text_fields.hint)
     )
     controller.ringGestures.sceneHudRequested.connect(
-        lambda mode, actions: gesture_hud.show_mode(mode, scene_actions=actions)
+        lambda mode, actions: gesture_hud.show_mode(mode, scene_actions=actions, global_bindings=controller.ringGestures.globalBindings)
     )
     controller.ringGestures.hideRequested.connect(gesture_hud.hide)
     from .window_selector_overlay import WindowSelectorOverlay
@@ -124,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         print("[startup] packaged ASR imports ready")
         QTimer.singleShot(300, app.quit)
     else:
+        QTimer.singleShot(300, controller.permissionSetup.startIfNeeded)
         QTimer.singleShot(600, controller.warmLocalModel)
 
     tray_available = QSystemTrayIcon.isSystemTrayAvailable()
@@ -137,11 +133,11 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from .menu_bar import MacMenuBar
 
-                tray = MacMenuBar(icon)
+                tray = MacMenuBar(tray_icon)
             except Exception as exc:
                 print(f"[menu-bar] 原生文字不可用，保留图标菜单：{exc}", file=sys.stderr)
         if tray is None:
-            tray = QSystemTrayIcon(icon, app)
+            tray = QSystemTrayIcon(tray_icon, app)
         menu = QMenu()
         show_action = QAction("显示主窗口", menu)
         connection_action = QAction("连接设备", menu)

@@ -391,6 +391,7 @@ class ConnectionMixin:
 
     def _drop_local_streams(self) -> None:
         """Close processors after unexpected link loss (no BLE STOP)."""
+        self._drop_touchpad_local()
         if self.mic is not None:
             try:
                 self.mic.close()
@@ -625,6 +626,7 @@ class ConnectionMixin:
                 except Exception:
                     pass
             self.client = None
+        await self._wait_touchpad_cleanup()
         self.tx_uuid = ""
         self.rx_uuid = ""
 
@@ -684,6 +686,8 @@ class ConnectionMixin:
         self.audio_plot_enabled = False
 
     async def stop_all(self) -> None:
+        if self.touchpad_active:
+            await self.touchpad_off()
         if self.quaternion_active:
             await self.quaternion_off()
         if self.mic_active:

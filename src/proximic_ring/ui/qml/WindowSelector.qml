@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 
 Item {
     id: root
@@ -72,14 +73,9 @@ Item {
                 spacing: 14
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
+                    visible: windowPreviews.status !== "permission"
                     text: windowSelector.phase === "loading" ? "当前屏幕与桌面" : windowPreviews.hint
                     color: "#b0b0b0"; font.pixelSize: 13
-                }
-                Button {
-                    height: 27; visible: windowPreviews.status === "permission" && windowSelector.phase === "ready"
-                    text: "开启实时预览"; focusPolicy: Qt.NoFocus
-                    palette.button: "#444444"; palette.buttonText: "#eeeeee"; palette.highlight: "#777777"
-                    onClicked: windowPreviews.requestPermission()
                 }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: "部分应用未提供窗口"; color: "#bcbcbc"; font.pixelSize: 12; visible: windowSelector.partial }
             }
@@ -99,7 +95,7 @@ Item {
         GridView {
             id: grid
             objectName: "windowSelectorGrid"
-            anchors { left: parent.left; right: parent.right; top: parent.top; bottom: footer.top; topMargin: 122; bottomMargin: 20 }
+            anchors { left: parent.left; right: parent.right; top: parent.top; bottom: permissionNotice.visible ? permissionNotice.top : footer.top; topMargin: 122; bottomMargin: 20 }
             clip: true
             cellWidth: width / root.columns
             cellHeight: Math.round((cellWidth - 48) * 0.625) + 86
@@ -154,7 +150,7 @@ Item {
                             Text { anchors.horizontalCenter: parent.horizontalCenter; text: modelData.app; textFormat: Text.PlainText; color: "#bcbcbc"; font.pixelSize: 17 }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: windowPreviews.status === "permission" ? "需要屏幕录制权限" :
+                                text: windowPreviews.status === "permission" ? "预览未开启" :
                                       (!(modelData.number || 0) || windowPreviews.status === "unavailable") ? "该窗口暂不能预览" : "正在连接预览…"
                                 color: "#888888"; font.pixelSize: 12
                             }
@@ -194,6 +190,25 @@ Item {
                 }
             }
         }
+        RowLayout {
+            id: permissionNotice
+            objectName: "windowSelectorPermissionNotice"
+            anchors { left: parent.left; right: parent.right; bottom: footer.top; bottomMargin: 12; leftMargin: 12; rightMargin: 12 }
+            visible: windowPreviews.status === "permission" && windowSelector.phase === "ready"
+            spacing: 12
+            Text {
+                objectName: "windowSelectorPermissionText"
+                Layout.fillWidth: true
+                text: "未开启屏幕录制权限，暂时无法显示窗口预览。仍可选择和切换窗口。"
+                color: "#F2C66D"; font.pixelSize: 13; wrapMode: Text.Wrap
+            }
+            Button {
+                objectName: "windowSelectorPermissionButton"
+                text: "去开启"; focusPolicy: Qt.NoFocus
+                palette.button: "#444444"; palette.buttonText: "#F2C66D"; palette.highlight: "#777777"
+                onClicked: windowPreviews.requestPermission()
+            }
+        }
         Rectangle {
             id: footer
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
@@ -205,14 +220,14 @@ Item {
                 anchors { left: parent.left; leftMargin: 22; verticalCenter: parent.verticalCenter }
                 spacing: 18
                 Text { text: windowSelector.atApps ? "↑ ↓ ← →  选择应用" : "↑ ↓ ← →  选择窗口"; color: "#cccccc"; font.pixelSize: 13 }
-                Text { visible: !windowSelector.atApps; text: "中指捏合  返回上级"; color: "#cccccc"; font.pixelSize: 13 }
+                Text { visible: !windowSelector.atApps; text: windowSelector.globalLabels.switch_mode + "  返回上级"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { text: root.expandsSelection ? "Tap  展开" : "Tap  进入窗口"; color: "#f5f5f5"; font.pixelSize: 13 }
-                Text { text: "握拳  取消窗口选择"; color: "#cccccc"; font.pixelSize: 13 }
-                Text { text: "食指捏合  提示环"; color: "#cccccc"; font.pixelSize: 13 }
+                Text { text: windowSelector.globalLabels.window_selector + "  取消窗口选择"; color: "#cccccc"; font.pixelSize: 13 }
+                Text { text: windowSelector.globalLabels.show_menu + "  提示环"; color: "#cccccc"; font.pixelSize: 13 }
             }
             Text {
                 anchors { right: parent.right; rightMargin: 22; verticalCenter: parent.verticalCenter }
-                text: windowSelector.phase === "loading" ? "握拳可取消" : windowSelector.remaining + "s 后退出"
+                text: windowSelector.phase === "loading" ? windowSelector.globalLabels.window_selector + "可取消" : windowSelector.remaining + "s 后退出"
                 color: windowSelector.remaining <= 3 ? "#eeeeee" : "#a0a0a0"; font.pixelSize: 13
             }
         }

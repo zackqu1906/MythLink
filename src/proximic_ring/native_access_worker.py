@@ -46,12 +46,18 @@ class Dispatcher:
             if self.text_focus is None:
                 from .text_focus import TextFocusSession
                 self.text_focus = TextFocusSession()
-            if message.get("scene_apps") and operation != "focus_selection":
-                target = self.shortcuts.capture(menu_action=True, scene=True)
-                if target and target.bundle in message["scene_apps"] and target.scene:
+            if message.get("scene_apps") or message.get("voice_disabled_apps"):
+                target = self.shortcuts.capture(menu_action=True, scene=bool(message.get("scene_apps")))
+                configured = message.get("scene_apps", {})
+                disabled = target and target.bundle in message.get("voice_disabled_apps", [])
+                eligible = (target and target.bundle in configured and target.scene and not target.blocked
+                            and (target.scene == "presentation" or target.input_context == "nontext")
+                            and (not isinstance(configured, dict) or target.scene in configured[target.bundle]))
+                if eligible or disabled:
                     if operation == "focus_apply":
                         self.text_focus.plans.pop(message.get("plan", ""), None)
-                    return {"result": {"status": "presentation", "count": 0, "index": 0}}
+                    return {"result": {"status": "presentation" if eligible else "voice_overridden",
+                                       "scene": target.scene, "count": 0, "index": 0}}
             return {"result": self.text_focus.handle(
                 operation, ignored_pid=int(message.get("ignored_pid", 0)),
                 expected=message.get("expected"), action=message.get("action", "inspect"),
@@ -102,7 +108,8 @@ class Dispatcher:
                                "role": target.role, "blocked": target.blocked, "remote_id": handle,
                                "plain_enter": target.plain_enter, "menu_action": target.menu_action,
                                "scene": target.scene, "scene_checked": target.scene_checked,
-                               "input_context": target.input_context}}
+                               "input_context": target.input_context,
+                               "website": target.website, "page_key": target.page_key}}
         if operation in {"same_target", "shortcut"}:
             target = self.targets.get(message["target"])
             if target is None:

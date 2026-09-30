@@ -15,71 +15,90 @@ ColumnLayout {
     SettingsFormGroup {
         objectName: "settingsAudioGroup"
         title: "麦克风与语音"; symbol: "microphone"
-        description: pane.settingsDialog.deviceSettingsLocked
-            ? "设备已连接，灰色选项需在首页断开戒指后修改。"
-            : "选择输入设备与语音启停方式，设备选项在下次连接时生效。"
+        description: "连接期间可修改；正在进行的语音处理完成后，再应用新的音频来源与启停方式。"
+        Label {
+            objectName: "audioSettingsStatus"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: pane.controller.audioSettingsStatus
+            color: pane.controller.audioSettingsError ? "#9A6817" : theme.muted
+            font.pixelSize: 13; wrapMode: Text.Wrap
+        }
         SettingsFormRow {
             title: "音频来源"
-            description: "戒指连接统一在首页管理。"
+            description: pane.controller.microphoneDevicesError.length > 0
+                ? pane.controller.microphoneDevicesError
+                : "直接选择 Ring 或已检测到的音频输入设备。"
             SettingsSelect {
+                id: audioInputCombo
                 objectName: "audioSourceCombo"
                 Layout.fillWidth: true
                 Accessible.name: "音频来源"
-                model: ["Ring 麦克风", "电脑音频"]
-                enabled: !pane.settingsDialog.deviceSettingsLocked
-                currentIndex: pane.controller.audioSource === "microphone" ? 1 : 0
-                onActivated: {
-                    pane.controller.audioSource = currentIndex === 1 ? "microphone" : "ring"
-                    if (currentIndex === 1) pane.controller.refreshMicrophones()
-                }
-            }
-        }
-        SettingsFormRow {
-            objectName: "microphoneDeviceRow"
-            visible: pane.controller.audioSource === "microphone"
-            title: "麦克风"
-            description: pane.controller.microphoneDevicesError.length > 0
-                ? pane.controller.microphoneDevicesError
-                : "选择电脑上的音频输入设备；找不到选定设备时不会切换到其他麦克风。"
-            SettingsSelect {
-                objectName: "microphoneDeviceCombo"
-                Layout.fillWidth: true
-                Accessible.name: "选择麦克风"
-                enabled: !pane.settingsDialog.deviceSettingsLocked && !pane.controller.microphoneScanBusy
-                model: pane.controller.microphoneDevices
+                model: pane.controller.audioInputs
                 textRole: "label"; valueRole: "value"
+                enabled: !pane.controller.busy
                 currentIndex: {
-                    var rows = pane.controller.microphoneDevices
+                    var rows = pane.controller.audioInputs
                     for (var i = 0; i < rows.length; ++i)
-                        if (rows[i].value === pane.controller.microphoneDevice) return i
-                    return 0
+                        if (rows[i].value === pane.controller.audioInputSelection) return i
+                    return -1
                 }
-                onActivated: pane.controller.microphoneDevice = currentValue
+                displayText: currentIndex >= 0 ? currentText : pane.controller.audioInputLabel
+                onActivated: pane.controller.selectAudioInput(currentValue)
+                Connections {
+                    target: audioInputCombo.popup
+                    function onAboutToShow() { pane.controller.refreshMicrophones() }
+                }
             }
             UiAction {
                 objectName: "refreshMicrophonesButton"
                 Layout.alignment: Qt.AlignRight
                 text: pane.controller.microphoneScanBusy ? "检测中…" : "刷新设备"
                 quiet: true
-                enabled: !pane.settingsDialog.deviceSettingsLocked && !pane.controller.microphoneScanBusy
+                enabled: !pane.controller.microphoneScanBusy
                 onClicked: pane.controller.refreshMicrophones()
             }
+        }
+        PermissionNotice {
+            objectName: "microphoneSettingsPermissionNotice"
+            Layout.fillWidth: true
+            readonly property var warning: pane.controller.inlineInput.permissions.essentialWarnings.filter(function(item) { return item.kind === "microphone" })[0]
+            message: pane.controller.audioSettings.audio_source === "microphone" && warning ? warning.text : ""
+            onActivated: pane.controller.inlineInput.permissions.openPermissionSettings("microphone")
         }
         SettingsFormRow {
             title: "语音启停方式"
             descriptionObjectName: "speechControlModeHint"
-            description: pane.controller.speechControlMode === "gesture"
+            description: (pane.controller.audioSettings.speech_control_mode === "gesture"
                 ? "开启语音识别后，" + pane.controller.confirmGestureHint + " 开始，再做一次结束。"
                 : "靠近说话开始，" + pane.controller.confirmGestureHint + " 结束。"
-                  + (pane.controller.audioSource === "microphone" ? "使用选定麦克风检测靠近。" : "")
+                  + (pane.controller.audioSettings.audio_source === "microphone" ? "使用选定麦克风检测靠近。" : ""))
             SettingsSelect {
                 objectName: "speechControlModeCombo"
                 Layout.fillWidth: true
                 Accessible.name: "语音启停方式"
                 model: ["靠近说话", "手势启停"]
-                enabled: !pane.settingsDialog.deviceSettingsLocked
-                currentIndex: pane.controller.speechControlMode === "gesture" ? 1 : 0
+                enabled: !pane.controller.busy
+                currentIndex: pane.controller.audioSettings.speech_control_mode === "gesture" ? 1 : 0
                 onActivated: pane.controller.speechControlMode = currentIndex === 1 ? "gesture" : "proximity"
+            }
+        }
+        SettingsFormRow {
+            objectName: "inputEnhancementRow"
+            title: "输入增强"
+            description: "声音较小时可提高音量，立即生效；不影响靠近检测。"
+            Slider {
+                objectName: "asrGainSlider"
+                Layout.fillWidth: true
+                Accessible.name: "输入增强"
+                from: 0; to: 12; stepSize: 1
+                value: pane.controller.asrGainDb
+                onMoved: pane.controller.asrGainDb = value
+            }
+            Label {
+                Layout.alignment: Qt.AlignRight
+                text: "+" + pane.controller.asrGainDb.toFixed(0) + " dB"
+                color: theme.muted; font.pixelSize: 12
             }
         }
         SettingsFormRow {
@@ -190,10 +209,23 @@ ColumnLayout {
         objectName: "settingsPermissionsGroup"
         title: "系统与权限"; symbol: "tool"
         visible: Qt.platform.os === "osx"
-        description: "查看语音输入和应用操作所需的系统状态。"
+        description: "管理语音输入与手势控制所需的权限。"
+        SettingsFormRow {
+            title: "系统授权"
+            description: "直接显示 macOS 授权提示，已开启的自动跳过。"
+            UiAction {
+                objectName: "permissionSetupButton"
+                Layout.alignment: Qt.AlignRight
+                text: pane.controller.permissionSetup.active ? "继续授权" : "请求权限"
+                enabled: !pane.controller.permissionSetup.busy
+                onClicked: pane.controller.permissionSetup.open()
+            }
+        }
         SettingsFormRow {
             title: "辅助功能"
-            description: pane.controller.inlineInput.permissions.title
+            description: pane.controller.inlineInput.permissions.accessibilityWarningText
+                || (pane.controller.inlineInput.permissions.accessibilityGranted ? "已开启" : "用于语音编辑与手势控制。")
+            descriptionColor: pane.controller.inlineInput.permissions.accessibilityWarningText ? "#9A6817" : theme.muted
             UiAction {
                 objectName: "settingsAccessibilityButton"
                 Layout.alignment: Qt.AlignRight
@@ -214,11 +246,13 @@ ColumnLayout {
         }
         SettingsFormRow {
             title: "窗口实时预览"
-            description: pane.controller.inlineInput.permissions.screenRecordingStatus
+            description: pane.controller.inlineInput.permissions.screenRecordingWarning ? "未开启屏幕录制权限，无法显示窗口预览。"
+                : pane.controller.inlineInput.permissions.screenRecordingGranted ? "已开启" : "用于显示窗口实时画面。"
+            descriptionColor: pane.controller.inlineInput.permissions.screenRecordingWarning ? "#9A6817" : theme.muted
             UiAction {
                 objectName: "settingsCategory6"
                 Layout.alignment: Qt.AlignRight
-                text: "查看与授权"
+                text: "管理"
                 onClicked: pane.detailRequested(6)
             }
         }
@@ -250,12 +284,15 @@ ColumnLayout {
                 onClicked: pane.detailRequested(9)
             }
         }
-        SettingsCategoryButton {
-            objectName: "advancedSettingsButton"
-            Layout.fillWidth: true
-            text: "高级设置"
+        SettingsFormRow {
+            title: "高级设置"
             description: "识别服务、文本模型与性能"
-            onClicked: pane.advancedSettingsRequested()
+            UiAction {
+                objectName: "advancedSettingsButton"
+                Layout.alignment: Qt.AlignRight
+                text: "高级设置"
+                onClicked: pane.advancedSettingsRequested()
+            }
         }
     }
 }

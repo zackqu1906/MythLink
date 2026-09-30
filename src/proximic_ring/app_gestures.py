@@ -73,7 +73,7 @@ def default_profiles() -> dict[str, dict[str, AppBinding]]:
     return profiles
 
 
-def validate_profiles(profiles, voice: GestureBindings) -> None:
+def validate_profiles(profiles, voice: GestureBindings, reserved=RING_RESERVED_GESTURES) -> None:
     for app, actions in profiles.items():
         used = set()
         for action, binding in actions.items():
@@ -83,7 +83,7 @@ def validate_profiles(profiles, voice: GestureBindings) -> None:
                 continue
             if not binding.enabled:
                 continue
-            if binding.gesture in RING_RESERVED_GESTURES:
+            if binding.gesture in reserved:
                 raise ValueError("该手势已保留给 Ring 全局菜单")
             if binding.gesture in voice.confirm:
                 raise ValueError("开始／结束听写的手势需独立保留，请选择其他手势")
@@ -109,10 +109,10 @@ def profiles_from_json(value: object):
     return defaults
 
 
-def reserve_ring_profiles(profiles):
+def reserve_ring_profiles(profiles, reserved=RING_RESERVED_GESTURES):
     return {app: {action: AppBinding("swipe-up", "Return") if action == "send" else
                   replace(binding, gesture="", enabled=False)
-                  if binding.gesture in RING_RESERVED_GESTURES else binding
+                  if binding.gesture in reserved else binding
                   for action, binding in actions.items()}
             for app, actions in profiles.items()}
 

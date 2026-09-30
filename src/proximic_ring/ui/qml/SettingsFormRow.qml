@@ -7,6 +7,7 @@ GridLayout {
     property string title: ""
     property string description: ""
     property string descriptionObjectName: ""
+    property color descriptionColor: theme.muted
     property int controlWidth: 216
     default property alias controls: controlColumn.data
     columns: width < 540 ? 1 : 2
@@ -31,7 +32,7 @@ GridLayout {
             visible: text.length > 0
             text: row.description
             font.pixelSize: 13; lineHeight: 1.15
-            color: theme.muted; wrapMode: Text.Wrap
+            color: row.descriptionColor; wrapMode: Text.Wrap
         }
     }
     ColumnLayout {

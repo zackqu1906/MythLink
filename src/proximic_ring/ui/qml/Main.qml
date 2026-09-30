@@ -289,77 +289,21 @@ ApplicationWindow {
                 color: root.textMuted
                 wrapMode: Text.Wrap
             }
+            PermissionNotice {
+                objectName: "inputMethodPermissionNotice"
+                Layout.fillWidth: true
+                message: appController.inlineInput.permissions.accessibilityWarningText
+                onActivated: appController.inlineInput.openAccessibilitySettings()
+            }
             Label {
                 Layout.fillWidth: true
-                text: "2. 允许辅助功能"
+                text: "2. 启用语音输入法"
                 color: root.textMain
                 font.bold: true
             }
             Label {
                 Layout.fillWidth: true
-                objectName: "accessibilityPermissionStatus"
-                text: appController.inlineInput.permissions.title
-                color: appController.inlineInput.permissions.warning ? "#996516" : root.textMain
-                font.bold: true
-                wrapMode: Text.Wrap
-            }
-            Label {
-                Layout.fillWidth: true
-                text: appController.inlineInput.permissions.detail + "\n" + appController.inlineInput.permissions.instructions
-                color: root.textMuted
-                wrapMode: Text.Wrap
-            }
-            Label {
-                objectName: "permissionApplicationPath"
-                Layout.fillWidth: true
-                text: "当前运行位置：\n" + appController.inlineInput.permissions.location
-                color: root.textMuted
-                font.pixelSize: 11
-                wrapMode: Text.WrapAnywhere
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Button {
-                    objectName: "openAccessibilityPermissionsButton"
-                    text: "打开辅助功能设置"
-                    onClicked: appController.inlineInput.openAccessibilitySettings()
-                }
-                Button {
-                    objectName: "refreshAccessibilityPermissionsButton"
-                    text: appController.inlineInput.permissions.checking ? "检查中…" : "重新检测"
-                    enabled: !appController.inlineInput.permissions.checking
-                    onClicked: appController.inlineInput.permissions.refresh()
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Button {
-                    visible: appController.inlineInput.permissions.canReveal
-                    text: "显示当前应用"
-                    onClicked: appController.inlineInput.permissions.revealApplication()
-                }
-                Button {
-                    objectName: "copyPermissionDiagnosticsButton"
-                    text: "复制权限诊断"
-                    onClicked: appController.inlineInput.permissions.copyDiagnostics()
-                }
-            }
-            Label {
-                Layout.fillWidth: true
-                visible: text.length > 0
-                text: appController.inlineInput.permissions.actionMessage
-                color: root.textMuted
-                wrapMode: Text.Wrap
-            }
-            Label {
-                Layout.fillWidth: true
-                text: "3. 切入语音输入法"
-                color: root.textMain
-                font.bold: true
-            }
-            Label {
-                Layout.fillWidth: true
-                text: "连接设备并开启识别后，点入文本框再 tap，会自动切入语音输入法并开始听写。也可手动选择输入法。需要拼音时手动切回。若菜单里没有，在键盘 → 文字输入 → 编辑中添加。"
+                text: "在键盘设置的输入法列表中启用语音输入法。连接 Ring 并开启识别后，点入文本框再 Tap 即可开始听写。"
                 color: root.textMuted
                 wrapMode: Text.Wrap
             }
@@ -695,10 +639,10 @@ ApplicationWindow {
             Rectangle { Layout.fillWidth: true; height: 1; color: uiTheme.line }
             RowLayout {
                 Layout.fillWidth: true; spacing: 4
-                UiAction { text: ""; symbol: "mail"; quiet: true; Accessible.name: "反馈与诊断"; onClicked: helpDialog.open(); ToolTip.visible: hovered; ToolTip.text: "反馈与诊断" }
+                UiAction { objectName: "contactButton"; text: ""; symbol: "mail"; quiet: true; Accessible.name: "联系我们"; onClicked: contactDialog.open(); ToolTip.visible: hovered; ToolTip.text: "联系我们" }
                 Item { Layout.fillWidth: true }
                 UiAction { objectName: "runtimeSettingsButton"; text: ""; symbol: "settings"; quiet: true; Accessible.name: "设置"; onClicked: runtimeSettingsDialog.open(); ToolTip.visible: hovered; ToolTip.text: "设置" }
-                UiAction { text: ""; symbol: "help"; quiet: true; Accessible.name: "帮助"; onClicked: helpDialog.open(); ToolTip.visible: hovered; ToolTip.text: "帮助" }
+                UiAction { objectName: "helpButton"; text: ""; symbol: "help"; quiet: true; Accessible.name: "帮助"; onClicked: helpDialog.open(); ToolTip.visible: hovered; ToolTip.text: "帮助" }
             }
         }
     }
@@ -749,6 +693,49 @@ ApplicationWindow {
         }
     }
     Dialog {
+        id: contactDialog
+        objectName: "contactDialog"
+        parent: Overlay.overlay
+        popupType: Popup.Item
+        anchors.centerIn: parent
+        width: Math.min(480, root.width - 48)
+        modal: true
+        title: "联系我们"
+        property bool copied: false
+        property bool emailCopied: false
+        onOpened: { copied = false; emailCopied = false }
+        footer: Item {
+            implicitHeight: 58
+            UiAction {
+                anchors { right: parent.right; bottom: parent.bottom; margins: 16 }
+                text: "关闭"; quiet: true
+                onClicked: contactDialog.close()
+            }
+        }
+        background: Rectangle { color: uiTheme.surface; radius: 16; border.color: uiTheme.line }
+        contentItem: ColumnLayout {
+            spacing: 16
+            Label { Layout.fillWidth: true; text: "让 MythLink 更好用"; font.pixelSize: 18; font.bold: true; color: uiTheme.text }
+            Label { Layout.fillWidth: true; text: "欢迎向我们反馈使用中遇到的问题，也欢迎分享你的想法和建议。"; wrapMode: Text.Wrap; color: uiTheme.muted }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { Layout.fillWidth: true; text: appController.inlineInput.permissions.contactEmail; color: uiTheme.primary; font.pixelSize: 16; wrapMode: Text.WrapAnywhere }
+                UiAction {
+                    objectName: "copyContactEmailButton"
+                    text: contactDialog.emailCopied ? "已复制" : "复制邮箱"; quiet: true
+                    onClicked: contactDialog.emailCopied = appController.inlineInput.permissions.copyContactEmail()
+                }
+            }
+            Label { Layout.fillWidth: true; text: "反馈问题时，可以附上使用的应用、操作步骤和截图，方便我们了解具体情况。"; wrapMode: Text.Wrap; color: uiTheme.muted }
+            UiAction {
+                objectName: "copyContactAppInfoButton"
+                text: contactDialog.copied ? "已复制应用信息" : "复制应用信息"
+                onClicked: contactDialog.copied = appController.inlineInput.permissions.copyAppInfo()
+            }
+            Label { Layout.fillWidth: true; text: "应用信息包含版本号和系统版本，方便反馈时附上。"; wrapMode: Text.Wrap; color: uiTheme.muted; font.pixelSize: 12 }
+        }
+    }
+    Dialog {
         id: helpDialog
         objectName: "helpDialog"
         parent: Overlay.overlay
@@ -763,9 +750,9 @@ ApplicationWindow {
             Label { Layout.fillWidth: true; text: "语音输入"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
             Label { Layout.fillWidth: true; text: "连接 Ring 并开启语音识别。点入文本框后，使用当前配置的语音手势开始输入；语音输入页可查看记录。"; wrapMode: Text.Wrap; color: uiTheme.muted }
             Label { Layout.fillWidth: true; text: "场景与手势"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
-            Label { Layout.fillWidth: true; text: "点击手势卡片查看用途。Tap、左滑、右滑保留给语音交互；不同模式下的系统手势按现有规则生效。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            UiAction { Layout.fillWidth: true; text: "输入法与权限设置"; onClicked: { helpDialog.close(); inputMethodSetupDialog.open() } }
-            UiAction { objectName: "runtimeLogButton"; Layout.fillWidth: true; text: "故障排查 · 实时日志"; onClicked: { helpDialog.close(); runtimeLogDialog.open() } }
+            Label { Layout.fillWidth: true; text: "Tap 与四向滑动组成语音手势组。应用覆盖其中任意一个后，该应用常规状态下停用整组语音操作。放映、阅读和播放等场景独立配置；全局功能占用的手势会在应用内置灰。"; wrapMode: Text.Wrap; color: uiTheme.muted }
+            UiAction { Layout.alignment: Qt.AlignLeft; text: "输入法与权限设置"; onClicked: { helpDialog.close(); inputMethodSetupDialog.open() } }
+            UiAction { objectName: "runtimeLogButton"; Layout.alignment: Qt.AlignLeft; text: "故障排查 · 实时日志"; onClicked: { helpDialog.close(); runtimeLogDialog.open() } }
         }
     }
 
@@ -819,10 +806,7 @@ ApplicationWindow {
                 appController.inlineInput.permissions.cancelScreenPreview()
             }
             onAboutToShow: navigate(0)
-            onOpened: {
-                if (appController.audioSource === "microphone")
-                    appController.refreshMicrophones()
-            }
+            onOpened: appController.refreshMicrophones()
             closePolicy: Popup.CloseOnEscape
             readonly property bool deviceSettingsLocked:
                 appController.connected || appController.busy
@@ -926,19 +910,23 @@ ApplicationWindow {
                                 objectName: "ringGestureModeLabel"
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                                 text: "Ring 全局菜单 · " + appController.ringGestures.modeLabel
-                                      + "\n食指捏合唤起提示，中指捏合切换模式，显示 5 秒。"
-                                      + "\n操作模式仅保留上下滑、握拳和两种捏合；语音手势在输入模式使用。"
+                                      + "\n提示、模式切换与窗口选择的手势在“场景与手势 → 全局默认”中配置。"
+                                      + "\n应用覆盖语音组后，整组语音操作在该应用常规状态下停用。"
                                       + "\n下滑进入输入框选择，四向滑动移动高亮，5 秒无操作退出。"
                                       + "\n普通框选中即聚焦，Tap 开始语音；地址栏需先 Tap 确认聚焦。"
                                 color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
                             }
-                            SettingsCategoryButton {
-                                objectName: "openAppGestureSettingsButton"
+                            SettingsFormRow {
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                                 visible: appController.appGestures.supported
-                                text: "发送与切换对话"
+                                title: "发送与切换对话"
                                 description: "选择 Codex、WorkBuddy 或微信，自定义手势对应的快捷键"
-                                onClicked: runtimeSettingsDialog.navigate(7)
+                                UiAction {
+                                    objectName: "openAppGestureSettingsButton"
+                                    Layout.alignment: Qt.AlignRight
+                                    text: "设置快捷键"
+                                    onClicked: runtimeSettingsDialog.navigate(7)
+                                }
                             }
 
                             SettingsSectionHeader {
@@ -950,7 +938,7 @@ ApplicationWindow {
                             }
                             Label {
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                text: "每项最多设置两个手势，语音操作之间不能重复分配。确认手势在纯手势模式下用于开始和结束；应用操作可在其他阶段复用撤销和转换手势。"
+                                text: "每项最多设置两个手势，语音操作之间不能重复分配。应用常规配置覆盖语音组的任意成员后，整组在该应用内停用；移除全部覆盖后恢复。"
                                 color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                             }
                             GestureBindingRow { actionName: "confirm"; title: "确认 · 开始／结束本句语音" }
@@ -1012,96 +1000,40 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: runtimeSettingsDialog.currentPage === 6
                             spacing: 14
-                            SettingsCategoryButton {
-                                objectName: "openInputMethodSetupButton"
+                            SettingsFormRow {
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                                 visible: appController.inlineInput.enabled
-                                text: "安装与启用语音输入法"
-                                description: "查看组件状态、输入法选择和系统权限"
-                                onClicked: inputMethodSetupDialog.open()
+                                title: "语音输入法"
+                                description: "安装或更新输入法，在系统中启用"
+                                UiAction {
+                                    objectName: "openInputMethodSetupButton"
+                                    Layout.alignment: Qt.AlignRight
+                                    text: "安装与管理"
+                                    onClicked: inputMethodSetupDialog.open()
+                                }
                             }
-                            Rectangle {
+                            SettingsFormGroup {
                                 objectName: "screenRecordingPermissionCard"
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                implicitHeight: screenPermissionContent.implicitHeight + 32
                                 visible: Qt.platform.os === "osx"
-                                radius: 12; color: root.panel; border.color: root.border
-                                ColumnLayout {
-                                    id: screenPermissionContent
-                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
-                                    spacing: 10
-                                    Label {
-                                        text: "屏幕录制权限"
-                                        color: root.textMain; font.bold: true; font.pixelSize: 15
+                                title: "窗口实时预览"
+                                description: "开启屏幕录制权限后，可在窗口总览中查看各个窗口的实时画面。"
+                                SettingsFormRow {
+                                    title: "屏幕录制"
+                                    description: appController.inlineInput.permissions.screenRecordingGranted
+                                        ? "已开启" : "在系统设置中管理此权限。"
+                                    UiAction {
+                                        objectName: "openScreenRecordingPermissionsButton"
+                                        text: "去系统设置"
+                                        enabled: !appController.inlineInput.permissions.screenRecordingRequesting
+                                        onClicked: appController.inlineInput.permissions.openScreenRecordingSettings()
                                     }
-                                    Label {
-                                        objectName: "screenRecordingPermissionStatus"
-                                        Layout.fillWidth: true
-                                        text: appController.inlineInput.permissions.screenRecordingStatus
-                                        color: appController.inlineInput.permissions.screenRecordingGranted ? root.textMain : "#996516"
-                                        wrapMode: Text.Wrap
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: "用于显示窗口选择层的实时画面。开启权限后返回这里，会继续验证一次预览。"
-                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
-                                    }
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        Button {
-                                            objectName: "openScreenRecordingPermissionsButton"
-                                            text: appController.inlineInput.permissions.screenRecordingRequesting ? "正在打开…" : "打开屏幕录制设置"
-                                            enabled: !appController.inlineInput.permissions.screenRecordingRequesting && !appController.inlineInput.permissions.screenPreviewBusy
-                                            onClicked: appController.inlineInput.permissions.openScreenRecordingSettings()
-                                        }
-                                        Button {
-                                            objectName: "refreshScreenRecordingPermissionsButton"
-                                            text: "重新检测"
-                                            onClicked: appController.inlineInput.permissions.refreshScreenRecording()
-                                        }
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: appController.inlineInput.permissions.screenRecordingInstructions
-                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
-                                    }
-                                    Label {
-                                        objectName: "screenRecordingPermissionMessage"
-                                        Layout.fillWidth: true
-                                        visible: text.length > 0
-                                        text: appController.inlineInput.permissions.screenRecordingMessage
-                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
-                                    }
-                                    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: root.border }
-                                    Label {
-                                        text: "实时预览确认"
-                                        color: root.textMain; font.bold: true
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        text: "验证会短暂读取当前桌面一个应用窗口，取得画面后立即停止，不录音、不保存。macOS 可能另弹出含 bypass 的确认，需要你点击 Allow／允许。"
-                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
-                                    }
-                                    RowLayout {
-                                        Button {
-                                            objectName: "verifyScreenPreviewButton"
-                                            text: appController.inlineInput.permissions.screenPreviewBusy ? "验证中…" : "验证实时预览"
-                                            enabled: appController.inlineInput.permissions.screenRecordingGranted && !appController.inlineInput.permissions.screenRecordingRequesting && !appController.inlineInput.permissions.screenPreviewBusy
-                                            onClicked: appController.inlineInput.permissions.verifyScreenPreview()
-                                        }
-                                        Button {
-                                            objectName: "cancelScreenPreviewButton"
-                                            text: "取消验证"
-                                            visible: appController.inlineInput.permissions.screenPreviewBusy
-                                            onClicked: appController.inlineInput.permissions.cancelScreenPreview()
-                                        }
-                                    }
-                                    Label {
-                                        objectName: "screenPreviewCheckMessage"
-                                        Layout.fillWidth: true
-                                        text: appController.inlineInput.permissions.screenPreviewMessage
-                                        color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
-                                    }
+                                }
+                                PermissionNotice {
+                                    objectName: "screenRecordingPermissionNotice"
+                                    Layout.fillWidth: true; actionText: ""
+                                    message: appController.inlineInput.permissions.screenRecordingWarning
+                                        ? "未开启屏幕录制权限，暂时无法显示窗口预览。仍可选择和切换窗口。" : ""
                                 }
                             }
                         }

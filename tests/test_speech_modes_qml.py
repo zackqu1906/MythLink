@@ -1,9 +1,10 @@
 from pathlib import Path
+import json
 
 import pytest
 
 
-def test_independent_mode_controls_and_gesture_hint_render_and_lock(tmp_path, monkeypatch):
+def test_single_audio_menu_and_independent_control_mode_remain_editable(tmp_path, monkeypatch):
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QSettings, QUrl
     from PySide6.QtQml import QQmlApplicationEngine
@@ -17,7 +18,9 @@ def test_independent_mode_controls_and_gesture_hint_render_and_lock(tmp_path, mo
         pytest.skip("QML needs its own QApplication process")
     app = app or QApplication(["speech-modes", "-platform", "offscreen"])
     monkeypatch.setattr(module, "app_data_root", lambda: tmp_path)
-    monkeypatch.setattr(module, "input_device_choices", lambda: [])
+    row = {"name": "USB microphone", "api": "Core Audio", "index": 1}
+    row.update(value=json.dumps(row), label="USB microphone")
+    monkeypatch.setattr(module, "input_device_choices", lambda: [row])
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
@@ -33,7 +36,7 @@ def test_independent_mode_controls_and_gesture_hint_render_and_lock(tmp_path, mo
     assert isinstance(window, QQuickWindow)
     controls = {name: window.findChild(QObject, name) for name in (
         "runtimeSettingsDialog", "audioSourceCombo", "speechControlModeCombo",
-        "microphoneDeviceCombo", "speechControlModeHint", "stage1SensitivitySlider",
+        "speechControlModeHint", "stage1SensitivitySlider",
     )}
     assert all(controls.values())
     try:
@@ -44,21 +47,21 @@ def test_independent_mode_controls_and_gesture_hint_render_and_lock(tmp_path, mo
         assert controls["speechControlModeCombo"].property("currentIndex") == 1
         controller.speechControlMode = "proximity"  # Exercise both modes; new users default to tap.
         QTest.qWait(20)
-        assert not controls["microphoneDeviceCombo"].property("visible")
-        controller.audioSource = "microphone"
+        assert window.findChild(QObject, "microphoneDeviceCombo") is None
+        controller.selectAudioInput(row["value"])
         controller.speechControlMode = "gesture"
         assert controller.setGestureBinding("confirm", 0, "snap")
         QTest.qWait(100)
-        assert controls["microphoneDeviceCombo"].property("visible")
         assert controls["audioSourceCombo"].property("currentIndex") == 1
+        assert controls["audioSourceCombo"].property("displayText") == "USB microphone"
         assert controls["speechControlModeCombo"].property("currentIndex") == 1
         assert "弹指" in controls["speechControlModeHint"].property("text")
         assert not controls["stage1SensitivitySlider"].property("enabled")
         controller._connected = True
         controller.connectedChanged.emit()
         app.processEvents()
-        for name in ("audioSourceCombo", "speechControlModeCombo", "microphoneDeviceCombo"):
-            assert not controls[name].property("enabled")
+        for name in ("audioSourceCombo", "speechControlModeCombo"):
+            assert controls[name].property("enabled")
         assert window.grabWindow().save(str(tmp_path / "speech-mode-settings.png"))
         assert not warnings
     finally:

@@ -14,9 +14,9 @@ from ..app_gestures import (ACTION_LABELS, APP_LABELS, AppBinding, action_phase,
                             default_profiles, profiles_from_json,
                             profiles_to_json, validate_profiles, reserve_ring_profiles)
 from ..app_shortcuts import MacAppShortcuts
-from ..gesture_settings import BoundGestureEvent, GESTURE_LABELS, RING_RESERVED_GESTURES
+from ..gesture_settings import BoundGestureEvent, GESTURE_LABELS
 from ..input_source_switch import foreground_pid, select_voice_input_source
-from ..gesture_scenes import PRESENTATION
+from ..scene_capabilities import SCENE_LABELS
 from ..wechat_setup import (KEYBOARD_SETTINGS_URL, MENU_TITLES,
                             KeyboardShortcutsNavigator, detect_wechat_menu)
 from .shortcut_recorder import shortcut_from_event, shortcut_from_key
@@ -35,6 +35,7 @@ class AppGestureEvent:
     sentence: tuple
     capture_error: str = ""
     scene: str = ""
+    exclusive: bool = False
 
 
 @dataclass(frozen=True)
@@ -82,12 +83,12 @@ class AppGestureController(QObject):
         try:
             self._profiles = profiles_from_json(owner._settings.value(
                 "gestures/appProfiles", profiles_to_json(default_profiles())))
-            reserved = reserve_ring_profiles(self._profiles)
+            reserved = reserve_ring_profiles(self._profiles, owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
             if reserved != self._profiles:
                 self._profiles = reserved
                 owner._settings.setValue("gestures/appProfiles", profiles_to_json(reserved))
                 self._error = "全局手势的旧绑定已更新；输入模式上滑统一为 Enter"
-            validate_profiles(self._profiles, owner._gesture_bindings)
+            validate_profiles(self._profiles, owner._gesture_bindings, owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
         except (ValueError, TypeError, KeyError):
             self._profiles = default_profiles()
             # Preserve a user's custom start/end gestures, disabling colliding
@@ -128,11 +129,11 @@ class AppGestureController(QObject):
     def apps(self):
         return [{"value": key, "label": value} for key, value in APP_LABELS.items()]
 
-    @Property("QVariantList", constant=True)
+    @Property("QVariantList", notify=changed)
     def gestures(self):
         return [{"value": "", "label": "未绑定"}] + [
             {"value": key, "label": value} for key, value in GESTURE_LABELS.items()
-            if key not in RING_RESERVED_GESTURES]
+            if key not in self.owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"}]
 
     @Property("QVariantMap", notify=changed)
     def profiles(self):
@@ -216,14 +217,15 @@ class AppGestureController(QObject):
         self.changed.emit()
 
     def validate_voice(self, bindings):
-        if any(name in RING_RESERVED_GESTURES for pair in bindings.as_dict().values() for name in pair):
+        if any(name in self.owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"}
+               for pair in bindings.as_dict().values() for name in pair):
             raise ValueError("该手势已保留给 Ring 全局菜单")
-        validate_profiles(self._profiles, bindings)
+        validate_profiles(self._profiles, bindings, self.owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
         self._validate_source_conflict(self._profiles, bindings)
 
     def _unused_source_gestures(self):
         used = {g for pair in self.owner._gesture_bindings.as_dict().values() for g in pair}
-        used.update(RING_RESERVED_GESTURES)
+        used.update(self.owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
         used.update(b.gesture for actions in self._profiles.values() for b in actions.values() if b.enabled)
         return [g for g in GESTURE_LABELS if g not in used]
 
@@ -308,12 +310,12 @@ class AppGestureController(QObject):
                 raise ValueError("应用操作不存在")
             if action == "send":
                 raise ValueError("输入模式上滑固定为 Enter，适用于所有应用")
-            if gesture in RING_RESERVED_GESTURES:
+            if gesture in self.owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"}:
                 raise ValueError("该手势已保留给 Ring 全局菜单")
             binding = AppBinding(gesture, shortcut, enabled if gesture else False)
             profiles = {key: dict(value) for key, value in self._profiles.items()}
             profiles[app][action] = binding
-            validate_profiles(profiles, self.owner._gesture_bindings)
+            validate_profiles(profiles, self.owner._gesture_bindings, self.owner._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
             self._validate_source_conflict(profiles, self.owner._gesture_bindings)
         except (ValueError, TypeError) as exc:
             self._error = str(exc)
@@ -455,6 +457,9 @@ class AppGestureController(QObject):
         """Capture the destination and phase at recognition, before Qt queues it."""
         source = event.event if isinstance(event, BoundGestureEvent) else event
         name = str(getattr(source, "name", ""))
+        override = self.scene_envelope(source)
+        if override is not None:
+            return override
         if name != "swipe-up" and name and name == self._source_gesture:
             created, generation = time.monotonic(), self._generation
             try:
@@ -479,35 +484,69 @@ class AppGestureController(QObject):
                                capture_error=capture_error, **state)
 
     def scene_envelope(self, event):
-        """Claim a scene shortcut before the firmware's tap-to-record endpoint."""
+        """Resolve application/scene ownership before any voice endpoint runs."""
         name = str(getattr(event, "name", ""))
-        if self._recording or not self._catalog.uses_scene(name):
+        catalog = self._catalog
+        if not catalog._can_bind_regular(name):
+            return None
+        scene_apps = catalog.configured_scenes()
+        voice_gesture = name in catalog.voice_group()
+        if not ((scene_apps and (catalog.uses(name) or catalog.uses_scene(name) or voice_gesture))
+                or (voice_gesture and catalog.voice_disabled_bundles())
+                or (name == self._source_gesture and catalog.uses(name))):
             return None
         created, generation = time.monotonic(), self._generation
         state, sentence = self.phase_state(), self.sentence()
         bindings = self.owner._gesture_bindings
-        configured = {bundle: self._catalog.for_scene(bundle, PRESENTATION) for bundle in self._catalog.scene_bundles()}
+        target, capture_error = None, ""
         try:
-            target = self.backend.capture(menu_action=True, scene=True)
+            target = self.backend.capture(menu_action=True, **({"scene": True} if scene_apps else {}))
         except Exception as exc:
-            self.owner._event_log("APP_SCENE", gesture=name, result="unavailable", error=str(exc))
-            self._catalog.observe_scene(None)
-            return None
-        self._catalog.observe_scene(target)
-        reason = ("no_target" if target is None else
-                  "blocked_window" if target.blocked else
-                  "not_presenting" if target.scene != PRESENTATION else
-                  "text_focus" if target.input_context == "text" else
-                  "unknown_focus" if target.input_context != "nontext" else
-                  "unmapped" if "scene:" + name not in configured.get(target.bundle, {}) else "")
-        self.owner._event_log("APP_SCENE", _live_message="", gesture=name,
-                              app=target.bundle if target else "", result="default" if reason else "claimed",
-                              reason=reason, scene=target.scene if target else "",
-                              input_context=target.input_context if target else "unknown")
-        if reason:
+            capture_error = f"{type(exc).__name__}: {exc}"
+        if target is None:
+            # Unknown foreground must not accidentally start voice or execute
+            # a default gesture that could have been overridden in that app.
+            return AppGestureEvent(BoundGestureEvent(event, bindings), None, generation, created,
+                                   sentence=sentence, capture_error=capture_error or "无法确认当前前台应用",
+                                   exclusive=True, **state)
+        if scene_apps:
+            catalog.observe_scene(target)
+        active_scene = (target.scene if target.scene in scene_apps.get(target.bundle, [])
+                        and not target.blocked and target.input_context == "nontext" else "")
+        if active_scene:
+            # Scene mappings are independent of regular bindings. Unassigned
+            # voice gestures stay silent instead of falling back to voice.
+            claimed = (voice_gesture or "scene:" + name in catalog.for_scene(target.bundle, active_scene, target.website)
+                       or "menu:" + name in catalog.for_target(target.bundle))
+        else:
+            claimed = ((voice_gesture and catalog.voice_overridden(target.bundle))
+                       or (name == self._source_gesture and "menu:" + name in catalog.for_target(target.bundle)))
+        if not claimed:
             return None
         return AppGestureEvent(BoundGestureEvent(event, bindings), target, generation, created,
-                               sentence=sentence, scene=target.scene, **state)
+                               sentence=sentence, scene=active_scene, exclusive=True, **state)
+
+    def handle_override(self, event):
+        """Consumed overrides never fall through, even if stale or unassigned."""
+        if (self._recording or event.generation != self._generation
+                or time.monotonic() - event.created > 1.0 or event.sentence != self.sentence()):
+            return
+        if event.capture_error:
+            self.notify("暂时无法确认前台应用，未执行手势，请重试")
+            return
+        target = event.target
+        if target is None or target.blocked or self.owner._ring_gestures.speech_busy():
+            return
+        if action_phase("next", phase=event.phase, composing=event.composing,
+                        writing=event.writing, edit_requested=event.edit_requested) != "dispatch":
+            return
+        source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
+        name = str(getattr(source, "name", ""))
+        action = ("scene:" if event.scene else "menu:") + name
+        actions = self._catalog.for_scene(target.bundle, event.scene, target.website) if event.scene else self._catalog.for_target(target.bundle)
+        binding = actions.get(action)
+        if binding is not None:
+            self._dispatch(action, binding, target)
 
     def handle_scene(self, event):
         """A claimed scene gesture never falls through to a global/voice action."""
@@ -521,7 +560,7 @@ class AppGestureController(QObject):
                 or action_phase("next", phase=event.phase, composing=event.composing,
                                 writing=event.writing, edit_requested=event.edit_requested) != "dispatch"):
             return
-        binding = self._catalog.for_scene(target.bundle, event.scene).get(action)
+        binding = self._catalog.for_scene(target.bundle, event.scene, target.website).get(action)
         if binding is not None:
             self._dispatch(action, binding, target)
 
@@ -529,7 +568,7 @@ class AppGestureController(QObject):
         """Only explicit menu mappings may use the operation-mode app route."""
         if not isinstance(event, AppGestureEvent):
             return False
-        if event.scene:
+        if event.exclusive or event.scene:
             return True  # handle_scene revalidates settings, speech and native context.
         source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
         name = str(getattr(source, "name", ""))
@@ -542,6 +581,9 @@ class AppGestureController(QObject):
                     and "menu:" + name in self._catalog.for_target(target.bundle))
 
     def handle(self, event: AppGestureEvent) -> bool:
+        if event.exclusive:
+            self.handle_override(event)
+            return True
         source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
         name = str(getattr(source, "name", ""))
         target = event.target

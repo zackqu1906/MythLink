@@ -110,11 +110,11 @@ ColumnLayout {
         text: "切换对话：本句处理完成后生效。\n手势可以复用；有可撤销或转编辑的语音时，优先处理语音操作。"
         color: "#687286"; font.pixelSize: 11
     }
-    Button {
+    UiAction {
         objectName: "openWeChatGuideButton"
-        Layout.fillWidth: true
+        Layout.alignment: Qt.AlignLeft
         visible: settings.selectedApp === "wechat"
-        text: "微信聊天切换 · 查看设置步骤  ›"
+        text: "查看微信设置步骤"
         onClicked: settings.wechatSetupRequested()
     }
     Label {
@@ -122,7 +122,7 @@ ColumnLayout {
         text: settings.service.error
         visible: text.length > 0; color: "#986A15"; font.pixelSize: 12
     }
-    Button {
+    UiAction {
         objectName: "resetAppGesturesButton"
         text: "恢复此应用默认手势"
         onClicked: settings.service.resetApp(settings.selectedApp)

@@ -134,7 +134,7 @@ def test_explicit_add_and_binding_validation_preserve_voice_and_persist(route, m
     catalog = configure(s, monkeypatch)
     assert not catalog.addApplication("unlisted.app")
     assert catalog.bindings[BUNDLE] == {}
-    for gesture in {"tap", "swipe-left", "swipe-right"} | RING_RESERVED_GESTURES:
+    for gesture in c._global_gesture_bindings.reserved:
         assert not catalog.setBinding(BUNDLE, gesture, ACTION["id"])
     assert not catalog.setBinding(BUNDLE, "circle-clockwise", "invented")
     assert catalog.setBinding(BUNDLE, "circle-clockwise", ACTION["id"])
@@ -183,7 +183,7 @@ def test_custom_binding_rejects_locked_gestures_invalid_keys_and_changed_applica
     for name, shortcut in [("", "Cmd+N"), ("a" * 121, "Cmd+N"), ("New", "N"), ("New", "Cmd+K, Cmd+N")]:
         assert not catalog.customAction(name, shortcut)
         assert not catalog.setCustomBinding(BUNDLE, "circle-clockwise", name, shortcut)
-    for gesture in {"tap", "swipe-left", "swipe-right"} | RING_RESERVED_GESTURES:
+    for gesture in catalog.globalOccupancy:
         assert not catalog.setCustomBinding(BUNDLE, gesture, "New", "Cmd+N")
     catalog.selectApplication("")
     assert not catalog.setCustomBinding(BUNDLE, "circle-clockwise", "New", "Cmd+N")
@@ -237,7 +237,7 @@ def test_clear_one_application_preserves_other_bindings_and_live_voice(route, mo
     assert catalog.bindings[second] == other_bindings and len(catalog.apps) == 1
 
 
-def test_remove_and_readd_do_not_restore_legacy_shortcuts_or_old_menu_reply(route, monkeypatch):
+def test_remove_and_readd_use_fresh_defaults_not_legacy_shortcuts_or_old_menu_reply(route, monkeypatch):
     from proximic_ring.ui.application_mapping_controller import ApplicationMappingController
     c, service, inline, backend, sent, _, emit = route
     bundle = "com.openai.codex"
@@ -270,9 +270,12 @@ def test_remove_and_readd_do_not_restore_legacy_shortcuts_or_old_menu_reply(rout
         restored.close()
     assert catalog.addApplication(bundle)
     catalog._apply_result("menu", generation, bundle, dict(actions=[ACTION]), "")
-    assert catalog.busy and catalog.actions == [] and catalog.bindings[bundle] == {}
+    assert catalog.busy and all(item.get("preset") for item in catalog.actions)
+    assert catalog.bindings[bundle]["circle-clockwise"]["shortcut"] == "Cmd+Shift+]"
+    service._last_dispatch = None  # Simulate a later gesture after remove/re-add.
     emit("circle-clockwise")
-    assert not sent
+    assert sent == [("codex", "Cmd+Shift+]")]
+    sent.clear()
     catalog._apply_result("menu", catalog._generation["menu"], bundle, dict(actions=[ACTION]), "")
     assert catalog.setBinding(bundle, "circle-clockwise", ACTION["id"])
     service._last_dispatch = None  # Model a later gesture, outside the existing debounce window.

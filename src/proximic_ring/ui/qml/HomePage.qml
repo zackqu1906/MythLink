@@ -19,6 +19,23 @@ ScrollView {
     ColumnLayout {
         width: page.availableWidth
         spacing: 24
+        ColumnLayout {
+            objectName: "homePermissionNotices"
+            Layout.fillWidth: true; spacing: 2
+            readonly property var notices: page.controller.inlineInput.permissions.essentialWarnings.filter(
+                function(item) { return item.kind !== "microphone" || page.controller.audioSource === "microphone" })
+            visible: notices.length > 0
+            Repeater {
+                model: parent.notices
+                PermissionNotice {
+                    required property var modelData
+                    objectName: "homePermission_" + modelData.kind
+                    Layout.fillWidth: true
+                    message: modelData.text
+                    onActivated: page.controller.inlineInput.permissions.openPermissionSettings(modelData.kind)
+                }
+            }
+        }
         GridLayout {
             Layout.fillWidth: true
             columns: width >= 900 ? 2 : 1

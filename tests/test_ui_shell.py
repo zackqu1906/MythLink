@@ -136,7 +136,7 @@ def test_settings_form_navigation_preserves_configuration_and_live_voice(inline_
     assert root.findChild(QObject, "settingsAudioGroup").property("visible")
     assert root.findChild(QObject, "settingsInputGroup").property("visible")
     assert root.findChild(QObject, "settingsCategory3") is None
-    assert not root.findChild(QObject, "microphoneDeviceRow").property("visible")
+    assert root.findChild(QObject, "microphoneDeviceRow") is None
     assert not root.findChild(QObject, "voiceSensitivityRow").property("visible")
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)

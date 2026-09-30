@@ -6,7 +6,10 @@ import sys
 
 from .app_gestures import KEY_CODES, normalize_shortcut, profile_for_application
 from .mac_permissions import require_post_event_access
-from .gesture_scenes import presentation_profile, installed_presentation_profile, presentation_context
+from .gesture_scenes import PRESENTATION
+from .scene_capabilities import application_scene_profiles, installed_scene_profiles, BROWSERS, VIDEO
+from .activity_scenes import activity_context
+from .browser_media import BrowserMedia, browser_media_context
 
 
 def verify_native_api() -> None:
@@ -42,6 +45,10 @@ class ShortcutTarget:
     scene: str = ""
     scene_checked: bool = False
     input_context: str = "unknown"
+    website: str = ""
+    page_key: str = ""
+    web_area: object = field(default=None, repr=False)
+    player: object = field(default=None, repr=False)
 
 
 class LocalMacAppShortcuts:
@@ -54,13 +61,13 @@ class LocalMacAppShortcuts:
         if app is None:
             return None
         bundle, pid = str(app.bundleIdentifier() or ""), int(app.processIdentifier())
-        scene_profile = presentation_profile(bundle) if scene else ""
-        if scene and not scene_profile:
+        scene_profiles = application_scene_profiles(bundle) if scene else {}
+        if scene:
             try:
-                scene_profile = installed_presentation_profile(bundle, str(app.bundleURL().path()))
+                scene_profiles = installed_scene_profiles(bundle, str(app.bundleURL().path()))
             except AttributeError:
                 pass
-            if not scene_profile:
+            if not scene_profiles and not menu_action:
                 return None
         profile = profile_for_application(bundle, str(app.localizedName() or ""))
         if not profile and not plain_enter and not menu_action and not scene:
@@ -76,6 +83,9 @@ class LocalMacAppShortcuts:
         def attr(node, name):
             if node is None:
                 return None
+            if name == "AXValueSettable":
+                error, editable = AX.AXUIElementIsAttributeSettable(node, "AXValue", None)
+                return bool(editable) if error == 0 else None
             error, value = AX.AXUIElementCopyAttributeValue(node, name, None)
             if error == 0 and value is not None and name in {"AXPosition", "AXSize"}:
                 value_type = AX.kAXValueCGPointType if name == "AXPosition" else AX.kAXValueCGSizeType
@@ -93,20 +103,25 @@ class LocalMacAppShortcuts:
         subrole = str(attr(window, "AXSubrole") or "")
         # Do not turn a chat shortcut into a dialog confirmation or terminal input.
         description = str(attr(focus, "AXDescription") or "").casefold()
-        active_scene, input_context = presentation_context(bundle, window, focus, attr, profile=scene_profile) if scene else ("", "unknown")
+        browser = browser_media_context(window, focus, attr) if scene and bundle.casefold() in BROWSERS else BrowserMedia()
+        active_scene, input_context = ((browser.scene, browser.input_context) if browser.scene else
+            activity_context(bundle, scene_profiles, window, focus, attr) if scene else ("", "unknown"))
+        if scene and bundle.casefold() in BROWSERS and active_scene == VIDEO and not browser.scene:
+            active_scene = ""  # Browser video must be tied to the current page/player.
         # WPS's verified slide surface uses AXDialog. Only a positive scene
         # capture may exempt it; ordinary shortcuts and all other dialogs stay blocked.
-        scene_dialog = scene and scene_profile == "wps" and active_scene and input_context == "nontext"
+        scene_dialog = scene and scene_profiles.get(PRESENTATION) == "wps" and active_scene == PRESENTATION and input_context == "nontext"
         blocked = (bool(attr(window, "AXModal")) or (subrole in {"AXDialog", "AXSystemDialog"} and not scene_dialog)
                    or role in {"AXMenu", "AXMenuItem", "AXComboBox", "AXSearchField"}
                    or any(word in description for word in ("terminal", "终端", "search", "搜索")))
-        if scene:
+        if scene or menu_action:
             latest = frontmost_application()
             if latest is None or (str(latest.bundleIdentifier() or ""), int(latest.processIdentifier())) != (bundle, pid):
                 return None
         return ShortcutTarget(bundle, pid, profile or bundle, window, focus, role, blocked,
                               menu_action=menu_action, scene=active_scene, scene_checked=scene,
-                              input_context=input_context)
+                              input_context=input_context, website=browser.website, page_key=browser.page_key,
+                              web_area=browser.web_area, player=browser.player)
 
     def same_target(self, target: ShortcutTarget, *, require_focus: bool = False) -> bool:
         options = dict(plain_enter=target.plain_enter, menu_action=target.menu_action)
@@ -117,8 +132,12 @@ class LocalMacAppShortcuts:
             return False
         if target.window is not None and current.window != target.window:
             return False
-        if target.scene_checked and (not target.scene or current.scene != target.scene
-                                     or current.input_context != "nontext"):
+        if target.page_key or current.page_key:
+            if (current.page_key != target.page_key or current.website != target.website
+                    or current.web_area != target.web_area or current.player != target.player):
+                return False
+        if target.scene_checked and (current.scene != target.scene
+                                     or (target.scene and current.input_context != target.input_context)):
             return False
         if require_focus and target.focus is not None and current.focus != target.focus:
             return False

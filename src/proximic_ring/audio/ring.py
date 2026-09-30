@@ -73,6 +73,9 @@ class RingAudioSource(AudioSource):
         imu_sample_observer: Callable[[object], None] | None = None,
         gesture_observer: Callable[[object], None] | None = None,
         gesture_state_observer: Callable[[bool], None] | None = None,
+        touchpad_observer: Callable[[object], None] | None = None,
+        touchpad_state_observer: Callable[[bool], None] | None = None,
+        touchpad_duration_s: float | None = 90.,
         battery_observer: Callable[
             [int | None, int | None, int | None], None
         ]
@@ -100,6 +103,13 @@ class RingAudioSource(AudioSource):
         self.imu_sample_observer = imu_sample_observer
         self.gesture_observer = gesture_observer
         self.gesture_state_observer = gesture_state_observer
+        if touchpad_observer is not None and (imu_observer is not None or imu_sample_observer is not None):
+            raise ValueError("Touchpad and raw IMU observers share one stream; choose one")
+        self.touchpad_observer = touchpad_observer
+        self.touchpad_state_observer = touchpad_state_observer
+        self.touchpad_duration_s = touchpad_duration_s
+        self.touchpad_active = False
+        self.touchpad_error = None
         self.gestures_active = False
         self.gesture_error = None
         self.battery_observer = battery_observer
@@ -120,8 +130,11 @@ class RingAudioSource(AudioSource):
         self._pause_stream_requested = threading.Event()
         self._stream_paused = threading.Event()
         self._ready = threading.Event()
+        self._resume_finished = threading.Event()
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
+        self._resume_error: BaseException | None = None
+        self._pcm_generation = object()
 
         self.capture_path: Path | None = None
         self.pcm_callbacks: int = 0
@@ -152,6 +165,8 @@ class RingAudioSource(AudioSource):
         self._pending_start_monotonic_ns = None
         self.last_read_end_monotonic_ns = None
         self._error = None
+        self._resume_error = None
+        self._resume_finished.clear()
         self.capture_path = None
         self.pcm_callbacks = 0
         self.samples_received = 0
@@ -232,11 +247,14 @@ class RingAudioSource(AudioSource):
         self._pending_start_monotonic_ns = None
         self.last_read_end_monotonic_ns = None
         if self._stream_paused.is_set():
+            self._resume_error = None
             self._buffer_audio.set()
             self._ready.clear()
+            self._resume_finished.clear()
             self._pause_stream_requested.clear()
             wait_s = max(6.0, _INITIAL_PCM_TIMEOUT_S + 2.0)
-            if not self._ready.wait(wait_s):
+            if not self._resume_finished.wait(wait_s):
+                self._pause_stream_requested.set()
                 raise RuntimeError(
                     "Ring microphone did not restart after model loading; "
                     "the device will be disconnected"
@@ -245,6 +263,10 @@ class RingAudioSource(AudioSource):
                 raise RuntimeError(
                     f"Ring audio stream failed: {self._error}"
                 ) from self._error
+            if self._resume_error is not None:
+                raise RuntimeError(str(self._resume_error)) from self._resume_error
+            if self._stop.is_set():
+                raise RuntimeError("Ring 音频切换已取消")
             self._watchdog_armed.set()
             return
 
@@ -271,6 +293,7 @@ class RingAudioSource(AudioSource):
         """Stop MIC traffic while keeping BLE/NUS connected."""
         if self._thread is None:
             return
+        self._pcm_generation = object()
         self._watchdog_armed.clear()
         self._buffer_audio.clear()
         self._pause_stream_requested.set()
@@ -288,12 +311,33 @@ class RingAudioSource(AudioSource):
                 f"Failed to pause Ring microphone: {self._error}"
             ) from self._error
 
+    def set_audio_enabled(self, enabled: bool) -> None:
+        """Switch MIC traffic without tearing down BLE, gestures or battery."""
+        if not enabled:
+            self.pause_stream()
+            self.audio_enabled = False
+            self._clear_queue()
+            self._pending = np.empty(0, dtype=np.float32)
+            self._pending_start_monotonic_ns = None
+            return
+        self.audio_enabled = True
+        try:
+            self.begin_buffering()
+        except Exception:
+            self.audio_enabled = False
+            self._buffer_audio.clear()
+            self._watchdog_armed.clear()
+            self._pause_stream_requested.set()
+            raise
+
     @property
     def error(self) -> BaseException | None:
         return self._error
 
     def close(self) -> None:
+        self._pcm_generation = object()
         self._stop.set()
+        self._resume_finished.set()
         self._start_stream.set()
         self._pause_stream_requested.clear()
         self._stream_paused.set()
@@ -303,10 +347,20 @@ class RingAudioSource(AudioSource):
         self._thread = None
 
     def read(self, frames: int) -> np.ndarray | None:
+        return self.read_interruptible(frames)
+
+    def read_interruptible(self, frames: int, *, should_interrupt: Callable[[], bool] | None = None) -> np.ndarray | None:
+        """Let an idle settings change proceed even while PCM is stalled.
+
+        An interruption preserves pending samples. The caller must decide to
+        resume reading or switch capture; it is not an audio EOF/disconnect.
+        """
         if frames <= 0:
             raise ValueError("frames must be > 0")
 
         while self._pending.size < frames:
+            if should_interrupt is not None and should_interrupt():
+                raise InterruptedError("音频设置等待应用")
             if self._error is not None and self._queue.empty():
                 raise RuntimeError(f"Ringo audio stream failed: {self._error}") from self._error
 
@@ -527,6 +581,7 @@ class RingAudioSource(AudioSource):
                 ctypes.windll.ole32.CoUninitialize()
             self._connected_ready.set()
             self._ready.set()
+            self._resume_finished.set()
             try:
                 self._queue.put_nowait(_STOP)
             except queue.Full:
@@ -544,7 +599,13 @@ class RingAudioSource(AudioSource):
     async def _start_mic_and_wait(self, session, *, timeout_s: float) -> bool:
         """Start the SDK microphone and require an actual PCM callback."""
         baseline_callbacks = self.pcm_callbacks
-        await session.mic_on(self.encoding, on_pcm=self._on_pcm)
+        generation = self._pcm_generation = object()
+
+        def on_pcm(frame_seq, pcm):
+            if generation is self._pcm_generation and not self._stop.is_set():
+                self._on_pcm(frame_seq, pcm)
+
+        await session.mic_on(self.encoding, on_pcm=on_pcm)
         if not session.mic_active or session.mic is None:
             return False
 
@@ -685,6 +746,10 @@ class RingAudioSource(AudioSource):
 
     async def _shutdown_session(self, session) -> None:
         """Best-effort BLE shutdown that never hides the stream failure."""
+        if bool(getattr(session, "touchpad_active", False)):
+            try:await session.touchpad_off()
+            except Exception as exc:print(f"Ring cleanup: touchpad STOP failed: {exc}")
+        self.touchpad_active = False
         self.gestures_active = False
         if self.gesture_state_observer is not None:
             self.gesture_state_observer(False)
@@ -789,50 +854,33 @@ class RingAudioSource(AudioSource):
 
             # Firmware recognition has its own START; it never needs raw IMU.
             await self._start_gestures(session)
+            await self._start_touchpad(session)
             await self._start_imu_best_effort(session)
 
             if not self.audio_enabled:
-                # DJI supplies PCM independently; this BLE session only owns
-                # battery/gestures. Never issue MIC ON or arm the PCM watchdog.
+                # Start with MIC off, but retain the same loop for a later
+                # switch from a computer microphone to Ring audio.
                 if self.gesture_error is not None:
                     raise RuntimeError(f"Ring 固件手势启动失败：{self.gesture_error}")
+                self._pause_stream_requested.set()
+                self._stream_paused.set()
                 self._ready.set()
-                while not self._stop.is_set():
-                    client = getattr(session, "client", None)
-                    if client is not None and not bool(getattr(client, "is_connected", False)):
-                        raise RuntimeError("Ring BLE connection was physically lost")
-                    await asyncio.sleep(0.05)
-                return
-
-            # The receiver is normally operated with a short human pause
-            # between CONNECT and MIC ON.  Preserve at least a small quiet
-            # window after NUS setup/control queries, especially when the ASR
-            # backend is already cached and model startup finishes instantly.
-            settle_remaining = _INITIAL_MIC_SETTLE_S - (
-                time.monotonic() - connected_at
-            )
-            if settle_remaining > 0:
-                print(
-                    "Waiting briefly for the Ring link to settle before MIC ON "
-                    f"({settle_remaining:.2f}s) ..."
+            else:
+                # Preserve the proven CONNECT -> MIC ON settling interval.
+                settle_remaining = _INITIAL_MIC_SETTLE_S - (time.monotonic() - connected_at)
+                if settle_remaining > 0:
+                    await asyncio.sleep(settle_remaining)
+                started = await self._start_mic_and_wait(
+                    session, timeout_s=_INITIAL_PCM_TIMEOUT_S,
                 )
-                await asyncio.sleep(settle_remaining)
-
-            started = await self._start_mic_and_wait(
-                session,
-                timeout_s=_INITIAL_PCM_TIMEOUT_S,
-            )
-            if not started:
-                hint = ""
-                if self.encoding == "opus":
-                    hint = (
-                        " Opus mode additionally needs opuslib and a native libopus runtime; "
-                        "try --encoding pcm to avoid Opus during initial testing."
+                if not started:
+                    hint = ""
+                    if self.encoding == "opus":
+                        hint = " Opus mode needs opuslib and a native libopus runtime; try encoding pcm."
+                    raise RuntimeError(
+                        "Ring connected, but no microphone audio was received. "
+                        f"The device was disconnected; reconnect manually.{hint}"
                     )
-                raise RuntimeError(
-                    "Ring connected, but no microphone audio was received. "
-                    f"The device was disconnected; reconnect manually.{hint}"
-                )
 
             # Start the stall timer from MIC ON.  If the Ring never sends the
             # first callback, that is treated exactly like a stream stall.
@@ -857,7 +905,7 @@ class RingAudioSource(AudioSource):
                         f"[DIAG] {sdk_diag}"
                     )
 
-                if self._pause_stream_requested.is_set():
+                if self._pause_stream_requested.is_set() or self._stream_paused.is_set():
                     self._watchdog_armed.clear()
                     if session.mic_active:
                         await session.mic_off()
@@ -867,6 +915,9 @@ class RingAudioSource(AudioSource):
                         not self._stop.is_set()
                         and self._pause_stream_requested.is_set()
                     ):
+                        client = getattr(session, "client", None)
+                        if client is not None and not bool(getattr(client, "is_connected", False)):
+                            raise RuntimeError("Ring BLE connection was physically lost")
                         await asyncio.sleep(0.05)
                     if self._stop.is_set():
                         return
@@ -877,16 +928,29 @@ class RingAudioSource(AudioSource):
                     if remaining_pause > 0:
                         await asyncio.sleep(remaining_pause)
                     self._stream_paused.clear()
-                    started = await self._start_mic_and_wait(
-                        session,
-                        timeout_s=_INITIAL_PCM_TIMEOUT_S,
-                    )
-                    if not started:
-                        raise RuntimeError(
-                            "Ring microphone did not restart after model loading"
+                    try:
+                        started = await self._start_mic_and_wait(
+                            session, timeout_s=_INITIAL_PCM_TIMEOUT_S,
                         )
+                        restart_error = None
+                    except Exception as exc:
+                        started, restart_error = False, exc
+                    if not started:
+                        # A failed MIC ON is recoverable when switching back
+                        # to a computer microphone. Only real BLE failures
+                        # tear down this session; tell the caller and stay off.
+                        if session.mic_active:
+                            await session.mic_off()
+                        self._resume_error = restart_error or RuntimeError("Ring 麦克风未返回音频")
+                        self._buffer_audio.clear()
+                        self._pause_stream_requested.set()
+                        self._stream_paused.set()
+                        self._ready.set()
+                        self._resume_finished.set()
+                        continue
                     last_seen_callbacks = self.pcm_callbacks
                     last_progress_at = time.monotonic()
+                    self._resume_finished.set()
                     continue
 
                 callbacks_now = self.pcm_callbacks
@@ -1017,6 +1081,26 @@ class RingAudioSource(AudioSource):
             if self.gesture_state_observer is not None:
                 self.gesture_state_observer(False)
             raise RuntimeError(f"Ring 固件手势启动失败：{exc}") from exc
+
+    async def _start_touchpad(self, session) -> None:
+        """Opt-in typed events on the existing BLE loop; no OS mouse injection."""
+        if self.touchpad_observer is None:
+            return
+        def stopped(error):
+            self.touchpad_active = False
+            self.touchpad_error = error
+            if self.touchpad_state_observer is not None:
+                self.touchpad_state_observer(False)
+        try:
+            await session.touchpad_on(on_event=self.touchpad_observer,
+                                      on_stopped=stopped, duration_s=self.touchpad_duration_s)
+            self.touchpad_active = True
+            self.touchpad_error = None
+            if self.touchpad_state_observer is not None:
+                self.touchpad_state_observer(True)
+        except Exception as exc:
+            stopped(exc)
+            raise RuntimeError(f"Ring touchpad startup failed: {exc}") from exc
 
     async def _start_imu_best_effort(self, session) -> None:
         """Start the shared IMU stream, but never fail the audio session."""

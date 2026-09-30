@@ -8,12 +8,13 @@ import time
 from urllib.parse import unquote, urlsplit
 
 from .gesture_scenes import PRESENTATION, presentation_context
-from .scene_capabilities import PDF, VIDEO, IMAGE, MUSIC, EXTENSIONS, MUSIC_APPS, BROWSERS
+from .scene_capabilities import PDF, VIDEO, IMAGE, MUSIC, EXTENSIONS, MUSIC_APPS
 
 
 def input_context(window, focus, read):
     safe = {"AXWindow", "AXButton", "AXImage", "AXGroup", "AXLayoutArea", "AXScrollArea", "AXStaticText",
-            "AXToolbar", "AXSplitGroup", "AXSlider", "AXValueIndicator", "AXTable", "AXRow", "AXList", "AXOutline"}
+            "AXToolbar", "AXSplitGroup", "AXSlider", "AXValueIndicator", "AXTable", "AXRow", "AXList", "AXOutline",
+            "AXCheckBox", "AXRadioButton"}
     node = focus
     for _ in range(14):
         if node is None:
@@ -49,10 +50,12 @@ def activity_context(bundle, profiles, window, focus, attr, *, budget=.16):
             raise TimeoutError()
         return attr(node, key) if node is not None else None
     try:
+        # Reserve time for other scenes in multi-purpose office applications.
         # Existing presentation recognition (including the WPS exception) wins.
         if PRESENTATION in profiles:
             scene, context = presentation_context(bundle, window, focus, read,
-                budget=max(0, deadline-time.monotonic()), profile=profiles[PRESENTATION])
+                budget=max(0, min(.08 if len(profiles) > 1 else budget, deadline-time.monotonic())),
+                profile=profiles[PRESENTATION])
             if scene:
                 return scene, context
         if (read(window, "AXRole") != "AXWindow" or read(window, "AXModal") or read(window, "AXMinimized")
@@ -60,7 +63,6 @@ def activity_context(bundle, profiles, window, focus, attr, *, budget=.16):
             return "", "unknown"
         context = input_context(window, focus, read)
         document = document_kind(read(window, "AXDocument"))
-        browser = bundle.casefold() in BROWSERS
         # A title alone in a browser/office app is not proof of an open file.
         # Preview does not always expose AXDocument for an image.
         if not document and bundle.casefold() == "com.apple.preview":
@@ -79,10 +81,11 @@ def activity_context(bundle, profiles, window, focus, attr, *, budget=.16):
                 continue
             role = read(node, "AXRole")
             labels = " ".join(str(read(node, key) or "") for key in ("AXIdentifier", "AXDescription", "AXSubrole")).casefold()
-            if role in {"AXButton", "AXSlider", "AXMenuButton"}:
+            if role in {"AXButton", "AXCheckBox", "AXSlider", "AXValueIndicator", "AXMenuButton"}:
                 labels += " " + str(read(node, "AXTitle") or "").casefold()
-                if read(node, "AXEnabled") is not False:
-                    play |= role == "AXButton" and bool(re.search(r"\b(?:play|pause)\b|播放|暂停|暫停", labels))
+                if read(node, "AXEnabled") is True:
+                    # QuickTime exposes play/pause as AXCheckBox / AXToggle.
+                    play |= role in {"AXButton", "AXCheckBox"} and bool(re.search(r"\b(?:play|pause)\b|播放|暂停|暫停", labels))
                     seek |= role in {"AXSlider", "AXValueIndicator"} and bool(re.search(r"\b(?:seek|scrub|timeline|playback|progress|time)\b|进度|進度|时间|時間", labels))
             if role in {"AXGroup", "AXScrollArea", "AXLayoutArea", "AXWebArea", "AXImage"}:
                 video |= bool(re.search(r"\b(?:video|movie)(?:\b|view)|视频|影片|視頻", labels))

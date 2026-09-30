@@ -135,13 +135,20 @@ def test_saved_bindings_release_global_gestures_and_preserve_custom_actions(rout
 
 
 @pytest.mark.parametrize("app_mapping", [False, True])
-def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(route, monkeypatch, app_mapping):
+@pytest.mark.parametrize("voice_override", [False, True])
+def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(route, monkeypatch, app_mapping, voice_override):
     import proximic_ring.firmware_gestures as host
     c, _, inline, _, _, _, _ = route
     if app_mapping:
         from test_application_menus import ACTION, configure
         catalog = configure(c.appGestures, monkeypatch, "com.openai.codex")
         assert catalog.setBinding("com.openai.codex", "circle-clockwise", ACTION["id"])
+    if voice_override:
+        from test_application_menus import ACTION, configure
+        catalog = configure(c.appGestures, monkeypatch, "com.openai.codex")
+        if not app_mapping:
+            catalog.clearApplicationBindings("com.openai.codex")
+        assert catalog.setBinding("com.openai.codex", "swipe-left", ACTION["id"])
     state, started, finals, actions, shown = {}, [], [], [], []
     c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
     recognition, disconnect = threading.Event(), c._disconnect_event
@@ -191,6 +198,10 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(ro
                 gesture("middle-pinch")
                 QCoreApplication.processEvents()
                 assert c.ringGestures.mode == "input"
+                if voice_override:
+                    gesture("tap")
+                    assert not gate.gesture_busy and not gate.active
+                    assert catalog.setBinding("com.openai.codex", "swipe-left", "")
                 gesture("tap")
                 assert gate.gesture_busy and not gate.active
                 gesture("middle-pinch")  # Start queued, no GUI listening status yet.

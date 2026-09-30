@@ -416,6 +416,27 @@ class ProximitySessionController:
         self.flush()
         self.sink.close()
 
+    def configure_idle(self, *, start_on_gesture: bool, pre_roll_s: float,
+                       stage2_delay_s: float, end_on_tap: bool, manual_active=None) -> None:
+        """Change input mode at an idle boundary without replacing ASR sinks.
+
+        The runtime serializes this with gesture delivery. Retaining the sink
+        preserves utterance IDs, backend workers and completed-record history.
+        """
+        if self.gesture_busy:
+            raise RuntimeError("当前语句尚未结束")
+        if pre_roll_s < 0 or stage2_delay_s < 0:
+            raise ValueError("语音检测参数无效")
+        delay = int(round(stage2_delay_s * self.sample_rate))
+        if self.stage1_inactivity_samples <= delay:
+            raise ValueError("语音检测延迟超出有效范围")
+        self.reset()
+        self.start_on_gesture = bool(start_on_gesture)
+        self.end_on_tap = bool(end_on_tap or start_on_gesture)
+        self.pre_roll_samples = 0 if start_on_gesture else int(round(pre_roll_s * self.sample_rate))
+        self.stage2_delay_samples = 0 if start_on_gesture else delay
+        self.manual_active = manual_active
+
     def _append_history(self, x: np.ndarray) -> None:
         if self.pre_roll_samples <= 0:
             return

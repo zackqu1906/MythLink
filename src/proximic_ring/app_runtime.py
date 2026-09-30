@@ -24,6 +24,8 @@ import numpy as np
 
 from .asr import ASRBackendCache
 from .audio import MicrophoneSource, RingAudioSource
+from .audio.reconfiguration import AudioInputPipeline
+from .live_audio_settings import LiveAudioSettings
 from .cli import _build_detector, _build_session_controller
 from .events import Stage2Event
 from .gesture_settings import BoundGestureEvent, GestureBindings
@@ -565,8 +567,15 @@ class RecognitionRuntime:
         stage1_threshold_provider: Callable[[], float] | None = None,
         gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
         gesture_filter: Callable[[object, bool], bool] | None = None,
+        audio_settings: LiveAudioSettings | None = None,
+        on_audio_configuring: Callable[[], None] | None = None,
+        on_audio_configured: Callable[[object, str], None] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
+        if audio_settings is not None:
+            # A live pipeline owns the Windows hold hook so switching back to
+            # gesture mode releases Right Alt instead of leaving it consumed.
+            args.push_to_talk = False
         gesture_control = self.settings.speech_control_mode == "gesture"
         end_on_gesture = bool(args.asr_end_on_tap)
         selected_backend = self.settings.asr_backend.strip().lower().replace(
@@ -613,6 +622,25 @@ class RecognitionRuntime:
         stopping_reported = False
         stopping_lock = threading.Lock()
         source_close_lock = threading.Lock()
+        audio_change_lock = threading.Lock()
+        input_pipeline = None
+
+        def current_microphone():
+            return input_pipeline.microphone if input_pipeline is not None else microphone
+
+        def session_started(session_id):
+            if audio_settings is not None:
+                audio_settings.allowed.clear()
+            if on_session_started is not None:
+                on_session_started(session_id)
+
+        def session_ended():
+            # Close eligibility on this producer thread, before the queued GUI
+            # state update can run. A final/edit must finish before reconfigure.
+            if audio_settings is not None:
+                audio_settings.allowed.clear()
+            if on_session_ended is not None:
+                on_session_ended()
 
         def publish_raw_utterance(session_id: int, audio_16k: object) -> None:
             audio = np.asarray(audio_16k, dtype=np.float32).reshape(-1)
@@ -656,7 +684,9 @@ class RecognitionRuntime:
             with source_close_lock:
                 if not source_disconnected.is_set():
                     try:
-                        if microphone is not None:
+                        if input_pipeline is not None:
+                            input_pipeline.close_microphone()
+                        elif microphone is not None:
                             microphone.close()
                     finally:
                         try:
@@ -676,8 +706,10 @@ class RecognitionRuntime:
                     disconnect_event.set()
                     close_source_and_report()
                     return
-                if microphone is not None and microphone.error is not None:
-                    on_state(f"[AUDIO_INPUT_ERROR] {microphone.error}")
+                live_microphone = current_microphone()
+                if (live_microphone is not None and live_microphone.error is not None
+                        and not (audio_settings is not None and audio_settings.applying)):
+                    on_state(f"[AUDIO_INPUT_ERROR] {live_microphone.error}")
                     close_source_and_report()
                     return
 
@@ -724,7 +756,8 @@ class RecognitionRuntime:
                 desktop_overlay=SilentTranscriptOverlay(),
                 on_state=on_state,
                 show_streaming_console=False,
-                push_to_talk_observer=on_push_to_talk,
+                push_to_talk_observer=(lambda active: on_push_to_talk(active) if not gesture_control else None)
+                    if on_push_to_talk is not None else None,
                 desktop_should_inject=external_window_has_focus,
                 backend_cache=self.asr_backend_cache,
                 raw_audio_observer=(
@@ -732,8 +765,8 @@ class RecognitionRuntime:
                     if on_raw_audio is not None or on_raw_imu is not None
                     else None
                 ),
-                raw_session_start_observer=on_session_started,
-                session_end_observer=on_session_ended,
+                raw_session_start_observer=session_started,
+                session_end_observer=session_ended,
                 asr_context_provider=asr_context_provider,
                 asr_context_observer=on_asr_context,
             )
@@ -742,22 +775,24 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            if on_gesture is not None or end_on_gesture or gesture_filter is not None:
+            if on_gesture is not None or end_on_gesture or gesture_filter is not None or audio_settings is not None:
                 on_state("正在准备固件手势事件通道…")
                 try:
                     from proximic_ring.firmware_gestures import FirmwareGestureWorker
 
-                    def publish_gesture(event: object) -> None:
+                    def dispatch_gesture(event: object) -> None:
                         bindings = (
                             gesture_bindings_provider() if gesture_bindings_provider
                             else self.settings.gesture_bindings
                         )
                         name = str(getattr(event, "name", ""))
+                        live_microphone = current_microphone()
                         accepted = (
                             gestures_enabled.is_set()
                             and not disconnect_event.is_set()
                             and source.error is None
-                            and (microphone is None or microphone.error is None)
+                            and (live_microphone is None or live_microphone.error is None
+                                 or (audio_settings is not None and audio_settings.applying))
                         )
                         # Global modes must gate even confirm gestures before
                         # they can prepare/start/end audio on this thread.
@@ -777,6 +812,7 @@ class RecognitionRuntime:
                             # interaction gate before submitting final ASR.
                             can_request = (
                                 recognition_event.is_set()
+                                and not (audio_settings is not None and audio_settings.applying)
                                 and not (
                                     cancel_utterance_event is not None
                                     and cancel_utterance_event.is_set()
@@ -819,6 +855,12 @@ class RecognitionRuntime:
                                 if gesture_bindings_provider else event
                             )
 
+                    def publish_gesture(event: object) -> None:
+                        # A queued START and a settings claim must have one
+                        # ordering. Never hold this lock during model/device IO.
+                        with audio_change_lock:
+                            dispatch_gesture(event)
+
                     gesture_worker = FirmwareGestureWorker(on_gesture=publish_gesture)
                     gesture_worker.start()
                     source.gesture_observer = gesture_worker.submit
@@ -854,18 +896,63 @@ class RecognitionRuntime:
                 on_state(f"音频来源：{microphone.device_name}（电脑麦克风）；Ring 仅提供手势")
             else:
                 on_state("音频来源：Ring 麦克风")
+            if audio_settings is not None:
+                input_pipeline = AudioInputPipeline(
+                    source, microphone, detector, controller, self.settings,
+                    microphone_factory=MicrophoneSource, detector_factory=_build_detector,
+                    on_state=on_state, on_push_to_talk=on_push_to_talk,
+                )
+                input_pipeline.initialize_controls()
             next_gesture_status_at = time.monotonic() + GESTURE_STATUS_INTERVAL_S
             next_gesture_health_at = 0.0
             last_gesture_health_sent = -float("inf")
             last_gesture_status = ""
             last_gesture_health = None
             recognition_was_enabled = False
+
+            def safe_to_change_audio():
+                return not bool(getattr(controller, "gesture_busy", getattr(controller, "active", False))) and not (
+                    (cancel_utterance_event is not None and cancel_utterance_event.is_set())
+                    or (finish_utterance_event is not None and finish_utterance_event.is_set())
+                )
+
+            def interrupt_idle_audio_read():
+                return (audio_settings.pending and not audio_settings.applying
+                        and audio_settings.allowed.is_set() and safe_to_change_audio())
+
             on_started()
             while not disconnect_event.is_set():
+                if input_pipeline is not None:
+                    with audio_change_lock:
+                        request = audio_settings.claim() if safe_to_change_audio() else None
+                    if request is not None:
+                        if on_audio_configuring is not None:
+                            on_audio_configuring()
+                        error = input_pipeline.apply(request.configuration, disconnect_event)
+                        if disconnect_event.is_set():
+                            break
+                        detector = input_pipeline.detector
+                        audio_source = input_pipeline.audio_source
+                        gesture_control = input_pipeline.configuration.speech_control_mode == "gesture"
+                        end_on_gesture = bool(self.settings.asr_end_on_tap or gesture_control)
+                        recognition_was_enabled = False
+                        if audio_settings.complete(request, success=not error):
+                            if on_audio_configured is not None:
+                                on_audio_configured(request, error)
+                            else:
+                                audio_settings.acknowledge(request)
+                        continue  # Never process an old-source block after switching.
                 try:
-                    block = audio_source.read(320)
+                    interruptible_read = getattr(audio_source, "read_interruptible", None)
+                    if audio_settings is not None and audio_source is source and callable(interruptible_read):
+                        try:
+                            block = interruptible_read(320, should_interrupt=interrupt_idle_audio_read)
+                        except InterruptedError:
+                            continue
+                    else:
+                        block = audio_source.read(320)
                 except Exception as exc:
-                    if microphone is not None:
+                    if current_microphone() is not None:
                         on_state(f"[AUDIO_INPUT_ERROR] {exc}")
                     raise
                 if block is None:
@@ -941,7 +1028,9 @@ class RecognitionRuntime:
                     else:
                         controller.flush()  # direct-ASR baseline has no tap gate
 
-                recognition_enabled = recognition_event.is_set()
+                recognition_enabled = recognition_event.is_set() and not (
+                    audio_settings is not None and audio_settings.applying
+                )
                 if not recognition_enabled:
                     if recognition_was_enabled:
                         # Finish the current utterance once, then discard
@@ -1020,6 +1109,8 @@ class RecognitionRuntime:
             # Ring EOF ends the device session; it must not submit a partial
             # utterance as if the user had performed the confirmation gesture.
         finally:
+            if audio_settings is not None:
+                audio_settings.close()
             watcher_done.set()
             try:
                 close_source_and_report()
@@ -1032,8 +1123,12 @@ class RecognitionRuntime:
                         on_state(f"固件手势清理异常：{exc}")
                 if watcher is not threading.current_thread():
                     watcher.join(timeout=1.0)
-                if controller is not None:
-                    abort = getattr(controller, "abort", None)
-                    if callable(abort):
-                        abort()
-                    controller.close()
+                try:
+                    if controller is not None:
+                        abort = getattr(controller, "abort", None)
+                        if callable(abort):
+                            abort()
+                        controller.close()
+                finally:
+                    if input_pipeline is not None:
+                        input_pipeline.close()

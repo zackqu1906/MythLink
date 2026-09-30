@@ -7,6 +7,7 @@ import plistlib
 import subprocess
 
 from .gesture_scenes import presentation_profile
+from .scene_capabilities import application_scene_profiles
 
 
 def application_roots():
@@ -72,7 +73,8 @@ def application_metadata(path):
         aliases = ' '.join(str(info.get(key) or '') for key in ('CFBundleDisplayName', 'CFBundleName', 'CFBundleExecutable'))
         return dict(value=bundle, label=label, path=str(path), running=False,
                     search=f'{label} {path.stem} {aliases} {bundle}'.casefold(),
-                    presentationProfile=presentation_profile(bundle, info))
+                    presentationProfile=presentation_profile(bundle, info),
+                    sceneProfiles=application_scene_profiles(bundle, info))
     except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
         return None
 
@@ -95,6 +97,7 @@ def installed_applications(running, *, roots=None, indexed=None):
         metadata = previous or (application_metadata(path) if path else None) or {}
         apps[bundle] = dict(value=bundle, label=label, path=path, running=True,
                             presentationProfile=metadata.get('presentationProfile', presentation_profile(bundle)),
+                            sceneProfiles=metadata.get('sceneProfiles', application_scene_profiles(bundle)),
                             search=f"{previous.get('search', '')} {label} {bundle}".casefold())
     return dict(candidates=sorted(apps.values(), key=lambda app: (not app['running'], app['label'].casefold())),
                 partial=partial or scan_errors)

@@ -89,13 +89,16 @@ class GestureHud(QObject):
                 or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen())
 
     def show_mode(self, mode: str, *, preview: bool = False, input_fields_available: bool = True,
-                  message: str = "", input_fields_hint: str = "", scene_actions=None):
+                  message: str = "", input_fields_hint: str = "", scene_actions=None, global_bindings=None):
         if mode not in ("input", "operation"):
             raise ValueError("未知手势提示模式")
         root = self.window.rootObject()
         root.setProperty("mode", mode)
         root.setProperty("preview", preview)
         root.setProperty("sceneActions", scene_actions or [])
+        from ..gesture_settings import GlobalGestureBindings, GESTURE_LABELS
+        bindings = global_bindings or GlobalGestureBindings().as_dict()
+        root.setProperty("globalLabels", {key: GESTURE_LABELS[value].split("（")[0] for key, value in bindings.items()})
         root.setProperty("notice", message)
         root.setProperty("inputFieldsAvailable", input_fields_available)
         root.setProperty("inputFieldsHint", input_fields_hint or

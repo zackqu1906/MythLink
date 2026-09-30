@@ -84,11 +84,13 @@ def test_preflight_is_not_full_success_and_only_explicit_setup_checks_capture(mo
         monitor._on_application_state(Qt.ApplicationActive)
         monitor.cancelScreenPreview()
         assert not captures and not requests and not monitor._screen_preview_verified
-        assert "继续完成" in monitor.screenRecordingMessage
+        assert "返回窗口总览" in monitor.screenRecordingMessage
         monitor.openScreenRecordingSettings()
         wait_for(lambda: not monitor.screenRecordingRequesting)
         assert requests == [True] and not captures
         monitor._on_application_state(Qt.ApplicationActive)
+        assert not captures  # Returning from Settings only refreshes permission.
+        monitor.verifyScreenPreview()  # The internal diagnostic remains explicit.
         wait_for(lambda: not monitor.screenPreviewBusy)
         assert captures == [True] and monitor._screen_preview_verified
         monitor._on_application_state(Qt.ApplicationActive)

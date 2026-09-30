@@ -118,22 +118,11 @@ ScrollView {
                     }
                     UiAction { objectName: "inputMethodSetupButton"; text: "输入法设置"; quiet: true; onClicked: page.inputSetupRequested() }
                 }
-                Rectangle {
+                PermissionNotice {
                     objectName: "accessibilityPermissionWarning"
                     Layout.fillWidth: true
-                    implicitHeight: permissionContent.implicitHeight + 24
-                    visible: page.controller.inlineInput.permissions.warning
-                    color: "#FFF8E8"; radius: 10; border.color: "#F1DDB9"
-                    RowLayout {
-                        id: permissionContent
-                        anchors.fill: parent; anchors.margins: 12; spacing: 12
-                        ColumnLayout {
-                            Layout.fillWidth: true; spacing: 4
-                            Label { Layout.fillWidth: true; text: page.controller.inlineInput.permissions.title; color: "#996516"; font.bold: true; wrapMode: Text.Wrap }
-                            Label { Layout.fillWidth: true; text: "编辑、撤销或发送可能受限；授权后会自动检测。"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
-                        }
-                        UiAction { objectName: "permissionWarningSettingsButton"; text: "检查权限"; onClicked: page.inputSetupRequested() }
-                    }
+                    message: page.controller.inlineInput.permissions.accessibilityWarningText
+                    onActivated: page.controller.inlineInput.permissions.openSettings()
                 }
                 RowLayout {
                     Layout.fillWidth: true

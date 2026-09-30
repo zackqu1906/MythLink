@@ -10,13 +10,16 @@ from datetime import datetime
 from PySide6.QtCore import QObject, Property, Signal, Slot, Qt
 
 from ..app_gestures import AppBinding, normalize_shortcut
-from ..gesture_settings import GESTURE_LABELS, RING_RESERVED_GESTURES
+from ..gesture_settings import GESTURE_LABELS, VOICE_GESTURE_GROUP, GLOBAL_ACTION_LABELS
 from ..native_access import NativeAccessChannel
 from ..application_catalog import installed_applications
-from ..gesture_scenes import (PRESENTATION, SCENE_ANCHORS, PROFILES, scene_actions,
+from ..application_defaults import chat_actions, default_mappings, default_profile
+from ..browser_media import BILIBILI, website_domain, matches_website, video_actions, website_defaults
+from ..gesture_scenes import (PRESENTATION, PROFILES, scene_actions,
                              presentation_profile, installed_presentation_profile)
+from ..scene_capabilities import (SCENE_LABELS, application_scene_profiles,
+                                 installed_scene_profiles, activity_actions, BROWSERS, VIDEO)
 
-VOICE_LOCKED = frozenset({"tap", "swipe-left", "swipe-right"})
 SETTINGS_KEY = "gestures/applicationMenusV1"
 
 
@@ -24,6 +27,7 @@ class ApplicationMappingController(QObject):
     changed = Signal()
     discoveryChanged = Signal()
     applicationBindingsCleared = Signal(str)
+    websiteBindingsCleared = Signal(str, str)
     _result = Signal(str, int, str, object, str)
     _sceneObserved = Signal(str, str)
 
@@ -36,6 +40,7 @@ class ApplicationMappingController(QObject):
         self._menus = []
         self._bundle = ""
         self._scene = "regular"
+        self._website = ""
         self._scene_hints = {}
         self._message = "添加应用后，读取它暴露的菜单快捷键"
         self._busy = False
@@ -57,7 +62,7 @@ class ApplicationMappingController(QObject):
                     raise ValueError()
                 bindings = {}
                 for gesture, item in data["bindings"].items():
-                    if gesture not in GESTURE_LABELS or gesture in VOICE_LOCKED | RING_RESERVED_GESTURES:
+                    if gesture not in GESTURE_LABELS:
                         raise ValueError()
                     bindings[gesture] = {key: str(item[key]) for key in ("id", "label", "path", "shortcut")}
                     bindings[gesture]["shortcut"] = normalize_shortcut(item["shortcut"])
@@ -69,18 +74,43 @@ class ApplicationMappingController(QObject):
                     profile = installed_presentation_profile(bundle, str(data.get("path", "")))
                 if profile:
                     self._apps[bundle]["presentationProfile"] = profile
+                saved_profiles = data.get("sceneProfiles", {})
+                if not isinstance(saved_profiles, dict):
+                    saved_profiles = {}
+                capabilities = {key: value for key, value in saved_profiles.items()
+                                if key in SCENE_LABELS and isinstance(value, str)}
+                capabilities.update(installed_scene_profiles(bundle, str(data.get("path", ""))))
+                if profile:
+                    capabilities[PRESENTATION] = profile
+                self._apps[bundle]["sceneProfiles"] = capabilities
                 scenes = {}
                 for scene, items in data.get("scenes", {}).items():
-                    if not profile or scene != PRESENTATION or not isinstance(items, dict):
+                    if scene not in SCENE_LABELS or not isinstance(items, dict):
                         raise ValueError()
+                    # Retain bindings when a known application is uninstalled;
+                    # native capture still verifies capability independently.
+                    capabilities.setdefault(scene, "generic")
                     scenes[scene] = {}
                     for gesture, item in items.items():
-                        if gesture not in GESTURE_LABELS or gesture in SCENE_ANCHORS:
+                        if gesture not in GESTURE_LABELS:
                             raise ValueError()
                         scenes[scene][gesture] = {key: str(item[key]) for key in ("id", "label", "path", "shortcut")}
                         scenes[scene][gesture]["shortcut"] = normalize_shortcut(item["shortcut"])
                 if scenes and not removed:
                     self._apps[bundle]["scenes"] = scenes
+                websites = {}
+                for domain, site in data.get("websites", {}).items():
+                    if website_domain(domain) != domain or not isinstance(site, dict):
+                        raise ValueError()
+                    items = {}
+                    for gesture, item in site.get("bindings", {}).items():
+                        if gesture not in GESTURE_LABELS:
+                            raise ValueError()
+                        items[gesture] = {key: str(item[key]) for key in ("id", "label", "path", "shortcut")}
+                        items[gesture]["shortcut"] = normalize_shortcut(item["shortcut"])
+                    websites[domain] = dict(label=str(site.get("label", domain)), bindings=items)
+                if websites and not removed:
+                    self._apps[bundle]["websites"] = websites
                 if removed:
                     self._apps[bundle]["removed"] = True
                 if profile == "wps":
@@ -101,7 +131,7 @@ class ApplicationMappingController(QObject):
 
     @Property("QVariantMap", notify=changed)
     def bindings(self):
-        return {bundle: {g: dict(item) for g, item in self._bindings_for(bundle, self._scene).items()}
+        return {bundle: {g: dict(item) for g, item in self._bindings_for(bundle, self._scene, self._website).items()}
                 for bundle, app in self._apps.items() if not app.get("removed")}
 
     @Property("QVariantMap", notify=changed)
@@ -109,11 +139,123 @@ class ApplicationMappingController(QObject):
         return {bundle: {g: dict(item) for g, item in app["bindings"].items()}
                 for bundle, app in self._apps.items() if not app.get("removed")}
 
-    def _bindings_for(self, bundle, scene="regular"):
+    def _bindings_for(self, bundle, scene="regular", website=""):
         app = self._apps.get(bundle, {})
         if app.get("removed"):
             return {}
+        if scene == VIDEO and website:
+            return app.get("websites", {}).get(website, {}).get("bindings", {})
         return app.get("bindings", {}) if scene == "regular" else app.get("scenes", {}).get(scene, {})
+
+    @Property(bool, notify=changed)
+    def browserVideoScope(self):
+        return self._is_added(self._bundle) and self._bundle.casefold() in BROWSERS and self._scene == VIDEO
+
+    @Property(str, notify=changed)
+    def selectedWebsite(self):
+        return self._website
+
+    @Property("QVariantList", notify=changed)
+    def websites(self):
+        return [dict(value="", label="通用视频")] + [dict(value=domain, label=site["label"])
+            for domain, site in self._apps.get(self._bundle, {}).get("websites", {}).items()]
+
+    @Property(str, notify=changed)
+    def selectedScopeLabel(self):
+        if not self.browserVideoScope:
+            return self.selectedSceneLabel
+        label = self._apps[self._bundle].get("websites", {}).get(self._website, {}).get("label", "通用视频")
+        return self.selectedSceneLabel + " · " + label
+
+    @Slot(str)
+    def selectWebsite(self, domain):
+        if not self.browserVideoScope or (domain and domain not in self._apps[self._bundle].get("websites", {})):
+            return
+        if self._website != domain:
+            self._website = domain
+            self.changed.emit()
+            self.discoveryChanged.emit()
+
+    @Slot(str, result=bool)
+    def addWebsite(self, value):
+        if not self.browserVideoScope:
+            return False
+        try:
+            domain = website_domain(value)
+        except (ValueError, UnicodeError):
+            self._message = "请输入完整的网站域名，例如 bilibili.com"
+            self.discoveryChanged.emit()
+            return False
+        self._message = ""
+        app = self._apps[self._bundle]
+        if domain not in app.get("websites", {}):
+            self._apps = {**self._apps, self._bundle: {**app, "websites": {**app.get("websites", {}),
+                domain: dict(label="哔哩哔哩" if domain == BILIBILI else domain, bindings=website_defaults(domain))}}}
+            self._save()
+        self.selectWebsite(domain)
+        self.discoveryChanged.emit()
+        return True
+
+    @Slot(str, str, result=bool)
+    def removeWebsite(self, bundle, domain):
+        if not self._is_added(bundle) or domain not in self._apps[bundle].get("websites", {}):
+            return False
+        app = self._apps[bundle]
+        sites = dict(app["websites"])
+        del sites[domain]
+        self._apps = {**self._apps, bundle: {**app, "websites": sites}}
+        if self._bundle == bundle and self._website == domain:
+            self._website = ""
+        self._save()
+        self.websiteBindingsCleared.emit(bundle, domain)
+        return True
+
+    def website_for_target(self, bundle, host):
+        sites = self._apps.get(bundle, {}).get("websites", {})
+        return next(iter(sorted((domain for domain in sites if matches_website(host, domain)), key=len, reverse=True)), "")
+
+    def scene_bindings_for_target(self, target, scene):
+        website = self.website_for_target(target.bundle, target.website) if scene == VIDEO else ""
+        return self._bindings_for(target.bundle, scene, website)
+
+    @Property("QVariantMap", notify=changed)
+    def globalOccupancy(self):
+        bindings = self.service.owner._global_gesture_bindings
+        return {gesture: GLOBAL_ACTION_LABELS[action] for action, gesture in bindings.as_dict().items()}
+
+    @Property("QVariantList", notify=changed)
+    def voiceGestures(self):
+        return [g for g in GESTURE_LABELS if g in self.voice_group()]
+
+    def voice_group(self):
+        # Custom voice aliases must obey the same all-or-nothing policy.
+        return VOICE_GESTURE_GROUP | {g for pair in self.service.owner._gesture_bindings.as_dict().values()
+                                      for g in pair if g}
+
+    def voice_overridden(self, bundle):
+        return any(g in self.voice_group() and self._can_bind_regular(g)
+                   for g in self._bindings_for(bundle))
+
+    def voice_disabled_bundles(self):
+        return [bundle for bundle in self._apps if self.voice_overridden(bundle)]
+
+    @Property(str, notify=changed)
+    def voiceOverrideNotice(self):
+        if not self._is_added(self._bundle):
+            return ""
+        if self._scene != "regular":
+            return f"{self.selectedSceneLabel}模式下停用手势语音输入，仅使用本场景的手势配置。退出场景后恢复应用常规配置。"
+        overridden = [GESTURE_LABELS[g] for g in self._bindings_for(self._bundle)
+                      if g in self.voice_group() and self._can_bind_regular(g)]
+        return ("已覆盖语音组手势：" + "、".join(overridden)
+                + "。该应用常规状态下无法使用手势语音输入；未绑定的语音组手势不执行操作。移除全部覆盖后自动恢复，其他应用不受影响。") if overridden else ""
+
+    @Property(str, notify=changed)
+    def globalConflictNotice(self):
+        conflicts = [GESTURE_LABELS[g] for g in self._bindings_for(self._bundle, self._scene, self._website)
+                     if g in self.globalOccupancy]
+        return ("以下绑定因全局占用已暂停：" + "、".join(conflicts)
+                + "。原绑定保留，释放全局占用后恢复。") if conflicts else ""
 
     @Property(str, notify=changed)
     def selectedScene(self):
@@ -126,24 +268,43 @@ class ApplicationMappingController(QObject):
     def _profile_for(self, bundle):
         return presentation_profile(bundle) or self._apps.get(bundle, {}).get("presentationProfile", "")
 
+    def _profiles_for(self, bundle):
+        profiles = dict(self._apps.get(bundle, {}).get("sceneProfiles", {}))
+        profiles.update(application_scene_profiles(bundle))
+        if self._profile_for(bundle):
+            profiles[PRESENTATION] = self._profile_for(bundle)
+        return {scene: profiles[scene] for scene in SCENE_LABELS if scene in profiles}
+
+    @Property("QVariantList", notify=changed)
+    def availableScenes(self):
+        return [dict(value="regular", label="常规")] + [dict(value=scene, label=SCENE_LABELS[scene])
+            for scene in self._profiles_for(self._bundle) if self._is_added(self._bundle)]
+
+    @Property(str, notify=changed)
+    def selectedSceneLabel(self):
+        return SCENE_LABELS.get(self._scene, "常规")
+
     @Property(str, notify=discoveryChanged)
     def sceneHint(self):
-        return self._scene_hints.get(self._bundle, "保存后进入目标应用放映；食指捏合可查看当次识别到的手势用途。")
+        return self._scene_hints.get(self._bundle, "进入目标应用的对应场景后自动生效；使用全局“手势提示”可查看当前用途。")
 
     def observe_scene(self, target):
         bundle = target.bundle if target is not None else self._bundle
         if target is None or not self._is_added(bundle):
-            message = "前台不是已配置的演示应用，或暂时无法读取窗口"
+            message = "前台不是已配置的应用，或暂时无法读取窗口"
         elif target.blocked:
-            message = "当前为菜单或对话框，保留默认用途"
+            message = "当前为菜单或对话框，暂停场景动作"
         elif not target.scene:
-            message = "未识别到放映窗口，保留默认用途"
+            message = "未识别到对应场景，使用应用常规配置"
         elif target.input_context == "text":
-            message = "正在输入文字，保留语音用途"
+            message = "当前为文字输入区域，使用应用常规配置"
         elif target.input_context != "nontext":
-            message = "焦点状态待确认，保留默认用途"
+            message = "焦点状态待确认，使用应用常规配置"
         else:
-            message = "已识别到放映，可使用放映配置"
+            label = SCENE_LABELS.get(target.scene, target.scene)
+            if target.website:
+                label += " · " + target.website
+            message = f"已识别到{label}，可使用{label}配置"
         self._sceneObserved.emit(bundle, "上次检测 " + datetime.now().strftime("%H:%M:%S") + " · " + message)
 
     @Slot(str, str)
@@ -154,10 +315,11 @@ class ApplicationMappingController(QObject):
 
     @Slot(str)
     def selectScene(self, scene):
-        if scene not in {"regular", PRESENTATION} or (scene == PRESENTATION and not self.supportsPresentation):
+        if scene != "regular" and (scene not in self._profiles_for(self._bundle) or not self._is_added(self._bundle)):
             return
         if scene != self._scene:
             self._scene = scene
+            self._website = ""
             # Editor selection never changes runtime scene, settings or epochs.
             self.changed.emit()
             self.discoveryChanged.emit()
@@ -165,7 +327,13 @@ class ApplicationMappingController(QObject):
     @Slot(str, result=int)
     def bindingCount(self, bundle):
         app = self._apps.get(bundle, {})
-        return len(app.get("bindings", {})) + sum(len(items) for items in app.get("scenes", {}).values())
+        return (len(app.get("bindings", {})) + sum(len(items) for items in app.get("scenes", {}).values())
+                + sum(len(site["bindings"]) for site in app.get("websites", {}).values()))
+
+    @Property(bool, notify=changed)
+    def hasDefaultMappings(self):
+        app = self._apps.get(self._bundle, {})
+        return self._is_added(self._bundle) and bool(default_profile(self._bundle, app.get("label", "")))
 
     @Property("QVariantList", notify=discoveryChanged)
     def candidates(self):
@@ -175,10 +343,16 @@ class ApplicationMappingController(QObject):
     def actions(self):
         app = self._apps.get(self._bundle, {})
         groups = [app.get("bindings", {})] + list(app.get("scenes", {}).values())
+        groups += [site["bindings"] for site in app.get("websites", {}).values()]
         custom = {item["id"]: {**item, "available": None, "custom": True}
                   for group in groups for item in group.values()
                   if item["id"].startswith("custom:")}
-        return scene_actions(self._bundle, self._scene, profile=self._profile_for(self._bundle)) + self._menus + list(custom.values())
+        presets = (scene_actions(self._bundle, self._scene, profile=self._profile_for(self._bundle))
+                   if self._scene in {"regular", PRESENTATION} else
+                   activity_actions(self._bundle, self._scene, self._profiles_for(self._bundle).get(self._scene, "")))
+        if self.browserVideoScope:
+            presets = video_actions(self._website)
+        return presets + chat_actions(self._bundle, app.get("label", ""), self._scene) + self._menus + list(custom.values())
 
     @Property(str, notify=discoveryChanged)
     def selectedApp(self):
@@ -257,7 +431,10 @@ class ApplicationMappingController(QObject):
                     saved = self._apps[app["value"]]
                     profile = presentation_profile(app["value"]) or app.get("presentationProfile") or saved.get("presentationProfile", "")
                     self._apps[app["value"]] = {**saved, "label": app["label"], "path": app.get("path", ""),
-                                              "presentationProfile": profile if profile in PROFILES else ""}
+                                              "presentationProfile": profile if profile in PROFILES else "",
+                                              "sceneProfiles": {**saved.get("sceneProfiles", {}),
+                                                                **app.get("sceneProfiles", {}),
+                                                                **application_scene_profiles(app["value"])}}
             self.changed.emit()
         elif bundle == self._bundle and self._is_added(bundle):
             result = result or {}
@@ -278,10 +455,16 @@ class ApplicationMappingController(QObject):
         if not candidate:
             return False
         if not self._is_added(bundle):
-            # A re-added application starts empty and goes to the end of the icon strip.
+            # Install a fresh editable template only on an explicit add. Refresh,
+            # restart and selecting an existing app never reapply defaults.
             self._apps.pop(bundle, None)
             profile = presentation_profile(bundle) or candidate.get("presentationProfile", "")
-            self._apps = {**self._apps, bundle: dict(label=candidate["label"], path=candidate.get("path", ""), bindings={},
+            defaults = default_mappings(bundle, candidate["label"])
+            self._apps = {**self._apps, bundle: dict(label=candidate["label"], path=candidate.get("path", ""),
+                                                   bindings=defaults.get("regular", {}),
+                                                   scenes={scene: items for scene, items in defaults.items() if scene != "regular"},
+                                                   sceneProfiles={**candidate.get("sceneProfiles", {}),
+                                                                  **installed_scene_profiles(bundle, candidate.get("path", ""))},
                                                    presentationProfile=profile if profile in PROFILES else "")}
             self._save()
         self.selectApplication(bundle)
@@ -293,6 +476,7 @@ class ApplicationMappingController(QObject):
         selected = bundle if self._is_added(bundle) else ""
         if selected != self._bundle:
             self._scene = "regular"
+            self._website = ""
         self._bundle = selected
         self._menus = []
         self._busy = bool(self._bundle)
@@ -313,9 +497,24 @@ class ApplicationMappingController(QObject):
         if not self._is_added(bundle):
             return False
         if self.bindingCount(bundle):
-            self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {}}}
+            self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {},
+                "websites": {domain: {**site, "bindings": {}} for domain, site in self._apps[bundle].get("websites", {}).items()}}}
             self._save()
         self.applicationBindingsCleared.emit(bundle)
+        return True
+
+    @Slot(str, result=bool)
+    def restoreDefaultMappings(self, bundle):
+        if not self._is_added(bundle):
+            return False
+        app = self._apps[bundle]
+        defaults = default_mappings(bundle, app["label"])
+        if not defaults:
+            return False
+        self._apps = {**self._apps, bundle: {**app, "bindings": defaults.get("regular", {}),
+            "scenes": {scene: items for scene, items in defaults.items() if scene != "regular"}}}
+        self._save()
+        self.applicationBindingsCleared.emit(bundle)  # Discard this app's old drafts too.
         return True
 
     @Slot(str, result=bool)
@@ -324,7 +523,7 @@ class ApplicationMappingController(QObject):
             return False
         # Keep an empty ownership marker so removing a new configuration never
         # reactivates this bundle's older, explicitly saved shortcut profile.
-        self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {}, "removed": True}}
+        self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {}, "websites": {}, "removed": True}}
         if self._bundle == bundle:
             self.selectApplication("")  # Invalidates any in-flight menu reply.
         self._save()
@@ -333,19 +532,15 @@ class ApplicationMappingController(QObject):
 
     @Slot(str, result=bool)
     def canBind(self, gesture):
-        if self._scene == PRESENTATION and self.supportsPresentation:
-            return gesture in GESTURE_LABELS and gesture not in SCENE_ANCHORS
         return self._can_bind_regular(gesture)
 
     def _can_bind_regular(self, gesture):
-        return (gesture in GESTURE_LABELS and gesture not in VOICE_LOCKED | RING_RESERVED_GESTURES
-                and gesture not in self.service.owner._gesture_bindings.confirm
-                and gesture != self.service.inputSourceGesture)
+        return gesture in GESTURE_LABELS and gesture not in self.service.owner._global_gesture_bindings.reserved
 
     @Slot(str, str, str, result=bool)
     def setBinding(self, bundle, gesture, action_id):
         if not self._is_added(bundle) or not self.canBind(gesture):
-            self._message = "此手势保留给语音或系统交互，不能修改应用绑定"
+            self._message = "此手势已被全局功能占用，请先修改全局配置"
             self.discoveryChanged.emit()
             return False
         action = next((item for item in self.actions if item["id"] == action_id), None)
@@ -381,7 +576,7 @@ class ApplicationMappingController(QObject):
         return self._store_binding(bundle, gesture, action) if action else False
 
     def _store_binding(self, bundle, gesture, action):
-        bindings = dict(self._bindings_for(bundle, self._scene))
+        bindings = dict(self._bindings_for(bundle, self._scene, self._website))
         if action:
             bindings[gesture] = {key: action[key] for key in ("id", "label", "path", "shortcut")}
         else:
@@ -389,9 +584,12 @@ class ApplicationMappingController(QObject):
         app = self._apps[bundle]
         updated = {**app, "bindings": bindings} if self._scene == "regular" else {
             **app, "scenes": {**app.get("scenes", {}), self._scene: bindings}}
+        if self.browserVideoScope and self._website:
+            updated = {**app, "websites": {**app["websites"],
+                self._website: {**app["websites"][self._website], "bindings": bindings}}}
         self._apps = {**self._apps, bundle: updated}
         self._save()
-        self._message = ("已保存，仅在此应用前台放映且未输入文字时生效" if self._scene == PRESENTATION
+        self._message = (f"已保存，仅在此应用前台处于{self.selectedSceneLabel}且未输入文字时生效" if self._scene != "regular"
                          else "已保存，仅在该应用位于前台时生效")
         self.discoveryChanged.emit()
         return True
@@ -416,17 +614,24 @@ class ApplicationMappingController(QObject):
                 if self._can_bind_regular(gesture)}
 
     def scene_bundles(self):
-        return [bundle for bundle in self._apps if self._profile_for(bundle) and self._bindings_for(bundle, PRESENTATION)]
+        return [bundle for bundle in self._apps if self._is_added(bundle) and self._profiles_for(bundle)]
+
+    def configured_scenes(self):
+        return {bundle: list(self._profiles_for(bundle))
+                for bundle in self.scene_bundles()}
 
     def uses_scene(self, gesture):
-        return gesture not in SCENE_ANCHORS and any(gesture in self._bindings_for(bundle, PRESENTATION)
-                                                   for bundle in self.scene_bundles())
+        return self._can_bind_regular(gesture) and (any(gesture in self._bindings_for(bundle, scene)
+            for bundle, scenes in self.configured_scenes().items() for scene in scenes)
+            or any(gesture in site["bindings"] for app in self._apps.values() if not app.get("removed")
+                   for site in app.get("websites", {}).values()))
 
-    def for_scene(self, bundle, scene):
-        if not self._profile_for(bundle) or scene != PRESENTATION:
+    def for_scene(self, bundle, scene, website=""):
+        if scene not in self._profiles_for(bundle):
             return {}
+        domain = self.website_for_target(bundle, website) if scene == VIDEO else ""
         return {"scene:" + gesture: AppBinding(gesture, item["shortcut"])
-                for gesture, item in self._bindings_for(bundle, scene).items() if gesture not in SCENE_ANCHORS}
+                for gesture, item in self._bindings_for(bundle, scene, domain).items() if self._can_bind_regular(gesture)}
 
     def close(self):
         self._closed = True

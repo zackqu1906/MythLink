@@ -20,11 +20,47 @@ GESTURE_LABELS = {
 }
 GESTURE_ACTION_LABELS = {"confirm": "确认", "undo": "撤销", "switch_mode": "类型转换"}
 RING_RESERVED_GESTURES = frozenset({"index-pinch", "middle-pinch", "clench", "swipe-down", "swipe-up"})
+VOICE_GESTURE_GROUP = frozenset({"tap", "swipe-left", "swipe-right", "swipe-up", "swipe-down"})
+GLOBAL_ACTION_LABELS = {"show_menu": "手势提示", "switch_mode": "切换交互模式", "window_selector": "窗口选择"}
+GLOBAL_BINDINGS_KEY = "gestures/globalBindingsV1"
 
 
-def reserve_ring_gestures(bindings: GestureBindings) -> GestureBindings:
+@dataclass(frozen=True)
+class GlobalGestureBindings:
+    show_menu: str = "index-pinch"
+    switch_mode: str = "middle-pinch"
+    window_selector: str = "clench"
+
+    def __post_init__(self):
+        values = list(self.as_dict().values())
+        if (any(value not in GESTURE_LABELS or value in VOICE_GESTURE_GROUP for value in values)
+                or len(set(values)) != len(values)):
+            raise ValueError("每个全局功能需使用不同的有效手势")
+
+    def as_dict(self):
+        return {action: getattr(self, action) for action in GLOBAL_ACTION_LABELS}
+
+    @property
+    def reserved(self):
+        return frozenset(self.as_dict().values())
+
+    def action_for(self, gesture):
+        return next((action for action, value in self.as_dict().items() if value == gesture), "")
+
+    def to_json(self):
+        return json.dumps(self.as_dict(), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, value):
+        data = json.loads(str(value))
+        if not isinstance(data, dict) or set(data) != set(GLOBAL_ACTION_LABELS):
+            raise ValueError("全局手势设置格式无效")
+        return cls(**data)
+
+
+def reserve_ring_gestures(bindings: GestureBindings, reserved=RING_RESERVED_GESTURES) -> GestureBindings:
     """Retire only conflicting slots; leave all other deliberate choices intact."""
-    values = {action: tuple("" if name in RING_RESERVED_GESTURES else name for name in names)
+    values = {action: tuple("" if name in reserved else name for name in names)
               for action, names in bindings.as_dict().items()}
     if not any(values["confirm"]):
         # There must always be a way to start/end the sentence. If tap was

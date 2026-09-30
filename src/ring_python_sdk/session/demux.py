@@ -159,6 +159,9 @@ class DemuxMixin:
             if status is not None:
                 self.imu_calibration_status = status
                 self.emit_live(format_imu_calibration_status(status))
+        elif data[:2] == b"\x21\x05":
+            if self.touchpad_active and self.touchpad is not None:
+                self.touchpad.submit(bytes(data))
         elif data[:2] == b"\x21\x0a":
             if self.quaternion_active and self.quaternion_callback is not None:
                 for frame in parse_quaternions(bytes(data), self.quaternion_rate_hz):

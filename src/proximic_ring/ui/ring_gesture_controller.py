@@ -8,7 +8,9 @@ import time
 from PySide6.QtCore import QObject, Property, Qt, Signal, Slot
 
 from ..app_gestures import QUIET_PHASES
-from ..gesture_settings import GESTURE_LABELS
+from ..gesture_settings import (GESTURE_LABELS, GLOBAL_ACTION_LABELS, GLOBAL_BINDINGS_KEY,
+                                VOICE_GESTURE_GROUP)
+from ..scene_capabilities import SCENE_LABELS
 from .text_focus_controller import TextFocusController
 from .page_scroll_controller import PageScrollController
 from .window_selector_controller import WindowSelectorController
@@ -79,6 +81,88 @@ class RingGestureController(QObject):
     def windowSelector(self):
         return self._selector
 
+    @Property("QVariantMap", notify=changed)
+    def globalBindings(self):
+        return self.owner._global_gesture_bindings.as_dict()
+
+    @Property("QVariantList", constant=True)
+    def globalActions(self):
+        return [dict(value=key, label=label) for key, label in GLOBAL_ACTION_LABELS.items()]
+
+    @Slot(str, result="QVariantList")
+    def globalGestureOptions(self, action):
+        used = {g for key, g in self.globalBindings.items() if key != action}
+        used.update(self.owner._app_gestures.catalog.voice_group())
+        used.add(self.owner._app_gestures.inputSourceGesture)
+        return [dict(value=g, label=label) for g, label in GESTURE_LABELS.items() if g not in used]
+
+    def _global_gesture_editable(self, gesture):
+        return (gesture in GESTURE_LABELS
+                and gesture not in self.owner._app_gestures.catalog.voice_group()
+                and gesture != self.owner._app_gestures.inputSourceGesture)
+
+    @Slot(str, result="QVariantList")
+    def globalActionOptions(self, gesture):
+        if not self._global_gesture_editable(gesture):
+            return []
+        bindings = self.owner._global_gesture_bindings
+        previous_action = bindings.action_for(gesture)
+        options = []
+        for action, label in GLOBAL_ACTION_LABELS.items():
+            previous_gesture = bindings.as_dict()[action]
+            if previous_gesture == gesture:
+                effect = "此手势当前用于「" + label + "」。"
+            elif previous_action:
+                effect = (f"保存后，{GESTURE_LABELS[gesture]}用于「{label}」，"
+                          f"{GESTURE_LABELS[previous_gesture]}用于「{GLOBAL_ACTION_LABELS[previous_action]}」。")
+            else:
+                effect = (f"保存后，{GESTURE_LABELS[gesture]}用于「{label}」，"
+                          f"释放{GESTURE_LABELS[previous_gesture]}的全局占用。")
+            options.append(dict(id=action, label=label, path="当前绑定：" + GESTURE_LABELS[previous_gesture],
+                                shortcut="", available=True, effect=effect))
+        return options
+
+    @Slot(str, str, result=bool)
+    def setGlobalGestureAction(self, gesture, action):
+        """Gesture-first editor: move a function, or exchange two assignments atomically."""
+        if action not in GLOBAL_ACTION_LABELS or not self._global_gesture_editable(gesture):
+            return False
+        current = self.owner._global_gesture_bindings
+        previous_action = current.action_for(gesture)
+        updates = {action: gesture}
+        if previous_action and previous_action != action:
+            updates[previous_action] = current.as_dict()[action]
+        return self._save_global_bindings(replace(current, **updates))
+
+    @Slot(str, str, result=bool)
+    def setGlobalBinding(self, action, gesture):
+        if action not in GLOBAL_ACTION_LABELS or gesture not in {row["value"] for row in self.globalGestureOptions(action)}:
+            return False
+        return self._save_global_bindings(replace(self.owner._global_gesture_bindings, **{action: gesture}))
+
+    def _save_global_bindings(self, bindings):
+        if self.owner._global_gesture_bindings == bindings:
+            return True
+        if self.speech_busy() or self._fields.applying.is_set() or self._scroll.applying.is_set():
+            self.owner._app_gestures.notify("请先结束当前操作，再修改全局手势")
+            return False
+        self.owner._settings.setValue(GLOBAL_BINDINGS_KEY, bindings.to_json())
+        with self._lock:
+            self.owner._global_gesture_bindings = bindings
+            self._generation += 1
+            self._transition = None
+        self._fields.picker.stop()
+        self._selector.cancel()
+        self.hideRequested.emit()
+        service = self.owner._app_gestures
+        service._generation += 1
+        service.cancel_pending()
+        self.changed.emit()
+        service.changed.emit()
+        service.catalog.changed.emit()
+        self.owner.gestureSettingsChanged.emit()
+        return True
+
     def session_blocked(self):
         proximity = getattr(self.owner, "_proximity", None)
         return proximity is not None and proximity.gestures_blocked
@@ -119,21 +203,27 @@ class RingGestureController(QObject):
         if connection is not self.owner._disconnect_event or connection.is_set():
             return False
         name = str(getattr(event, "name", ""))
+        global_action = self.owner._global_gesture_bindings.action_for(name)
+        canonical = {"show_menu": "index-pinch", "switch_mode": "middle-pinch", "window_selector": "clench"}
         proximity = getattr(self.owner, "_proximity", None)
         if proximity is not None and proximity.filter_gesture(name, connection):
             return False
         busy = bool(audio_busy or self.speech_busy())
         if self._selector.blocked.is_set():
-            self._selector.enqueue(name, connection, busy)
+            self._selector.enqueue(canonical.get(global_action, name if name in VOICE_GESTURE_GROUP else ""), connection, busy)
             return False
         picker = self._fields.picker
         with self._lock:
-            scene_allowed = (not busy and self._transition is None and not picker.active.is_set()
-                             and not self._fields.pending.is_set() and not self._scroll.pending.is_set())
+            # Check foreground ownership even while an old field picker is
+            # waiting for its next focus poll; Tap must not escape into voice
+            # immediately after switching to an overridden application.
+            scene_allowed = not global_action and self._transition is None
             scene_generation = self._generation
         if scene_allowed:
             scene_event = self.owner._app_gestures.scene_envelope(event)
             if scene_event is not None:
+                if busy:
+                    scene_event = replace(scene_event, phase="listening")
                 self._sceneRequested.emit(ModeGestureEvent(scene_event, scene_generation), connection)
                 return False  # Consumed before tap can reach the audio endpoint.
         selection_gestures = {"swipe-up", "swipe-down", "swipe-left", "swipe-right", "tap"}
@@ -142,18 +232,18 @@ class RingGestureController(QObject):
                  and not busy else None)
         if self.mode == "operation" and name in {"swipe-up", "swipe-down"} and not busy:
             stamp = self._scroll.capture_stamp()
-        if name == "clench" and not busy:
+        if global_action == "window_selector" and not busy:
             stamp = self._selector.capture_stamp()
         with self._lock:
-            if self._scroll.pending.is_set() and name != "index-pinch":
+            if self._scroll.pending.is_set() and global_action != "show_menu":
                 if self._scroll.applying.is_set() or name in {"swipe-up", "swipe-down"}:
                     return False
-            if self._fields.pending.is_set() and name != "index-pinch":
+            if self._fields.pending.is_set() and global_action != "show_menu":
                 # A mode switch may cancel discovery. During the short actual
                 # focus write, suppress gestures until its result is known.
-                if name not in {"middle-pinch", "clench"} or self._fields.applying.is_set():
+                if global_action not in {"switch_mode", "window_selector"} or self._fields.applying.is_set():
                     return False
-            if self._transition is not None and name != "index-pinch":
+            if self._transition is not None and global_action != "show_menu":
                 # In particular, a tap must not start audio while Qt is
                 # deciding the preceding mode change.
                 return False
@@ -168,19 +258,19 @@ class RingGestureController(QObject):
                                               stamp=stamp, selection=ticket)
                         self._requested.emit(request, connection)
                         return ticket["action"] == "voice"
-                    if name not in {"middle-pinch", "index-pinch", "clench"}:
+                    if not global_action:
                         return False
-            if name not in {"middle-pinch", "index-pinch", "clench", "swipe-down"}:
+            if not global_action and name != "swipe-down":
                 if self._mode == "input":
                     return True
                 if name != "swipe-up":
                     # Explicit app-menu mappings work in either mode. Keep
                     # voice/source gestures and legacy profiles input-only.
                     return not busy and self.owner._app_gestures.catalog.uses(name)
-            transition = object() if name in {"middle-pinch", "clench"} and not busy else None
+            transition = object() if global_action in {"switch_mode", "window_selector"} and not busy else None
             if transition is not None:
                 self._transition = transition
-            request = MenuRequest(name, self._generation, time.monotonic(), busy, transition, stamp)
+            request = MenuRequest(canonical.get(global_action, name), self._generation, time.monotonic(), busy, transition, stamp)
         self._requested.emit(request, connection)
         return False
 
@@ -193,7 +283,7 @@ class RingGestureController(QObject):
 
     def accepts(self, event):
         with self._lock:
-            if (isinstance(event, ModeGestureEvent) and getattr(event.source, "scene", "")
+            if (isinstance(event, ModeGestureEvent) and getattr(event.source, "exclusive", False)
                     and (self._fields.pending.is_set() or self._scroll.pending.is_set())):
                 return False
             mode_allowed = self._mode == "input" or (
@@ -212,7 +302,7 @@ class RingGestureController(QObject):
         if self.session_blocked():
             return
         self._fields.refresh()
-        if self.owner._app_gestures.catalog.scene_bundles() and not self.speech_busy():
+        if (self.owner._app_gestures.catalog.scene_bundles() or self.owner._app_gestures.catalog.voice_disabled_bundles()) and not self.speech_busy():
             generation, created, connection = self._generation, time.monotonic(), self.owner._disconnect_event
             def work():
                 try:
@@ -234,13 +324,23 @@ class RingGestureController(QObject):
             return
         catalog = self.owner._app_gestures.catalog
         catalog.observe_scene(target)
-        if (target is not None and target.scene and not target.blocked and target.input_context == "nontext"
+        if (target is not None and not target.blocked
                 and not self.speech_busy() and not self._selector.blocked.is_set() and not self._fields.picker.active.is_set()):
-            items = catalog._bindings_for(target.bundle, target.scene)
-            if items:
-                label = catalog._apps.get(target.bundle, {}).get("label", "演示应用")
-                self.sceneHudRequested.emit(self.mode, [dict(gesture=GESTURE_LABELS[g], action=b["label"], application=label)
-                                                       for g, b in items.items()])
+            scene = target.scene if target.input_context == "nontext" and target.scene in catalog.configured_scenes().get(target.bundle, []) else ""
+            disabled = bool(scene or catalog.voice_overridden(target.bundle))
+            items = catalog.scene_bindings_for_target(target, scene) if scene else catalog._bindings_for(target.bundle)
+            if disabled or items:
+                label = catalog._apps.get(target.bundle, {}).get("label", "应用")
+                actions = dict(catalog.globalOccupancy)
+                if disabled:
+                    actions.update({g: "未绑定" for g in catalog.voice_group() if g not in actions})
+                actions.update({g: b["label"] for g, b in items.items() if catalog._can_bind_regular(g)})
+                scene_label = SCENE_LABELS.get(scene, "常规")
+                if scene and target.website:
+                    scene_label += " · " + target.website
+                self.sceneHudRequested.emit(self.mode, [dict(gesture=GESTURE_LABELS[g], action=actions[g], application=label,
+                    sceneLabel=scene_label, voiceDisabled=disabled)
+                    for g in GESTURE_LABELS if g in actions])
                 return
         self.showRequested.emit(self.mode, "")
 

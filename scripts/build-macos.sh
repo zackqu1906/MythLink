@@ -39,7 +39,7 @@ if [[ "${PROXIMIC_SKIP_DEPENDENCY_INSTALL:-0}" != "1" ]]; then
     "$PYTHON" -m pip install --upgrade \
         "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
     "$PYTHON" -m pip install -c requirements-macos.lock \
-        ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
+        ".[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
         -r requirements-packaging.txt
 fi
 PROXIMIC_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" /bin/zsh scripts/build-input-method.sh

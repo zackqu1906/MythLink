@@ -13,6 +13,7 @@ streaming_root = project_root / "third_party" / "streaming-sensevoice"
 funasr_root = project_root / "third_party" / "Fun-ASR"
 
 datas = collect_data_files("proximic_ring")
+datas += collect_data_files("ring_python_sdk", includes=["touchpad/assets/*"])
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
 datas += collect_data_files("funasr", includes=["version.txt"])
@@ -30,6 +31,8 @@ if notices.is_file():
     datas.append((str(notices), "."))
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
+if platform.system() == "Darwin":
+    hiddenimports += ["MNN", "_mnncengine"]
 hiddenimports += [
     "funasr",
     "funasr.auto.auto_model",
@@ -179,6 +182,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="ProximicVoice",
+    icon=str(project_root / "packaging/icons/mythlink.ico") if os.name == "nt" else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -198,6 +202,7 @@ if platform.system() == "Darwin":
     app = BUNDLE(
         coll,
         name="Proximic Voice.app",
+        icon=str(project_root / "packaging/icons/mythlink.icns"),
         bundle_identifier="com.proximic.voice",
         info_plist={
             "CFBundleDisplayName": "Proximic Voice",
@@ -206,7 +211,7 @@ if platform.system() == "Darwin":
             "LSMinimumSystemVersion": "15.0",
             "NSBluetoothAlwaysUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSBluetoothPeripheralUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
-            "NSMicrophoneUsageDescription": "Proximic Voice 使用你选定的电脑麦克风（例如 DJI）采集语音并转写。",
+            "NSMicrophoneUsageDescription": "MythLink 使用你选定的电脑麦克风采集语音并转写。",
             "NSScreenCaptureUsageDescription": "用于 Ring 窗口选择层的实时预览和用户主动发起的预览验证，不录音、不保存或上传画面。",
         },
     )

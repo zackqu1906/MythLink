@@ -169,3 +169,104 @@ def test_disabled_monitor_never_requests_macos_permissions():
     app.processEvents()
     assert not monitor.warning
     monitor.close()
+
+
+def test_device_permission_notices_are_passive_and_unknown_is_not_denied(monkeypatch):
+    from PySide6.QtCore import QCoreApplication, Qt
+    from proximic_ring.ui.mac_permissions_controller import MacPermissionsController
+    app = QCoreApplication.instance() or QCoreApplication([])
+    status = Qt.PermissionStatus.Denied
+    monkeypatch.setattr(app, "checkPermission", lambda permission: status)
+    monitor = MacPermissionsController(enabled=False)
+    monitor._enabled = True
+    try:
+        monitor._refresh_device_permissions()
+        assert {n['kind'] for n in monitor.essentialWarnings} == {'bluetooth', 'microphone'}
+        for status in (Qt.PermissionStatus.Granted, Qt.PermissionStatus.Undetermined):
+            monitor._refresh_device_permissions()
+            assert monitor.essentialWarnings == []
+    finally:
+        monitor._enabled = False
+        monitor.close()
+
+
+@pytest.mark.parametrize("trusted,post", [(False, False), (True, False), (True, True)])
+def test_accessibility_request_uses_native_prompt_and_skips_granted(monkeypatch, trusted, post):
+    from proximic_ring.mac_permissions import request_accessibility_access
+    calls = []
+    monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(
+        AXIsProcessTrusted=lambda: trusted, kAXTrustedCheckOptionPrompt="prompt",
+        AXIsProcessTrustedWithOptions=lambda options: calls.append(("ax", options)) or False))
+    monkeypatch.setitem(sys.modules, "Quartz", SimpleNamespace(
+        CGPreflightPostEventAccess=lambda: post,
+        CGRequestPostEventAccess=lambda: calls.append(("post",)) or False))
+    assert request_accessibility_access() is (trusted and post)
+    assert calls == ([] if trusted and post else [("post",)] if trusted else [("ax", {"prompt": True})])
+
+
+@pytest.mark.parametrize("kind,raises", [("accessibility", False), ("screen", False), ("screen", True)])
+def test_native_request_is_separate_from_opening_settings_and_never_grants_from_api_return(monkeypatch, kind, raises):
+    import threading
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtTest import QTest
+    from proximic_ring.ui import mac_permissions_controller as module
+    app = QCoreApplication.instance() or QCoreApplication([])
+    release = threading.Event()
+    calls, finished = [], []
+    def request():
+        calls.append(kind)
+        release.wait(2)
+        if raises:
+            raise RuntimeError("unavailable")
+        return False  # Asynchronous system request: not a denial callback.
+    monkeypatch.setattr(module, "request_accessibility_access", request)
+    monkeypatch.setattr(module, "request_screen_capture_access", request)
+    monkeypatch.setattr(module, "read_screen_capture_access", lambda: False)
+    monkeypatch.setattr(module.QDesktopServices, "openUrl", lambda url: pytest.fail("native onboarding must not force System Settings open"))
+    monitor = module.MacPermissionsController(enabled=False, reader=lambda: PermissionState(False, False))
+    monitor._enabled = True
+    monitor.systemPermissionRequestFinished.connect(lambda *args: finished.append(args))
+    try:
+        assert monitor.requestSystemPermission(kind)
+        assert monitor.systemPermissionRequesting
+        assert not monitor.requestSystemPermission("accessibility")
+        monitor.openSettings()
+        monitor.openScreenRecordingSettings()
+        monitor.verifyScreenPreview()
+        assert not monitor.screenPreviewBusy
+        release.set()
+        for _ in range(100):
+            QTest.qWait(5)
+            if finished and not monitor.checking:
+                break
+        assert finished == [(kind, not raises)] and calls == [kind]
+        assert not monitor.systemPermissionRequesting and not monitor.permissionGranted(kind)
+    finally:
+        release.set()
+        monitor._enabled = False
+        monitor.close()
+
+
+def test_closed_monitor_discards_native_request_completion(monkeypatch):
+    import threading
+    from PySide6.QtCore import QCoreApplication
+    from PySide6.QtTest import QTest
+    from proximic_ring.ui import mac_permissions_controller as module
+    app = QCoreApplication.instance() or QCoreApplication([])
+    release = threading.Event()
+    finished = []
+    monkeypatch.setattr(module, "request_accessibility_access", lambda: release.wait(2))
+    monitor = module.MacPermissionsController(enabled=False)
+    assert not monitor.requestSystemPermission("accessibility")
+    monitor._enabled = True
+    monitor.systemPermissionRequestFinished.connect(lambda *args: finished.append(args))
+    try:
+        assert monitor.requestSystemPermission("accessibility")
+        monitor._enabled = False
+        monitor.close()
+        release.set()
+        QTest.qWait(30)
+        assert not finished
+        assert not monitor.requestSystemPermission("screen")
+    finally:
+        release.set()

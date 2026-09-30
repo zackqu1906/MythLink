@@ -7,6 +7,7 @@ Item {
     property string notice: ""
     property bool preview: false
     property var sceneActions: []
+    property var globalLabels: ({show_menu: "食指捏合", switch_mode: "中指捏合", window_selector: "握拳"})
     property bool inputFieldsAvailable: true
     property string inputFieldsHint: "当前窗口未提供文本框"
     property real entranceTime: 0
@@ -24,12 +25,12 @@ Item {
         {symbol: "mic", tone: "indigo", label: "Tap · 语音输入", detail: "再 Tap · 结束本句", width: 84},
         {symbol: "edit", tone: "indigo", label: "Tap + 右滑", detail: "语音编辑\n再 Tap · 结束本句", width: 84},
         {symbol: "down", tone: "cyan", label: "下滑 · 选择输入框", detail: inputFieldsHint, width: 114},
-        {symbol: "apps", tone: "amber", label: "握拳 · 切换应用", detail: "", width: 86},
+        {symbol: "apps", tone: "amber", label: globalLabels.window_selector + " · 切换应用", detail: "", width: 108},
         {symbol: "undo", tone: "cyan", label: "左滑 · 撤销", detail: "", width: 70}
     ] : [
         {symbol: "up", tone: "violet", label: "上滑 · 向上滚动", detail: "", width: 94},
         {symbol: "down", tone: "violet", label: "下滑 · 向下滚动", detail: "", width: 86},
-        {symbol: "apps", tone: "amber", label: "握拳 · 切换应用", detail: "", width: 86}
+        {symbol: "apps", tone: "amber", label: globalLabels.window_selector + " · 切换应用", detail: "", width: 108}
     ]
 
     function clamp(value) { return Math.max(0, Math.min(1, value)) }
@@ -116,7 +117,7 @@ Item {
                 GestureHudIcon { x: 5; y: 3; width: 10; height: 10; symbol: "pinch"; ink: "#CFD8ED" }
                 Text {
                     x: 19; height: parent.height; width: 58
-                    text: "中指捏合切换"; font.pixelSize: 8
+                    text: root.globalLabels.switch_mode + "切换"; font.pixelSize: 8; elide: Text.ElideRight
                     color: "#CFD8ED"; verticalAlignment: Text.AlignVCenter
                 }
             }
@@ -158,7 +159,7 @@ Item {
         }
         Text {
             x: 25; y: 265; width: 230
-            text: root.notice || (root.preview ? "食指捏合 · 唤起提示  /  预览" : "食指捏合 · 唤起提示")
+            text: root.notice || (root.globalLabels.show_menu + " · 唤起提示" + (root.preview ? "  /  预览" : ""))
             opacity: root.notice ? 1 : root.progress(900, 300)
             color: root.notice ? "#FFD47C" : "#A8B8CD"; font.pixelSize: root.notice ? 10 : 8
             horizontalAlignment: Text.AlignHCenter
@@ -170,10 +171,10 @@ Item {
         anchors.fill: parent; radius: 18; color: "#E91B2233"; border.color: "#536487"
         Text {
             x: 16; y: 16; width: parent.width - 32
-            text: root.sceneActions.length && root.sceneActions[0].application ? root.sceneActions[0].application + " · 放映" : "放映"
+            text: root.sceneActions.length ? (root.sceneActions[0].application || "应用") + " · " + (root.sceneActions[0].sceneLabel || "放映") : "场景手势"
             color: "#EAF1FF"; font.pixelSize: 16; font.weight: Font.DemiBold; elide: Text.ElideRight
         }
-        Text { x: 16; y: 42; text: "场景专属动作 · 其余沿用默认"; color: "#A8B8CD"; font.pixelSize: 10 }
+        Text { x: 16; y: 42; text: root.sceneActions.length && root.sceneActions[0].voiceDisabled ? "手势语音输入已停用 · 全局功能保留" : "应用手势 · 语音组仍可用"; color: "#A8B8CD"; font.pixelSize: 10 }
         Grid {
             x: 12; y: 67; columns: 3; spacing: 6
             Repeater {
@@ -182,12 +183,12 @@ Item {
                     required property var modelData
                     required property int index
                     objectName: "sceneGesture_" + index
-                    width: 81; height: 52; radius: 8; color: "#344368"
+                    width: 81; height: root.sceneActions.length > 9 ? 38 : 52; radius: 8; color: "#344368"
                     Text { x: 7; y: 8; width: parent.width - 14; text: modelData.gesture; color: "#BED0F6"; font.pixelSize: 11; elide: Text.ElideRight }
-                    Text { x: 7; y: 26; width: parent.width - 14; text: modelData.action; color: "white"; font.pixelSize: 10; elide: Text.ElideRight }
+                    Text { x: 7; y: parent.height > 40 ? 26 : 23; width: parent.width - 14; text: modelData.action; color: "white"; font.pixelSize: 10; elide: Text.ElideRight }
                 }
             }
         }
-        Text { x: 16; y: 248; width: parent.width - 32; text: "食指捏合 · 提示    食中捏合 · 切换模式"; color: "#A8B8CD"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter }
+        Text { x: 16; y: 248; width: parent.width - 32; text: root.globalLabels.show_menu + " · 提示    " + root.globalLabels.switch_mode + " · 切换模式"; color: "#A8B8CD"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
     }
 }
