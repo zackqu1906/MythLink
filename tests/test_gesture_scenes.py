@@ -7,7 +7,8 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 from proximic_ring.app_shortcuts import LocalMacAppShortcuts, ShortcutTarget
-from proximic_ring.gesture_scenes import POWERPOINT, PRESENTATION, SCENE_ANCHORS, presentation_context
+from proximic_ring.gesture_scenes import POWERPOINT, PRESENTATION, SCENE_ANCHORS
+from scene_test_helpers import presentation_context
 from proximic_ring.gesture_scenes import presentation_profile, installed_presentation_profile, scene_actions
 from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route

@@ -51,7 +51,8 @@ class Dispatcher:
                 configured = message.get("scene_apps", {})
                 disabled = target and target.bundle in message.get("voice_disabled_apps", [])
                 eligible = (target and target.bundle in configured and target.scene and not target.blocked
-                            and (target.scene == "presentation" or target.input_context == "nontext")
+                            and (target.input_context == "nontext"
+                                 or (target.scene == "presentation" and target.input_context == "unknown"))
                             and (not isinstance(configured, dict) or target.scene in configured[target.bundle]))
                 if eligible or disabled:
                     if operation == "focus_apply":

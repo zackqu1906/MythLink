@@ -5,7 +5,8 @@ import json
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.browser_media import browser_media_context, website_domain, matches_website
+from proximic_ring.scene_recognition.browser import detect_browser as browser_media_context
+from proximic_ring.scene_recognition.websites import website_domain, matches_website
 from proximic_ring.app_shortcuts import ShortcutTarget, LocalMacAppShortcuts
 from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
@@ -112,7 +113,7 @@ def test_website_bindings_persist_and_remain_independent_of_generic_scene(route,
     assert {item["shortcut"] for item in catalog.actions if item.get("preset")} == {"Space", "Left", "Right", "Up", "Down"}
     assert catalog.setBinding(SAFARI, "tap", "web-video:play")
     assert catalog.addWebsite("https://www.bilibili.com/video/BV123?secret=omitted")
-    assert catalog.selectedWebsite == BILI and catalog.bindingCount(SAFARI) == 6
+    assert catalog.selectedWebsite == BILI and catalog.bindingCount(SAFARI) == 10
     assert catalog.bindings[SAFARI]["swipe-left"]["shortcut"] == "Left"
     assert not catalog.voice_overridden(SAFARI)
     assert catalog.setCustomBinding(SAFARI, "tap", "自定义播放", "Alt+Space")

@@ -13,9 +13,11 @@ from ..app_gestures import AppBinding, normalize_shortcut
 from ..gesture_settings import GESTURE_LABELS, VOICE_GESTURE_GROUP, GLOBAL_ACTION_LABELS
 from ..native_access import NativeAccessChannel
 from ..application_catalog import installed_applications
+from ..scene_defaults import (TEMPLATES, SCENE_DEFAULTS_VERSION, scene_defaults, resolve_action, action_label)
 from ..application_defaults import (chat_actions, default_mappings, default_profile,
                                     DEFAULTS_VERSION, AUTO_ADD_PROFILES, start_action)
-from ..browser_media import BILIBILI, website_domain, matches_website, video_actions, website_defaults
+from ..scene_recognition.websites import BILIBILI, website_domain, matches_website
+from ..website_defaults import video_actions, website_defaults
 from ..gesture_scenes import (PRESENTATION, PROFILES, scene_actions,
                              presentation_profile, installed_presentation_profile)
 from ..scene_capabilities import (SCENE_LABELS, application_scene_profiles,
@@ -75,6 +77,23 @@ class ApplicationMappingController(QObject):
                                          bindings={} if removed else bindings,
                                          defaultsVersion=int(data.get("defaultsVersion", 0)),
                                          pendingStart=data.get("pendingStart") is True)
+                initialized = data.get("initializedScenes", [])
+                pending = data.get("pendingDefaults", {})
+                if (not isinstance(initialized, list) or any(scene not in TEMPLATES for scene in initialized)
+                        or not isinstance(pending, dict)):
+                    raise ValueError()
+                for scene, items in pending.items():
+                    if scene not in TEMPLATES or not isinstance(items, dict):
+                        raise ValueError()
+                    if any(TEMPLATES[scene].get(gesture) != action for gesture, action in items.items()):
+                        raise ValueError()
+                self._apps[bundle].update(
+                    initializedScenes=list(initialized), pendingDefaults={} if removed else pending,
+                    sceneDefaultsVersion=int(data.get("sceneDefaultsVersion", 0)),
+                    defaultsCleared=data.get("defaultsCleared") is True or (
+                        "defaultsCleared" not in data and data.get("defaultsVersion", 0) >= 2
+                        and not bindings and not any(data.get("scenes", {}).values())
+                        and not data.get("pendingStart")))
                 profile = presentation_profile(bundle) or data.get("presentationProfile", "")
                 if profile not in PROFILES:
                     profile = installed_presentation_profile(bundle, str(data.get("path", "")))
@@ -132,10 +151,12 @@ class ApplicationMappingController(QObject):
             self._message = "应用配置无法读取；原记录已保留，请重新添加应用"
         if self._config_valid:
             self._upgrade_defaults()
+            self._upgrade_scene_defaults()
 
-    def _defaults_for(self, bundle, app):
+    def _defaults_for(self, bundle, app, menus=()):
         return default_mappings(bundle, app.get("label", ""),
-                                presentation=presentation_profile(bundle) or app.get("presentationProfile", ""))
+                                presentation=presentation_profile(bundle) or app.get("presentationProfile", ""),
+                                scene_profiles=app.get("sceneProfiles", {}), menus=menus)
 
     def _upgrade_defaults(self):
         # One-time fill for existing populated records. Custom keys win, and
@@ -143,7 +164,8 @@ class ApplicationMappingController(QObject):
         for bundle, app in self._apps.items():
             if app.get("removed") or app.get("defaultsVersion", 0) >= DEFAULTS_VERSION:
                 continue
-            defaults = self._defaults_for(bundle, app)
+            defaults = {scene: items for scene, items in self._defaults_for(bundle, app).items()
+                        if scene in {"regular", PRESENTATION}}
             if not defaults:
                 continue
             if app.get("bindings") or any(app.get("scenes", {}).values()):
@@ -160,6 +182,52 @@ class ApplicationMappingController(QObject):
             app["defaultsVersion"] = DEFAULTS_VERSION
             self._defaults_dirty = True
 
+    def _upgrade_scene_defaults(self):
+        # A scope is initialized once, even if its shortcuts have not been read.
+        # Existing scopes (including empty ones) are owned by the user.
+        for bundle, app in self._apps.items():
+            if app.get("removed"):
+                continue
+            profiles = self._profiles_for(bundle)
+            modes = [scene for scene in profiles if scene in TEMPLATES]
+            if not modes:
+                continue
+            initialized = set(app.get("initializedScenes", []))
+            resolved, pending = scene_defaults(bundle, profiles)
+            for scene in modes:
+                if scene in initialized:
+                    continue
+                if not app.get("defaultsCleared") and scene not in app.get("scenes", {}):
+                    app.setdefault("scenes", {})[scene] = resolved[scene]
+                    if pending.get(scene):
+                        app.setdefault("pendingDefaults", {})[scene] = pending[scene]
+                initialized.add(scene)
+                self._defaults_dirty = True
+            app["initializedScenes"] = [scene for scene in TEMPLATES if scene in initialized]
+            if app.get("sceneDefaultsVersion", 0) != SCENE_DEFAULTS_VERSION:
+                app["sceneDefaultsVersion"] = SCENE_DEFAULTS_VERSION
+                self._defaults_dirty = True
+
+    def _resolve_scene_defaults(self, bundle):
+        app = self._apps[bundle]
+        pending = {scene: dict(items) for scene, items in app.get("pendingDefaults", {}).items()}
+        changed = False
+        for scene, items in pending.items():
+            target = app.setdefault("scenes", {}).setdefault(scene, {})
+            for gesture, action in list(items.items()):
+                if gesture in target:
+                    del items[gesture]  # A saved user action always wins.
+                    changed = True
+                    continue
+                record = resolve_action(bundle, scene, action, self._profiles_for(bundle).get(scene, ""), self._menus)
+                if record:
+                    target[gesture] = record
+                    del items[gesture]
+                    changed = True
+        if changed:
+            app["pendingDefaults"] = {scene: items for scene, items in pending.items() if items}
+        return changed
+
     def _new_application(self, candidate):
         bundle = candidate["value"]
         capabilities = {**candidate.get("sceneProfiles", {}),
@@ -168,7 +236,10 @@ class ApplicationMappingController(QObject):
         app = dict(label=candidate["label"], path=candidate.get("path", ""),
                    sceneProfiles=capabilities, presentationProfile=profile if profile in PROFILES else "")
         defaults = self._defaults_for(bundle, app)
-        app.update(bindings=defaults.get("regular", {}),
+        _, pending = scene_defaults(bundle, capabilities)
+        app.update(initializedScenes=[scene for scene in TEMPLATES if scene in capabilities],
+                   pendingDefaults=pending, sceneDefaultsVersion=SCENE_DEFAULTS_VERSION, defaultsCleared=False,
+                   bindings=defaults.get("regular", {}),
                    scenes={scene: items for scene, items in defaults.items() if scene != "regular"},
                    defaultsVersion=DEFAULTS_VERSION,
                    pendingStart=bool(app["presentationProfile"] and "snap" not in defaults.get("regular", {})))
@@ -385,10 +456,23 @@ class ApplicationMappingController(QObject):
         app = self._apps.get(self._bundle, {})
         return self._is_added(self._bundle) and bool(self._defaults_for(self._bundle, app))
 
+    @Property("QVariantMap", notify=discoveryChanged)
+    def pendingBindings(self):
+        if self._website:
+            return {}
+        return {gesture: action_label(self._scene, action) for gesture, action in
+                self._apps.get(self._bundle, {}).get("pendingDefaults", {}).get(self._scene, {}).items()}
+
+    @Property(int, notify=changed)
+    def pendingDefaultCount(self):
+        return sum(len(items) for items in self._apps.get(self._bundle, {}).get("pendingDefaults", {}).values())
+
     @Property(str, notify=discoveryChanged)
     def defaultMappingNotice(self):
         if self._apps.get(self._bundle, {}).get("pendingStart"):
             return "放映中已默认设置左右翻页、响指结束。响指开始放映等待读取此应用的快捷键：打开应用后刷新快捷键，或手动绑定。"
+        if self.pendingBindings:
+            return "场景预设已保存，等待读取此应用的快捷键：" + "、".join(self.pendingBindings.values()) + "。打开应用后刷新快捷键，或手动绑定。"
         return ""
 
     @Property("QVariantList", notify=discoveryChanged)
@@ -513,6 +597,8 @@ class ApplicationMappingController(QObject):
                     # Tombstones are already in _apps and are never re-added.
                     self._apps[app["value"]] = self._new_application(app)
                     self._defaults_dirty = True
+            if self._config_valid:
+                self._upgrade_scene_defaults()
             if self._defaults_dirty:
                 self._save()
             self.changed.emit()
@@ -527,6 +613,8 @@ class ApplicationMappingController(QObject):
                 else "应用尚未暴露可识别的菜单快捷键。可展开它的菜单后刷新")
             if not error and result.get("unresolved"):
                 self._message += f"；另有 {result['unresolved']} 项按键暂无法解析"
+            if not error and self._resolve_scene_defaults(bundle):
+                self._save()
             if not error and self._apps[bundle].get("pendingStart"):
                 action = start_action(self._menus)
                 if action and "snap" not in self._apps[bundle]["bindings"]:
@@ -572,9 +660,10 @@ class ApplicationMappingController(QObject):
     def clearApplicationBindings(self, bundle):
         if not self._is_added(bundle):
             return False
-        if self.bindingCount(bundle) or self._apps[bundle].get("pendingStart"):
+        if (self.bindingCount(bundle) or self._apps[bundle].get("pendingStart")
+                or self._apps[bundle].get("pendingDefaults") or not self._apps[bundle].get("defaultsCleared")):
             self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {},
-                "pendingStart": False, "defaultsVersion": DEFAULTS_VERSION,
+                "pendingStart": False, "pendingDefaults": {}, "defaultsCleared": True, "defaultsVersion": DEFAULTS_VERSION,
                 "websites": {domain: {**site, "bindings": {}} for domain, site in self._apps[bundle].get("websites", {}).items()}}}
             self._save()
         self.applicationBindingsCleared.emit(bundle)
@@ -585,10 +674,14 @@ class ApplicationMappingController(QObject):
         if not self._is_added(bundle):
             return False
         app = self._apps[bundle]
-        defaults = self._defaults_for(bundle, app)
+        menus = self._menus if bundle == self._bundle else ()
+        defaults = self._defaults_for(bundle, app, menus)
         if not defaults:
             return False
+        _, pending = scene_defaults(bundle, self._profiles_for(bundle), menus)
         self._apps = {**self._apps, bundle: {**app, "bindings": defaults.get("regular", {}),
+            "initializedScenes": [scene for scene in TEMPLATES if scene in self._profiles_for(bundle)],
+            "pendingDefaults": pending, "sceneDefaultsVersion": SCENE_DEFAULTS_VERSION, "defaultsCleared": False,
             "scenes": {scene: items for scene, items in defaults.items() if scene != "regular"},
             "defaultsVersion": DEFAULTS_VERSION,
             "pendingStart": bool(self._profile_for(bundle) and "snap" not in defaults.get("regular", {}))}}
@@ -602,7 +695,7 @@ class ApplicationMappingController(QObject):
             return False
         # Keep an empty ownership marker so removing a new configuration never
         # reactivates this bundle's older, explicitly saved shortcut profile.
-        self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {}, "websites": {}, "removed": True}}
+        self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {}, "websites": {}, "pendingDefaults": {}, "removed": True}}
         if self._bundle == bundle:
             self.selectApplication("")  # Invalidates any in-flight menu reply.
         self._save()
@@ -668,6 +761,10 @@ class ApplicationMappingController(QObject):
         if self.browserVideoScope and self._website:
             updated = {**app, "websites": {**app["websites"],
                 self._website: {**app["websites"][self._website], "bindings": bindings}}}
+        if self._scene in TEMPLATES and not self._website:
+            pending = {scene: dict(items) for scene, items in app.get("pendingDefaults", {}).items()}
+            pending.get(self._scene, {}).pop(gesture, None)
+            updated["pendingDefaults"] = {scene: items for scene, items in pending.items() if items}
         self._apps = {**self._apps, bundle: updated}
         self._save()
         self._message = (f"已保存，仅在此应用前台处于{self.selectedSceneLabel}且未输入文字时生效" if self._scene != "regular"

@@ -568,6 +568,7 @@ class RecognitionRuntime:
         gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
         gesture_filter: Callable[[object, bool], bool] | None = None,
         audio_settings: LiveAudioSettings | None = None,
+        on_ring_source: Callable[[object], None] | None = None,
         on_audio_configuring: Callable[[], None] | None = None,
         on_audio_configured: Callable[[object, str], None] | None = None,
     ) -> None:
@@ -883,6 +884,8 @@ class RecognitionRuntime:
 
             on_state("模型加载完成，正在启动并确认实时音频…")
             source.start_stream(buffer_audio=True)
+            if on_ring_source is not None and not disconnect_event.is_set():
+                on_ring_source(source)
             if disconnect_event.is_set():
                 return
             if microphone is not None:

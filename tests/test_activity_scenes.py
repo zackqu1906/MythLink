@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.activity_scenes import activity_context
+from scene_test_helpers import activity_context
 from proximic_ring.scene_capabilities import (PDF, VIDEO, IMAGE, MUSIC, SCENE_LABELS,
     application_scene_profiles, installed_scene_profiles, activity_actions)
 from proximic_ring.ui.application_mapping_controller import ApplicationMappingController

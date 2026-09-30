@@ -9,15 +9,11 @@ from pathlib import Path
 import plistlib
 
 from .gesture_scenes import PRESENTATION, presentation_profile
+from .scene_recognition.documents import EXTENSIONS
 
-PDF, VIDEO, IMAGE, MUSIC = "pdf", "video", "image", "music"
+from .scene_recognition.models import PDF, VIDEO, IMAGE, MUSIC
 SCENE_LABELS = {PRESENTATION: "放映", PDF: "PDF 阅读", VIDEO: "视频播放", IMAGE: "图片预览", MUSIC: "音乐播放"}
-EXTENSIONS = {
-    PDF: {"pdf"},
-    VIDEO: {"mp4", "m4v", "mov", "mkv", "avi", "webm", "wmv", "flv", "mpg", "mpeg", "ts", "m2ts", "3gp"},
-    IMAGE: {"png", "jpg", "jpeg", "gif", "heic", "heif", "tif", "tiff", "bmp", "webp", "avif", "svg", "raw", "cr2", "nef"},
-    MUSIC: {"mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "ogg", "opus", "wma", "alac", "ape"},
-}
+
 UTIS = {
     PDF: {"com.adobe.pdf"},
     VIDEO: {"public.movie", "public.video", "public.mpeg-4", "public.mpeg", "com.apple.quicktime-movie", "org.matroska.mkv"},

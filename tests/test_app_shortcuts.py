@@ -104,7 +104,9 @@ def test_capture_is_bounded_metadata_only_no_text_or_clipboard(monkeypatch):
         sharedWorkspace=lambda: SimpleNamespace(frontmostApplication=lambda: app))))
     target = MacAppShortcuts().capture()
     assert target.profile == "codex" and target.focus == "focus" and not target.blocked
-    assert len(reads) == 6
+    assert len(reads) == 9
+    assert set(reads) == {"AXFocusedWindow", "AXFocusedUIElement", "AXRole", "AXWindow",
+                          "AXSubrole", "AXDescription", "AXModal", "AXSheets", "AXMinimized"}
 
 
 @pytest.mark.parametrize("bundle,role,description", [
@@ -136,7 +138,7 @@ def test_plain_enter_capture_all_apps_and_fields(monkeypatch, bundle, role, desc
     assert backend.same_target(target, require_focus=True)
     values[("app", "AXFocusedUIElement")] = "different-field"
     assert not backend.same_target(target, require_focus=True)
-    assert set(reads) == {"AXFocusedWindow", "AXFocusedUIElement", "AXRole"}
+    assert set(reads) == {"AXFocusedWindow", "AXFocusedUIElement", "AXRole", "AXWindow"}
 
 
 def test_plain_enter_target_posts_no_modifiers_and_rejects_other_chords(desktop):

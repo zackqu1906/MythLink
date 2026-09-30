@@ -1,11 +1,14 @@
-"""Opt-in application scenes. Detection reads control metadata, never slide text."""
+"""Presentation application capabilities, title aliases and shortcut catalogs.
+
+Runtime recognition is owned by scene_recognition.engine, not these presets.
+"""
 from __future__ import annotations
 
 import re
 from pathlib import Path
 import plistlib
 
-from .presentation_detection import PRESENTATION, detect_presentation
+from .scene_recognition.models import PRESENTATION
 
 POWERPOINT = "com.microsoft.Powerpoint"
 SCENE_ANCHORS = frozenset({"index-pinch", "middle-pinch"})
@@ -123,12 +126,3 @@ TITLE_NAMES = {
     "openoffice": ("OpenOffice", "OpenOffice Impress"),
     "onlyoffice": ("ONLYOFFICE",),
 }
-
-
-def presentation_context(bundle, window, focus, attr, *, budget=0.24, profile="", screen_frames=(), application_name=""):
-    """Capability boundary; every supported presenter uses the same detector."""
-    profile = presentation_profile(bundle) or profile
-    if not profile:
-        return "", "unknown"
-    return detect_presentation(window, focus, attr, budget=budget, screen_frames=screen_frames,
-                               application_names=(application_name, *TITLE_NAMES.get(profile, ())))

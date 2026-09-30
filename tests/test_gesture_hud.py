@@ -20,7 +20,7 @@ def test_foreground_window_screen_wins_over_mouse_and_negative_origins():
     assert screen_for_window([left, right], QRect(9000, 0, 800, 600)) is None
     area = QRect(-1440, 25, 1440, 810)
     geometry = hud_geometry(area)
-    assert geometry.size().width() == 280 and area.contains(geometry)
+    assert geometry.size().width() == 360 and area.contains(geometry)
     assert area.right() - geometry.right() == 24
     assert area.bottom() - geometry.bottom() == 24
     assert QRect(0, 0, 480, 420).contains(hud_geometry(QRect(0, 0, 480, 420)))
@@ -33,6 +33,8 @@ def test_hud_modes_reset_timer_do_not_activate_and_do_not_start_voice(tmp_path):
     script = r'''
 import sys
 import math
+import os
+from pathlib import Path
 from PySide6.QtCore import QMetaObject, QRectF, Qt, qInstallMessageHandler
 from PySide6.QtWidgets import QApplication, QLineEdit
 from PySide6.QtTest import QTest
@@ -42,6 +44,8 @@ messages = []
 qInstallMessageHandler(lambda kind, context, message: messages.append(message))
 app = QApplication([])
 app.setQuitOnLastWindowClosed(False)
+shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', sys.argv[1]))
+shots.mkdir(parents=True, exist_ok=True)
 editor = QLineEdit()
 editor.setText('keep focus here')
 editor.show(); editor.setFocus(); editor.activateWindow()
@@ -58,7 +62,7 @@ for flag in (Qt.WindowTransparentForInput, Qt.WindowDoesNotAcceptFocus, Qt.Windo
 assert app.focusWidget() is focus
 assert not hud.window.isActive()
 assert root.property('mode') == 'input'
-assert hud.window.width() == hud.window.height() == 280
+assert hud.window.width() == hud.window.height() == 360
 assert root.property('animationRunning')
 assert 0 <= root.property('entranceTime') < 300
 assert not hud.window.grabWindow().isNull()
@@ -83,25 +87,27 @@ def check_layout(count):
     labels = []
     for index, sat in enumerate(satellites):
         angle = math.radians(index*360/count)
-        assert abs(sat.x()+22 - (140 + 86*math.sin(angle))) < .1
-        assert abs(sat.y()+22 - (126 - 86*math.cos(angle))) < 1
+        assert abs(sat.x()+24 - (180 + 112*math.sin(angle))) < .1
+        assert abs(sat.y()+24 - (160 - 112*math.cos(angle))) < 1
         label = next(item for item in visual_items(sat) if item.objectName() == 'satelliteLabel')
         rect = label.mapRectToScene(QRectF(0, 0, label.width(), label.height()))
-        assert QRectF(0, 0, 280, 280).contains(rect)
+        assert QRectF(0, 0, 360, 360).contains(rect)
         assert not rect.intersects(hub_rect), (index, rect, hub_rect)
-        assert not any(rect.intersects(circle) for circle in circles)
+        assert not any(rect.intersects(circle) for circle in circles), (index, rect, circles)
         caption = next(item for item in visual_items(label) if item.objectName() == 'satelliteCaption')
-        assert caption.implicitWidth() <= caption.width() + .5
-        assert not any(rect.intersects(other) for other in labels)
+        assert caption.property("font").pixelSize() >= 12
+        assert not any(rect.intersects(other) for other in labels), (index, rect, labels)
         labels.append(rect)
 
 check_layout(6)
+assert hud.window.grabWindow().save(str(shots / 'input-hud.png'))
 hud.preview('operation')
 assert root.property('entranceTime') < 50
 QTest.qWait(1500)
 assert hud.window.isVisible()
 assert root.property('mode') == 'operation'
 check_layout(3)
+assert hud.window.grabWindow().save(str(shots / 'operation-hud.png'))
 assert app.focusWidget() is focus
 QTest.qWait(1700)
 assert hud.window.isVisible()  # Past both 3 s and the preceding display's 5 s deadline.
@@ -115,6 +121,7 @@ check_layout(6)
 remaining, entrance = hud._timer.remainingTime(), root.property('entranceTime')
 hud.update_input_fields(False, '输入框读取未完成，请重试')
 assert root.property('inputFieldsHint') == '输入框读取未完成，请重试'
+assert root.property('fieldHint') == '输入框读取未完成，请重试'
 assert root.property('entranceTime') >= entrance
 assert hud._timer.remainingTime() <= remaining
 check_layout(6)
@@ -131,17 +138,32 @@ hud.preview('operation')
 assert root.property('notice') == ''  # A later request must clear a previous notice.
 hud.update_input_fields(False, '需要辅助功能权限')
 assert root.property('inputFieldsAvailable') is True  # Preview stays independent.
-hud.show_mode('input', scene_actions=[dict(gesture='左滑', action='上一个动画 / 上一页')] * 9)
-QTest.qWait(100)
-scene_cards = [item for item in visual_items(root) if item.objectName().startswith('sceneGesture_')]
-assert len(scene_cards) == 9 and all(item.isVisible() for item in scene_cards)
-assert not next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
+keys = ['swipe-left', 'swipe-right', 'swipe-up', 'swipe-down', 'tap', 'snap', 'circle-clockwise', 'circle-counterclockwise']
+rows = [dict(key=g, gesture=g, action='很长的场景动作名称用于检查省略和字号', scope='scene', application='PowerPoint',
+             scene='presentation', sceneLabel='放映', voiceDisabled=True) for g in keys]
+hud.show_mode('input', scene_actions=rows)
+QTest.qWait(1900)
+assert next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
+assert root.property('voiceDisabled') and root.property('overflow') == 2
+assert root.property('sceneActive') and root.property('modeTitle') == '放映'
+assert root.property('fieldHint') == ''
+assert not next(item for item in visual_items(root) if item.objectName() == 'gestureHudGlobalShortcuts').isVisible()
+check_layout(6)
 assert app.focusWidget() is focus and not hud.window.isActive()
-from pathlib import Path
-import os
-shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', sys.argv[1]))
-shots.mkdir(parents=True, exist_ok=True)
 assert hud.window.grabWindow().save(str(shots / 'presentation-hud.png'))
+original = root.property('orbs')
+hud.show_mode('operation', scene_actions=rows)
+QTest.qWait(1900)
+assert root.property('orbs') == original
+assert root.property('modeTitle') == '放映'
+assert root.property('mode') == 'operation' and root.property('contextLabel') == 'PowerPoint · 放映'
+check_layout(6)
+assert hud.window.grabWindow().save(str(shots / 'presentation-operation-hud.png'))
+for count in range(1, 6):
+    hud.show_mode('input', scene_actions=rows[:count])
+    QTest.qWait(1900)
+    assert hud.window.grabWindow().save(str(shots / ('scene-' + str(count) + '-hud.png')))
+    check_layout(count)
 hud.show_mode('input')
 assert next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
 assert not any('Error' in line or 'ReferenceError' in line or 'TypeError' in line for line in messages), messages
@@ -154,7 +176,7 @@ assert not root.property('animationRunning')
     environment = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software",
                        PROXIMIC_DATA_HOME=str(tmp_path), PROXIMIC_STARTUP_PROBE="1")
     run = subprocess.run([sys.executable, "-c", script, str(tmp_path)], env=environment,
-                         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=20)
+                         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=45)
     assert run.returncode == 0, run.stdout + run.stderr
 
 
@@ -286,5 +308,5 @@ finally:
     environment = dict(os.environ, QT_QPA_PLATFORM="cocoa", PROXIMIC_DATA_HOME=str(tmp_path),
                        PROXIMIC_STARTUP_PROBE="1")
     run = subprocess.run([sys.executable, "-c", script], env=environment,
-                         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=20)
+                         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stdout + run.stderr

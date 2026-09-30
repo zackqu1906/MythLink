@@ -10,18 +10,21 @@ import re
 import time
 from urllib.parse import unquote, urlsplit
 
-PRESENTATION = "presentation"
+from .focus import inspect_focus
+from .documents import non_slide_document
+
+from .models import PRESENTATION, SceneResult
 
 
 def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), application_names=()):
-    """Return a positive scene and a three-state input context.
+    """Return the shared scene result with a three-state input context.
 
     A full-screen document is insufficient. Recognize a dedicated slide-show
     window or a visible End Show button in a presentation editor's controls.
     Unsupported/localized AX layouts remain unknown and retain global routing.
     """
     if window is None:
-        return "", "unknown"
+        return SceneResult()
     deadline = time.monotonic() + budget
 
     def read(node, key):
@@ -30,29 +33,7 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
         return attr(node, key)
 
     def focus_context():
-        # Check the actual focus and ancestors, including presenter notes. A
-        # missing focus/parent or unknown control is not proof of non-editing.
-        node, input_context = focus, "unknown"
-        safe_roles = {"AXWindow", "AXButton", "AXImage", "AXGroup", "AXLayoutArea",
-                      "AXScrollArea", "AXStaticText", "AXToolbar", "AXSplitGroup"}
-        for _ in range(10):
-            if node is None:
-                break
-            role = read(node, "AXRole")
-            if role in {"AXTextArea", "AXTextField", "AXSearchField", "AXComboBox"} or (read(node, "AXEditable") or read(node, "AXIsEditable")):
-                return "text"
-            if role not in safe_roles:
-                break
-            if node == window:
-                input_context = "nontext"
-                break
-            parent = read(node, "AXParent")
-            # Some presentation applications expose AXWindow without AXParent on
-            # their slide canvas. Keep checking ancestors when available.
-            if parent is None and read(node, "AXWindow") == window:
-                return "nontext"
-            node = parent
-        return input_context
+        return inspect_focus(window, focus, read).context
 
     def close_rect(position, size, other_position, other_size):
         if any(value is None or len(value) != 2 for value in (position, size, other_position, other_size)):
@@ -72,15 +53,6 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
         if (focus is None or read(focus, "AXRole") not in {"AXGroup", "AXImage", "AXLayoutArea"}
                 or read(focus, "AXFocused") is False or read(focus, "AXEnabled") is False
                 or focus_context() != "nontext"):
-            return False
-        # Multi-purpose editors also display PDFs, images and documents fullscreen. A known
-        # non-slide document must not borrow slideshow mappings. Titles may
-        # otherwise be empty, omitted, localized, or just the deck's name.
-        document = read(window, "AXDocument")
-        document_path = unquote(urlsplit(str(document or "")).path)
-        suffix = Path(document_path or str(read(window, "AXTitle") or "")).suffix.casefold()
-        if suffix in {".pdf", ".doc", ".docx", ".odt", ".txt", ".xls", ".xlsx", ".csv",
-                      ".png", ".jpg", ".jpeg", ".gif", ".mp4", ".mov"}:
             return False
         position, size = read(window, "AXPosition"), read(window, "AXSize")
         if not close_rect(position, size, read(focus, "AXPosition"), read(focus, "AXSize")):
@@ -112,11 +84,16 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
     try:
         if (read(window, "AXRole") != "AXWindow" or read(window, "AXModal")
                 or read(window, "AXMinimized") or read(window, "AXSheets")):
-            return "", "unknown"
+            return SceneResult()
         subrole = read(window, "AXSubrole")
         if subrole == "AXSystemDialog":
-            return "", "unknown"
+            return SceneResult()
         title = str(read(window, "AXTitle") or "").strip()
+        document = read(window, "AXDocument")
+        # Applies to every evidence path, not just fullscreen geometry. Office
+        # suites share preview controls across slides, PDFs, photos and video.
+        if non_slide_document(document or title):
+            return SceneResult()
         # Anchored application-generated names, not arbitrary mentions in a
         # document name. Do not treat a normal .pptx document title as a show.
         app_name = "|".join(re.escape(name) for name in application_names if name)
@@ -127,30 +104,30 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
         # Only reject it as a filename when AXDocument actually says so.
         document_name = Path(unquote(urlsplit(str(read(window, "AXDocument") or "")).path)).name
         if (branded or unbranded) and title != document_name:
-            return PRESENTATION, focus_context()
+            return SceneResult(PRESENTATION, focus_context())
         if slide_surface():
-            return PRESENTATION, "nontext"
+            return SceneResult(PRESENTATION, "nontext")
         # Some versions expose only the document name. A visible presentation
         # toolbar's End Show button is an independent positive signal. Never
         # traverse the app menu, slide content, or read AXValue/selected text.
         queue = [(window, 0)]
         end_labels = {"end show", "end slide show", "end slideshow", "exit slideshow", "exit slide show",
-                      "stop slideshow", "exit presentation", "end presentation", "close preview",
+                      "stop slideshow", "exit presentation", "end presentation",
                       "结束放映", "结束幻灯片放映", "退出放映", "退出幻灯片播放", "退出幻灯片放映",
-                      "结束播放", "結束放映", "結束投影片放映", "退出預覽", "退出预览"}
+                      "結束放映", "結束投影片放映"}
         visited = 0
         while queue and visited < 64:
             node, depth = queue.pop(0)
             visited += 1
-            if read(node, "AXHidden"):
+            if read(node, "AXHidden") or read(node, "AXEnabled") is False:
                 continue
             role = read(node, "AXRole")
             if role == "AXButton":
                 label = str(read(node, "AXTitle") or read(node, "AXDescription") or "").strip().casefold()
                 if label in end_labels and read(node, "AXEnabled") and read(node, "AXHidden") is not True:
-                    return PRESENTATION, focus_context()
+                    return SceneResult(PRESENTATION, focus_context())
             if role in {"AXWindow", "AXGroup", "AXToolbar", "AXSplitGroup"} and depth < 4:
                 queue.extend((child, depth + 1) for child in list(read(node, "AXChildren") or [])[:64 - visited])
-        return "", "unknown"
+        return SceneResult()
     except (TimeoutError, TypeError, ValueError):
-        return "", "unknown"
+        return SceneResult()

@@ -883,10 +883,13 @@ class AppController(QObject):
                                      multi_undo_enabled=self._multi_undo_enabled)
         self._app_gestures = AppGestureController(self)
         self._ring_gestures = RingGestureController(self)
+        from .touchpad_controller import TouchpadController
+        self._touchpad = TouchpadController(self)
         from .proximity_controller import ProximityController
         self._proximity = ProximityController(self, settings=self._settings)
         self._proximity.diagnostic.connect(lambda info: self._event_log("PROXIMITY", **info))
         self._proximity.lockPreparing.connect(self.pauseRecognition)
+        self._proximity.lockPreparing.connect(self._touchpad.stop)
         self._proximity.locked.connect(self.pauseRecognition)
         self._proximity.changed.connect(self._ring_gestures.lock_state_changed)
         self._proximity.reconnectRequested.connect(self._reconnect_for_proximity)
@@ -1139,6 +1142,10 @@ class AppController(QObject):
     @Property(QObject, constant=True)
     def ringGestures(self) -> QObject:
         return self._ring_gestures
+
+    @Property(QObject, constant=True)
+    def touchpad(self) -> QObject:
+        return self._touchpad
 
     @Property(QObject, constant=True)
     def proximity(self) -> QObject:
@@ -3545,6 +3552,7 @@ class AppController(QObject):
                     stage1_threshold_provider=lambda: self._stage1_threshold,
                     gesture_bindings_provider=lambda: self._gesture_bindings,
                     audio_settings=audio_changes,
+                    on_ring_source=lambda source: self._touchpad.sourceReady.emit(source, gesture_connection),
                     on_audio_configuring=lambda: self._audioConfiguring.emit(audio_changes),
                     on_audio_configured=lambda request, error: self._audioConfigured.emit(audio_changes, request, error),
                 )
@@ -4167,6 +4175,7 @@ class AppController(QObject):
         self._cancel_inline_requests("主程序已退出")
         self._record_interrupted_inline_edits("主程序已退出")
         self._app_gestures.close()
+        self._touchpad.close()
         self._ring_gestures.close()
         self._undo_queue_timer.stop()
         self._undo_queue.clear()
@@ -4653,6 +4662,7 @@ class AppController(QObject):
             self.associationChanged.emit()
 
     def _stop_device_interaction(self) -> None:
+        self._touchpad.stop("设备连接已停止")
         if self._device_stop_handled:
             return
         self._device_stop_handled = True

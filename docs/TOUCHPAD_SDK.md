@@ -98,7 +98,7 @@ source = RingAudioSource(
 )
 ```
 
-它复用主程序已有连接，在固件手势启动后启动触摸板，关闭/断线时自动清理。`source.touchpad_active` 和 `source.touchpad_error` 可供 UI 展示。接收事件不代表自动发送系统鼠标动作，产品层可以选择将事件传给 `MacSystemMouse.handle` 或其他应用逻辑。此轮未增加桌面设置页开关。
+它复用主程序已有连接，在固件手势启动后启动触摸板，关闭/断线时自动清理。`source.touchpad_active` 和 `source.touchpad_error` 可供 UI 展示。接收事件不代表自动发送系统鼠标动作，产品层可以选择将事件传给 `MacSystemMouse.handle` 或其他应用逻辑。桌面导航栏新增“触摸板”页面，可动态开启/关闭系统鼠标控制，默认 90 秒自动停止。设置包含指针速度、轻触点击、反转上下方向和自动停止时长。Esc、断线或锁屏会停止控制，重连后需手动再次开启。
 
 ## 互斥与清理
 
@@ -130,3 +130,11 @@ events = processor.poll(now_monotonic)  # 定时约 1–5 ms 调用，排出待�
 必须保持“推理前上传全部状态；推理后缓存全部状态”的顺序，不能边读输出边回写输入。详见 `docs/TOUCHPAD_ADAPTATION_AUDIT.md`；原数据 27,790 帧回放已验证修复效果，无校准或静止冻结。
 
 测试入口：`tests/test_touchpad_sdk.py`（会话、互斥、线程、清理、超时、路由与主项目适配），`tests/test_touchpad_backbone.py`（真实 MNN 状态覆盖回归）。仍未宣称 Android 设备逐帧输出完全一致，也未进行本轮 SDK 与语音/手势并发实机验收。
+
+## 桌面动态控制
+
+`RingAudioSource.start_touchpad(**options)` 和 `stop_touchpad()` 从 GUI / 其他线程调用，立即返回 `concurrent.futures.Future`，通过现有 BLE 事件循环执行 SDK 操作。不要在 GUI 线程调用 `.result()` 等待。运行期间无需修改构造参数，也不重启语音。
+
+`ui/touchpad_controller.py` 管理页面状态和连接代次；`touchpad_mouse.py` 将高频事件放入最多 32 项的队列，在专用线程发送系统鼠标事件。连续位移合并但不越过点击，超过 100 ms 的旧事件丢弃；停止立即关闭本地输出门。推理仍由 SDK 的单线程 executor 执行，BLE 回调只入队，GUI 仅接收低频统计和状态变化。
+
+设置仅在关闭时修改并持久保存，开启状态不持久化。触摸板失败单独显示，不终止语音或固件手势；SDK 的原始 IMU / 四元数互斥约束仍然适用。

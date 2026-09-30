@@ -7,7 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from proximic_ring.app_shortcuts import LocalMacAppShortcuts
-from proximic_ring.gesture_scenes import POWERPOINT, PRESENTATION, presentation_context
+from proximic_ring.gesture_scenes import POWERPOINT, PRESENTATION
+from scene_test_helpers import presentation_context
 from test_gesture_scenes import metadata, window_tree, wps_window_tree
 from test_app_gestures import route
 from test_application_menus import configure
@@ -82,7 +83,7 @@ def test_fullscreen_other_content_does_not_use_slide_bindings(bundle, extension)
 
 @pytest.mark.parametrize("evidence", ["title", "controls", "canvas"])
 def test_generic_presenter_needs_no_shortcut_profile_for_shared_detection(evidence):
-    from proximic_ring.presentation_detection import detect_presentation
+    from proximic_ring.scene_recognition.presentation import detect_presentation
     from proximic_ring.gesture_scenes import scene_actions
     name = "Example Slides [Plus]"
     window, focus = window_tree(name + " - Slide Show - Review.odp")
@@ -90,7 +91,8 @@ def test_generic_presenter_needs_no_shortcut_profile_for_shared_detection(eviden
         window["AXTitle"] = "Review.odp"
         window["AXChildren"] = [dict(AXRole="AXButton", AXTitle="End Show", AXEnabled=True)]
     if evidence == "canvas": window, focus = wps_window_tree()
-    assert detect_presentation(window, focus, metadata, application_names=[name]) == (PRESENTATION, "nontext")
+    result = detect_presentation(window, focus, metadata, application_names=[name])
+    assert (result.scene, result.input_context) == (PRESENTATION, "nontext")
     assert presentation_context("test.independent.slides", window, focus, metadata,
                                 profile="generic", application_name=name) == (PRESENTATION, "nontext")
     assert not scene_actions("test.independent.slides", PRESENTATION, profile="generic")
@@ -166,7 +168,11 @@ def test_capture_caches_only_within_snapshot_and_discards_mid_read_focus_change(
     backend, root, reads = native_backend(monkeypatch, window, focus, bundle=WPS)
     first = backend.capture(menu_action=True, scene=True)
     assert first.scene == PRESENTATION
-    assert all(count == 1 for (node, key), count in reads.items() if node != id(root))
+    # The snapshot cache is reused except for the two identities deliberately
+    # checked again at the boundary to reject mid-read document/window changes.
+    revalidated = {(id(window), "AXDocument"), (id(focus), "AXWindow")}
+    assert all(count == (2 if (node, key) in revalidated else 1)
+               for (node, key), count in reads.items() if node != id(root))
     focus["AXRole"] = "AXTextField"
     assert not backend.same_target(first)  # New snapshot must reread all metadata.
     focus["AXRole"] = "AXGroup"
@@ -182,7 +188,7 @@ def test_capture_caches_only_within_snapshot_and_discards_mid_read_focus_change(
 
 
 def test_slower_ax_responses_still_identify_wps_without_reusing_a_previous_snapshot(monkeypatch):
-    import proximic_ring.presentation_detection as scenes
+    import proximic_ring.scene_recognition.presentation as scenes
     window, focus = wps_window_tree()
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle=WPS)
     ax, elapsed = sys.modules["ApplicationServices"], [0.]

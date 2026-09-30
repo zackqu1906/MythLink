@@ -32,7 +32,7 @@ def test_shell_navigation_preserves_live_state_and_configuration(inline_ui, tmp_
     mode_before = controller.ringGestures.mode
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
-    for index, page in enumerate(("homePage", "mainPageScroll", "gesturesPage")):
+    for index, page in enumerate(("homePage", "mainPageScroll", "gesturesPage", "touchpadPage")):
         nav = visual_child(root.contentItem(), f"mainNav{index}")
         QMetaObject.invokeMethod(nav, "click")
         QTest.qWait(100)
@@ -44,7 +44,7 @@ def test_shell_navigation_preserves_live_state_and_configuration(inline_ui, tmp_
         assert origin.x() + surface.width() <= root.width()
         assert origin.y() + surface.height() <= root.height()
         assert root.grabWindow().save(str(shots / f"{page}-{size[0]}.png"))
-    assert visual_child(root.contentItem(), "mainNav3") is None
+    assert visual_child(root.contentItem(), "mainNav4") is None
     assert controller.gestureBindings == bindings_before
     assert controller.appGestures.profiles == profiles_before
     assert controller.ringGestures.mode == mode_before

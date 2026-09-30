@@ -1,7 +1,7 @@
 """Editable defaults and installed-app onboarding, independent of routing.
 
-Extend DEFAULT_MAPPINGS with scene/gesture/action IDs and supply verified actions
-in the existing scene catalog or CHAT_ACTIONS. Runtime dispatch has no preset path:
+Scene meanings and application key adapters live in scene_defaults.
+Presentation and chat defaults retain their existing catalog IDs. Runtime dispatch has no preset path:
 these are copied into the same records as user-created mappings.
 """
 from __future__ import annotations
@@ -10,6 +10,8 @@ import re
 
 from .app_gestures import APP_LABELS, default_profiles, profile_for_application, normalize_shortcut
 from .gesture_scenes import PRESENTATION, presentation_profile, scene_actions
+from .scene_capabilities import application_scene_profiles
+from .scene_defaults import scene_defaults
 
 DEFAULTS_VERSION = 2
 AUTO_ADD_PROFILES = frozenset({"codex", "workbuddy", "wps", "powerpoint"})
@@ -43,7 +45,14 @@ def chat_actions(bundle: str, label: str, scene: str) -> list[dict]:
             for key, title in CHAT_ACTIONS.items()]
 
 
-def default_mappings(bundle: str, label: str = "", *, presentation: str = "", menus=()) -> dict[str, dict]:
+def default_mappings(bundle: str, label: str = "", *, presentation: str = "", scene_profiles=None, menus=()) -> dict[str, dict]:
+    profiles = {**(scene_profiles or {}), **application_scene_profiles(bundle)}
+    result = _base_mappings(bundle, label, presentation=presentation, menus=menus)
+    result.update(scene_defaults(bundle, profiles, menus)[0])
+    return result
+
+
+def _base_mappings(bundle: str, label: str = "", *, presentation: str = "", menus=()) -> dict[str, dict]:
     """Fresh, serializable records; callers cannot mutate the shared template."""
     profile = default_profile(bundle, label, presentation=presentation)
     presenter = presentation_profile(bundle) or presentation

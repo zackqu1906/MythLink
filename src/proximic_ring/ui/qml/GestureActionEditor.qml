@@ -22,14 +22,15 @@ Rectangle {
     }
     readonly property var saved: applicationScope ? (catalog.bindings[bundle] || {})[gesture] || null
         : globalOptions.filter(function(a) { return editor.globalController.globalBindings[a.id] === editor.gesture })[0] || null
+    readonly property string pendingDefault: applicationScope ? catalog.pendingBindings[gesture] || "" : ""
     readonly property string savedId: saved ? saved.id : ""
     readonly property string contextKey: applicationScope ? bundle + "/" + catalog.selectedScene + "/" + catalog.selectedWebsite + "/" + gesture : "global/" + gesture
-    readonly property string savedVersion: applicationScope ? savedId : JSON.stringify(globalController.globalBindings)
+    readonly property string savedVersion: applicationScope ? savedId + (pendingDefault ? "/pending:" + pendingDefault : "") : JSON.stringify(globalController.globalBindings)
     // Drafts survive a gesture/app/page switch, but never alter live bindings.
     property var drafts: ({})
     readonly property string draftId: drafts[contextKey] ? drafts[contextKey].id : savedId
     readonly property var customDraft: drafts[contextKey] ? drafts[contextKey].custom || null : null
-    readonly property bool dirty: draftId !== savedId
+    readonly property bool dirty: draftId !== savedId || Boolean(pendingDefault && drafts[contextKey])
     readonly property bool stale: Boolean(drafts[contextKey] && drafts[contextKey].base !== savedVersion)
     readonly property bool voiceLocked: catalog.voiceGestures.indexOf(gesture) >= 0
     readonly property bool editable: {
@@ -76,8 +77,8 @@ Rectangle {
     implicitHeight: Math.max(664, body.implicitHeight + 40)
     function choose(actionId) {
         if (!editable || stale) return
-        if (actionId === draftId) return
-        if (actionId === savedId) { discard(); return }
+        if (actionId === draftId && !pendingDefault) return
+        if (actionId === savedId && !pendingDefault) { discard(); return }
         var next = Object.assign({}, drafts)
         next[contextKey] = {id: actionId, base: savedVersion}
         drafts = next
