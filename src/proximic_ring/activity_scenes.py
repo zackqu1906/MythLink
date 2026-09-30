@@ -41,7 +41,7 @@ def document_kind(value):
     return next((scene for scene, extensions in EXTENSIONS.items() if suffix in extensions), "")
 
 
-def activity_context(bundle, profiles, window, focus, attr, *, budget=.16):
+def activity_context(bundle, profiles, window, focus, attr, *, budget=.30, screen_frames=(), application_name=""):
     if window is None or not profiles:
         return "", "unknown"
     deadline = time.monotonic() + budget
@@ -51,11 +51,11 @@ def activity_context(bundle, profiles, window, focus, attr, *, budget=.16):
         return attr(node, key) if node is not None else None
     try:
         # Reserve time for other scenes in multi-purpose office applications.
-        # Existing presentation recognition (including the WPS exception) wins.
+        # All presentation-capable applications use the shared detector first.
         if PRESENTATION in profiles:
             scene, context = presentation_context(bundle, window, focus, read,
-                budget=max(0, min(.08 if len(profiles) > 1 else budget, deadline-time.monotonic())),
-                profile=profiles[PRESENTATION])
+                budget=max(0, min(.24 if len(profiles) > 1 else budget, deadline-time.monotonic())),
+                profile=profiles[PRESENTATION], screen_frames=screen_frames, application_name=application_name)
             if scene:
                 return scene, context
         if (read(window, "AXRole") != "AXWindow" or read(window, "AXModal") or read(window, "AXMinimized")

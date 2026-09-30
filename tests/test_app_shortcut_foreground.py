@@ -31,10 +31,12 @@ def workspace(monkeypatch):
         NSRunLoop=SimpleNamespace(currentRunLoop=lambda: SimpleNamespace(runUntilDate_=drain))))
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWorkspace=SimpleNamespace(
         sharedWorkspace=lambda: SimpleNamespace(frontmostApplication=lambda: apps[state.cached]))))
+    window = {"AXRole": "AXWindow"}
+    root = {"AXFocusedWindow": window}
     monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(
         AXUIElementCreateApplication=lambda pid: pid,
         AXUIElementSetMessagingTimeout=lambda *args: None,
-        AXUIElementCopyAttributeValue=lambda *args: (0, None)))
+        AXUIElementCopyAttributeValue=lambda node, key, _: (0, (root if isinstance(node, int) else node).get(key))))
     return state
 
 

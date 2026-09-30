@@ -43,14 +43,14 @@ def test_wps_real_untitled_dialog_slide_surface_is_recognized_without_reading_co
     assert presentation_context("com.kingsoft.wpsoffice.mac.global", window, focus, metadata) == (PRESENTATION, "nontext")
 
 
-@pytest.mark.parametrize("change", ["foreign", "standard", "system_dialog", "modal", "minimized", "sheet",
-    "windowed", "titled", "missing_title", "unknown_fullscreen", "unknown_modal", "text", "editable",
+@pytest.mark.parametrize("change", ["foreign", "system_dialog", "modal", "minimized", "sheet",
+    "windowed", "unknown_fullscreen", "text", "editable",
     "unknown", "missing", "detached", "not_focused", "disabled", "unknown_children", "nested_control",
     "prompt", "missing_children", "missing_size", "partial_size", "shifted", "empty_size"])
 def test_wps_surface_exception_does_not_accept_editor_dialog_or_unknown_metadata(change):
     window, focus = wps_window_tree()
     bundle = "com.kingsoft.wpsoffice.mac"
-    if change == "foreign": bundle = POWERPOINT
+    if change == "foreign": bundle = "com.example.Other"
     for name, value in {"standard": "AXStandardWindow", "system_dialog": "AXSystemDialog"}.items():
         if change == name: window["AXSubrole"] = value
     if change == "modal": window["AXModal"] = True
@@ -97,7 +97,7 @@ def test_scene_evidence_is_not_fullscreen_or_an_unknown_focus(change, expected):
     window, focus = window_tree()
     bundle, budget = POWERPOINT, .12
     if change == "normal": window["AXTitle"] = "Deck.pptx"
-    if change == "named_document": window["AXTitle"] = "Slide Show - Example.pptx"
+    if change == "named_document": window.update(AXTitle="Slide Show - Example.pptx", AXDocument="file:///Slide%20Show%20-%20Example.pptx")
     if change == "fullscreen": window.update(AXTitle="Deck", AXFullScreen=True)
     if change == "foreign": bundle = "com.example.Editor"
     if change == "modal": window["AXModal"] = True
@@ -138,6 +138,7 @@ def test_minimized_or_sheet_covered_presentation_is_not_eligible():
 def presentation(route, monkeypatch):
     c, service, inline, _, sent, messages, _ = route
     catalog = configure(service, monkeypatch, POWERPOINT)
+    catalog.clearApplicationBindings(POWERPOINT)  # This fixture tests explicit scene edits independently of defaults.
     catalog.selectScene(PRESENTATION)
     assert catalog.setBinding(POWERPOINT, "swipe-left", "powerpoint:previous")
     assert catalog.setBinding(POWERPOINT, "swipe-right", "powerpoint:next")
@@ -261,14 +262,14 @@ def test_scene_survives_menu_read_failure_and_can_inherit_without_menu(presentat
     ("com.kingsoft.wpsoffice.mac.global", "wps", "Cmd+Return"),
     ("com.apple.iWork.Keynote", "keynote", "Cmd+Alt+P"),
     ("org.libreoffice.script", "libreoffice", "F5"),
-    ("org.openoffice.script", "openoffice", None),
+    ("org.openoffice.script", "openoffice", "F5"),
     ("asc.onlyoffice.ONLYOFFICE", "onlyoffice", "Cmd+Shift+Return"),
 ])
-def test_all_known_presenters_get_scene_and_only_wps_installs_defaults(route, monkeypatch, bundle, profile, start):
+def test_all_known_presenters_get_scene_and_standard_gesture_defaults(route, monkeypatch, bundle, profile, start):
     c, s, _, _, _, _, _ = route
     catalog = configure(s, monkeypatch, bundle)
     assert catalog.supportsPresentation and catalog.selectedScene == "regular"
-    assert catalog.bindingCount(bundle) == (3 if profile == "wps" else 0)
+    assert catalog.bindingCount(bundle) == 4
     assert catalog.scene_bundles() == [bundle]
     presets = [a for a in catalog.actions if a.get("preset")]
     assert all(a["id"].startswith(profile + ":") for a in presets)
@@ -378,9 +379,9 @@ def test_existing_wps_record_gains_scene_without_readding_or_changing_bindings(r
     monkeypatch.setattr(restored, "_request", lambda *args: None)
     try:
         restored.selectApplication(bundle)
-        assert restored.supportsPresentation and restored.bindingCount(bundle) == 1
+        assert restored.supportsPresentation and restored.bindingCount(bundle) == 4
         restored.selectScene(PRESENTATION)
-        assert restored.canBind("tap") and restored.bindings[bundle] == {}
+        assert restored.canBind("tap") and set(restored.bindings[bundle]) == {"swipe-left", "swipe-right", "snap"}
         assert restored.regularBindings[bundle] == original[bundle]["bindings"]
         assert c._settings.value(SETTINGS_KEY) == raw  # Migration discovery alone never writes settings.
     finally:

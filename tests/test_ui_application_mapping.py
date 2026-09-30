@@ -43,6 +43,7 @@ def test_powerpoint_scene_tabs_reserved_gestures_and_separate_drafts(mapping_ui,
     before, messages = c.gestureBindings, list(bridge.messages)
     catalog._candidates = [dict(value=POWERPOINT, label="Microsoft PowerPoint", path="/System/Applications/TextEdit.app")]
     assert catalog.addApplication(POWERPOINT)
+    catalog.clearApplicationBindings(POWERPOINT)  # Exercise draft editing separately from installed defaults.
     QTest.qWait(60)
     click("gestureApplication_" + POWERPOINT)
     click("gestureCard_swipe-right")
@@ -105,7 +106,7 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
     QTest.qWait(60)
     click("gestureApplication_" + bundle)
     bar = root.findChild(QObject, "applicationSceneBar")
-    assert bar.property("visible") and catalog.bindingCount(bundle) == (3 if profile == "wps" else 0)
+    assert bar.property("visible") and catalog.bindingCount(bundle) == (3 if profile == "generic" else 4)
     click("gestureCard_swipe-right")
     editor = root.findChild(QObject, "gestureActionEditor")
     assert editor.property("editable")
@@ -113,9 +114,8 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
     assert editor.property("editable")
     assert "PowerPoint" not in root.findChild(QObject, "gestureSceneHint").property("text")
     if profile != "generic":
-        if profile == "wps":
-            assert editor.property("savedId") == "wps:next"
-            assert catalog.setBinding(bundle, "swipe-right", "")
+        assert editor.property("savedId") == profile + ":next"
+        assert catalog.setBinding(bundle, "swipe-right", "")
         catalog._busy = True
         catalog.discoveryChanged.emit()
         click("menuAction_" + profile + ":next")
@@ -124,7 +124,8 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
         assert catalog.bindings[bundle]["swipe-right"]["shortcut"] == "Right"
         assert "PowerPoint" not in root.findChild(QObject, "savedMenuBindingStatus").property("text")
     else:
-        assert not any(a.get("preset") for a in catalog.actions)
+        assert {a["id"] for a in catalog.actions if a.get("preset")} == {"presentation:previous", "presentation:next", "presentation:end"}
+        assert catalog.defaultMappingNotice
         assert root.findChild(QObject, "customShortcutButton").property("visible")
     click("gestureCard_index-pinch")
     assert not editor.property("editable")

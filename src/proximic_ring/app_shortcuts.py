@@ -80,7 +80,7 @@ class LocalMacAppShortcuts:
             AX.AXUIElementSetMessagingTimeout(element, 0.08)
         except (AttributeError, TypeError):
             pass
-        def attr(node, name):
+        def native_attr(node, name):
             if node is None:
                 return None
             if name == "AXValueSettable":
@@ -92,9 +92,25 @@ class LocalMacAppShortcuts:
                 valid, pair = AX.AXValueGetValue(value, value_type, None)
                 return tuple(pair) if valid else None
             return value if error == 0 else None
+        # AX attributes are cross-process calls. Reuse reads within this one
+        # snapshot only, so slower computers have the same detection budget.
+        cache = {}
+        def attr(node, name):
+            key = (id(node), name)
+            if key not in cache:
+                cache[key] = (node, native_attr(node, name))
+            return cache[key][1]
         window = attr(element, "AXFocusedWindow")
+        reported_window = window
         focus = attr(element, "AXFocusedUIElement")
         role = str(attr(focus, "AXRole") or "")
+        # Entering a show (especially on another display) may leave the app's
+        # focused-window attribute on its editor. Prefer the actual focused
+        # control's owning window; never scan background windows for a show.
+        focus_window = focus if role == "AXWindow" else attr(focus, "AXWindow")
+        if (focus_window is not None and attr(focus_window, "AXRole") == "AXWindow"
+                and attr(focus, "AXFocused") is not False):
+            window = focus_window
         if plain_enter:
             # Enter follows the focused control's own semantics, including web
             # editors, search fields and address bars. No app/role whitelist.
@@ -103,21 +119,40 @@ class LocalMacAppShortcuts:
         subrole = str(attr(window, "AXSubrole") or "")
         # Do not turn a chat shortcut into a dialog confirmation or terminal input.
         description = str(attr(focus, "AXDescription") or "").casefold()
+        screen_frames = []
+        if (PRESENTATION in scene_profiles
+                and attr(window, "AXFullScreen") is not True):
+            try:
+                import AppKit
+                import Quartz
+                for screen in AppKit.NSScreen.screens():
+                    bounds = Quartz.CGDisplayBounds(int(screen.deviceDescription()["NSScreenNumber"]))
+                    screen_frames.append((bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                pass  # No display evidence means no geometric fallback.
         browser = browser_media_context(window, focus, attr) if scene and bundle.casefold() in BROWSERS else BrowserMedia()
         active_scene, input_context = ((browser.scene, browser.input_context) if browser.scene else
-            activity_context(bundle, scene_profiles, window, focus, attr) if scene else ("", "unknown"))
+            activity_context(bundle, scene_profiles, window, focus, attr, screen_frames=screen_frames, application_name=str(app.localizedName() or "")) if scene else ("", "unknown"))
         if scene and bundle.casefold() in BROWSERS and active_scene == VIDEO and not browser.scene:
             active_scene = ""  # Browser video must be tied to the current page/player.
-        # WPS's verified slide surface uses AXDialog. Only a positive scene
-        # capture may exempt it; ordinary shortcuts and all other dialogs stay blocked.
-        scene_dialog = scene and scene_profiles.get(PRESENTATION) == "wps" and active_scene == PRESENTATION and input_context == "nontext"
-        blocked = (bool(attr(window, "AXModal")) or (subrole in {"AXDialog", "AXSystemDialog"} and not scene_dialog)
-                   or role in {"AXMenu", "AXMenuItem", "AXComboBox", "AXSearchField"}
-                   or any(word in description for word in ("terminal", "终端", "search", "搜索")))
+        # Explicit application shortcuts don't require a chat input field.
+        # Preserve the stricter focus guard for legacy chat navigation, while
+        # genuine dialogs/sheets and open menus still block all app shortcuts.
+        scene_dialog = scene and active_scene == PRESENTATION and input_context == "nontext"
+        chat_focus_blocked = (role in {"AXComboBox", "AXSearchField"}
+                              or any(word in description for word in ("terminal", "终端", "search", "搜索")))
+        blocked = (window is None or bool(attr(window, "AXModal")) or bool(attr(window, "AXSheets"))
+                   or bool(attr(window, "AXMinimized"))
+                   or (subrole in {"AXDialog", "AXSystemDialog"} and not scene_dialog)
+                   or role in {"AXMenu", "AXMenuItem"}
+                   or (not menu_action and chat_focus_blocked))
         if scene or menu_action:
             latest = frontmost_application()
             if latest is None or (str(latest.bundleIdentifier() or ""), int(latest.processIdentifier())) != (bundle, pid):
                 return None
+            if (native_attr(element, "AXFocusedWindow") != reported_window
+                    or native_attr(element, "AXFocusedUIElement") != focus):
+                return None  # Focus changed during the read; do not mix windows.
         return ShortcutTarget(bundle, pid, profile or bundle, window, focus, role, blocked,
                               menu_action=menu_action, scene=active_scene, scene_checked=scene,
                               input_context=input_context, website=browser.website, page_key=browser.page_key,
@@ -149,7 +184,7 @@ class LocalMacAppShortcuts:
         if target.plain_enter and parts != ["Return"]:
             raise RuntimeError("全局上滑仅允许 Enter")
         if not self.same_target(target, require_focus=require_focus):
-            raise RuntimeError("目标窗口已变化，请在目标对话中重新操作")
+            raise RuntimeError("目标窗口已变化，请在目标应用中重新操作")
         require_post_event_access()
         masks = {"Cmd": Quartz.kCGEventFlagMaskCommand, "Ctrl": Quartz.kCGEventFlagMaskControl,
                  "Alt": Quartz.kCGEventFlagMaskAlternate, "Shift": Quartz.kCGEventFlagMaskShift}

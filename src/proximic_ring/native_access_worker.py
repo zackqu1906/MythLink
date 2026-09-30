@@ -124,6 +124,11 @@ class Dispatcher:
 
 
 def main():
+    from .mac_app_activation import configure_app_activation
+
+    # NSWorkspace/menu reads can register this executable as an application.
+    # Set the policy first, including when a denied worker is being restarted.
+    configure_app_activation(background=True)
     import objc
     dispatcher = Dispatcher()
     for line in sys.stdin.buffer:

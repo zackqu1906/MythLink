@@ -333,6 +333,12 @@ ScrollView {
                     visible: page.sceneScope; Layout.fillWidth: true
                     text: page.catalog.sceneHint; color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap
                 }
+                Label {
+                    Layout.fillWidth: true
+                    visible: page.catalog.defaultMappingNotice.length > 0
+                    text: page.catalog.defaultMappingNotice
+                    color: "#A35527"; font.pixelSize: 11; wrapMode: Text.Wrap
+                }
             }
         }
         PermissionNotice {

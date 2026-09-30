@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import plistlib
 import re
 import subprocess
 
@@ -27,6 +28,10 @@ def _version(value: str) -> tuple[int, ...]:
 
 def verify_bundle(app: Path, minimum_macos: str) -> list[str]:
     errors: list[str] = []
+    with (app / "Contents" / "Info.plist").open("rb") as stream:
+        info = plistlib.load(stream)
+    if info.get("LSUIElement") is not True or info.get("LSBackgroundOnly"):
+        errors.append("bundle must start as LSUIElement; only the main UI may enable its Dock icon")
     executable_root = app / "Contents" / "MacOS"
     resources_root = app / "Contents" / "Resources"
     files = [item for item in app.rglob("*") if item.is_file()]
