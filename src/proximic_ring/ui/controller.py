@@ -57,6 +57,8 @@ from ..gesture_settings import (
 )
 from ..app_gestures import migrate_voice_defaults
 from .app_gesture_controller import AppGestureController, AppGestureEvent, InputSourceGestureEvent
+from .voice_history_filter import VoiceHistoryFilter
+from .home_statistics import HomeStatistics
 from .ring_gesture_controller import ModeGestureEvent, RingGestureController
 from ..model_packages import install_default_local_model
 from ..interaction_associations import (
@@ -342,6 +344,7 @@ class AppController(QObject):
     transcriptChanged = Signal()
     sessionHistoryChanged = Signal()
     voiceHistoryChanged = Signal()
+    historyActionMessageChanged = Signal()
     playingVoiceChanged = Signal()
     interactionChanged = Signal()
     logChanged = Signal()
@@ -412,6 +415,7 @@ class AppController(QObject):
         self._transcript_active = False
         self._session_history_lines: list[str] = []
         self._voice_history_entries: list[dict[str, object]] = []
+        self._history_action_message = ""
         self._playing_voice_path = ""
         self._voice_history_closed = False
         self._interaction_state = "idle"
@@ -647,11 +651,14 @@ class AppController(QObject):
         # used for ASR/LLM/feedback training data. Keep the old attribute so
         # the QML and playback code remain stable.
         self._voice_history = self._modification_dataset
-        self._voice_history_entries = self._voice_history.load_entries()
+        self._voice_history_entries = self._voice_history.load_entries(limit=None)
         self._voice_history_model = _VoiceHistoryListModel(
             self._voice_history_entries, self
         )
+        self._filtered_voice_history = VoiceHistoryFilter(self._voice_history_model, self)
         self.voiceHistoryChanged.connect(self._sync_voice_history_model)
+        self._home_statistics = HomeStatistics(lambda: self._voice_history_entries, self)
+        self.voiceHistoryChanged.connect(self._home_statistics.historyChanged)
         self._register_association_actions()
         self._voice_audio_output: QAudioOutput | None = None
         self._voice_player: QMediaPlayer | None = None
@@ -1315,6 +1322,23 @@ class AppController(QObject):
     @Property(QObject, constant=True)
     def voiceHistoryModel(self) -> QObject:
         return self._voice_history_model
+
+    @Property(QObject, constant=True)
+    def filteredVoiceHistoryModel(self) -> QObject:
+        return self._filtered_voice_history
+
+    @Property(QObject, constant=True)
+    def homeStatistics(self) -> QObject:
+        return self._home_statistics
+
+    @Property(str, notify=historyActionMessageChanged)
+    def historyActionMessage(self) -> str:
+        return self._history_action_message
+
+    @Slot()
+    def clearHistoryActionMessage(self) -> None:
+        self._history_action_message = ""
+        self.historyActionMessageChanged.emit()
 
     @Property(str, notify=playingVoiceChanged)
     def playingVoicePath(self) -> str:
@@ -3553,6 +3577,52 @@ class AppController(QObject):
         self._append_log("逐句语音记录已清空")
         self._event_log("VOICE_HISTORY_CLEAR_RESULT", status="applied")
 
+    @Slot(str, result=bool)
+    def deleteVoiceHistory(self, interaction_id: str) -> bool:
+        entry = next((row for row in self._voice_history_entries
+                      if str(row.get("interactionId", "")) == interaction_id), {})
+        if self._playing_voice_path and self._playing_voice_path == entry.get("audioPath"):
+            if self._voice_player is not None:
+                self._voice_player.stop()
+                self._voice_player.setSource(QUrl())
+            self._playing_voice_path = ""
+            self.playingVoiceChanged.emit()
+        try:
+            self._voice_history.delete_entry(interaction_id)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self._history_action_message = "删除未完成，请重试。"
+            self._append_log(f"删除语音记录失败：{exc}")
+            if self._voice_history.is_deleted(interaction_id):
+                self._forget_deleted_history_associations(interaction_id)
+            self._refresh_voice_history_entries()
+            self.historyActionMessageChanged.emit()
+            return False
+        self._forget_deleted_history_associations(interaction_id)
+        self._refresh_voice_history_entries()
+        self._history_action_message = "已删除这条记录。"
+        self.historyActionMessageChanged.emit()
+        return True
+
+    def _forget_deleted_history_associations(self, interaction_id: str) -> None:
+        def unrelated(recommendation):
+            return all(item.interaction_id != interaction_id
+                       for item in (recommendation.chosen, *recommendation.rejected))
+
+        self._association_coordinator.forget_interaction(interaction_id)
+        self._association_queue = deque(item for item in self._association_queue if unrelated(item))
+        for key, items in list(self._provisional_association_recommendations.items()):
+            self._provisional_association_recommendations[key] = [item for item in items if unrelated(item)]
+        if self._association_recommendation is not None and not unrelated(self._association_recommendation):
+            self._advance_association_recommendation()
+        self._association_center_entries = [row for row in self._association_center_entries
+                                            if row.get("interactionId") != interaction_id]
+        if self._association_center_chosen_id == interaction_id:
+            self._association_center_chosen_id = ""
+        self._association_center_rejected_ids.discard(interaction_id)
+        if self._manual_association_watch and self._manual_association_watch[2].interaction_id == interaction_id:
+            self._stop_manual_association_watch()
+        self.associationChanged.emit()
+
     @Slot()
     def openDataDirectory(self) -> None:
         directory = self._modification_dataset.user_root
@@ -3648,7 +3718,7 @@ class AppController(QObject):
         force_model_reset: bool = False,
     ) -> None:
         try:
-            entries = self._voice_history.load_entries()
+            entries = self._voice_history.load_entries(limit=None)
         except BaseException as exc:
             self._append_log(f"刷新逐句语音记录失败：{exc}")
             return
@@ -3868,6 +3938,7 @@ class AppController(QObject):
         if self._voice_history_closed:
             return
         self._voice_history_closed = True
+        self._home_statistics.close()
         self._cancel_inline_requests("主程序已退出")
         self._record_interrupted_inline_edits("主程序已退出")
         self._app_gestures.close()
@@ -6517,6 +6588,16 @@ class AppController(QObject):
                 confidence=getattr(event, "confidence", None),
                 _live_message="",
             )
+            return
+        if app_event is not None and app_event.scene:
+            self._app_gestures.handle_scene(app_event)
+            return
+        if self._ring_gestures.mode == "operation":
+            # accepts() allows only fresh, explicitly bound menu events here.
+            # Never let an operation-mode shortcut fall through to voice undo,
+            # correction, input-source switching, or the input-mode Enter action.
+            if app_event is not None and not self._ring_gestures.speech_busy():
+                self._app_gestures.handle(app_event)
             return
         # Also protect direct GUI dispatchers; the normal runtime reserves
         # these gestures before confirmation and before native target capture.

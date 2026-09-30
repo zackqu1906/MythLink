@@ -22,6 +22,9 @@ class Dispatcher:
 
     def handle(self, message):
         operation = message["operation"]
+        if operation == "application_candidates":
+            from .application_menus import application_candidates
+            return {"result": application_candidates()}
         if operation == "selector_cancel":
             # Session cleanup needs no AX access and must not request permission.
             result = (self.window_selector.handle(operation, token=message.get("token", ""))
@@ -30,6 +33,11 @@ class Dispatcher:
         state = replace(read_permission_state(), control_channel="worker", control_pid=os.getpid())
         if operation == "status":
             return {"permissions": asdict(state)}
+        if operation == "application_menu":
+            if state.accessibility is not True:
+                raise MacPermissionError(state)
+            from .application_menus import read_application_menu
+            return {"result": read_application_menu(str(message["bundle"]))}
         if operation in {"focus_probe", "focus_plan", "focus_apply", "focus_selection"}:
             # Normal AX focus only needs Accessibility. The bounded Safari
             # click fallback checks event-posting permission at point of use.
@@ -38,6 +46,12 @@ class Dispatcher:
             if self.text_focus is None:
                 from .text_focus import TextFocusSession
                 self.text_focus = TextFocusSession()
+            if message.get("scene_apps") and operation != "focus_selection":
+                target = self.shortcuts.capture(menu_action=True, scene=True)
+                if target and target.bundle in message["scene_apps"] and target.scene:
+                    if operation == "focus_apply":
+                        self.text_focus.plans.pop(message.get("plan", ""), None)
+                    return {"result": {"status": "presentation", "count": 0, "index": 0}}
             return {"result": self.text_focus.handle(
                 operation, ignored_pid=int(message.get("ignored_pid", 0)),
                 expected=message.get("expected"), action=message.get("action", "inspect"),
@@ -71,7 +85,11 @@ class Dispatcher:
                              message["bundle"], expected_pid=message["pid"])
             return {"result": None}
         if operation == "capture":
-            target = self.shortcuts.capture(plain_enter=bool(message.get("plain_enter", False)))
+            options = dict(plain_enter=bool(message.get("plain_enter", False)),
+                           menu_action=bool(message.get("menu_action", False)))
+            if message.get("scene"):
+                options["scene"] = True
+            target = self.shortcuts.capture(**options)
             if target is None:
                 return {"result": None}
             handle = uuid.uuid4().hex
@@ -82,7 +100,9 @@ class Dispatcher:
             # captured targets; never silently recapture one for an old send.
             return {"result": {"bundle": target.bundle, "pid": target.pid, "profile": target.profile,
                                "role": target.role, "blocked": target.blocked, "remote_id": handle,
-                               "plain_enter": target.plain_enter}}
+                               "plain_enter": target.plain_enter, "menu_action": target.menu_action,
+                               "scene": target.scene, "scene_checked": target.scene_checked,
+                               "input_context": target.input_context}}
         if operation in {"same_target", "shortcut"}:
             target = self.targets.get(message["target"])
             if target is None:

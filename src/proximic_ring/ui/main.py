@@ -67,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     # On macOS the selected input method handles F8/Esc directly. No global
     # event tap or Accessibility permission is needed for speech interactions.
     engine = QQmlApplicationEngine()
+    from .application_icons import install_application_icons
+    install_application_icons(engine)
     engine.rootContext().setContextProperty("appController", controller)
     qml_errors: list[str] = []
     engine.warnings.connect(
@@ -94,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     text_fields.changed.connect(
         lambda: gesture_hud.update_input_fields(text_fields.available, text_fields.hint)
+    )
+    controller.ringGestures.sceneHudRequested.connect(
+        lambda mode, actions: gesture_hud.show_mode(mode, scene_actions=actions)
     )
     controller.ringGestures.hideRequested.connect(gesture_hud.hide)
     from .window_selector_overlay import WindowSelectorOverlay

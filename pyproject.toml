@@ -40,7 +40,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-proximic_ring = ["assets/*.model", "assets/*.json", "assets/*.npy", "ui/qml/*.qml", "ui/assets/*.svg"]
+proximic_ring = ["assets/*.model", "assets/*.json", "assets/*.npy", "ui/qml/*.qml", "ui/assets/*.svg", "ui/assets/figma/*.svg", "ui/assets/figma/*.png"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

@@ -134,9 +134,14 @@ def test_saved_bindings_release_global_gestures_and_preserve_custom_actions(rout
     assert restored._profiles["codex"]["new"] == AppBinding("", "Cmd+N", False)
 
 
-def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(route, monkeypatch):
+@pytest.mark.parametrize("app_mapping", [False, True])
+def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(route, monkeypatch, app_mapping):
     import proximic_ring.firmware_gestures as host
     c, _, inline, _, _, _, _ = route
+    if app_mapping:
+        from test_application_menus import ACTION, configure
+        catalog = configure(c.appGestures, monkeypatch, "com.openai.codex")
+        assert catalog.setBinding("com.openai.codex", "circle-clockwise", ACTION["id"])
     state, started, finals, actions, shown = {}, [], [], [], []
     c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
     recognition, disconnect = threading.Event(), c._disconnect_event
@@ -180,7 +185,8 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(ro
                 assert c.ringGestures.mode == "operation" and not gate.gesture_busy
                 for name in ("tap", "swipe-left", "swipe-right", "circle-clockwise"):
                     gesture(name)
-                assert not gate.gesture_busy and not actions
+                assert not gate.gesture_busy
+                assert [event.name for event in actions] == (["circle-clockwise"] if app_mapping else [])
             elif self.reads == 2:
                 gesture("middle-pinch")
                 QCoreApplication.processEvents()
@@ -219,7 +225,7 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(ro
         on_connected=lambda: None, on_disconnected=lambda: None, on_started=lambda: None,
         on_gesture=actions.append,
         gesture_filter=lambda event, busy: c.ringGestures.filter(event, busy, disconnect))
-    assert [event.name for event in actions] == ["swipe-right"]
+    assert [event.name for event in actions] == (["circle-clockwise"] if app_mapping else []) + ["swipe-right"]
     assert len(finals) == len(started) == 1
 
 

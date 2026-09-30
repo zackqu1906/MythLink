@@ -6,6 +6,7 @@ import sys
 
 from .app_gestures import KEY_CODES, normalize_shortcut, profile_for_application
 from .mac_permissions import require_post_event_access
+from .gesture_scenes import presentation_profile, installed_presentation_profile, presentation_context
 
 
 def verify_native_api() -> None:
@@ -37,10 +38,15 @@ class ShortcutTarget:
     blocked: bool = False
     remote_id: str = ""
     plain_enter: bool = False
+    menu_action: bool = False
+    scene: str = ""
+    scene_checked: bool = False
+    input_context: str = "unknown"
 
 
 class LocalMacAppShortcuts:
-    def capture(self, *, plain_enter: bool = False) -> ShortcutTarget | None:
+    def capture(self, *, plain_enter: bool = False, menu_action: bool = False,
+                scene: bool = False) -> ShortcutTarget | None:
         if sys.platform != "darwin":
             return None
         from .mac_workspace import frontmost_application
@@ -48,13 +54,21 @@ class LocalMacAppShortcuts:
         if app is None:
             return None
         bundle, pid = str(app.bundleIdentifier() or ""), int(app.processIdentifier())
+        scene_profile = presentation_profile(bundle) if scene else ""
+        if scene and not scene_profile:
+            try:
+                scene_profile = installed_presentation_profile(bundle, str(app.bundleURL().path()))
+            except AttributeError:
+                pass
+            if not scene_profile:
+                return None
         profile = profile_for_application(bundle, str(app.localizedName() or ""))
-        if not profile and not plain_enter:
+        if not profile and not plain_enter and not menu_action and not scene:
             return None
         import ApplicationServices as AX
         element = AX.AXUIElementCreateApplication(pid)
-        # These are tiny metadata reads. Never fetch AXValue, selection, full text,
-        # or the accessibility tree in the speech/gesture path.
+        # Never fetch AXValue, selection or document text. Scene capture may
+        # inspect a bounded set of presentation control metadata below.
         try:
             AX.AXUIElementSetMessagingTimeout(element, 0.08)
         except (AttributeError, TypeError):
@@ -63,6 +77,10 @@ class LocalMacAppShortcuts:
             if node is None:
                 return None
             error, value = AX.AXUIElementCopyAttributeValue(node, name, None)
+            if error == 0 and value is not None and name in {"AXPosition", "AXSize"}:
+                value_type = AX.kAXValueCGPointType if name == "AXPosition" else AX.kAXValueCGSizeType
+                valid, pair = AX.AXValueGetValue(value, value_type, None)
+                return tuple(pair) if valid else None
             return value if error == 0 else None
         window = attr(element, "AXFocusedWindow")
         focus = attr(element, "AXFocusedUIElement")
@@ -75,16 +93,32 @@ class LocalMacAppShortcuts:
         subrole = str(attr(window, "AXSubrole") or "")
         # Do not turn a chat shortcut into a dialog confirmation or terminal input.
         description = str(attr(focus, "AXDescription") or "").casefold()
-        blocked = (bool(attr(window, "AXModal")) or subrole in {"AXDialog", "AXSystemDialog"}
+        active_scene, input_context = presentation_context(bundle, window, focus, attr, profile=scene_profile) if scene else ("", "unknown")
+        # WPS's verified slide surface uses AXDialog. Only a positive scene
+        # capture may exempt it; ordinary shortcuts and all other dialogs stay blocked.
+        scene_dialog = scene and scene_profile == "wps" and active_scene and input_context == "nontext"
+        blocked = (bool(attr(window, "AXModal")) or (subrole in {"AXDialog", "AXSystemDialog"} and not scene_dialog)
                    or role in {"AXMenu", "AXMenuItem", "AXComboBox", "AXSearchField"}
                    or any(word in description for word in ("terminal", "终端", "search", "搜索")))
-        return ShortcutTarget(bundle, pid, profile, window, focus, role, blocked)
+        if scene:
+            latest = frontmost_application()
+            if latest is None or (str(latest.bundleIdentifier() or ""), int(latest.processIdentifier())) != (bundle, pid):
+                return None
+        return ShortcutTarget(bundle, pid, profile or bundle, window, focus, role, blocked,
+                              menu_action=menu_action, scene=active_scene, scene_checked=scene,
+                              input_context=input_context)
 
     def same_target(self, target: ShortcutTarget, *, require_focus: bool = False) -> bool:
-        current = self.capture(plain_enter=target.plain_enter)
+        options = dict(plain_enter=target.plain_enter, menu_action=target.menu_action)
+        if target.scene_checked:
+            options["scene"] = True
+        current = self.capture(**options)
         if current is None or (current.bundle, current.pid) != (target.bundle, target.pid) or current.blocked:
             return False
         if target.window is not None and current.window != target.window:
+            return False
+        if target.scene_checked and (not target.scene or current.scene != target.scene
+                                     or current.input_context != "nontext"):
             return False
         if require_focus and target.focus is not None and current.focus != target.focus:
             return False
@@ -100,6 +134,8 @@ class LocalMacAppShortcuts:
         require_post_event_access()
         masks = {"Cmd": Quartz.kCGEventFlagMaskCommand, "Ctrl": Quartz.kCGEventFlagMaskControl,
                  "Alt": Quartz.kCGEventFlagMaskAlternate, "Shift": Quartz.kCGEventFlagMaskShift}
+        if "Fn" in parts[:-1]:
+            masks["Fn"] = Quartz.kCGEventFlagMaskSecondaryFn
         flags = sum(masks[part] for part in parts[:-1])
         # Precreate the down/up pair, so an allocation failure cannot leave a key held.
         events = [Quartz.CGEventCreateKeyboardEvent(None, KEY_CODES[parts[-1]], down)
@@ -114,11 +150,14 @@ class LocalMacAppShortcuts:
 
 
 class MacAppShortcuts:
-    def capture(self, *, plain_enter=False):
+    def capture(self, *, plain_enter=False, menu_action=False, scene=False):
         if sys.platform != "darwin":
             return None
         from .native_access import native_access
-        value = native_access().call("capture", plain_enter=plain_enter)
+        options = dict(plain_enter=plain_enter, menu_action=menu_action)
+        if scene:
+            options["scene"] = True
+        value = native_access().call("capture", **options)
         return ShortcutTarget(**value) if value is not None else None
 
     def same_target(self, target, *, require_focus=False):

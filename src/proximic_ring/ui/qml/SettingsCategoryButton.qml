@@ -9,21 +9,21 @@ Button {
     leftPadding: 18; rightPadding: 18; topPadding: 12; bottomPadding: 12
     background: Rectangle {
         radius: 12
-        color: button.down ? "#252F45" : button.hovered ? "#1D2637" : "#151B27"
-        border.color: button.activeFocus ? "#7892FF" : "#283246"
+        color: button.down ? "#E3E9FB" : button.hovered ? "#EBEFFB" : "#F5F7FD"
+        border.color: button.activeFocus ? "#082ACB" : "#E1E5F0"
         border.width: 1
     }
     contentItem: RowLayout {
         spacing: 12
         ColumnLayout {
             Layout.fillWidth: true; spacing: 5
-            Label { text: button.text; color: "#F5F7FB"; font.pixelSize: 15; font.bold: true }
+            Label { text: button.text; color: "#171C28"; font.pixelSize: 15; font.bold: true }
             Label {
                 Layout.fillWidth: true
-                text: button.description; color: "#A4AEC0"; font.pixelSize: 12
+                text: button.description; color: "#687286"; font.pixelSize: 12
                 wrapMode: Text.Wrap
             }
         }
-        Label { text: "›"; color: "#A4AEC0"; font.pixelSize: 24 }
+        Label { text: "›"; color: "#687286"; font.pixelSize: 24 }
     }
 }

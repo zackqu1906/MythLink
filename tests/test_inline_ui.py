@@ -26,7 +26,7 @@ class FakeBridge:
 
 
 def test_app_gesture_settings_layout_and_shortcut_recorder(inline_ui, tmp_path, monkeypatch):
-    from PySide6.QtCore import QObject, QMetaObject, QPointF, Qt
+    from PySide6.QtCore import QObject, QMetaObject, QPointF, Qt, Q_ARG
     from PySide6.QtQuick import QQuickItem
     from PySide6.QtTest import QTest
     import proximic_ring.ui.app_gesture_controller as app_gestures
@@ -41,11 +41,11 @@ def test_app_gesture_settings_layout_and_shortcut_recorder(inline_ui, tmp_path, 
     assert dialog.property("currentPage") == 0
     assert not section.isVisible()
     assert root.grabWindow().save("/private/tmp/proximic-settings-home.png")
-    QMetaObject.invokeMethod(root.findChild(QObject, "settingsCategory2"), "click")
+    QMetaObject.invokeMethod(dialog, "close")
+    root.setProperty("currentPage", 2)
     QTest.qWait(30)
-    jump = root.findChild(QQuickItem, "openAppGestureSettingsButton")
-    assert jump is not None and jump.isVisible()
-    QMetaObject.invokeMethod(jump, "click")
+    # The legacy editor remains covered independently of the new menu mapping UI.
+    QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 7))
     QTest.qWait(30)
     assert dialog.property("currentPage") == 7
     section_pos = section.mapToScene(QPointF(0, 0))
@@ -138,7 +138,7 @@ def test_shortcut_settings_reports_fallback_without_claiming_success(inline_ui, 
 
 
 def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_ui):
-    from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QPointF, Qt
+    from PySide6.QtCore import QCoreApplication, QEvent, QMetaObject, QObject, QPointF, Qt, Q_ARG
     from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
     from PySide6.QtTest import QTest
     c, _, _, root, _ = inline_ui
@@ -146,9 +146,11 @@ def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_
     dialog = root.findChild(QObject, "runtimeSettingsDialog")
     QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(150)
-    for name in ("settingsCategory2", "openAppGestureSettingsButton"):
-        QMetaObject.invokeMethod(root.findChild(QObject, name), "click")
-        QTest.qWait(20)
+    QMetaObject.invokeMethod(dialog, "close")
+    root.setProperty("currentPage", 2)
+    QTest.qWait(30)
+    QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 7))
+    QTest.qWait(150)
     def field():
         section = root.findChild(QObject, "appGestureSettingsSection")
         def find(item):
@@ -188,8 +190,8 @@ def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_
     assert c.appGestures._profiles["codex"]["next"].shortcut == "Cmd+Shift+["
     click_field()
     QMetaObject.invokeMethod(root.findChild(QObject, "settingsBackButton"), "click")
-    QTest.qWait(20)
-    assert dialog.property("currentPage") == 2 and not c.appGestures.recording
+    QTest.qWait(150)  # Returning to the gesture page closes the dialog with its exit transition.
+    assert not dialog.property("visible") and not c.appGestures.recording
     QMetaObject.invokeMethod(root.findChild(QObject, "settingsApplyButton"), "click")
     QTest.qWait(150)
     assert not dialog.property("visible") and not c.appGestures.recording
@@ -206,18 +208,24 @@ def test_settings_pages_and_back_navigation_fit_small_window(inline_ui):
     dialog = root.findChild(QObject, "runtimeSettingsDialog")
     QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(150)
-    for index in range(1, 7):
-        QMetaObject.invokeMethod(root.findChild(QObject, f"settingsCategory{index}"), "click")
-        QTest.qWait(25)
-        assert dialog.property("currentPage") == index
+    QMetaObject.invokeMethod(root.findChild(QObject, "advancedSettingsButton"), "click")
+    QTest.qWait(160)
+    advanced = root.findChild(QObject, "advancedSettingsDialog")
+    assert advanced.property("visible") and not dialog.property("visible")
+    for index in (4, 5):
         assert root.findChild(QQuickItem, f"settingsPage{index}").isVisible()
-        assert not root.findChild(QQuickItem, "settingsPage0").isVisible()
-        done = root.findChild(QQuickItem, "settingsApplyButton")
-        p = done.mapToScene(QPointF(0, 0))
-        assert 0 <= p.y() and p.y() + done.height() <= root.height()
-        assert root.grabWindow().save(f"/private/tmp/proximic-settings-page-{index}.png")
-        QMetaObject.invokeMethod(root.findChild(QObject, "settingsBackButton"), "click")
-        assert dialog.property("currentPage") == 0
+    done = root.findChild(QQuickItem, "advancedSettingsDoneButton")
+    p = done.mapToScene(QPointF(0, 0))
+    assert 0 <= p.y() and p.y() + done.height() <= root.height()
+    QMetaObject.invokeMethod(done, "click")
+    QTest.qWait(160)
+    assert dialog.property("visible")
+    QMetaObject.invokeMethod(root.findChild(QObject, "settingsCategory6"), "click")
+    QTest.qWait(25)
+    assert dialog.property("currentPage") == 6
+    assert root.findChild(QQuickItem, "settingsPage6").isVisible()
+    QMetaObject.invokeMethod(root.findChild(QObject, "settingsBackButton"), "click")
+    assert dialog.property("currentPage") == 0
     QMetaObject.invokeMethod(dialog, "close")
 
 
@@ -255,12 +263,15 @@ def inline_ui(tmp_path, monkeypatch):
     monkeypatch.setattr(controller._text_processing_worker, "submit_routing", lambda _: pytest.fail("automatic routing must not run"))
     monkeypatch.setattr(controller, "_desktop_target_adapter", lambda: pytest.fail("IME must not access AX"))
     engine = QQmlApplicationEngine()
+    from proximic_ring.ui.application_icons import install_application_icons
+    install_application_icons(engine)
     warnings = []
     engine.warnings.connect(lambda items: warnings.extend(str(item) for item in items))
     engine.rootContext().setContextProperty("appController", controller)
     engine.load(QUrl.fromLocalFile(str(Path(module.__file__).parent / "qml/Main.qml")))
     assert engine.rootObjects(), warnings
     root = engine.rootObjects()[0]
+    root.setProperty("currentPage", 1)  # Existing interaction tests exercise the voice page.
     root.hide()
     controller._recognition_enabled = True
     controller._apply_runtime_status("[ASR] START t=1.000s")
@@ -270,6 +281,7 @@ def inline_ui(tmp_path, monkeypatch):
 
     event(phase="listening", ready=True, revision=0, original="明天三点开会", selection=[6, 0], context_complete=True)
     yield controller, component._bridge, requests, root, event
+    controller.appGestures.close()
     component.close()
     controller._close_voice_history()
     engine.deleteLater()
@@ -340,7 +352,7 @@ def test_input_method_setup_does_not_install_during_live_dictation(inline_ui, mo
 
 @pytest.mark.parametrize("size", [(1080, 820), (940, 700)])
 @pytest.mark.parametrize("connected,recognizing", [(False, False), (True, False), (True, True)])
-def test_connection_controls_stay_inside_card_and_history_remains_accessible(
+def test_voice_controls_stay_inside_card_and_history_remains_accessible(
     inline_ui, size, connected, recognizing
 ):
     from PySide6.QtCore import QPointF
@@ -361,7 +373,7 @@ def test_connection_controls_stay_inside_card_and_history_remains_accessible(
     for detail in ["本句已取消", "输入法已连接，请选择语音输入法并点入当前应用的文本框。" * 4]:
         controller._set_status("听写已停止", detail, "ready")
         QTest.qWait(60)
-        for name in ["primaryConnectionButton", "secondaryConnectionButton"]:
+        for name in ["voiceRecognitionButton", "voiceHomeButton"]:
             button = root.findChild(QQuickItem, name)
             if not button.isVisible():
                 continue

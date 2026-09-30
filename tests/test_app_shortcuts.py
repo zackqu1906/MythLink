@@ -21,7 +21,7 @@ def desktop(monkeypatch):
     monkeypatch.setattr(backend, "capture", lambda **kw: state.target)
     quartz = SimpleNamespace(
         kCGEventFlagMaskCommand=256, kCGEventFlagMaskShift=128,
-        kCGEventFlagMaskControl=64, kCGEventFlagMaskAlternate=32, kCGEventSourceUserData=99,
+        kCGEventFlagMaskControl=64, kCGEventFlagMaskAlternate=32, kCGEventFlagMaskSecondaryFn=512, kCGEventSourceUserData=99,
         CGPreflightPostEventAccess=lambda: state.permission,
         CGEventCreateKeyboardEvent=lambda source, code, down: {"code": code, "down": down},
         CGEventSetFlags=lambda event, flags: event.update(flags=flags),
@@ -33,7 +33,8 @@ def desktop(monkeypatch):
 
 
 @pytest.mark.parametrize("shortcut,code,flags", [("Enter", 36, 0), ("Cmd+Shift+[", 33, 384),
-    ("Cmd+]", 30, 256), ("Cmd+N", 45, 256), ("Ctrl+Alt+Return", 36, 96)])
+    ("Cmd+]", 30, 256), ("Cmd+N", 45, 256), ("Ctrl+Alt+Return", 36, 96),
+    ("Ctrl+Fn+Left", 123, 576), ("F20", 90, 0), ("Cmd+KeypadEnter", 76, 256)])
 def test_posts_one_balanced_chord_to_pinned_pid(desktop, shortcut, code, flags):
     backend, state, _ = desktop
     backend.post(state.target, shortcut)

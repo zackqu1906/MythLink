@@ -40,8 +40,6 @@ def test_independent_mode_controls_and_gesture_hint_render_and_lock(tmp_path, mo
         window.show()
         QMetaObject.invokeMethod(controls["runtimeSettingsDialog"], "open")
         QTest.qWait(100)
-        QMetaObject.invokeMethod(window.findChild(QObject, "settingsCategory3"), "click")
-        QTest.qWait(20)
         assert controls["audioSourceCombo"].property("currentIndex") == 0
         assert controls["speechControlModeCombo"].property("currentIndex") == 1
         controller.speechControlMode = "proximity"  # Exercise both modes; new users default to tap.

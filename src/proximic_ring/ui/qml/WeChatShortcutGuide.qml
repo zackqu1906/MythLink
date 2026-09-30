@@ -27,7 +27,7 @@ ColumnLayout {
         Label {
             Layout.fillWidth: true; wrapMode: Text.Wrap
             text: "微信聊天切换：首次使用需添加两项系统快捷键"
-            color: "#F5F7FB"; font.bold: true
+            color: "#171C28"; font.bold: true
         }
         Button {
             objectName: "openAppShortcutsButton"
@@ -39,12 +39,12 @@ ColumnLayout {
             objectName: "wechatSetupInstructions"
             Layout.fillWidth: true; wrapMode: Text.Wrap
             text: "1. 打开「App 快捷键」后点击「＋」。\n2. 按下方两项分别填写，每项填完后保存。\n3. 回到微信即可使用手势，无需额外测试或勾选确认。\n\n「菜单标题」决定快捷键执行的操作，必须原样填写，不能自行起名。"
-            color: "#8D98AA"; font.pixelSize: 12
+            color: "#687286"; font.pixelSize: 12
         }
         Label {
             Layout.fillWidth: true; wrapMode: Text.Wrap
             text: settings.service.systemSettingsStatus
-            visible: text.length > 0; color: "#F0B85A"; font.pixelSize: 12
+            visible: text.length > 0; color: "#986A15"; font.pixelSize: 12
         }
         Label {
             objectName: "wechatDetectedMenuLabel"
@@ -52,7 +52,7 @@ ColumnLayout {
             text: (settings.service.wechatInfo.version ? "微信 " + settings.service.wechatInfo.version + " · " : "")
                   + (settings.service.wechatInfo.detected ? settings.service.wechatInfo.languageLabel + "\n" : "")
                   + (settings.service.wechatInfo.message || "")
-            color: "#8D98AA"; font.pixelSize: 12
+            color: "#687286"; font.pixelSize: 12
         }
         ComboBox {
             id: menuLanguagePicker
@@ -72,27 +72,27 @@ ColumnLayout {
                 required property var modelData
                 Layout.fillWidth: true
                 implicitHeight: setupFields.implicitHeight + 24
-                radius: 10; color: "#151B27"
+                radius: 10; color: "#F5F7FD"
                 ColumnLayout {
                     id: setupFields
                     anchors.fill: parent; anchors.margins: 12; spacing: 8
-                    Label { text: setupRow.modelData.heading; color: "#F5F7FB"; font.bold: true }
+                    Label { text: setupRow.modelData.heading; color: "#171C28"; font.bold: true }
                     Label {
                         Layout.fillWidth: true; wrapMode: Text.Wrap
                         text: "应用程序：选择微信（WeChat / Weixin）"
-                        color: "#F5F7FB"; font.pixelSize: 12
+                        color: "#171C28"; font.pixelSize: 12
                     }
                     Label {
                         objectName: "wechatMenuInstruction_" + setupRow.modelData.action
                         Layout.fillWidth: true; wrapMode: Text.Wrap
                         text: "菜单标题：" + (setupRow.modelData.menu || "等待识别，请打开微信后重新识别或选择菜单语言")
-                        color: "#F5F7FB"; font.pixelSize: 12
+                        color: "#171C28"; font.pixelSize: 12
                     }
                     Label {
                         objectName: "wechatShortcutInstruction_" + setupRow.modelData.action
                         Layout.fillWidth: true; wrapMode: Text.Wrap
                         text: "键盘快捷键：点击该输入框，再按下 " + settings.displayShortcut(setupRow.modelData.shortcut)
-                        color: "#F5F7FB"; font.pixelSize: 12
+                        color: "#171C28"; font.pixelSize: 12
                     }
                     Button {
                         text: "复制菜单标题"
@@ -106,7 +106,7 @@ ColumnLayout {
         Label {
             Layout.fillWidth: true; wrapMode: Text.Wrap
             text: "如果修改上方的按键或微信菜单语言，请同步更新系统里的这两项配置。上滑发送无需此设置。"
-            color: "#8D98AA"; font.pixelSize: 12
+            color: "#687286"; font.pixelSize: 12
         }
     }
 }

@@ -86,6 +86,27 @@ def test_lost_reply_is_not_replayed(tmp_path, monkeypatch):
         channel.close()
 
 
+def test_large_slow_menu_reply_uses_metadata_budget(tmp_path, monkeypatch):
+    worker = tmp_path / "large_menu.py"
+    worker.write_text('''import sys, json, time
+m = json.loads(sys.stdin.readline())
+time.sleep(2.2)
+actions = [{"label": "Long application menu item " * 15, "shortcut": "Cmd+N"} for _ in range(800)]
+print(json.dumps({"id": m["id"], "result": {"actions": actions}}), flush=True)
+''')
+    channel = NativeAccessChannel()
+    def start():
+        channel._process = subprocess.Popen([sys.executable, str(worker)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+    monkeypatch.setattr(channel, "_start", start)
+    try:
+        result = channel.call("application_menu", bundle="com.example.LargeMenu")
+        assert len(result["actions"]) == 800
+        assert len(json.dumps(result)) > 262144
+    finally:
+        channel.close()
+
+
 def test_frozen_channel_launches_same_executable_without_source_python(monkeypatch):
     import proximic_ring.native_access as module
     calls = []

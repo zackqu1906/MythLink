@@ -95,6 +95,18 @@ def test_edit_success_can_recommend_asr_and_llm_groups():
     assert all(len(item.rejected) == 2 for item in recommendations)
 
 
+def test_deleted_history_is_forgotten_without_losing_other_failures():
+    coordinator = RecentFailureCoordinator()
+    for number in (1, 2):
+        coordinator.record_failure(_member(number, mode="edit", request_id=number * 10, result="bad"))
+    coordinator.forget_interaction("interaction-1")
+    coordinator.forget_interaction("already-removed")
+    recommendations = coordinator.record_success(_member(3, mode="edit", request_id=30, result="good"))
+    assert [item.kind for item in recommendations] == ["asr", "llm"]
+    assert all([member.interaction_id for member in item.rejected] == ["interaction-2"]
+               for item in recommendations)
+
+
 def test_action_router_keeps_input_surfaces_decoupled():
     received = []
     router = AssociationActionRouter()

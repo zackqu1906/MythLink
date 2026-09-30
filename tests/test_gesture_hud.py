@@ -131,6 +131,19 @@ hud.preview('operation')
 assert root.property('notice') == ''  # A later request must clear a previous notice.
 hud.update_input_fields(False, '需要辅助功能权限')
 assert root.property('inputFieldsAvailable') is True  # Preview stays independent.
+hud.show_mode('input', scene_actions=[dict(gesture='左滑', action='上一个动画 / 上一页')] * 9)
+QTest.qWait(100)
+scene_cards = [item for item in visual_items(root) if item.objectName().startswith('sceneGesture_')]
+assert len(scene_cards) == 9 and all(item.isVisible() for item in scene_cards)
+assert not next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
+assert app.focusWidget() is focus and not hud.window.isActive()
+from pathlib import Path
+import os
+shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', sys.argv[1]))
+shots.mkdir(parents=True, exist_ok=True)
+assert hud.window.grabWindow().save(str(shots / 'presentation-hud.png'))
+hud.show_mode('input')
+assert next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
 assert not any('Error' in line or 'ReferenceError' in line or 'TypeError' in line for line in messages), messages
 assert 'proximic_ring.app_runtime' not in sys.modules
 assert 'proximic_ring.host_gestures' not in sys.modules
@@ -140,7 +153,7 @@ assert not root.property('animationRunning')
 '''
     environment = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software",
                        PROXIMIC_DATA_HOME=str(tmp_path), PROXIMIC_STARTUP_PROBE="1")
-    run = subprocess.run([sys.executable, "-c", script], env=environment,
+    run = subprocess.run([sys.executable, "-c", script, str(tmp_path)], env=environment,
                          cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=20)
     assert run.returncode == 0, run.stdout + run.stderr
 

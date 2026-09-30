@@ -6,6 +6,7 @@ Item {
     property string mode: "input"
     property string notice: ""
     property bool preview: false
+    property var sceneActions: []
     property bool inputFieldsAvailable: true
     property string inputFieldsHint: "当前窗口未提供文本框"
     property real entranceTime: 0
@@ -62,6 +63,7 @@ Item {
     onAccentChanged: orbit.requestPaint()
 
     Item {
+        visible: root.sceneActions.length === 0
         width: 280; height: 280
         scale: Math.min(root.width, root.height) / 280
         transformOrigin: Item.TopLeft
@@ -162,5 +164,30 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             style: Text.Outline; styleColor: "#172235"
         }
+    }
+    Rectangle {
+        visible: root.sceneActions.length > 0
+        anchors.fill: parent; radius: 18; color: "#E91B2233"; border.color: "#536487"
+        Text {
+            x: 16; y: 16; width: parent.width - 32
+            text: root.sceneActions.length && root.sceneActions[0].application ? root.sceneActions[0].application + " · 放映" : "放映"
+            color: "#EAF1FF"; font.pixelSize: 16; font.weight: Font.DemiBold; elide: Text.ElideRight
+        }
+        Text { x: 16; y: 42; text: "场景专属动作 · 其余沿用默认"; color: "#A8B8CD"; font.pixelSize: 10 }
+        Grid {
+            x: 12; y: 67; columns: 3; spacing: 6
+            Repeater {
+                model: root.sceneActions
+                Rectangle {
+                    required property var modelData
+                    required property int index
+                    objectName: "sceneGesture_" + index
+                    width: 81; height: 52; radius: 8; color: "#344368"
+                    Text { x: 7; y: 8; width: parent.width - 14; text: modelData.gesture; color: "#BED0F6"; font.pixelSize: 11; elide: Text.ElideRight }
+                    Text { x: 7; y: 26; width: parent.width - 14; text: modelData.action; color: "white"; font.pixelSize: 10; elide: Text.ElideRight }
+                }
+            }
+        }
+        Text { x: 16; y: 248; width: parent.width - 32; text: "食指捏合 · 提示    食中捏合 · 切换模式"; color: "#A8B8CD"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter }
     }
 }

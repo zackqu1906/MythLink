@@ -8,6 +8,7 @@ import time
 from PySide6.QtCore import QObject, Property, Qt, Signal, Slot
 
 from ..app_gestures import QUIET_PHASES
+from ..gesture_settings import GESTURE_LABELS
 from .text_focus_controller import TextFocusController
 from .page_scroll_controller import PageScrollController
 from .window_selector_controller import WindowSelectorController
@@ -34,7 +35,10 @@ class RingGestureController(QObject):
     changed = Signal()
     showRequested = Signal(str, str)
     hideRequested = Signal()
+    sceneHudRequested = Signal(str, object)
+    _sceneHudReady = Signal(int, float, object, object)
     _requested = Signal(object, object)
+    _sceneRequested = Signal(object, object)
 
     def __init__(self, owner):
         super().__init__(owner)
@@ -54,6 +58,8 @@ class RingGestureController(QObject):
         self.changed.connect(self._fields.sync)
         # Always queue: firmware callbacks must never manipulate Qt windows.
         self._requested.connect(self._apply, Qt.QueuedConnection)
+        self._sceneRequested.connect(owner._apply_gesture, Qt.QueuedConnection)
+        self._sceneHudReady.connect(self._show_scene_hud, Qt.QueuedConnection)
         owner.connectedChanged.connect(self._connection_changed)
 
     @Property(str, notify=changed)
@@ -121,6 +127,15 @@ class RingGestureController(QObject):
             self._selector.enqueue(name, connection, busy)
             return False
         picker = self._fields.picker
+        with self._lock:
+            scene_allowed = (not busy and self._transition is None and not picker.active.is_set()
+                             and not self._fields.pending.is_set() and not self._scroll.pending.is_set())
+            scene_generation = self._generation
+        if scene_allowed:
+            scene_event = self.owner._app_gestures.scene_envelope(event)
+            if scene_event is not None:
+                self._sceneRequested.emit(ModeGestureEvent(scene_event, scene_generation), connection)
+                return False  # Consumed before tap can reach the audio endpoint.
         selection_gestures = {"swipe-up", "swipe-down", "swipe-left", "swipe-right", "tap"}
         stamp = (self._fields.capture_stamp() if self.mode == "input" and
                  (name == "swipe-down" or (picker.active.is_set() and name in selection_gestures))
@@ -159,7 +174,9 @@ class RingGestureController(QObject):
                 if self._mode == "input":
                     return True
                 if name != "swipe-up":
-                    return False
+                    # Explicit app-menu mappings work in either mode. Keep
+                    # voice/source gestures and legacy profiles input-only.
+                    return not busy and self.owner._app_gestures.catalog.uses(name)
             transition = object() if name in {"middle-pinch", "clench"} and not busy else None
             if transition is not None:
                 self._transition = transition
@@ -176,7 +193,15 @@ class RingGestureController(QObject):
 
     def accepts(self, event):
         with self._lock:
-            return (not self.session_blocked() and self._mode == "input" and self._transition is None
+            if (isinstance(event, ModeGestureEvent) and getattr(event.source, "scene", "")
+                    and (self._fields.pending.is_set() or self._scroll.pending.is_set())):
+                return False
+            mode_allowed = self._mode == "input" or (
+                self._mode == "operation" and isinstance(event, ModeGestureEvent)
+                and not self._scroll.applying.is_set() and not self._fields.pending.is_set()
+                and self.owner._app_gestures.is_menu_mapping_event(event.source)
+            )
+            return (not self.session_blocked() and mode_allowed and self._transition is None
                     and not self._selector.blocked.is_set()
                     and not self._fields.picker.active.is_set()
                     and (not isinstance(event, ModeGestureEvent)
@@ -187,6 +212,36 @@ class RingGestureController(QObject):
         if self.session_blocked():
             return
         self._fields.refresh()
+        if self.owner._app_gestures.catalog.scene_bundles() and not self.speech_busy():
+            generation, created, connection = self._generation, time.monotonic(), self.owner._disconnect_event
+            def work():
+                try:
+                    target = self.owner._app_gestures.backend.capture(menu_action=True, scene=True)
+                except Exception:
+                    target = None
+                try:
+                    self._sceneHudReady.emit(generation, created, connection, target)
+                except RuntimeError:
+                    pass
+            threading.Thread(target=work, name="GestureSceneHints", daemon=True).start()
+            return
+        self.showRequested.emit(self.mode, "")
+
+    @Slot(int, float, object, object)
+    def _show_scene_hud(self, generation, created, connection, target):
+        if (generation != self._generation or time.monotonic() - created > 1.0 or self.session_blocked()
+                or connection is not self.owner._disconnect_event or connection.is_set()):
+            return
+        catalog = self.owner._app_gestures.catalog
+        catalog.observe_scene(target)
+        if (target is not None and target.scene and not target.blocked and target.input_context == "nontext"
+                and not self.speech_busy() and not self._selector.blocked.is_set() and not self._fields.picker.active.is_set()):
+            items = catalog._bindings_for(target.bundle, target.scene)
+            if items:
+                label = catalog._apps.get(target.bundle, {}).get("label", "演示应用")
+                self.sceneHudRequested.emit(self.mode, [dict(gesture=GESTURE_LABELS[g], action=b["label"], application=label)
+                                                       for g, b in items.items()])
+                return
         self.showRequested.emit(self.mode, "")
 
     @Slot(object, object)

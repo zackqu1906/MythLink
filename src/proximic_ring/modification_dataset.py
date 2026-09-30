@@ -111,6 +111,7 @@ class ModificationDatasetCollector:
         self._request_interactions: dict[int, str] = {}
         self._routing_interactions: dict[int, str] = {}
         self._published_interactions: set[str] = set()
+        self._deleted_interactions: set[str] = set()
         self._history_entries: dict[str, dict] | None = None
         self._history_rows: list[dict] = []
         self._history_dirty_ids: set[str] = set()
@@ -347,6 +348,8 @@ class ModificationDatasetCollector:
         audio = np.asarray(audio_16k, dtype=np.float32).reshape(-1).copy()
         with self._lock:
             interaction_id = self._session_interactions.get(session_id)
+            if interaction_id in self._deleted_interactions:
+                return
             if interaction_id is None:
                 self._pending_audio[session_id] = audio
             else:
@@ -371,6 +374,8 @@ class ModificationDatasetCollector:
             "error": getattr(update, "error", None),
         }
         with self._lock:
+            if self._session_interactions.get(session_id) in self._deleted_interactions:
+                return
             self._pending_asr.setdefault(session_id, []).append(row)
             interaction_id = self._session_interactions.get(session_id)
             if interaction_id is not None:
@@ -988,7 +993,7 @@ class ModificationDatasetCollector:
         """Return a lightweight pointer used by the recommendation engine."""
         with self._lock:
             interaction_id = self._session_interactions.get(int(session_id))
-            if interaction_id is None:
+            if interaction_id is None or interaction_id in self._deleted_interactions:
                 return {}
             record = self._interaction_data(interaction_id)
             return self._association_candidate(
@@ -1063,6 +1068,8 @@ class ModificationDatasetCollector:
                 + ", ".join(invalid_ids)
             )
         with self._lock:
+            if any(item in self._deleted_interactions for item in interaction_ids):
+                raise ValueError("关联中有已删除的记录")
             records = {
                 interaction_id: self._interaction_data(interaction_id)
                 for interaction_id in interaction_ids
@@ -1261,7 +1268,7 @@ class ModificationDatasetCollector:
         }
 
 
-    def load_entries(self, limit: int = 100) -> list[dict]:
+    def load_entries(self, limit: int | None = 100) -> list[dict]:
         """Load history once, then refresh only records this collector changed.
 
         Qt notifications can arrive out of order. Return the current cached
@@ -1301,7 +1308,88 @@ class ModificationDatasetCollector:
                 )
             self._history_dirty_ids.clear()
             # Callers/QML must not be able to modify the shared cached rows.
-            return [dict(row) for row in self._history_rows[: max(0, int(limit))]]
+            rows = self._history_rows if limit is None else self._history_rows[: max(0, int(limit))]
+            return [dict(row) for row in rows]
+
+    def delete_entry(self, interaction_id: str) -> bool:
+        """Delete one record and its links, without resetting live session bindings.
+
+        Stage the directory while related JSON is updated. Failed metadata writes
+        restore the record; failed file cleanup can be retried with the same ID.
+        The in-memory tombstone suppresses delayed callbacks for this session.
+        """
+        interaction_id = str(interaction_id)
+        if _CURRENT_INTERACTION_ID.fullmatch(interaction_id) is None:
+            raise ValueError("invalid interaction id")
+        with self._lock:
+            directory = self._interaction_dir(interaction_id)
+            staging_root = self.user_root / ".deleted-history"
+            staged = staging_root / interaction_id
+            if (self.interactions_root.is_symlink() or staging_root.is_symlink()
+                    or directory.is_symlink() or staged.is_symlink()):
+                raise ValueError("refusing a linked history directory")
+            if directory.exists():
+                if staged.exists() or not directory.is_dir():
+                    raise ValueError("history deletion is already staged")
+                if self._interaction_path(interaction_id).is_symlink():
+                    raise ValueError("refusing a linked history record")
+                associations = self._read_jsonl(self.association_index_path)
+                removed = [row for row in associations
+                           if interaction_id in row.get("member_interaction_ids", [])]
+                removed_ids = {row["association_id"] for row in removed}
+                other_ids = {member for row in removed for member in row["member_interaction_ids"]
+                             if member != interaction_id}
+                updates = []
+                for other_id in other_ids:
+                    if _CURRENT_INTERACTION_ID.fullmatch(str(other_id)) is None:
+                        raise ValueError("invalid association member")
+                    path = self._interaction_path(other_id)
+                    if path.is_symlink() or path.parent.is_symlink():
+                        raise ValueError("refusing a linked association record")
+                    if not path.is_file():
+                        continue
+                    original = self._read_json(path)
+                    updated = dict(original)
+                    updated["association_ids"] = [value for value in original.get("association_ids", [])
+                                                  if value not in removed_ids]
+                    updated["association_memberships"] = [value for value in original.get("association_memberships", [])
+                                                          if value.get("association_id") not in removed_ids]
+                    updates.append((path, original, updated))
+                staging_root.mkdir(parents=True, exist_ok=True)
+                directory.rename(staged)
+                written = []
+                try:
+                    for path, original, updated in updates:
+                        self._write_json(path, updated)
+                        written.append((path, original))
+                    if removed:
+                        self._write_jsonl(self.association_index_path, [row for row in associations if row not in removed])
+                except Exception:
+                    for path, original in reversed(written):
+                        self._write_json(path, original)
+                    staged.rename(directory)
+                    raise
+            elif not staged.is_dir():
+                return False
+            self._deleted_interactions.add(interaction_id)
+            self._history_dirty_ids.add(interaction_id)
+            self._published_interactions.discard(interaction_id)
+            for session_id, value in self._session_interactions.items():
+                if value == interaction_id:
+                    self._pending_audio.pop(session_id, None)
+                    self._pending_asr.pop(session_id, None)
+                    self._pending_runtime_events_by_session.pop(session_id, None)
+            # Staging is outside interactions, so a failed cleanup cannot make a
+            # removed row reappear after restart. Retrying the same ID finishes it.
+            shutil.rmtree(staged)
+            return True
+
+    def _deleted_record_path(self, path: Path) -> bool:
+        return path.parent.parent == self.interactions_root and path.parent.name in self._deleted_interactions
+
+    def is_deleted(self, interaction_id: str) -> bool:
+        with self._lock:
+            return interaction_id in self._deleted_interactions
 
     def clear(self) -> None:
         with self._lock:
@@ -1324,6 +1412,12 @@ class ModificationDatasetCollector:
         return self._interaction_dir(interaction_id) / "record.json"
 
     def _interaction_data(self, interaction_id: str) -> dict:
+        if interaction_id in self._deleted_interactions:
+            # Late persistence callbacks may still refer to a deleted live session.
+            # Supply empty bookkeeping sections; all writes/publication below are
+            # suppressed. No text/audio is retained and live input is not cancelled.
+            return {"mode": {}, "llm": {}, "asr": {}, "audio": {},
+                    "outcome": {}, "near_field": {}, "feedback": []}
         return self._read_json(self._interaction_path(interaction_id))
 
     def _ensure_interaction_locked(self, session_id: int) -> str:
@@ -1352,7 +1446,7 @@ class ModificationDatasetCollector:
         )
         interaction_id = base_interaction_id
         collision_index = 2
-        while self._interaction_dir(interaction_id).exists():
+        while self._interaction_dir(interaction_id).exists() or interaction_id in self._deleted_interactions:
             interaction_id = f"{base_interaction_id}_{collision_index:02d}"
             collision_index += 1
         interaction_dir = self._interaction_dir(interaction_id)
@@ -1503,6 +1597,8 @@ class ModificationDatasetCollector:
     def _publish_history_locked(
         self, interaction_id: str, *, force: bool = False
     ) -> None:
+        if interaction_id in self._deleted_interactions:
+            return
         if interaction_id in self._published_interactions and not force:
             return
         record = self._interaction_data(interaction_id)
@@ -1895,6 +1991,8 @@ class ModificationDatasetCollector:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _write_json(self, path: Path, data: dict) -> None:
+        if self._deleted_record_path(path):
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(
@@ -1908,8 +2006,9 @@ class ModificationDatasetCollector:
         if path.name == "record.json" and path.parent.parent == self.interactions_root:
             self._history_dirty_ids.add(path.parent.name)
 
-    @staticmethod
-    def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    def _write_jsonl(self, path: Path, rows: list[dict]) -> None:
+        if self._deleted_record_path(path):
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(
@@ -1918,8 +2017,9 @@ class ModificationDatasetCollector:
         )
         temporary.replace(path)
 
-    @staticmethod
-    def _write_wav(path: Path, audio: np.ndarray) -> None:
+    def _write_wav(self, path: Path, audio: np.ndarray) -> None:
+        if self._deleted_record_path(path):
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         pcm = np.rint(np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
         temporary = path.with_suffix(path.suffix + ".tmp")

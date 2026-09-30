@@ -21,7 +21,10 @@ KEY_CODES.update({"Return": 36, "L": 37, "J": 38, "'": 39, "K": 40, ";": 41,
                   "Down": 125, "Up": 126})
 KEY_CODES.update(dict(zip((f"F{i}" for i in range(1, 13)),
                          (122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111))))
-MODIFIERS = ("Cmd", "Ctrl", "Alt", "Shift")
+KEY_CODES.update(dict(zip((f"F{i}" for i in range(13, 21)),
+                         (105, 107, 113, 106, 64, 79, 80, 90))))
+KEY_CODES.update({"KeypadEnter": 76, "Clear": 71, "Help": 114})
+MODIFIERS = ("Cmd", "Ctrl", "Alt", "Shift", "Fn")
 
 
 def normalize_shortcut(value: str) -> str:
@@ -29,7 +32,7 @@ def normalize_shortcut(value: str) -> str:
         raise ValueError("请输入一个快捷键组合")
     parts = [p.strip() for p in value.split("+")]
     aliases = {"command": "Cmd", "cmd": "Cmd", "⌘": "Cmd", "control": "Ctrl",
-               "ctrl": "Ctrl", "option": "Alt", "alt": "Alt", "shift": "Shift",
+               "ctrl": "Ctrl", "option": "Alt", "alt": "Alt", "shift": "Shift", "fn": "Fn",
                "enter": "Return", "esc": "Escape", **{k.lower(): k for k in KEY_CODES}}
     parts = [aliases.get(p.lower(), p) for p in parts]
     if (not parts or parts[-1] not in KEY_CODES or any(p not in MODIFIERS for p in parts[:-1])
@@ -37,8 +40,8 @@ def normalize_shortcut(value: str) -> str:
         raise ValueError("请使用单个按键组合，例如 Cmd+Shift+[ 或 Enter")
     if len(parts) == 1 and len(parts[-1]) == 1:
         raise ValueError("字母、数字或标点需要搭配 Cmd、Ctrl 或 Alt，避免输入字符")
-    if len(parts[-1]) == 1 and not set(parts[:-1]) & {"Cmd", "Ctrl", "Alt"}:
-        raise ValueError("字符快捷键需要搭配 Cmd、Ctrl 或 Alt")
+    if len(parts[-1]) == 1 and not set(parts[:-1]) & {"Cmd", "Ctrl", "Alt", "Fn"}:
+        raise ValueError("字符快捷键需要搭配 Cmd、Ctrl、Alt 或 Fn")
     return "+".join([m for m in MODIFIERS if m in parts[:-1]] + [parts[-1]])
 
 

@@ -129,6 +129,16 @@ class RecentFailureCoordinator:
         if member.mode == "edit" and member.has_llm_result:
             self._append(self._llm_failures, member.target_key, member)
 
+    def forget_interaction(self, interaction_id: str) -> None:
+        """Remove a deleted history record without losing other recent failures."""
+        for mapping in (self._asr_failures, self._llm_failures):
+            for key, queue in list(mapping.items()):
+                remaining = deque((item for item in queue if item.interaction_id != interaction_id), maxlen=self.limit)
+                if remaining:
+                    mapping[key] = remaining
+                else:
+                    mapping.pop(key)
+
     def record_success(
         self, member: AssociationMember
     ) -> list[AssociationRecommendation]:

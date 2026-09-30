@@ -6,6 +6,14 @@ ColumnLayout {
     id: settings
     required property var service
     readonly property string selectedApp: appPicker.currentValue || "codex"
+    function selectApp(value) {
+        for (var i = 0; i < service.apps.length; ++i) {
+            if (service.apps[i].value === value) {
+                appPicker.currentIndex = i
+                return
+            }
+        }
+    }
     function actionLabel(action, fallback) {
         if (action === "previous") return selectedApp === "wechat" ? "上一个聊天" : "上一个任务"
         if (action === "next") return selectedApp === "wechat" ? "下一个聊天" : "下一个任务"
@@ -20,7 +28,7 @@ ColumnLayout {
     Label {
         Layout.fillWidth: true
         text: "输入模式：上滑固定按一次 Enter，适用于所有应用和浏览器的当前输入框。发送、换行或搜索由该输入框决定；听写中会先定稿。\n下方仅设置各应用的聊天／任务操作；操作模式上滑仍为页面滚动。"
-        color: "#8D98AA"; wrapMode: Text.Wrap; font.pixelSize: 12
+        color: "#687286"; wrapMode: Text.Wrap; font.pixelSize: 12
     }
     ComboBox {
         id: appPicker
@@ -34,26 +42,28 @@ ColumnLayout {
     Label {
         Layout.fillWidth: true; wrapMode: Text.Wrap
         text: settings.service.recordingError || (settings.service.recording ? "正在录制：按下组合键，Esc 取消" : "点击快捷键框后，直接按下组合键即可保存。")
-        color: settings.service.recordingError ? "#F0B85A" : "#8D98AA"; font.pixelSize: 12
+        color: settings.service.recordingError ? "#986A15" : "#687286"; font.pixelSize: 12
     }
     Repeater {
         model: settings.service.profiles[settings.selectedApp] || []
         delegate: Rectangle {
             id: row
             required property var modelData
+            readonly property bool voiceLocked: ["tap", "swipe-left", "swipe-right"].indexOf(modelData.gesture) >= 0
             Layout.fillWidth: true
             implicitHeight: fields.implicitHeight + 24
-            color: "#151B27"; radius: 10
+            color: "#F5F7FD"; radius: 10
             function save(gesture, shortcut, enabled) {
                 settings.service.setBinding(settings.selectedApp, modelData.action, gesture, shortcut, enabled)
             }
             ColumnLayout {
                 id: fields
+                enabled: !row.voiceLocked
                 anchors.fill: parent; anchors.margins: 12
                 spacing: 5
                 RowLayout {
                     Layout.fillWidth: true
-                    Label { Layout.fillWidth: true; text: settings.actionLabel(row.modelData.action, row.modelData.label); color: "#F5F7FB" }
+                    Label { Layout.fillWidth: true; text: settings.actionLabel(row.modelData.action, row.modelData.label) + (row.voiceLocked ? " · 语音手势已锁定" : ""); color: "#171C28" }
                     Switch {
                         objectName: "appGestureEnabled_" + row.modelData.action
                         Layout.preferredHeight: 32
@@ -69,8 +79,11 @@ ColumnLayout {
                         id: gesture
                         Layout.fillWidth: true; Layout.minimumWidth: 120
                         Layout.preferredHeight: 44
-                        model: settings.service.gestures
+                        model: settings.service.gestures.filter(function(g) { return ["tap", "swipe-left", "swipe-right"].indexOf(g.value) < 0 })
                         textRole: "label"; valueRole: "value"
+                        displayText: row.voiceLocked
+                                     ? ({"tap": "点击 Tap", "swipe-left": "左滑", "swipe-right": "右滑"})[row.modelData.gesture]
+                                     : currentText
                         currentIndex: {
                             for (var i = 0; i < model.length; i++)
                                 if (model[i].value === row.modelData.gesture) return i
@@ -95,7 +108,7 @@ ColumnLayout {
     Label {
         Layout.fillWidth: true; wrapMode: Text.Wrap
         text: "切换对话：本句处理完成后生效。\n手势可以复用；有可撤销或转编辑的语音时，优先处理语音操作。"
-        color: "#8D98AA"; font.pixelSize: 11
+        color: "#687286"; font.pixelSize: 11
     }
     Button {
         objectName: "openWeChatGuideButton"
@@ -107,7 +120,7 @@ ColumnLayout {
     Label {
         Layout.fillWidth: true; wrapMode: Text.Wrap
         text: settings.service.error
-        visible: text.length > 0; color: "#F0B85A"; font.pixelSize: 12
+        visible: text.length > 0; color: "#986A15"; font.pixelSize: 12
     }
     Button {
         objectName: "resetAppGesturesButton"

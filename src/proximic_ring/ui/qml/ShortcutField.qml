@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 
-TextField {
+UiTextField {
     id: field
     required property var service
     required property string sequence
@@ -10,7 +10,7 @@ TextField {
     readOnly: true
     selectByMouse: false
     text: activeFocus ? "" : sequence
-    placeholderText: activeFocus ? "请按快捷键 · Esc 取消" : "点击后按快捷键"
+    hintText: "点击后按快捷键"
     Accessible.description: "点击后直接按组合键，Esc 取消录制"
     onActiveFocusChanged: service.recording = activeFocus && visible
     onVisibleChanged: {

@@ -116,7 +116,9 @@ class TextFocusController(QObject):
                         or not self._eligible() or self.ring.speech_busy() or self.picker.active.is_set())):
                     result = {"status": "cancelled", "count": 0, "index": 0}
                 else:
-                    result = self._channel.call(operation, ignored_pid=os.getpid(), **params)
+                    scene_apps = self.ring.owner._app_gestures.catalog.scene_bundles()
+                    options = {"scene_apps": scene_apps} if scene_apps else {}
+                    result = self._channel.call(operation, ignored_pid=os.getpid(), **options, **params)
             except MacPermissionError:
                 result = {"status": "permission", "count": 0, "index": 0}
             except Exception:

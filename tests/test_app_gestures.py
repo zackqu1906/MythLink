@@ -88,6 +88,8 @@ def route(tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
     import proximic_ring.ui.controller as module
     monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "app-gestures.ini"), QSettings.IniFormat))
+    # This fixture exercises an explicitly configured legacy installation.
+    module.QSettings().setValue("gestures/appProfiles", profiles_to_json(default_profiles()))
     controller = _controller(tmp_path, monkeypatch)
     controller._connected = controller._runtime_active = True
     controller._recognition_enabled = False
@@ -99,10 +101,10 @@ def route(tmp_path, monkeypatch):
     sent = []
     class Backend:
         target = ShortcutTarget("com.openai.codex", 42, "codex", "window", "composer", "AXTextArea")
-        def capture(self, *, plain_enter=False):
-            return replace(self.target, plain_enter=plain_enter) if self.target else None
+        def capture(self, *, plain_enter=False, menu_action=False):
+            return replace(self.target, plain_enter=plain_enter, menu_action=menu_action) if self.target else None
         def same_target(self, target, *, require_focus=False):
-            return self.target is not None and replace(target, plain_enter=False) == self.target
+            return self.target is not None and replace(target, plain_enter=False, menu_action=False) == self.target
         def post(self, target, shortcut, *, require_focus=False):
             if not self.same_target(target, require_focus=require_focus):
                 raise RuntimeError("目标窗口已变化")
@@ -117,6 +119,7 @@ def route(tmp_path, monkeypatch):
         controller._apply_gesture(event, controller._disconnect_event)
         return event
     yield controller, service, inline, backend, sent, messages, emit
+    service.close()
     _close(controller)
 
 

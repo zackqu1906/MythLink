@@ -10,6 +10,9 @@ from proximic_ring.app_shortcuts import LocalMacAppShortcuts
 @pytest.fixture
 def workspace(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
+    import proximic_ring.mac_workspace as workspace_module
+    # This fixture represents the pipe worker, even if earlier tests created Qt.
+    monkeypatch.setattr(workspace_module, "_on_qt_event_thread", lambda: False)
     apps = {
         bundle: SimpleNamespace(bundleIdentifier=lambda b=bundle: b,
                                 processIdentifier=lambda p=pid: p,
@@ -55,3 +58,17 @@ def test_target_revalidation_rejects_app_switch_before_posting(workspace, monkey
     with pytest.raises(RuntimeError, match="目标窗口已变化"):
         backend.post(target, "Cmd+Shift+]")
     assert backend.capture().profile == "wechat"
+
+
+def test_menu_mapping_refreshes_cached_frontmost_record_before_capture_and_post(workspace, monkeypatch):
+    backend = LocalMacAppShortcuts()
+    workspace.cached, workspace.actual = "com.openai.codex", "com.apple.finder"
+    target = backend.capture(menu_action=True)
+    assert target.bundle == "com.apple.finder" and target.menu_action
+    assert backend.same_target(target)
+    workspace.actual = "com.tencent.xinWeChat"
+    monkeypatch.setitem(sys.modules, "Quartz", SimpleNamespace())
+    with pytest.raises(RuntimeError, match="目标窗口已变化"):
+        backend.post(target, "Cmd+N")
+    fresh = backend.capture(menu_action=True)
+    assert fresh.bundle == "com.tencent.xinWeChat" and fresh.pid == 2

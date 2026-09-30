@@ -65,7 +65,10 @@ class NativeAccessChannel:
             message = json.dumps({"id": sequence, "operation": operation, **params}).encode() + b"\n"
             try:
                 self._process.stdin.write(message)
-                deadline = time.monotonic() + 2.0
+                # Metadata reads have their own channel and may traverse large
+                # menus. Keep the short deadline for foreground key delivery.
+                menu_read = operation == "application_menu"
+                deadline = time.monotonic() + (8.0 if menu_read else 2.0)
                 while b"\n" not in self._buffer:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0 or not select.select([self._process.stdout], [], [], remaining)[0]:
@@ -74,7 +77,7 @@ class NativeAccessChannel:
                     if not chunk:
                         raise RuntimeError("按键通道已断开，请重新操作")
                     self._buffer += chunk
-                    if len(self._buffer) > 262144:
+                    if len(self._buffer) > (1048576 if menu_read else 262144):
                         raise RuntimeError("按键通道响应异常")
                 line, self._buffer = self._buffer.split(b"\n", 1)
                 reply = json.loads(line)
