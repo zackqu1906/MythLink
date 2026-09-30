@@ -1,10 +1,10 @@
-# Mac 触摸板 SDK 开发接口
+# 触摸板 SDK 开发接口（macOS / Windows）
 
 修正后的 Android AAR 触摸板适配已集成至 `src/ring_python_sdk/touchpad`，由现有 `RingSession` 收取 token 并运行原模型。模型无修改，不进行静止校准、偏置补偿或静止冻结；原 AAR 的预热、预测平均、增益映射和点击判定保留。电脑端触摸板模型与固件手势识别是两个独立功能。
 
 ## 安装与入口
 
-支持本次验证的 Apple Silicon Mac / Python 3.11 / MNN 3.6.1。主项目兼容 NumPy 1.26.4。MNN 按需导入，未启用触摸板时不会加载模型，也不会影响 ADPCM 和固件手势。
+支持已验证的 Apple Silicon Mac / Python 3.11 / MNN 3.6.1。Windows x64 / Python 3.11 已通过真实模型推理、重置和虚拟 BLE token 流测试；尚未进行 Windows 戒指实机验收。主项目兼容 NumPy 1.26.4。MNN 按需导入，未启用触摸板时不会加载模型，也不会影响 ADPCM 和固件手势。
 
 ```sh
 python -m pip install -c requirements-macos.lock -e '.[ring,touchpad]'
@@ -12,6 +12,15 @@ python examples/ring_touchpad.py --device 8F56 --seconds 90
 # 明确启用系统鼠标移动、左键单击；需辅助功能权限：
 python examples/ring_touchpad.py --device 8F56 --seconds 90 --mouse
 ```
+
+Windows PowerShell（在项目根目录）：
+
+```powershell
+python -m pip install -e ".[ring,touchpad]"
+python examples/ring_touchpad.py --device "戒指名称或蓝牙地址" --seconds 90
+```
+
+Windows 示例只打印移动与点击事件，`--mouse` 目前仅支持 macOS；它不会控制 Windows 光标。Windows 的 `touchpad` extra 会安装 MNN 3.6.1，需使用 Python 3.11 x64。没有戒指时可安装 `.[ring,touchpad,dev]`，再运行 `python -m pytest tests/test_touchpad_backbone.py tests/test_touchpad_sdk.py` 做模型和虚拟 BLE 测试。
 
 `--device` 支持名称、扫描序号或 Mac BLE UUID；多个同名设备时请用 UUID。接到已有应用时复用其 `RingSession`，不要再创建第二个连接。例子默认打印移动／点击，只有 `--mouse` 才发送系统鼠标事件。模型和 MNN notice 已纳入 wheel / macOS 应用打包，不依赖 Downloads 或实验目录。
 
@@ -129,4 +138,4 @@ events = processor.poll(now_monotonic)  # 定时约 1–5 ms 调用，排出待�
 
 必须保持“推理前上传全部状态；推理后缓存全部状态”的顺序，不能边读输出边回写输入。详见 `docs/TOUCHPAD_ADAPTATION_AUDIT.md`；原数据 27,790 帧回放已验证修复效果，无校准或静止冻结。
 
-测试入口：`tests/test_touchpad_sdk.py`（会话、互斥、线程、清理、超时、路由与主项目适配），`tests/test_touchpad_backbone.py`（真实 MNN 状态覆盖回归）。仍未宣称 Android 设备逐帧输出完全一致，也未进行本轮 SDK 与语音/手势并发实机验收。
+测试入口：`tests/test_touchpad_sdk.py`（会话、互斥、线程、清理、超时、路由、主项目适配及真实 MNN 虚拟 BLE 流），`tests/test_touchpad_backbone.py`（真实 MNN 状态覆盖回归）。仍未宣称 Android 设备逐帧输出完全一致，也未进行本轮 SDK 与语音/手势并发实机验收。

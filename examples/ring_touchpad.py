@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SDK example: typed events, or explicit macOS system mouse output (90s default)."""
+"""SDK example: print typed touchpad events; macOS can also control its mouse."""
 import argparse
 import asyncio
 from pathlib import Path
@@ -46,11 +46,13 @@ async def run(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--device', required=True, help='Ring name, scan index or macOS BLE UUID')
+    parser.add_argument('--device', required=True, help='Ring name, scan index, Windows BLE address or macOS BLE UUID')
     parser.add_argument('--seconds', type=float, default=90.)
     parser.add_argument('--connect-timeout', type=float, default=8.)
     parser.add_argument('--mouse', action='store_true', help='Control the real macOS mouse; requires Accessibility permission')
     args = parser.parse_args()
     if args.seconds <= 0:parser.error('--seconds must be positive')
+    if args.mouse and sys.platform != 'darwin':
+        parser.error('--mouse 目前只支持 macOS；Windows 请运行不带 --mouse 的事件测试')
     try:asyncio.run(run(args))
     except KeyboardInterrupt:pass

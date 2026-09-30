@@ -83,6 +83,26 @@ def test_real_events_on_loop_inference_off_loop_and_shared_routing(tmp_path,fake
     asyncio.run(run())
 
 
+def test_real_mnn_virtual_ble_stream(tmp_path):
+    pytest.importorskip('MNN')
+    async def run():
+        session,commands=make_session(tmp_path);events=[];seen=asyncio.Event()
+        def on_event(event):
+            events.append(event)
+            seen.set()
+        await session.touchpad_on(on_event=on_event,duration_s=5)
+        try:
+            for seq in range(31):session._demux(None,packet(seq))
+            await asyncio.wait_for(seen.wait(),4)
+            assert isinstance(events[0],TouchpadMove)
+            assert 0<=events[0].contact_probability<=1
+            assert np.isfinite((events[0].dx,events[0].dy)).all()
+        finally:
+            await session.touchpad_off()
+        assert commands==[START,STOP]
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('mode',['imu','quaternion','touchpad'])
 def test_existing_mode_cannot_be_replaced(tmp_path,fake_inference,mode):
     session,commands=make_session(tmp_path);setattr(session,mode+'_active',True)
@@ -200,7 +220,9 @@ def test_audio_gesture_and_touchpad_notifications_share_session(tmp_path,fake_in
         session._demux(None,b'\x26\x07'+struct.pack('<HBIf',1,5,1000,.9))
         block=struct.pack('<hBBH',100,0,0,4)+b'\0\0'
         session._demux(None,b'\x20\x03'+struct.pack('<HHHI',1,0,1,1000)+block)
-        await asyncio.sleep(.08)
+        for _ in range(100):
+            if moves and gestures and audio:break
+            await asyncio.sleep(.01)
         assert moves and gestures and audio
         assert commands[0]==bytes.fromhex('20 00 01 80 80')
         await session.stop_all()
