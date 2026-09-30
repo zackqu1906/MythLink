@@ -192,6 +192,15 @@ def run() -> int:
 
 def _entrypoint() -> int:
     multiprocessing.freeze_support()
+    if len(sys.argv) == 2 and sys.argv[1] == "--permission-status":
+        import json
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import QSettings
+        from proximic_ring.mac_permissions import permission_status_report
+        app = QApplication([sys.argv[0]])
+        report = permission_status_report(app, QSettings("ProxiMic", "ProxiMic Voice"))
+        print(json.dumps(report, ensure_ascii=False))
+        return 1 if report["backend_errors"] else 0
     if len(sys.argv) == 2 and sys.argv[1] == "--native-access-worker":
         from proximic_ring.native_access_worker import main
 

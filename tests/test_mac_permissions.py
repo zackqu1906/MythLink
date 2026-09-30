@@ -270,3 +270,55 @@ def test_closed_monitor_discards_native_request_completion(monkeypatch):
         assert not monitor.requestSystemPermission("screen")
     finally:
         release.set()
+
+
+def test_permission_scope_separates_source_installed_copies_and_adhoc_updates(monkeypatch, tmp_path):
+    import proximic_ring.mac_permissions as module
+    executable = tmp_path / 'Proximic Voice.app/Contents/MacOS/ProximicVoice'
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b'code')
+    identity = dict(frozen=False, executable=str(executable), app_path='')
+    requirement = ['designated => cdhash H"old-build"']
+    monkeypatch.setattr(module, 'running_identity', lambda: dict(identity))
+    monkeypatch.setattr(module.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(stdout='', stderr=requirement[0]))
+    source = module.permission_request_scope()
+    identity.update(frozen=True, app_path=str(executable.parents[2]))
+    installed = module.permission_request_scope()
+    assert source != installed
+    assert installed == module.permission_request_scope()
+    requirement[0] = 'designated => cdhash H"new-build"'
+    assert installed != module.permission_request_scope()
+    requirement[0] = 'designated => identifier "com.proximic.voice" and certificate leaf[subject.OU] = "TEAM"'
+    signed = module.permission_request_scope()
+    executable.write_bytes(b'new signed binary')
+    assert signed == module.permission_request_scope()
+    identity['app_path'] = '/Volumes/Proximic Voice/Proximic Voice.app'
+    assert signed != module.permission_request_scope()
+
+
+@pytest.mark.parametrize('missing_backend', [False, True])
+def test_permission_status_report_is_read_only_and_detects_missing_qt_backend(monkeypatch, tmp_path, missing_backend):
+    import proximic_ring.mac_permissions as module
+    from PySide6 import QtCore
+    settings = QtCore.QSettings(str(tmp_path / 'report.ini'), QtCore.QSettings.IniFormat)
+    settings.setValue('onboarding/nativePermissionsV2Attempted', ['bluetooth'])
+    settings.setValue('onboarding/nativePermissionsV3/installed', ['accessibility'])
+    before = {k: settings.value(k) for k in settings.allKeys()}
+    handler = [None]
+    def install(callback):
+        previous, handler[0] = handler[0], callback
+        return previous
+    monkeypatch.setattr(QtCore, 'qInstallMessageHandler', install)
+    monkeypatch.setattr(module, 'permission_request_scope', lambda: 'installed')
+    monkeypatch.setattr(module, 'read_permission_state', lambda: PermissionState(False, False))
+    monkeypatch.setattr(module, 'read_screen_capture_access', lambda: False)
+    def check(permission):
+        if missing_backend:
+            handler[0](None, None, 'Could not find permission plugin for QBluetoothPermission')
+        return QtCore.Qt.PermissionStatus.Undetermined
+    report = module.permission_status_report(SimpleNamespace(checkPermission=check), settings)
+    assert report['bluetooth'] == report['microphone'] == 'Undetermined'
+    assert bool(report['backend_errors']) is missing_backend
+    assert report['native_requests'] == ['accessibility']
+    assert {k: settings.value(k) for k in settings.allKeys()} == before
+    assert handler[0] is None

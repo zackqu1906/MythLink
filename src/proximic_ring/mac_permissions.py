@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import hashlib
+import subprocess
 import sys
 
 
@@ -101,3 +103,52 @@ def running_identity() -> dict:
     path = str(bundle or executable)
     return {"frozen": frozen, "executable": str(executable), "app_path": str(bundle or ""),
             "temporary_location": bool(bundle and (path.startswith("/Volumes/") or "/AppTranslocation/" in path))}
+
+
+def permission_request_scope() -> str:
+    """Keep source, installed copies and differently signed builds independent.
+
+    A Developer ID designated requirement is stable across normal updates;
+    an ad-hoc requirement contains the changing code hash, as macOS TCC does.
+    This reads signing metadata only; it never resets or edits TCC.
+    """
+    identity = running_identity()
+    executable = Path(identity["executable"])
+    signature = "source"
+    if identity["frozen"]:
+        try:
+            result = subprocess.run(["/usr/bin/codesign", "-d", "-r-", str(executable)],
+                                    capture_output=True, text=True, timeout=2, check=True)
+            signature = next(line for line in (result.stdout + result.stderr).splitlines()
+                             if line.startswith("designated =>"))
+        except (OSError, subprocess.SubprocessError, StopIteration):
+            stat = executable.stat()
+            signature = f"unsigned:{stat.st_mtime_ns}:{stat.st_size}"
+    else:
+        signature += ":" + str(Path(__file__).resolve().parents[2])
+    raw = f"{identity['frozen']}|{identity['app_path'] or executable}|{signature}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+
+def permission_status_report(app, settings) -> dict:
+    """Read-only package diagnostic; no requests, windows or settings writes."""
+    from dataclasses import asdict
+    from PySide6.QtCore import QBluetoothPermission, QMicrophonePermission, qInstallMessageHandler
+    warnings = []
+    previous = None
+    def message(kind, context, text):
+        if "permission plugin" in text.lower() and "could not" in text.lower():
+            warnings.append(text)
+        if previous:
+            previous(kind, context, text)
+    previous = qInstallMessageHandler(message)
+    try:
+        devices = {kind: app.checkPermission(permission()).name for kind, permission in
+                   (("bluetooth", QBluetoothPermission), ("microphone", QMicrophonePermission))}
+    finally:
+        qInstallMessageHandler(previous)
+    scope = permission_request_scope()
+    return dict(**devices, **asdict(read_permission_state()), screen=read_screen_capture_access(),
+                request_scope=scope, native_requests=settings.value("onboarding/nativePermissionsV3/" + scope, []),
+                legacy_shared_record=settings.value("onboarding/nativePermissionsV2Attempted", []),
+                backend_errors=warnings)

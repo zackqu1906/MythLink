@@ -103,6 +103,12 @@ def main(argv: list[str] | None = None) -> int:
     # Load model weights and seed both stable prompt prefixes after the first
     # frame instead of making the user's first utterance pay this cost.
     if startup_probe:
+        if sys.platform == "darwin":
+            from ..mac_permissions import permission_status_report
+            report = permission_status_report(app, controller._settings)
+            if report["backend_errors"]:
+                raise RuntimeError("macOS permission backend unavailable: " + "; ".join(report["backend_errors"]))
+            print("[startup] macOS permission backends ready (read-only)")
         # Packaging CI sets this flag to prove the frozen executable can import
         # the application, QML, and the dynamically loaded ASR modules.
         from ..asr.backends.funasr_nano import FunASRNanoStreamingASR

@@ -103,7 +103,7 @@ def test_first_launch_requests_directly_without_intro_or_begin(flow):
     settle()
     assert setup.active and setup.currentKind == "bluetooth" and setup.busy
     assert permissions.requests == ["bluetooth"]
-    assert set(settings.value(setup.ATTEMPTED_KEY)) == {"bluetooth"}
+    assert not settings.contains(setup.ATTEMPTED_KEY)
     setup.startIfNeeded()
     setup.open()
     settle()
@@ -156,7 +156,7 @@ def test_already_denied_qt_permissions_do_not_reprompt_or_force_settings(flow):
     setup.startIfNeeded()
     settle()
     assert not setup.active and permissions.requests == []
-    assert setup._attempted() == set(STEPS)
+    assert setup._attempted() == set()
 
 
 def test_async_native_api_return_is_not_dismissal_or_grant(flow):
@@ -226,33 +226,36 @@ def test_grant_in_settings_waits_for_return_before_next_prompt(flow):
     assert permissions.requests == ["accessibility", "screen"]
 
 
-def test_relaunch_continues_remaining_steps_without_repeating_attempts(flow):
+def test_relaunch_uses_os_response_and_ignores_old_callback(flow):
     setup, permissions, native, settings, _ = flow
     setup.startIfNeeded()
     settle()
     setup.close()
+    next_native = PermissionApp(permissions)
+    next_native.status["bluetooth"] = Qt.PermissionStatus.Denied
     other = PermissionSetupController(permissions, settings, enabled=True,
-                                      permission_app=PermissionApp(permissions), is_active=lambda: True)
+                                      permission_app=next_native, is_active=lambda: True)
     try:
         other.startIfNeeded()
         settle()
         assert permissions.requests == ["bluetooth", "microphone"]
-        native.complete(True)  # Old-process callback must not advance the new sequence.
+        native.complete(True)
         settle()
         assert permissions.requests == ["bluetooth", "microphone"]
     finally:
         other.close()
 
 
-def test_all_attempted_does_not_nag_but_settings_can_explicitly_request(flow):
-    setup, permissions, _, settings, _ = flow
+def test_completed_requests_do_not_nag_but_manual_native_retry_is_allowed(flow):
+    setup, permissions, native, settings, _ = flow
     settings.setValue(setup.ATTEMPTED_KEY, list(STEPS))
+    native.status = {kind: Qt.PermissionStatus.Denied for kind in native.status}
     setup.startIfNeeded()
     settle()
     assert not setup.active and not permissions.requests
     setup.open()
     settle()
-    assert permissions.requests == ["bluetooth"]
+    assert permissions.requests == ["accessibility"]
 
 
 def test_manual_continuation_handles_missing_os_activation_event(flow):
@@ -323,3 +326,58 @@ def test_native_alert_key_window_return_without_app_activation(flow):
     setup._window_focus_changed(object())
     settle()
     assert permissions.requests == ["accessibility", "screen"]
+
+
+def test_old_shared_source_marker_cannot_suppress_installed_permissions(flow):
+    setup, permissions, _, settings, _ = flow
+    settings.setValue("onboarding/nativePermissionsV2Attempted", list(STEPS))
+    settings.setValue("onboarding/permissionsV1Shown", True)
+    setup.startIfNeeded()
+    settle()
+    assert permissions.requests == ["bluetooth"]
+
+
+def test_past_grant_is_not_a_permanent_skip_after_permission_is_missing(flow):
+    setup, permissions, _, settings, _ = flow
+    permissions.states = dict.fromkeys(STEPS, True)
+    setup.startIfNeeded()
+    settle()
+    assert not settings.contains(setup.ATTEMPTED_KEY)
+    permissions.states["accessibility"] = False
+    setup.startIfNeeded()
+    settle()
+    assert permissions.requests == ["accessibility"]
+
+
+def test_undetermined_os_permission_overrides_any_historic_attempt_record(flow):
+    setup, permissions, _, settings, _ = flow
+    settings.setValue(setup.ATTEMPTED_KEY, list(STEPS))
+    setup.startIfNeeded()
+    settle()
+    assert permissions.requests == ["bluetooth"]
+
+
+def test_request_error_is_not_persisted_as_a_completed_request(flow, monkeypatch):
+    setup, permissions, native, settings, _ = flow
+    monkeypatch.setattr(native, "requestPermission", lambda *args: (_ for _ in ()).throw(RuntimeError()))
+    setup.startIfNeeded()
+    settle()
+    permissions.complete_native("accessibility", success=False)
+    settle()
+    permissions.complete_native("screen", success=False)
+    settle()
+    assert not setup.active and not settings.contains(setup.ATTEMPTED_KEY)
+
+
+def test_source_and_installed_scopes_do_not_share_request_markers(flow):
+    setup, permissions, native, settings, _ = flow
+    settings.setValue(PermissionSetupController.ATTEMPTED_PREFIX + "source", list(STEPS))
+    native.status = dict.fromkeys(native.status, Qt.PermissionStatus.Denied)
+    installed = PermissionSetupController(permissions, settings, enabled=True,
+        permission_app=native, is_active=lambda: True, request_scope="installed")
+    try:
+        installed.startIfNeeded()
+        settle()
+        assert permissions.requests == ["accessibility"]
+    finally:
+        installed.close()

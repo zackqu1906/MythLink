@@ -7,21 +7,24 @@ from PySide6.QtCore import (
     QObject, Property, QTimer, Qt, Signal, Slot, QBluetoothPermission, QMicrophonePermission,
 )
 from PySide6.QtGui import QGuiApplication
+from ..mac_permissions import permission_request_scope
 
 
 STEPS = ("bluetooth", "microphone", "accessibility", "screen")
 
 
 class PermissionSetupController(QObject):
-    ATTEMPTED_KEY = "onboarding/nativePermissionsV2Attempted"
+    ATTEMPTED_PREFIX = "onboarding/nativePermissionsV3/"
     changed = Signal()
+    diagnostic = Signal(object)
 
     def __init__(self, permissions, settings, parent=None, *, enabled=None,
-                 permission_app=None, is_active=None):
+                 permission_app=None, is_active=None, request_scope=None):
         super().__init__(parent)
         self._permissions = permissions
         self._settings = settings
         self._enabled = sys.platform == "darwin" if enabled is None else enabled
+        self.ATTEMPTED_KEY = self.ATTEMPTED_PREFIX + (request_scope or permission_request_scope())
         self._app = permission_app or QGuiApplication.instance()
         self._gui_app = self._app if isinstance(self._app, QGuiApplication) else None
         self._is_active = is_active or (
@@ -90,12 +93,12 @@ class PermissionSetupController(QObject):
     def _start(self, *, automatic):
         if not self._enabled or self._closed or self._active:
             return
-        if automatic and self._attempted() == set(STEPS):
-            return
         self._generation += 1
         self._automatic = automatic
         self._active = True
         self._index = -1
+        self.diagnostic.emit(dict(action="start", automatic=automatic,
+                                  scope=self.ATTEMPTED_KEY.rsplit("/", 1)[-1]))
         self._permissions.refresh()
         self._permissions.refreshScreenRecording()
         self._next()
@@ -106,13 +109,19 @@ class PermissionSetupController(QObject):
         self._index += 1
         while self._index < len(STEPS):
             kind = self.currentKind
-            if not self._permissions.permissionGranted(kind) and not (self._automatic and kind in self._attempted()):
+            granted = self._permissions.permissionGranted(kind)
+            # Qt's OS status is authoritative for Bluetooth/microphone. A
+            # historic attempt must never hide an Undetermined permission.
+            attempted = self._automatic and kind in {"accessibility", "screen"} and kind in self._attempted()
+            if not granted and not attempted:
                 break
-            self._mark_attempted(kind)
+            self.diagnostic.emit(dict(action="skip", kind=kind,
+                                      reason="granted" if granted else "already_requested_for_this_app"))
             self._index += 1
         self._pending_request = self._index < len(STEPS)
         if not self._pending_request:
             self._active = False
+            self.diagnostic.emit(dict(action="complete"))
         self.changed.emit()
         self._schedule()
 
@@ -139,12 +148,10 @@ class PermissionSetupController(QObject):
         kind = self.currentKind
         self._pending_request = False
         if self._permissions.permissionGranted(kind):
-            self._mark_attempted(kind)
+            self.diagnostic.emit(dict(action="skip", kind=kind, reason="granted"))
             self._next()
             return
-        # Record each actual attempt, not the whole sequence. Relaunching midway
-        # can request the remaining permissions without repeating denied ones.
-        self._mark_attempted(kind)
+        self.diagnostic.emit(dict(action="request", kind=kind))
         self._waiting = True
         try:
             if kind in {"accessibility", "screen"}:
@@ -153,10 +160,12 @@ class PermissionSetupController(QObject):
                 if not self._permissions.requestSystemPermission(kind):
                     self._requesting = False
                     self._advance_pending = True
+                    self.diagnostic.emit(dict(action="request_unavailable", kind=kind))
             else:
                 permission = {"bluetooth": QBluetoothPermission,
                               "microphone": QMicrophonePermission}[kind]()
                 status = self._app.checkPermission(permission)
+                self.diagnostic.emit(dict(action="status", kind=kind, status=status.name))
                 if status != Qt.PermissionStatus.Undetermined:
                     # A refusal is a completed choice, not a reason to force
                     # System Settings open. Existing yellow notices provide it.
@@ -173,16 +182,19 @@ class PermissionSetupController(QObject):
                         self._callback = None
                         self._requesting = False
                         self._advance_pending = True
+                        self._mark_attempted(kind)
+                        self.diagnostic.emit(dict(action="answered", kind=kind))
                         self._permissions.refreshDevicePermissions()
                         self.changed.emit()
                         self._schedule()
 
                     self._callback = completed
                     self._app.requestPermission(permission, self, completed)
-        except Exception:
+        except Exception as exc:
             self._requesting = False
             self._callback = None
             self._advance_pending = True
+            self.diagnostic.emit(dict(action="request_error", kind=kind, error=type(exc).__name__))
         self.changed.emit()
         self._schedule()
 
@@ -191,8 +203,11 @@ class PermissionSetupController(QObject):
         if self._closed or not self._active or kind != self.currentKind or not self._requesting:
             return
         self._requesting = False
+        if success:
+            self._mark_attempted(kind)
         if not success:
             self._advance_pending = True
+        self.diagnostic.emit(dict(action="native_request_returned", kind=kind, success=success))
         # AX prompt APIs return before the user responds. An API return or a
         # timer is not dismissal: wait for permission or return from system UI.
         self.changed.emit()

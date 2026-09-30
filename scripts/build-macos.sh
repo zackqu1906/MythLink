@@ -3,6 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
+export PYINSTALLER_CONFIG_DIR="${PYINSTALLER_CONFIG_DIR:-$PROJECT_ROOT/.build/pyinstaller-config}"
 
 APP_ONLY=0
 if [[ "${1:-}" == "--app-only" && "$#" == "1" ]]; then
@@ -91,6 +92,7 @@ if [[ ! -f "$SMOKE_LOG" ]] \
     || ! grep -q "bundled QML files ready" "$SMOKE_LOG" \
     || ! grep -q "macOS input method transport ready" "$SMOKE_LOG" \
     || ! grep -q "bundled input method installer ready" "$SMOKE_LOG" \
+    || ! grep -q "macOS permission backends ready (read-only)" "$SMOKE_LOG" \
     || ! grep -q "QML root window ready" "$SMOKE_LOG" \
     || ! grep -q "packaged ASR imports ready" "$SMOKE_LOG"; then
     echo "macOS packaged application did not complete its startup probe." >&2

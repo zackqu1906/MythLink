@@ -132,3 +132,22 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
 
     assert "bundled ADPCM decoder ready" in output.getvalue()
     assert "bundled QML files ready" in output.getvalue()
+
+
+def test_permission_status_command_is_read_only_and_does_not_start_main_ui(monkeypatch, capsys):
+    import json
+    from PySide6 import QtCore, QtWidgets
+    import proximic_ring.mac_permissions as permissions
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, 'argv', ['ProximicVoice', '--permission-status'])
+    monkeypatch.setattr(launcher.multiprocessing, 'freeze_support', lambda: None)
+    monkeypatch.setattr(launcher, 'run', lambda: pytest.fail('permission report must not start UI/onboarding'))
+    app, settings = object(), object()
+    monkeypatch.setattr(QtWidgets, 'QApplication', lambda args: app)
+    monkeypatch.setattr(QtCore, 'QSettings', lambda *args: settings)
+    def report(a, s):
+        assert a is app and s is settings
+        return dict(bluetooth='Undetermined', backend_errors=[])
+    monkeypatch.setattr(permissions, 'permission_status_report', report)
+    assert launcher._entrypoint() == 0
+    assert json.loads(capsys.readouterr().out)['bluetooth'] == 'Undetermined'

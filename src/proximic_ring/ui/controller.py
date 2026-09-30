@@ -866,6 +866,7 @@ class AppController(QObject):
         self._permission_setup = PermissionSetupController(
             self._inline_input.permissions, self._settings, self,
         )
+        self._permission_setup.diagnostic.connect(lambda fields: self._event_log("PERMISSION_SETUP", **fields))
         self._inline_requests: dict[int, object] = {}
         self._inline_unsettled_edits: set[int] = set()
         self._inline_interruption_logged = False
