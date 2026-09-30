@@ -302,7 +302,7 @@ class RingGestureController(QObject):
         if self.session_blocked():
             return
         self._fields.refresh()
-        if (self.owner._app_gestures.catalog.scene_bundles() or self.owner._app_gestures.catalog.voice_disabled_bundles()) and not self.speech_busy():
+        if self.owner._app_gestures.catalog.apps and not self.speech_busy():
             generation, created, connection = self._generation, time.monotonic(), self.owner._disconnect_event
             def work():
                 try:
@@ -331,15 +331,16 @@ class RingGestureController(QObject):
             items = catalog.scene_bindings_for_target(target, scene) if scene else catalog._bindings_for(target.bundle)
             if disabled or items:
                 label = catalog._apps.get(target.bundle, {}).get("label", "应用")
-                actions = dict(catalog.globalOccupancy)
-                if disabled:
-                    actions.update({g: "未绑定" for g in catalog.voice_group() if g not in actions})
-                actions.update({g: b["label"] for g, b in items.items() if catalog._can_bind_regular(g)})
                 scene_label = SCENE_LABELS.get(scene, "常规")
                 if scene and target.website:
                     scene_label += " · " + target.website
-                self.sceneHudRequested.emit(self.mode, [dict(gesture=GESTURE_LABELS[g], action=actions[g], application=label,
-                    sceneLabel=scene_label, voiceDisabled=disabled)
+                actions = {g: (b["label"], "scene" if scene else "application")
+                           for g, b in items.items() if catalog._can_bind_regular(g)}
+                actions.update({g: (action, "global") for g, action in catalog.globalOccupancy.items()})
+                if disabled:
+                    actions.update({g: ("未绑定", "unbound") for g in catalog.voice_group() if g not in actions})
+                self.sceneHudRequested.emit(self.mode, [dict(key=g, gesture=GESTURE_LABELS[g], action=actions[g][0],
+                    scope=actions[g][1], application=label, scene=scene, sceneLabel=scene_label, voiceDisabled=disabled)
                     for g in GESTURE_LABELS if g in actions])
                 return
         self.showRequested.emit(self.mode, "")

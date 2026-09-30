@@ -110,6 +110,8 @@ class RingAudioSource(AudioSource):
         self.touchpad_duration_s = touchpad_duration_s
         self.touchpad_active = False
         self.touchpad_error = None
+        self._touchpad_endpoint = None
+        self._touchpad_requests = set()
         self.gestures_active = False
         self.gesture_error = None
         self.battery_observer = battery_observer
@@ -837,6 +839,7 @@ class RingAudioSource(AudioSource):
 
             # BLE and the required NUS service are now validated.  Release the
             # connection phase before doing battery queries or starting audio.
+            self._touchpad_endpoint = (asyncio.get_running_loop(), session)
             self._connected_ready.set()
             battery_refresh_task = asyncio.create_task(
                 self._battery_updates(session),
@@ -1057,6 +1060,12 @@ class RingAudioSource(AudioSource):
             self._signal_error(exc)
             raise
         finally:
+            self._touchpad_endpoint = None
+            requests = list(self._touchpad_requests)
+            for task in requests:
+                task.cancel()
+            if requests:
+                await asyncio.gather(*requests, return_exceptions=True)
             if battery_refresh_task is not None:
                 battery_refresh_task.cancel()
                 try:
@@ -1081,6 +1090,54 @@ class RingAudioSource(AudioSource):
             if self.gesture_state_observer is not None:
                 self.gesture_state_observer(False)
             raise RuntimeError(f"Ring 固件手势启动失败：{exc}") from exc
+
+    def _submit_touchpad(self, enabled, options):
+        """Return a Future immediately; all SDK calls stay on the owning BLE loop."""
+        from concurrent.futures import Future
+        endpoint = self._touchpad_endpoint
+        if endpoint is None or self._stop.is_set():
+            result = Future()
+            result.set_exception(ConnectionError("Ring 未连接，请在首页连接设备"))
+            return result
+        loop, session = endpoint
+
+        async def apply():
+            task = asyncio.current_task()
+            self._touchpad_requests.add(task)
+            try:
+                if self._stop.is_set() or self._touchpad_endpoint is not endpoint:
+                    raise ConnectionError("Ring 连接已结束")
+                if enabled:
+                    callback = options.pop("on_stopped", None)
+                    def stopped(error):
+                        self.touchpad_active = False
+                        self.touchpad_error = error
+                        if callback is not None:
+                            callback(error)
+                    await session.touchpad_on(**options, on_stopped=stopped)
+                    self.touchpad_active = bool(session.touchpad_active)
+                    self.touchpad_error = None
+                else:
+                    await session.touchpad_off()
+                    self.touchpad_active = False
+            finally:
+                self._touchpad_requests.discard(task)
+
+        coroutine = apply()
+        try:
+            return asyncio.run_coroutine_threadsafe(coroutine, loop)
+        except RuntimeError:
+            coroutine.close()
+            result = Future()
+            result.set_exception(ConnectionError("Ring 连接已结束"))
+            return result
+
+    def start_touchpad(self, **options):
+        """Start touchpad dynamically on the existing connection; never block UI."""
+        return self._submit_touchpad(True, options)
+
+    def stop_touchpad(self):
+        return self._submit_touchpad(False, {})
 
     async def _start_touchpad(self, session) -> None:
         """Opt-in typed events on the existing BLE loop; no OS mouse injection."""

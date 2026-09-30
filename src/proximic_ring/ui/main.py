@@ -29,6 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationDisplayName("ProxiMic Voice")
     app.setOrganizationName("ProxiMic")
 
+    from ..mac_app_activation import configure_app_activation
+    configure_app_activation(background=startup_probe)
+
     base = Path(__file__).resolve().parent
     icon_path = base / "assets" / "mythlink-app.png"
     icon = QIcon(str(icon_path))
@@ -125,6 +128,10 @@ def main(argv: list[str] | None = None) -> int:
         print("[startup] packaged ASR imports ready")
         QTimer.singleShot(300, app.quit)
     else:
+        # The bundle initially launches as an agent to keep workers out of the
+        # Dock. Give the promoted main window focus so native onboarding can run.
+        QTimer.singleShot(0, window.requestActivate)
+        QTimer.singleShot(150, controller.appGestures.catalog.initializeInstalledApplications)
         QTimer.singleShot(300, controller.permissionSetup.startIfNeeded)
         QTimer.singleShot(600, controller.warmLocalModel)
 

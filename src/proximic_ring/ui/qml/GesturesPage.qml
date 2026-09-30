@@ -46,6 +46,7 @@ ScrollView {
         if (applicationScope) {
             var binding = (catalog.bindings[selectedApp] || {})[key]
             if (binding) return binding.label
+            if (catalog.pendingBindings[key]) return catalog.pendingBindings[key] + " · 等待快捷键"
             if (sceneScope) return "此场景未绑定"
             if (catalog.voiceOverrideNotice && catalog.voiceGestures.indexOf(key) >= 0) return "语音组已停用 · 未绑定"
         }
@@ -65,6 +66,7 @@ ScrollView {
     }
     function sourceLabel(key) {
         if (catalog.globalOccupancy[key]) return applicationScope ? "全局占用" : "全局功能"
+        if (applicationScope && catalog.pendingBindings[key]) return "已保存预设"
         if (sceneScope) return (catalog.bindings[selectedApp] || {})[key] ? catalog.selectedSceneLabel : "场景独立配置"
         if (catalog.voiceGestures.indexOf(key) >= 0) return "语音手势组"
         return ""
@@ -333,6 +335,12 @@ ScrollView {
                     visible: page.sceneScope; Layout.fillWidth: true
                     text: page.catalog.sceneHint; color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap
                 }
+                Label {
+                    Layout.fillWidth: true
+                    visible: page.catalog.defaultMappingNotice.length > 0
+                    text: page.catalog.defaultMappingNotice
+                    color: "#A35527"; font.pixelSize: 11; wrapMode: Text.Wrap
+                }
             }
         }
         PermissionNotice {
@@ -405,7 +413,7 @@ ScrollView {
                                         text: "清空此应用的映射"
                                         enabled: {
                                             var bindings = page.catalog.bindings
-                                            return page.catalog.bindingCount(page.selectedApp) > 0 || actionEditor.draftCount(page.selectedApp) > 0
+                                            return page.catalog.bindingCount(page.selectedApp) > 0 || page.catalog.pendingDefaultCount > 0 || actionEditor.draftCount(page.selectedApp) > 0
                                         }
                                         onTriggered: managementDialog.review("clear")
                                     }

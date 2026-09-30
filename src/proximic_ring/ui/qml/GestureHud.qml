@@ -2,36 +2,31 @@ import QtQuick
 
 Item {
     id: root
-    width: 280; height: 280
+    width: 360; height: 360
     property string mode: "input"
     property string notice: ""
     property bool preview: false
-    property var sceneActions: []
     property var globalLabels: ({show_menu: "食指捏合", switch_mode: "中指捏合", window_selector: "握拳"})
     property bool inputFieldsAvailable: true
     property string inputFieldsHint: "当前窗口未提供文本框"
     property real entranceTime: 0
     readonly property bool animationRunning: entrance.running
-    readonly property bool inputMode: mode === "input"
-    readonly property color accent: inputMode ? "#56DDF4" : "#B7A2FF"
-    readonly property real orbitRadius: 86
-    readonly property real centerX: 140
-    readonly property real centerY: 126
+    readonly property bool inputMode: sceneActive || mode === "input"
+    readonly property color accent: inputMode ? "#568BB5" : "#8D78B5"
+    readonly property real orbitRadius: 112
+    readonly property real centerX: 180
+    readonly property real centerY: 160
     readonly property real hubProgress: bezier(progress(0, 620), 0.16, 1, 0.3, 1)
     readonly property real orbitProgress: bezier(progress(60, 880), 0.35, 0, 0.15, 1)
     readonly property real innerProgress: bezier(progress(420, 700), 0.35, 0, 0.15, 1)
-    readonly property var satellites: inputMode ? [
-        {symbol: "up", tone: "cyan", label: "上滑 · 发送", detail: "", width: 74},
-        {symbol: "mic", tone: "indigo", label: "Tap · 语音输入", detail: "再 Tap · 结束本句", width: 84},
-        {symbol: "edit", tone: "indigo", label: "Tap + 右滑", detail: "语音编辑\n再 Tap · 结束本句", width: 84},
-        {symbol: "down", tone: "cyan", label: "下滑 · 选择输入框", detail: inputFieldsHint, width: 114},
-        {symbol: "apps", tone: "amber", label: globalLabels.window_selector + " · 切换应用", detail: "", width: 108},
-        {symbol: "undo", tone: "cyan", label: "左滑 · 撤销", detail: "", width: 70}
-    ] : [
-        {symbol: "up", tone: "violet", label: "上滑 · 向上滚动", detail: "", width: 94},
-        {symbol: "down", tone: "violet", label: "下滑 · 向下滚动", detail: "", width: 86},
-        {symbol: "apps", tone: "amber", label: globalLabels.window_selector + " · 切换应用", detail: "", width: 108}
-    ]
+    property var orbs: []
+    property int overflow: 0
+    property string contextLabel: ""
+    property bool voiceDisabled: false
+    property bool sceneActive: false
+    property string modeTitle: "输入模式"
+    readonly property var satellites: orbs
+    readonly property string fieldHint: !sceneActive && orbs.some(function(orb) { return orb.inputField }) ? inputFieldsHint : ""
 
     function clamp(value) { return Math.max(0, Math.min(1, value)) }
     function progress(delay, duration) { return clamp((entranceTime - delay) / duration) }
@@ -64,9 +59,8 @@ Item {
     onAccentChanged: orbit.requestPaint()
 
     Item {
-        visible: root.sceneActions.length === 0
-        width: 280; height: 280
-        scale: Math.min(root.width, root.height) / 280
+        width: 360; height: 360
+        scale: Math.min(root.width, root.height) / 360
         transformOrigin: Item.TopLeft
 
         Canvas {
@@ -95,31 +89,27 @@ Item {
 
         Rectangle {
             objectName: "gestureHudHub"
-            x: root.centerX - 48; y: root.centerY - 48
-            width: 96; height: 96; radius: 48
+            x: root.centerX - 50; y: root.centerY - 50
+            width: 100; height: 100; radius: 50
             opacity: root.hubProgress
             scale: 0.82 + 0.18 * root.hubProgress
-            color: root.inputMode ? "#F20F1C33" : "#F214142B"
-            border.width: 1; border.color: root.inputMode ? "#AA45C6E4" : "#AAAFA0E3"
+            color: root.inputMode ? "#F3FAFF" : "#F6F2FF"
+            border.width: 1; border.color: root.inputMode ? "#B5CEE1" : "#D2C4E7"
             GestureHudIcon {
-                x: 31; y: 12; width: 34; height: 34
-                symbol: root.inputMode ? "keyboard" : "scroll"; ink: root.accent
+                x: 35; y: 12; width: 30; height: 30
+                symbol: root.sceneActive ? "apps" : root.inputMode ? "keyboard" : "scroll"; ink: root.accent
             }
             Text {
-                x: 0; y: 51; width: parent.width
-                text: root.inputMode ? "输入模式" : "操作模式"
-                font.pixelSize: 13; font.weight: Font.DemiBold
-                color: "#F2F5FF"; horizontalAlignment: Text.AlignHCenter
+                x: 0; y: 47; width: parent.width
+                text: root.modeTitle
+                font.pixelSize: 14; font.weight: Font.DemiBold
+                color: "#192B43"; horizontalAlignment: Text.AlignHCenter
             }
-            Rectangle {
-                x: 7; y: 73; width: 82; height: 16; radius: 8
-                color: "#252C40"; border.color: "#43516A"; border.width: 0.6
-                GestureHudIcon { x: 5; y: 3; width: 10; height: 10; symbol: "pinch"; ink: "#CFD8ED" }
-                Text {
-                    x: 19; height: parent.height; width: 58
-                    text: root.globalLabels.switch_mode + "切换"; font.pixelSize: 8; elide: Text.ElideRight
-                    color: "#CFD8ED"; verticalAlignment: Text.AlignVCenter
-                }
+            Text {
+                x: 6; y: 72; width: 88
+                text: root.sceneActive ? (root.orbs.length ? "场景手势" : "尚未绑定手势") : root.voiceDisabled ? "语音组停用" : root.inputMode ? "语音与编辑" : "滚动与应用操作"
+                color: root.voiceDisabled && !root.sceneActive ? "#96631D" : "#556780"
+                font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter
             }
         }
 
@@ -146,49 +136,52 @@ Item {
                 }
                 opacity: root.clamp(t*1.7)
                 symbol: modelData.symbol
-                tint: modelData.tone === "amber" ? "#F0B153" : modelData.tone === "cyan" ? "#56DDF4" :
-                      modelData.tone === "indigo" ? "#929CEB" : "#B7A2FF"
-                label: modelData.label; detail: modelData.detail
-                labelWidth: modelData.width
-                labelOffset: Math.sin(finalAngle*Math.PI/180) > 0.5 ? 19 :
-                             Math.sin(finalAngle*Math.PI/180) < -0.5 ? -10 : 0
+                tint: modelData.scope === "global" ? "#F2D9AA" : root.inputMode ? "#B4DEF2" : "#D9CDF3"
+                label: modelData.label; detail: modelData.action
+                labelWidth: 120
+                labelOffset: {
+                    var preferred = Math.sin(finalAngle*Math.PI/180) > 0.5 ? 14 :
+                                    Math.sin(finalAngle*Math.PI/180) < -0.5 ? -14 : 0
+                    var base = satellite.x + (satellite.width - 120)/2
+                    return Math.max(6, Math.min(234, base + preferred)) - base
+                }
                 // Text waits until the spiral is almost at its resting radius.
                 labelOpacity: root.clamp((t-0.68)/0.32)
-                available: !(root.inputMode && modelData.symbol === "down") || root.inputFieldsAvailable
+                available: !modelData.inputField || root.inputFieldsAvailable
             }
-        }
-        Text {
-            x: 25; y: 265; width: 230
-            text: root.notice || (root.globalLabels.show_menu + " · 唤起提示" + (root.preview ? "  /  预览" : ""))
-            opacity: root.notice ? 1 : root.progress(900, 300)
-            color: root.notice ? "#FFD47C" : "#A8B8CD"; font.pixelSize: root.notice ? 10 : 8
-            horizontalAlignment: Text.AlignHCenter
-            style: Text.Outline; styleColor: "#172235"
         }
     }
     Rectangle {
-        visible: root.sceneActions.length > 0
-        anchors.fill: parent; radius: 18; color: "#E91B2233"; border.color: "#536487"
+        objectName: "gestureHudContext"
+        x: 12; y: 0; width: parent.width - 24; height: 22; radius: 11
+        color: "#F5F8FC"; border.color: "#D9E3ED"
+        visible: root.contextLabel.length > 0
         Text {
-            x: 16; y: 16; width: parent.width - 32
-            text: root.sceneActions.length ? (root.sceneActions[0].application || "应用") + " · " + (root.sceneActions[0].sceneLabel || "放映") : "场景手势"
-            color: "#EAF1FF"; font.pixelSize: 16; font.weight: Font.DemiBold; elide: Text.ElideRight
+            anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10
+            text: root.contextLabel; color: "#334760"; font.pixelSize: 11
+            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
         }
-        Text { x: 16; y: 42; text: root.sceneActions.length && root.sceneActions[0].voiceDisabled ? "手势语音输入已停用 · 全局功能保留" : "应用手势 · 语音组仍可用"; color: "#A8B8CD"; font.pixelSize: 10 }
-        Grid {
-            x: 12; y: 67; columns: 3; spacing: 6
-            Repeater {
-                model: root.sceneActions
-                Rectangle {
-                    required property var modelData
-                    required property int index
-                    objectName: "sceneGesture_" + index
-                    width: 81; height: root.sceneActions.length > 9 ? 38 : 52; radius: 8; color: "#344368"
-                    Text { x: 7; y: 8; width: parent.width - 14; text: modelData.gesture; color: "#BED0F6"; font.pixelSize: 11; elide: Text.ElideRight }
-                    Text { x: 7; y: parent.height > 40 ? 26 : 23; width: parent.width - 14; text: modelData.action; color: "white"; font.pixelSize: 10; elide: Text.ElideRight }
-                }
-            }
+    }
+    Text {
+        objectName: "gestureHudOverflow"
+        x: 12; y: 330; width: parent.width - 24; height: 14
+        text: root.notice || ((root.overflow ? "另有 " + root.overflow + " 项手势 · " : "") +
+                             (root.fieldHint || (root.overflow ? "可在场景与手势中查看" : "")))
+        font.pixelSize: 10; color: root.notice ? "#9C651D" : "#40536B"
+        horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+        style: Text.Outline; styleColor: "#F6F9FC"
+    }
+    Rectangle {
+        objectName: "gestureHudGlobalShortcuts"
+        visible: !root.sceneActive
+        x: 6; y: 346; width: parent.width - 12; height: 14; radius: 7
+        color: "#F5F8FC"
+        Text {
+            anchors.fill: parent
+            text: root.globalLabels.show_menu + " 提示 · " + root.globalLabels.switch_mode + " 切换 · " + root.globalLabels.window_selector + " 窗口"
+            color: "#334760"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
         }
-        Text { x: 16; y: 248; width: parent.width - 32; text: root.globalLabels.show_menu + " · 提示    " + root.globalLabels.switch_mode + " · 切换模式"; color: "#A8B8CD"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
     }
 }

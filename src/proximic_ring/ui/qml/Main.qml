@@ -26,7 +26,7 @@ ApplicationWindow {
 
     UiTheme { id: uiTheme }
     property int currentPage: 0
-    readonly property var pageTitles: ["我的 Ring", "语音输入", "场景与手势"]
+    readonly property var pageTitles: ["我的 Ring", "语音输入", "场景与手势", "触摸板"]
     readonly property int sidebarWidth: width < 1100 ? 180 : 218
     function showVoice(history) {
         currentPage = 1
@@ -617,21 +617,21 @@ ApplicationWindow {
                 Accessible.name: "MythLink"
             }
             Repeater {
-                model: [{label: "首页", icon: "home"}, {label: "语音输入", icon: "voice"}, {label: "场景与手势", icon: "gesture"}]
+                model: [{label: "首页", icon: "home", page: 0}, {label: "语音输入", icon: "voice", page: 1}, {label: "触摸板", icon: "pointer", page: 3}, {label: "场景与手势", icon: "gesture", page: 2}]
                 delegate: AbstractButton {
                     required property int index
                     required property var modelData
-                    objectName: "mainNav" + index
+                    objectName: "mainNav" + modelData.page
                     Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.maximumWidth: sidebar.width - 32; implicitHeight: 48
                     hoverEnabled: true
                     Accessible.name: modelData.label
-                    checked: root.currentPage === index
-                    onClicked: root.currentPage = index
+                    checked: root.currentPage === modelData.page
+                    onClicked: root.currentPage = modelData.page
                     background: Rectangle { radius: 10; color: parent.checked ? uiTheme.selection : parent.hovered ? "#E6E9F3" : "transparent"; border.color: parent.activeFocus ? uiTheme.primary : "transparent" }
                     contentItem: RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 12; spacing: 13
                         UiIcon { Layout.preferredWidth: 21; Layout.preferredHeight: 21; symbol: modelData.icon; ink: uiTheme.text }
-                        Label { Layout.fillWidth: true; text: modelData.label; color: uiTheme.text; font.pixelSize: 16; font.weight: root.currentPage === index ? Font.DemiBold : Font.Normal }
+                        Label { Layout.fillWidth: true; text: modelData.label; color: uiTheme.text; font.pixelSize: 16; font.weight: root.currentPage === modelData.page ? Font.DemiBold : Font.Normal }
                     }
                 }
             }
@@ -659,7 +659,7 @@ ApplicationWindow {
             Column {
                 anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: 5
                 Label { text: root.pageTitles[root.currentPage]; color: uiTheme.text; font.pixelSize: 32; font.weight: Font.Bold }
-                Label { text: root.currentPage === 0 ? (appController.deviceName || "连接你的 Ring，开始使用") : root.currentPage === 1 ? "说话完成输入与修改，回顾每一次语音记录" : "查看手势与应用操作的对应关系"; color: uiTheme.muted; font.pixelSize: 12 }
+                Label { text: root.currentPage === 0 ? (appController.deviceName || "连接你的 Ring，开始使用") : root.currentPage === 1 ? "说话完成输入与修改，回顾每一次语音记录" : root.currentPage === 3 ? "让 Ring 成为你的触摸板，直接控制系统指针" : "查看手势与应用操作的对应关系"; color: uiTheme.muted; font.pixelSize: 12 }
             }
             RowLayout {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 8
@@ -754,6 +754,14 @@ ApplicationWindow {
             UiAction { Layout.alignment: Qt.AlignLeft; text: "输入法与权限设置"; onClicked: { helpDialog.close(); inputMethodSetupDialog.open() } }
             UiAction { objectName: "runtimeLogButton"; Layout.alignment: Qt.AlignLeft; text: "故障排查 · 实时日志"; onClicked: { helpDialog.close(); runtimeLogDialog.open() } }
         }
+    }
+
+    TouchpadPage {
+        parent: pageBody
+        anchors.fill: parent
+        visible: root.currentPage === 3
+        controller: appController
+        onHomeRequested: root.currentPage = 0
     }
 
     VoicePage {

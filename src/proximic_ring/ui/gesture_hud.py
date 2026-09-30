@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QCursor, QGuiApplication
 from PySide6.QtQuick import QQuickView
 
 
-HUD_SIZE = 280
+HUD_SIZE = 360
 HUD_MARGIN = 24
 HUD_DURATION_MS = 5000
 
@@ -95,10 +95,12 @@ class GestureHud(QObject):
         root = self.window.rootObject()
         root.setProperty("mode", mode)
         root.setProperty("preview", preview)
-        root.setProperty("sceneActions", scene_actions or [])
         from ..gesture_settings import GlobalGestureBindings, GESTURE_LABELS
         bindings = global_bindings or GlobalGestureBindings().as_dict()
         root.setProperty("globalLabels", {key: GESTURE_LABELS[value].split("（")[0] for key, value in bindings.items()})
+        from .gesture_hud_model import hint_view
+        for name, value in hint_view(mode, scene_actions, bindings).items():
+            root.setProperty(name, value)
         root.setProperty("notice", message)
         root.setProperty("inputFieldsAvailable", input_fields_available)
         root.setProperty("inputFieldsHint", input_fields_hint or

@@ -17,6 +17,10 @@ def test_website_presets_drafts_custom_sites_and_removal(mapping_ui, tmp_path, s
     root.resize(*size)
     catalog._candidates = [dict(value=SAFARI, label="Safari", path="/Applications/Safari.app")]
     assert catalog.addApplication(SAFARI)
+    catalog.selectScene("video")
+    assert catalog.bindings[SAFARI]["tap"]["id"] == "web-video:play"
+    catalog.setBinding(SAFARI, "tap", "")  # Exercise an unsaved draft independently of the default.
+    catalog.selectScene("regular")
     QTest.qWait(60)
     click("gestureApplication_" + SAFARI)
     assert not root.findChild(QObject, "gestureWebsiteBar").property("visible")

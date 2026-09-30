@@ -43,6 +43,7 @@ def test_powerpoint_scene_tabs_reserved_gestures_and_separate_drafts(mapping_ui,
     before, messages = c.gestureBindings, list(bridge.messages)
     catalog._candidates = [dict(value=POWERPOINT, label="Microsoft PowerPoint", path="/System/Applications/TextEdit.app")]
     assert catalog.addApplication(POWERPOINT)
+    catalog.clearApplicationBindings(POWERPOINT)  # Exercise draft editing separately from installed defaults.
     QTest.qWait(60)
     click("gestureApplication_" + POWERPOINT)
     click("gestureCard_swipe-right")
@@ -105,7 +106,7 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
     QTest.qWait(60)
     click("gestureApplication_" + bundle)
     bar = root.findChild(QObject, "applicationSceneBar")
-    assert bar.property("visible") and catalog.bindingCount(bundle) == (3 if profile == "wps" else 0)
+    assert bar.property("visible") and catalog.bindingCount(bundle) == (3 if profile == "generic" else 4)
     click("gestureCard_swipe-right")
     editor = root.findChild(QObject, "gestureActionEditor")
     assert editor.property("editable")
@@ -113,9 +114,8 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
     assert editor.property("editable")
     assert "PowerPoint" not in root.findChild(QObject, "gestureSceneHint").property("text")
     if profile != "generic":
-        if profile == "wps":
-            assert editor.property("savedId") == "wps:next"
-            assert catalog.setBinding(bundle, "swipe-right", "")
+        assert editor.property("savedId") == profile + ":next"
+        assert catalog.setBinding(bundle, "swipe-right", "")
         catalog._busy = True
         catalog.discoveryChanged.emit()
         click("menuAction_" + profile + ":next")
@@ -124,7 +124,8 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
         assert catalog.bindings[bundle]["swipe-right"]["shortcut"] == "Right"
         assert "PowerPoint" not in root.findChild(QObject, "savedMenuBindingStatus").property("text")
     else:
-        assert not any(a.get("preset") for a in catalog.actions)
+        assert {a["id"] for a in catalog.actions if a.get("preset")} == {"presentation:previous", "presentation:next", "presentation:end"}
+        assert catalog.defaultMappingNotice
         assert root.findChild(QObject, "customShortcutButton").property("visible")
     click("gestureCard_index-pinch")
     assert not editor.property("editable")
@@ -237,6 +238,7 @@ def test_all_activity_modes_visible_and_bindings_drafts_are_separate(mapping_ui,
     catalog._candidates = [dict(value=bundle, label="多媒体查看器", path="",
         sceneProfiles={PDF: "preview", IMAGE: "preview", VIDEO: "quicktime", MUSIC: "music"})]
     assert catalog.addApplication(bundle)
+    catalog.clearApplicationBindings(bundle)  # This test exercises drafts independently of defaults.
     QTest.qWait(60)
     click("gestureApplication_" + bundle)
     click("gestureCard_tap")
@@ -773,3 +775,47 @@ def test_saved_binding_status_distinguishes_missing_partial_and_failed_reads(map
     assert status.property("text") == "上次读取时菜单可用"
     assert root.findChild(QObject, "applicationMenuReadTime").property("text").startswith("最近读取 ")
     assert bridge.messages == messages
+
+
+@pytest.mark.parametrize('bundle,scene,count', [('com.apple.Music','music',5),
+    ('com.colliderli.iina','video',5), ('com.apple.Preview','pdf',2), ('com.apple.Preview','image',2)])
+def test_new_scene_defaults_are_visible_without_manually_assigning_actions(mapping_ui,bundle,scene,count):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    _,_,root,catalog,_,click,_=mapping_ui
+    catalog._candidates=[dict(value=bundle,label='测试播放器',path='')]
+    assert catalog.addApplication(bundle)
+    QTest.qWait(60)
+    click('gestureApplication_'+bundle)
+    click(scene+'GestureScene')
+    assert len(catalog.bindings[bundle])==count
+    click('gestureCard_swipe-right')
+    editor=root.findChild(QObject,'gestureActionEditor')
+    assert editor.property('savedId') and not editor.property('dirty')
+    assert '未绑定' not in editor.property('currentDescription')
+
+
+def test_pending_scene_preset_can_be_seen_cancelled_and_replaced_in_editor(mapping_ui):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    _,_,root,catalog,_,click,_=mapping_ui
+    bundle='test.unknown.music'
+    catalog._candidates=[dict(value=bundle,label='未知音乐播放器',sceneProfiles={'music':'generic'})]
+    assert catalog.addApplication(bundle)
+    QTest.qWait(60)
+    click('gestureApplication_'+bundle)
+    click('musicGestureScene')
+    click('gestureCard_tap')
+    editor=root.findChild(QObject,'gestureActionEditor')
+    assert '等待快捷键' in editor.property('currentDescription')
+    assert editor.property('pendingDefault')=='播放 / 暂停'
+    click('menuAction_')
+    assert editor.property('dirty') and root.findChild(QObject,'saveMenuMappingButton').property('enabled')
+    click('saveMenuMappingButton')
+    assert 'tap' not in catalog.pendingBindings and not editor.property('pendingDefault')
+    assert not editor.property('dirty')
+    native=dict(id='native-next',label='下一首',shortcut='Cmd+Right',path='播放',available=True)
+    catalog._apply_result('menu',catalog._generation['menu'],bundle,dict(actions=[native]),'')
+    click('gestureCard_swipe-right')
+    assert editor.property('savedId')=='native-next'
+    assert '等待快捷键' not in editor.property('currentDescription')

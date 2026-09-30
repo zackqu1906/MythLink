@@ -209,6 +209,9 @@ if platform.system() == "Darwin":
             "CFBundleShortVersionString": "0.6.0",
             "CFBundleVersion": "0.6.0",
             "LSMinimumSystemVersion": "15.0",
+            # The same executable also runs permission/gesture workers. Start
+            # without a Dock icon; ui.main promotes only the normal Qt host.
+            "LSUIElement": True,
             "NSBluetoothAlwaysUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSBluetoothPeripheralUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSMicrophoneUsageDescription": "MythLink 使用你选定的电脑麦克风采集语音并转写。",

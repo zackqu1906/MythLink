@@ -1,0 +1,32 @@
+{
+  "tokens": 1200,
+  "overflows": 0,
+  "resets": 0,
+  "ble_loop_interval_ms": {
+    "samples": 1128,
+    "p50": 5.139,
+    "p95": 6.686,
+    "max": 14.725
+  },
+  "pointer_worker_handoff_ms": {
+    "samples": 998,
+    "p50": 0.028,
+    "p95": 0.082,
+    "max": 2.036
+  },
+  "qt_timer_interval_ms": {
+    "idle": {
+      "samples": 124,
+      "p50": 16.052,
+      "p95": 17.059,
+      "max": 18.413
+    },
+    "loaded": {
+      "samples": 375,
+      "p50": 16.035,
+      "p95": 17.471,
+      "max": 21.388
+    }
+  },
+  "scope": "Local CPU real MNN inference at 200 tokens/s; simulated BLE packets and mouse sink; no actual BLE/Quartz or ASR load."
+}

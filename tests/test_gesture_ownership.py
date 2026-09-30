@@ -121,15 +121,22 @@ def test_global_reassignment_releases_old_gesture_and_preserves_suspended_bindin
 
 @pytest.mark.parametrize("action,old,new", [("show_menu", "index-pinch", "snap"), ("switch_mode", "middle-pinch", "circle-clockwise")])
 def test_remapped_hint_and_mode_actions_run_on_new_physical_gesture(route, monkeypatch, action, old, new):
-    c, service, _, _, _, _, _ = route
+    from PySide6.QtTest import QTest
+    c, service, _, backend, _, _, _ = route
     catalog = configure(service, monkeypatch)
+    monkeypatch.setattr(backend, "capture", lambda **kwargs: backend.target)
     assert c.ringGestures.setGlobalBinding(action, new)
     assert catalog.canBind(old) and not catalog.canBind(new)
     shown = []
     c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
     assert request(c, old)  # Old physical gesture is no longer a global command.
     assert not request(c, new)
-    if action == "show_menu": assert shown == [("input", "")]
+    if action == "show_menu":
+        # Hints now resolve the current app asynchronously even without scenes.
+        for _ in range(40):
+            if shown: break
+            QTest.qWait(25)
+        assert shown == [("input", "")]
     else: assert c.ringGestures.mode == "operation"
 
 

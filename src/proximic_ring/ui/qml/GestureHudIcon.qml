@@ -49,6 +49,18 @@ Canvas {
         } else if (symbol === "pinch") {
             line([11,30,18,23,22,16,28,10])
             line([18,23,25,22,30,17])
+        } else if (symbol === "left" || symbol === "right") {
+            if (symbol === "left") { line([33,20,7,20]); line([17,10,7,20,17,30]) }
+            else { line([7,20,33,20]); line([23,10,33,20,23,30]) }
+        } else if (symbol === "clockwise" || symbol === "counterclockwise") {
+            if (symbol === "counterclockwise") { c.translate(40,0); c.scale(-1,1) }
+            c.beginPath(); c.arc(20,21,12,0.3,Math.PI*1.8); c.stroke()
+            line([28,6,31,14,22,14])
+        } else if (symbol === "tap") {
+            c.beginPath(); c.arc(20,20,6,0,Math.PI*2); c.stroke()
+            line([20,3,20,7]); line([20,33,20,37]); line([3,20,7,20]); line([33,20,37,20])
+        } else if (symbol === "snap") {
+            line([23,5,11,23,21,23,17,35,30,17,20,17,23,5])
         }
     }
 }

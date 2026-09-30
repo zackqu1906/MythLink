@@ -51,7 +51,8 @@ class Dispatcher:
                 configured = message.get("scene_apps", {})
                 disabled = target and target.bundle in message.get("voice_disabled_apps", [])
                 eligible = (target and target.bundle in configured and target.scene and not target.blocked
-                            and (target.scene == "presentation" or target.input_context == "nontext")
+                            and (target.input_context == "nontext"
+                                 or (target.scene == "presentation" and target.input_context == "unknown"))
                             and (not isinstance(configured, dict) or target.scene in configured[target.bundle]))
                 if eligible or disabled:
                     if operation == "focus_apply":
@@ -124,6 +125,11 @@ class Dispatcher:
 
 
 def main():
+    from .mac_app_activation import configure_app_activation
+
+    # NSWorkspace/menu reads can register this executable as an application.
+    # Set the policy first, including when a denied worker is being restarted.
+    configure_app_activation(background=True)
     import objc
     dispatcher = Dispatcher()
     for line in sys.stdin.buffer:

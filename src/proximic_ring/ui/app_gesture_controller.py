@@ -504,6 +504,9 @@ class AppGestureController(QObject):
         except Exception as exc:
             capture_error = f"{type(exc).__name__}: {exc}"
         if target is None:
+            self.owner._event_log("APP_SCENE", gesture=name, result="unavailable",
+                                  reason="capture_failed" if capture_error else "foreground_changed",
+                                  error=capture_error)
             # Unknown foreground must not accidentally start voice or execute
             # a default gesture that could have been overridden in that app.
             return AppGestureEvent(BoundGestureEvent(event, bindings), None, generation, created,
@@ -513,6 +516,13 @@ class AppGestureController(QObject):
             catalog.observe_scene(target)
         active_scene = (target.scene if target.scene in scene_apps.get(target.bundle, [])
                         and not target.blocked and target.input_context == "nontext" else "")
+        if target.bundle in scene_apps:
+            reason = ("blocked_window" if target.blocked else "no_scene" if not target.scene else
+                      "text_focus" if target.input_context == "text" else
+                      "unknown_focus" if target.input_context != "nontext" else
+                      "unconfigured_scene" if not active_scene else "ready")
+            self.owner._event_log("APP_SCENE", _live_message="", gesture=name, app=target.bundle,
+                                  scene=target.scene, input_context=target.input_context, reason=reason)
         if active_scene:
             # Scene mappings are independent of regular bindings. Unassigned
             # voice gestures stay silent instead of falling back to voice.
@@ -535,7 +545,10 @@ class AppGestureController(QObject):
             self.notify("暂时无法确认前台应用，未执行手势，请重试")
             return
         target = event.target
-        if target is None or target.blocked or self.owner._ring_gestures.speech_busy():
+        if target is not None and target.blocked:
+            self.notify("当前有弹窗或菜单，请关闭后在目标应用中重试")
+            return
+        if target is None or self.owner._ring_gestures.speech_busy():
             return
         if action_phase("next", phase=event.phase, composing=event.composing,
                         writing=event.writing, edit_requested=event.edit_requested) != "dispatch":
@@ -606,7 +619,10 @@ class AppGestureController(QObject):
             self.notify("操作已过期，请重新触发手势")
             return True
         if target.blocked:
-            self.notify("请回到主聊天输入区域操作")
+            self.notify("当前有弹窗或菜单，请关闭后在目标应用中重试" if target.menu_action
+                        else "请回到主聊天输入区域操作")
+            self.owner._event_log("APP_GESTURE", app=target.bundle, gesture=name,
+                                  result="blocked", reason="blocked_window_or_control")
             return True
         phase_action = "next" if action.startswith("menu:") else action
         original = action_phase(phase_action, phase=event.phase, composing=event.composing,
