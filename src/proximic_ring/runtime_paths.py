@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 
 
+# Keep the existing storage namespace across the Mythlink rebrand so installed
+# users retain downloaded models, voice history and diagnostics.
 APP_DIR_NAME = "ProxiMic Voice"
 DATA_HOME_ENV = "PROXIMIC_DATA_HOME"
 

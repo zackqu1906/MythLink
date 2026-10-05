@@ -30,7 +30,7 @@ final class IMEService {
     func inactiveState(requestID: String? = nil, lifecycleEvent: String = "inactive") {
         var state: [String: Any] = ["type": "state", "ready": false, "phase": "idle", "client_id": "",
                                     "utterance_id": "", "application": "", "revision": 0,
-                                    "edit_requested": false, "raw": "", "error": "请手动选中 ProxiMic 语音输入法并进入文本框",
+                                    "edit_requested": false, "raw": "", "error": "请手动选中 Mythlink 语音输入法并进入文本框",
                                     "lifecycle_event": lifecycleEvent, "has_composition": false,
                                     "original": "", "selection": [0, 0], "context_complete": false,
                                     "capabilities": ["marked_text": false, "context_complete": false,

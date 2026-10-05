@@ -111,7 +111,7 @@ def test_frozen_channel_launches_same_executable_without_source_python(monkeypat
     import proximic_ring.native_access as module
     calls = []
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", "/Applications/Proximic Voice.app/Contents/MacOS/ProximicVoice")
+    monkeypatch.setattr(sys, "executable", "/Applications/Mythlink.app/Contents/MacOS/Mythlink")
     monkeypatch.setattr(module.subprocess, "Popen", lambda args, **kw: calls.append((args, kw)) or SimpleNamespace())
     channel = NativeAccessChannel()
     channel._start()

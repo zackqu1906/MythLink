@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumWidth: 940
     minimumHeight: 700
     visible: true
-    title: "MythLink"
+    title: "Mythlink"
     color: uiTheme.background
     Material.theme: Material.Light
     Material.accent: uiTheme.primary
@@ -614,7 +614,7 @@ ApplicationWindow {
                 source: "../assets/figma/mythlink-logo.svg"
                 sourceSize.width: Math.ceil(width * Screen.devicePixelRatio)
                 fillMode: Image.PreserveAspectFit
-                Accessible.name: "MythLink"
+                Accessible.name: "Mythlink"
             }
             Repeater {
                 model: [{label: "首页", icon: "home", page: 0}, {label: "语音输入", icon: "voice", page: 1}, {label: "触摸板", icon: "pointer", page: 3}, {label: "场景与手势", icon: "gesture", page: 2}]
@@ -715,7 +715,7 @@ ApplicationWindow {
         background: Rectangle { color: uiTheme.surface; radius: 16; border.color: uiTheme.line }
         contentItem: ColumnLayout {
             spacing: 16
-            Label { Layout.fillWidth: true; text: "让 MythLink 更好用"; font.pixelSize: 18; font.bold: true; color: uiTheme.text }
+            Label { Layout.fillWidth: true; text: "让 Mythlink 更好用"; font.pixelSize: 18; font.bold: true; color: uiTheme.text }
             Label { Layout.fillWidth: true; text: "欢迎向我们反馈使用中遇到的问题，也欢迎分享你的想法和建议。"; wrapMode: Text.Wrap; color: uiTheme.muted }
             RowLayout {
                 Layout.fillWidth: true
@@ -747,8 +747,12 @@ ApplicationWindow {
         background: Rectangle { color: uiTheme.surface; radius: 16; border.color: uiTheme.line }
         contentItem: ColumnLayout {
             spacing: 16
+            Label { Layout.fillWidth: true; text: "Mythlink · 戒指交互平台"; font.pixelSize: 18; font.bold: true; color: uiTheme.text }
+            Label { Layout.fillWidth: true; text: "融合语音输入、鼠标控制、手势识别与场景联动，在一个平台中管理戒指的交互功能。"; wrapMode: Text.Wrap; color: uiTheme.muted }
             Label { Layout.fillWidth: true; text: "语音输入"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
             Label { Layout.fillWidth: true; text: "连接 Ring 并开启语音识别。点入文本框后，使用当前配置的语音手势开始输入；语音输入页可查看记录。"; wrapMode: Text.Wrap; color: uiTheme.muted }
+            Label { Layout.fillWidth: true; text: "鼠标控制"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
+            Label { Layout.fillWidth: true; text: "在触摸板页开启鼠标控制，通过戒指触摸板移动指针和轻触点击，并调整指针速度。"; wrapMode: Text.Wrap; color: uiTheme.muted }
             Label { Layout.fillWidth: true; text: "场景与手势"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
             Label { Layout.fillWidth: true; text: "Tap 与四向滑动组成语音手势组。应用覆盖其中任意一个后，该应用常规状态下停用整组语音操作。放映、阅读和播放等场景独立配置；全局功能占用的手势会在应用内置灰。"; wrapMode: Text.Wrap; color: uiTheme.muted }
             UiAction { Layout.alignment: Qt.AlignLeft; text: "输入法与权限设置"; onClicked: { helpDialog.close(); inputMethodSetupDialog.open() } }
@@ -955,7 +959,7 @@ ApplicationWindow {
                             ColumnLayout {
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                                 visible: appController.appGestures.supported
-                                Label { text: "切入 ProxiMic Voice"; color: root.textMain }
+                                Label { text: "切入 Mythlink"; color: root.textMain }
                                 ComboBox {
                                     id: inputSourceGestureSelector
                                     objectName: "inputSourceGestureSelector"

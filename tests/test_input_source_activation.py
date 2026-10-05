@@ -288,11 +288,11 @@ def test_isolated_host_never_launches_installed_input_method(tmp_path, monkeypat
     bundle.touch()
     monkeypatch.setattr(module.Path, 'home', lambda: tmp_path)
     monkeypatch.delenv('PROXIMIC_IME_SOCKET', raising=False)
-    monkeypatch.setattr(module.sys, 'argv', ['ProximicVoice'])
+    monkeypatch.setattr(module.sys, 'argv', ['Mythlink'])
     if isolation == 'custom_socket':
         monkeypatch.setenv('PROXIMIC_IME_SOCKET', str(tmp_path / 'smoke/bridge.sock'))
     else:
-        monkeypatch.setattr(module.sys, 'argv', ['ProximicVoice', '--self-check-package'])
+        monkeypatch.setattr(module.sys, 'argv', ['Mythlink', '--self-check-package'])
     class Process:
         @staticmethod
         def startDetached(*args): pytest.fail('isolated host must not launch the installed IME')

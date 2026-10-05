@@ -126,7 +126,7 @@ a.datas = [item for item in a.datas if _used_transformers_model(item[0])]
 
 # Binary dependency discovery is conservative for QML and retains frameworks
 # belonging only to excluded modules.  None of these are imported by Python or
-# QML in Proximic Voice; the packaged startup probe verifies the final closure.
+# QML in Mythlink; the packaged startup probe verifies the final closure.
 _UNUSED_QT_FRAMEWORKS = {
     "QtMultimediaWidgets.framework",
     "QtPdf.framework",
@@ -181,7 +181,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="ProximicVoice",
+    name="Mythlink",
     icon=str(project_root / "packaging/icons/mythlink.ico") if os.name == "nt" else None,
     debug=False,
     bootloader_ignore_signals=False,
@@ -195,26 +195,26 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="ProximicVoice",
+    name="Mythlink",
 )
 
 if platform.system() == "Darwin":
     app = BUNDLE(
         coll,
-        name="Proximic Voice.app",
+        name="Mythlink.app",
         icon=str(project_root / "packaging/icons/mythlink.icns"),
         bundle_identifier="com.proximic.voice",
         info_plist={
-            "CFBundleDisplayName": "Proximic Voice",
+            "CFBundleDisplayName": "Mythlink",
             "CFBundleShortVersionString": "0.6.0",
             "CFBundleVersion": "0.6.0",
             "LSMinimumSystemVersion": "15.0",
             # The same executable also runs permission/gesture workers. Start
             # without a Dock icon; ui.main promotes only the normal Qt host.
             "LSUIElement": True,
-            "NSBluetoothAlwaysUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
-            "NSBluetoothPeripheralUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
-            "NSMicrophoneUsageDescription": "MythLink 使用你选定的电脑麦克风采集语音并转写。",
+            "NSBluetoothAlwaysUsageDescription": "Mythlink 使用蓝牙连接智能戒指，接收语音、触摸与手势数据，用于语音输入、鼠标控制和场景操作。",
+            "NSBluetoothPeripheralUsageDescription": "Mythlink 使用蓝牙连接智能戒指，接收语音、触摸与手势数据，用于语音输入、鼠标控制和场景操作。",
+            "NSMicrophoneUsageDescription": "Mythlink 使用你选定的电脑麦克风采集语音并转写。",
             "NSScreenCaptureUsageDescription": "用于 Ring 窗口选择层的实时预览和用户主动发起的预览验证，不录音、不保存或上传画面。",
         },
     )

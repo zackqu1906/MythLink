@@ -5,8 +5,8 @@
     <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
     <key>CFBundleExecutable</key><string>ProxiMicInput</string>
     <key>CFBundleIdentifier</key><string>com.proximic.inputmethod.ProxiMicVoice</string>
-    <key>CFBundleName</key><string>ProxiMic 语音</string>
-    <key>CFBundleDisplayName</key><string>ProxiMic 语音</string>
+    <key>CFBundleName</key><string>Mythlink 语音</string>
+    <key>CFBundleDisplayName</key><string>Mythlink 语音</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleSignature</key><string>PRXI</string>
     <key>CFBundleVersion</key><string>1</string>

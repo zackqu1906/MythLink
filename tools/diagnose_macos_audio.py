@@ -171,7 +171,7 @@ def _print_log_evidence(log_path: Path, tail_lines: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Analyze the latest Proximic Voice macOS Ring capture and log."
+        description="Analyze the latest Mythlink macOS Ring capture and log."
     )
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
     parser.add_argument("--wav", type=Path, default=None)

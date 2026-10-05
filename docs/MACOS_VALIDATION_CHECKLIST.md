@@ -1,6 +1,6 @@
-# Proximic Voice macOS 实机验证与修复清单
+# Mythlink macOS 实机验证与修复清单
 
-本文档用于在真实 Apple Silicon Mac 上验证并修复 Proximic Voice。Windows 上的测试只能排除通用代码回归，不能替代 CoreBluetooth、应用包、权限、Qt Cocoa 平台插件及原生动态库的实机验证。
+本文档用于在真实 Apple Silicon Mac 上验证并修复 Mythlink。Windows 上的测试只能排除通用代码回归，不能替代 CoreBluetooth、应用包、权限、Qt Cocoa 平台插件及原生动态库的实机验证。
 
 ## Agent 工作约束
 
@@ -21,7 +21,7 @@
 - [ ] Python 版本和架构。
 - [ ] PySide6、PyInstaller、torch、torchaudio、bleak、funasr 版本。
 - [ ] 当前 Git commit，以及工作区是否存在未提交修改。
-- [ ] 测试对象是源码运行还是 `/Applications/Proximic Voice.app`。
+- [ ] 测试对象是源码运行还是 `/Applications/Mythlink.app`。
 
 建议执行：
 
@@ -64,7 +64,7 @@ git rev-parse HEAD
 观察进程：
 
 ```bash
-pgrep -afil 'ProximicVoice|Proximic Voice'
+pgrep -afil 'Mythlink|Mythlink'
 ```
 
 ### 如果出现第二个主窗口
@@ -77,7 +77,7 @@ pgrep -afil 'ProximicVoice|Proximic Voice'
 - 每个相关进程的父进程：
 
 ```bash
-ps -axo pid,ppid,lstart,command | grep -E 'ProximicVoice|Proximic Voice' | grep -v grep
+ps -axo pid,ppid,lstart,command | grep -E 'Mythlink|Mythlink' | grep -v grep
 ```
 
 重点检查：
@@ -136,10 +136,10 @@ tail -n 300 "$HOME/Library/Application Support/ProxiMic Voice/logs/startup.log"
 建议检查：
 
 ```bash
-find '/Applications/Proximic Voice.app/Contents' -path '*funasr/version.txt' -print
-find '/Applications/Proximic Voice.app/Contents' -path '*third_party/Fun-ASR/model.py' -print
-find '/Applications/Proximic Voice.app/Contents' -path '*third_party/streaming-sensevoice*' -print | head
-find '/Applications/Proximic Voice.app/Contents' -iname '*opus*.dylib' -print
+find '/Applications/Mythlink.app/Contents' -path '*funasr/version.txt' -print
+find '/Applications/Mythlink.app/Contents' -path '*third_party/Fun-ASR/model.py' -print
+find '/Applications/Mythlink.app/Contents' -path '*third_party/streaming-sensevoice*' -print | head
+find '/Applications/Mythlink.app/Contents' -iname '*opus*.dylib' -print
 ```
 
 对找到的动态库执行 `file <路径>`，确认不是仅有 `x86_64` 架构。
@@ -148,11 +148,11 @@ find '/Applications/Proximic Voice.app/Contents' -iname '*opus*.dylib' -print
 
 在“系统设置 → 隐私与安全性”中记录：
 
-- [ ] 蓝牙权限中存在 Proximic Voice，且已允许。
+- [ ] 蓝牙权限中存在 Mythlink，且已允许。
 - [ ] 麦克风权限状态已记录。虽然音频来自 Ring，仍需确认应用实际调用链是否触发该权限。
 - [ ] 辅助功能、输入监控权限状态已记录。
 
-macOS 通过 Quartz 键盘事件听写或修改当前文本框，需要在“系统设置 → 隐私与安全性 → 辅助功能”中允许 Proximic Voice；源码启动时允许 Terminal/Python。编辑预览支持全局 `Enter` 确认和 `Esc` 取消；右 Alt 按住说话仍是 Windows 专用能力。
+macOS 通过 Quartz 键盘事件听写或修改当前文本框，需要在“系统设置 → 隐私与安全性 → 辅助功能”中允许 Mythlink；源码启动时允许 Terminal/Python。编辑预览支持全局 `Enter` 确认和 `Esc` 取消；右 Alt 按住说话仍是 Windows 专用能力。
 
 如果权限弹窗从未出现或拒绝后无法恢复，先记录 `Info.plist` 中的用途说明，不要直接重置整台机器的隐私数据库。
 
@@ -277,7 +277,7 @@ PCM 间隔、RMS/峰值/静音/削波比例和 WAV 路径；第二行给出固�
 ~/Library/Logs/DiagnosticReports/
 ```
 
-只收集与 Proximic Voice、Python 或 Qt 相关且时间匹配的报告，避免混入其他应用日志。
+只收集与 Mythlink、Python 或 Qt 相关且时间匹配的报告，避免混入其他应用日志。
 
 ## 12. 修改后的最低验证要求
 
@@ -324,7 +324,7 @@ DiagnosticReports：
 ## 可直接交给 macOS Agent 的任务提示词
 
 ```text
-请按照 docs/MACOS_VALIDATION_CHECKLIST.md 在这台真实 macOS 机器上验证 Proximic Voice。
+请按照 docs/MACOS_VALIDATION_CHECKLIST.md 在这台真实 macOS 机器上验证 Mythlink。
 
 先记录环境并复现，不要根据 Windows 行为猜测。优先检查：
 1. 顶栏“实时日志”弹窗是否实时显示；

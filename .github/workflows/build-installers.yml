@@ -49,7 +49,7 @@ jobs:
         run: ./scripts/build-windows-installer.ps1 -SkipDependencyInstall
       - uses: actions/upload-artifact@v4
         with:
-          name: ProximicVoice-windows-x64
+          name: Mythlink-windows-x64
           path: dist/installer/*.exe
 
   macos:
@@ -123,7 +123,7 @@ jobs:
         run: bash ./scripts/build-macos.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: ProximicVoice-macos-arm64
+          name: Mythlink-macos-arm64
           path: dist/*.dmg
 
   release:

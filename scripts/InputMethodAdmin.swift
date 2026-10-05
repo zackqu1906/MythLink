@@ -71,10 +71,10 @@ struct InputMethodAdmin {
             let modeID = productID + ".dictation"
             guard let source = sources().first(where: {
                 property($0, kTISPropertyInputSourceID) as? String == modeID
-            }) else { fail("未找到 ProxiMic Voice，请先在输入法设置中安装组件") }
+            }) else { fail("未找到 Mythlink，请先在输入法设置中安装组件") }
             guard property(source, kTISPropertyInputSourceIsEnabled) as? Bool == true,
                   property(source, kTISPropertyInputSourceIsSelectCapable) as? Bool == true else {
-                fail("ProxiMic Voice 尚未启用，请在系统键盘设置中添加输入法")
+                fail("Mythlink 尚未启用，请在系统键盘设置中添加输入法")
             }
             // Re-selecting an active IME can reset composition in some clients.
             if property(source, kTISPropertyInputSourceIsSelected) as? Bool != true {
@@ -97,7 +97,7 @@ struct InputMethodAdmin {
                 let rightIsMode = (property($1, kTISPropertyInputSourceType) as? String) == (kTISTypeKeyboardInputMode as String)
                 return !leftIsMode && rightIsMode
             }
-            guard !matching.isEmpty else { fail("未找到已注册的 ProxiMic 输入源，请先安装。") }
+            guard !matching.isEmpty else { fail("未找到已注册的 Mythlink 输入源，请先安装。") }
             for source in matching {
                 if property(source, kTISPropertyInputSourceIsEnableCapable) as? Bool == true {
                     let status = TISEnableInputSource(source)
@@ -106,7 +106,7 @@ struct InputMethodAdmin {
             }
         case "disable":
             guard !sources().contains(where: { property($0, kTISPropertyInputSourceIsSelected) as? Bool == true }) else {
-                fail("请先手动切回系统拼音或其他输入法，再卸载 ProxiMic。")
+                fail("请先手动切回系统拼音或其他输入法，再卸载 Mythlink。")
             }
             for source in sources().reversed() {
                 if property(source, kTISPropertyInputSourceIsEnabled) as? Bool == true {

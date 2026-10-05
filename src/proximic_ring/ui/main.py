@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
         from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
     except ImportError as exc:
         raise SystemExit(
-            'ProxiMic UI requires PySide6. Install with: pip install -e ".[ui]"'
+            'Mythlink UI requires PySide6. Install with: pip install -e ".[ui]"'
         ) from exc
 
     from .controller import AppController
@@ -25,9 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     startup_probe = os.environ.get("PROXIMIC_STARTUP_PROBE", "").strip() == "1"
     print("[startup] creating QApplication")
     app = QApplication(list(sys.argv if argv is None else argv))
-    app.setApplicationName("ProxiMic Voice")
-    app.setApplicationDisplayName("ProxiMic Voice")
-    app.setOrganizationName("ProxiMic")
+    app.setApplicationName("Mythlink")
+    app.setApplicationDisplayName("Mythlink")
+    app.setOrganizationName("Mythlink")
 
     from ..mac_app_activation import configure_app_activation
     configure_app_activation(background=startup_probe)
@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             recognition_action.setEnabled(controller.connected and not controller.busy)
             gesture_menu_action.setText(f"显示当前手势菜单 · {controller.ringGestures.modeLabel}")
-            tray.setToolTip(f"ProxiMic Voice · {controller.statusTitle}")
+            tray.setToolTip(f"Mythlink · {controller.statusTitle}")
             if hasattr(tray, "setConnectionStatus"):
                 tray.setConnectionStatus(
                     controller.connected, controller.batteryAvailable,

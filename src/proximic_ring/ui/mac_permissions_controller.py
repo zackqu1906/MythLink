@@ -150,10 +150,13 @@ class MacPermissionsController(QObject):
         if not isinstance(app, QGuiApplication):
             return False
         try:
-            app_version = version("proximic-ring")
+            app_version = version("mythlink")
         except PackageNotFoundError:
-            app_version = "开发版"
-        app.clipboard().setText("MythLink\n版本：" + app_version + "\n系统：" + platform.system() + " "
+            try:
+                app_version = version("proximic-ring")
+            except PackageNotFoundError:
+                app_version = "开发版"
+        app.clipboard().setText("Mythlink\n版本：" + app_version + "\n系统：" + platform.system() + " "
                                + (platform.mac_ver()[0] if sys.platform == "darwin" else platform.release()))
         return True
 
@@ -182,7 +185,7 @@ class MacPermissionsController(QObject):
         if not self._identity["frozen"]:
             return "源码运行：请为启动源码的终端授权。程序会在后台自动检测，权限生效后即可继续使用。"
         prefix = "请先将 App 拖入“应用程序”，退出当前副本，再从“应用程序”打开。" if self._identity["temporary_location"] else ""
-        return prefix + ("请为下方路径的 Proximic Voice 授权，程序会自动检测。"
+        return prefix + ("请为下方路径的 Mythlink 授权，程序会自动检测。"
                          "更新后若已勾选但持续未生效，请核对是否授权了当前副本；必要时重新添加新版 App，"
                          "按键通道会自动重新连接，无需退出主程序。输入法更新与此权限独立。")
 
@@ -250,7 +253,7 @@ class MacPermissionsController(QObject):
         if not self._identity["frozen"]:
             return ("源码运行时，系统可能显示 VS Code、终端或 Python，请以授权弹窗中的名称为准。"
                     "开启后若仍未生效，请重新启动对应程序。")
-        return ("请在系统设置中允许当前使用的 Proximic Voice，无需分别给被预览的应用授权。"
+        return ("请在系统设置中允许当前使用的 Mythlink，无需分别给被预览的应用授权。"
                 "如系统提示，请退出并重新打开应用。")
 
     @Property(str, notify=changed)

@@ -1,21 +1,21 @@
-#define MyAppName "Proximic Voice"
+#define MyAppName "Mythlink"
 #define MyAppVersion "0.6.0"
-#define MyAppPublisher "Proximic"
-#define MyAppExeName "ProximicVoice.exe"
+#define MyAppPublisher "Mythlink"
+#define MyAppExeName "Mythlink.exe"
 
 [Setup]
 AppId={{7F4E8DCA-785E-4D6D-A582-49736863F7B8}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={%LOCALAPPDATA}\Programs\Proximic Voice
+DefaultDirName={%LOCALAPPDATA}\Programs\Mythlink
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\..\dist\installer
-OutputBaseFilename=ProximicVoice-{#MyAppVersion}-windows-x64-setup
+OutputBaseFilename=Mythlink-{#MyAppVersion}-windows-x64-setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -23,7 +23,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=yes
 
 [Files]
-Source: "..\..\dist\ProximicVoice\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\dist\Mythlink\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

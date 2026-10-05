@@ -1,6 +1,6 @@
 # Third-party notices
 
-Proximic Voice integrates the following third-party components. Most downloaded ASR/LLM weights remain outside Git; the provider-supplied touchpad asset below is bundled for offline SDK use.
+Mythlink integrates the following third-party components. Most downloaded ASR/LLM weights remain outside Git; the provider-supplied touchpad asset below is bundled for offline SDK use.
 
 ## llama.cpp
 

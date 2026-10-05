@@ -182,7 +182,7 @@ ScrollView {
             Label {
                 Layout.fillWidth: true
                 text: managementDialog.operation === "remove"
-                    ? "将从 MythLink 的应用列表移除，同时清空它的映射和未保存修改。不会卸载电脑上的应用，之后可重新添加。"
+                    ? "将从 Mythlink 的应用列表移除，同时清空它的映射和未保存修改。不会卸载电脑上的应用，之后可重新添加。"
                     : managementDialog.operation === "restore"
                     ? "将此应用的常规与场景映射恢复为内置默认配置，替换已保存的映射并清除未保存修改。恢复后仍可自由修改，其他应用及全局配置保持不变。"
                     : "将清空这个应用的映射和未保存修改，保留应用图标。其他应用的配置及语音、系统手势保持不变。"

@@ -15,10 +15,10 @@ if (-not $SkipDependencyInstall) {
 
 Push-Location $ProjectRoot
 try {
-    & $Python -m PyInstaller --noconfirm --clean "packaging\proximic_voice.spec"
+    & $Python -m PyInstaller --noconfirm --clean "packaging\mythlink.spec"
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
-    $BundledExe = Join-Path $ProjectRoot "dist\ProximicVoice\ProximicVoice.exe"
+    $BundledExe = Join-Path $ProjectRoot "dist\Mythlink\Mythlink.exe"
     $PackageCheck = Start-Process -FilePath $BundledExe `
         -ArgumentList "--self-check-package" -PassThru -Wait -WindowStyle Hidden
     if ($PackageCheck.ExitCode -ne 0) {
@@ -35,10 +35,10 @@ try {
     if (-not $Iscc) {
         throw "Inno Setup 6 not found. Install it, then rerun this script."
     }
-    & $Iscc "packaging\windows\ProximicVoice.iss"
+    & $Iscc "packaging\windows\Mythlink.iss"
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 
-    $Installer = Join-Path $ProjectRoot "dist\installer\ProximicVoice-0.6.0-windows-x64-setup.exe"
+    $Installer = Join-Path $ProjectRoot "dist\installer\Mythlink-0.6.0-windows-x64-setup.exe"
     if ($env:WINDOWS_SIGNING_CERT_SHA1) {
         $SignToolCandidates = @(
             (Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
@@ -66,4 +66,4 @@ try {
     Pop-Location
 }
 
-Write-Host "Installer: $ProjectRoot\dist\installer\ProximicVoice-0.6.0-windows-x64-setup.exe"
+Write-Host "Installer: $ProjectRoot\dist\installer\Mythlink-0.6.0-windows-x64-setup.exe"

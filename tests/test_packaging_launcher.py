@@ -53,7 +53,7 @@ def test_packaged_qml_runtime_check_requires_every_imported_module(tmp_path) -> 
 def test_frozen_installer_command_does_not_start_ui_or_require_python(monkeypatch) -> None:
     from proximic_ring import input_method_install
     launcher = _load_launcher()
-    monkeypatch.setattr(launcher.sys, "argv", ["/Applications/Proximic Voice.app/Contents/MacOS/ProximicVoice", "--input-method", "install"])
+    monkeypatch.setattr(launcher.sys, "argv", ["/Applications/Mythlink.app/Contents/MacOS/Mythlink", "--input-method", "install"])
     monkeypatch.setattr(launcher.multiprocessing, "freeze_support", lambda: None)
     monkeypatch.setattr(launcher, "run", lambda: pytest.fail("installer must not start a second ASR host"))
     calls = []
@@ -65,7 +65,7 @@ def test_frozen_installer_command_does_not_start_ui_or_require_python(monkeypatc
 def test_native_access_worker_does_not_launch_ui_or_another_asr_host(monkeypatch):
     from proximic_ring import native_access_worker
     launcher = _load_launcher()
-    monkeypatch.setattr(launcher.sys, "argv", ["ProximicVoice", "--native-access-worker"])
+    monkeypatch.setattr(launcher.sys, "argv", ["Mythlink", "--native-access-worker"])
     monkeypatch.setattr(launcher.multiprocessing, "freeze_support", lambda: None)
     monkeypatch.setattr(launcher, "run", lambda: pytest.fail("worker must not launch UI"))
     monkeypatch.setattr(native_access_worker, "main", lambda: 17)
@@ -104,7 +104,7 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(
         launcher.sys,
         "argv",
-        ["ProximicVoice", "--self-check-package"],
+        ["Mythlink", "--self-check-package"],
     )
 
     runtime_paths = types.ModuleType("proximic_ring.runtime_paths")
@@ -116,7 +116,7 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
     ui_main = types.ModuleType("proximic_ring.ui.main")
 
     def fake_main(argv):
-        assert argv == ["ProximicVoice"]
+        assert argv == ["Mythlink"]
         assert launcher.os.environ["PROXIMIC_STARTUP_PROBE"] == "1"
         assert launcher.os.environ["QT_QPA_PLATFORM"] == "offscreen"
         return 0
@@ -139,7 +139,7 @@ def test_permission_status_command_is_read_only_and_does_not_start_main_ui(monke
     from PySide6 import QtCore, QtWidgets
     import proximic_ring.mac_permissions as permissions
     launcher = _load_launcher()
-    monkeypatch.setattr(launcher.sys, 'argv', ['ProximicVoice', '--permission-status'])
+    monkeypatch.setattr(launcher.sys, 'argv', ['Mythlink', '--permission-status'])
     monkeypatch.setattr(launcher.multiprocessing, 'freeze_support', lambda: None)
     monkeypatch.setattr(launcher, 'run', lambda: pytest.fail('permission report must not start UI/onboarding'))
     app, settings = object(), object()

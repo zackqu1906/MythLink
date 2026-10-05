@@ -189,7 +189,7 @@ def _prompt_for(mode: str, edit_mode: str = EDIT_MODE_FRAGMENT) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="独立测试 ProxiMic Voice 的输入/修改大模型处理流程。",
+        description="独立测试 Mythlink 的输入/修改大模型处理流程。",
     )
     parser.add_argument(
         "--provider",
@@ -567,7 +567,7 @@ def _interactive(
     provider: str,
     show_prompt: bool,
 ) -> int:
-    print("ProxiMic Voice LLM 独立测试")
+    print("Mythlink LLM 独立测试")
     print(f"测试范围：{_provider_label(provider)}")
     for target_provider, settings in targets:
         print(

@@ -1,5 +1,13 @@
 # 桌面安装包
 
+产品和安装包名称统一为 **Mythlink**，定位为融合语音输入、鼠标控制、手势识别与场景联动的戒指交互平台。
+构建入口为 `packaging/mythlink.spec`，Windows 安装器配置为 `packaging/windows/Mythlink.iss`。
+
+为兼容已有安装，用户数据与模型缓存目录、`QSettings` 命名空间、macOS bundle / 输入源标识及
+Windows 安装器 AppId 保持原值；Python 内部包名 `proximic_ring` 和 `PROXIMIC_*` 环境变量继续有效。
+发行包名称为 `mythlink`，推荐命令为 `mythlink`、`mythlink-ui`，旧命令保留为兼容入口。
+GitHub 仓库与下载链接沿用实际地址；历史构建记录中的产物路径保留原名。
+
 ## 输入法验收隔离
 
 打包自检使用临时 `PROXIMIC_IME_SOCKET` 时，不能通过 `open` 预热系统已安装的输入法。
@@ -9,7 +17,7 @@
 `--self-check-package` 时直接跳过系统组件启动；正常运行的后台预热保持原样。
 测试自己的输入法客户端须显式启动并自行清理，不能借系统常驻组件验收临时端点。
 
-Proximic Voice 使用“轻量主安装包 + 模型按需下载”：安装包包含 UI、Ring SDK、
+Mythlink 使用“轻量主安装包 + 模型按需下载”：安装包包含 UI、Ring SDK、
 ASR/推理依赖和 16 kHz ADPCM 解码器，不包含 ASR 权重及约 2.5 GB 的本地 GGUF。
 首次使用相应功能时，ASR 框架下载权重；本地文本模型由设置页的“下载本地模型”按钮下载。
 
@@ -41,7 +49,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Compute cpu -SkipL
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
 ```
 
-产物：`dist/installer/ProximicVoice-0.6.0-windows-x64-setup.exe`。安装器为当前用户
+产物：`dist/installer/Mythlink-0.6.0-windows-x64-setup.exe`。安装器为当前用户
 安装，不要求管理员权限，并创建开始菜单入口，可选桌面快捷方式。
 
 公开分发前可通过证书存储中的代码签名证书为安装包签名：
@@ -65,7 +73,7 @@ Homebrew，也不会修改系统 Python：
 ./scripts/build-macos.sh
 ```
 
-产物：`dist/ProximicVoice-0.6.0-macos-arm64.dmg`。构建脚本把 Python 运行时
+产物：`dist/Mythlink-0.6.0-macos-arm64.dmg`。构建脚本把 Python 运行时
 复制进 `.app`，用户电脑不需要安装 Python、Homebrew 或其他运行库。生成 DMG 前，脚本会实际启动冻结后的
 可执行文件执行 `--self-check-package`，验证内置 ADPCM 解码器、全部必需 QML 模块、QApplication、
 控制器、ASR 导入和 QML 根窗口；启动失败会直接终止构建，详细信息写入

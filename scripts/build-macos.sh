@@ -46,9 +46,9 @@ fi
 PROXIMIC_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" /bin/zsh scripts/build-input-method.sh
 PROXIMIC_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" /bin/zsh scripts/build-proximity.sh
 PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON" -m PyInstaller --noconfirm --clean packaging/proximic_voice.spec
+    "$PYTHON" -m PyInstaller --noconfirm --clean packaging/mythlink.spec
 
-APP="$PROJECT_ROOT/dist/Proximic Voice.app"
+APP="$PROJECT_ROOT/dist/Mythlink.app"
 # Keep the installable app bundle intact. PyInstaller's binary collection can
 # flatten nested apps; copy/sign these helpers after it has built the host.
 mkdir -p "$APP/Contents/Helpers"
@@ -69,7 +69,7 @@ fi
 codesign --verify --deep --strict --verbose=2 "$APP"
 plutil -lint "$APP/Contents/Info.plist"
 "$PYTHON" tools/verify_macos_bundle.py "$APP" --minimum-macos 15.0
-APP_EXECUTABLE="$APP/Contents/MacOS/ProximicVoice"
+APP_EXECUTABLE="$APP/Contents/MacOS/Mythlink"
 if ! file "$APP_EXECUTABLE" | grep -q "arm64"; then
     echo "Packaged executable is not Apple Silicon arm64: $APP_EXECUTABLE" >&2
     exit 1
@@ -113,9 +113,9 @@ mkdir -p "$DMG_ROOT"
 cp -R "$APP" "$DMG_ROOT/"
 ln -s /Applications "$DMG_ROOT/Applications"
 cp "$PROJECT_ROOT/packaging/macos-installation.txt" "$DMG_ROOT/安装说明.txt"
-DMG="$PROJECT_ROOT/dist/ProximicVoice-0.6.0-macos-arm64.dmg"
+DMG="$PROJECT_ROOT/dist/Mythlink-0.6.0-macos-arm64.dmg"
 rm -f "$DMG"
-hdiutil create -volname "Proximic Voice" -srcfolder "$DMG_ROOT" \
+hdiutil create -volname "Mythlink" -srcfolder "$DMG_ROOT" \
     -ov -format UDZO "$DMG"
 
 if [[ -n "${APPLE_NOTARY_PROFILE:-}" && -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then

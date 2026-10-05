@@ -35,8 +35,8 @@ final class ProbeTextView: NSTextView {
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let window = NSWindow(contentRect: NSRect(x: 180, y: 260, width: 760, height: 320), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-window.title = "ProxiMic 输入法通道诊断（独立测试窗口）"
-let hint = NSTextField(labelWithString: "请点下面的测试文字，再手动选择 ProxiMic Voice。自动检查只操作这个窗口。")
+window.title = "Mythlink 输入法通道诊断（独立测试窗口）"
+let hint = NSTextField(labelWithString: "请点下面的测试文字，再手动选择 Mythlink。自动检查只操作这个窗口。")
 hint.frame = NSRect(x: 20, y: 270, width: 720, height: 30)
 window.contentView!.addSubview(hint)
 let view = ProbeTextView(frame: NSRect(x: 20, y: 20, width: 720, height: 240))

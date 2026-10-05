@@ -13,7 +13,7 @@ def prepare_funasr_runtime() -> None:
     """Satisfy FunASR's unused librosa import in a frozen application.
 
     ``funasr.utils.load_utils`` imports librosa unconditionally, although the
-    audio paths used by Proximic Voice use torch, torchaudio and NumPy only.
+    audio paths used by Mythlink use torch, torchaudio and NumPy only.
     Keeping librosa would also retain numba, llvmlite, scipy and scikit-learn.
     Source installations keep using a real librosa when one is available; a
     frozen build uses this empty module because those APIs are never called.
@@ -64,7 +64,7 @@ def _install_modelscope_download_shim() -> None:
         cache_root = Path(
             os.environ.get("MODELSCOPE_CACHE", Path.home() / ".cache/modelscope")
         ).expanduser()
-        # Reuse the legacy cache written by earlier Proximic Voice releases.
+        # Reuse the legacy cache written by earlier Mythlink releases.
         cached_snapshot = (
             cache_root
             / "models"

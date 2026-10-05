@@ -5,7 +5,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_PYTHON="$PROJECT_ROOT/.runtime/venv/bin/python"
 
 if [[ ! -x "$VENV_PYTHON" ]]; then
-    echo "Proximic Voice is not installed yet." >&2
+    echo "Mythlink is not installed yet." >&2
     echo "Run: ./scripts/setup-macos.sh" >&2
     exit 1
 fi

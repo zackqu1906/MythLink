@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>com.proximic.Presence</string>
-<key>CFBundleName</key><string>ProxiMic 距离锁屏</string>
+<key>CFBundleName</key><string>Mythlink 距离锁屏</string>
 <key>CFBundleExecutable</key><string>ProxiMicPresence</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundlePackageType</key><string>APPL</string>

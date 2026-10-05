@@ -19,7 +19,7 @@ class TouchpadBackbone:
         try:
             import MNN
         except ImportError as exc:
-            raise RuntimeError("Touchpad inference requires MNN==3.6.1; install proximic-ring[touchpad]") from exc
+            raise RuntimeError("Touchpad inference requires MNN==3.6.1; install mythlink[touchpad]") from exc
         self._mnn = MNN
         model = default_model_path() if model is None else Path(model)
         self.interpreter = MNN.Interpreter(str(model))
@@ -71,4 +71,3 @@ class TouchpadBackbone:
         # aliases next_ssm_0 output in this model's CPU memory plan. Android JNI
         # snapshots all 12 outputs and only uploads them at the next step.
         return values
-

@@ -44,9 +44,9 @@ def test_permission_changes_are_not_cached_by_key_delivery(monkeypatch):
 
 
 @pytest.mark.parametrize("path,temporary", [
-    ("/Applications/Proximic Voice.app/Contents/MacOS/ProximicVoice", False),
-    ("/Volumes/Proximic Voice/Proximic Voice.app/Contents/MacOS/ProximicVoice", True),
-    ("/private/tmp/AppTranslocation/ABC/d/Proximic Voice.app/Contents/MacOS/ProximicVoice", True),
+    ("/Applications/Mythlink.app/Contents/MacOS/Mythlink", False),
+    ("/Volumes/Mythlink/Mythlink.app/Contents/MacOS/Mythlink", True),
+    ("/private/tmp/AppTranslocation/ABC/d/Mythlink.app/Contents/MacOS/Mythlink", True),
 ])
 def test_diagnostics_identify_the_running_app_not_an_installed_namesake(monkeypatch, path, temporary):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
@@ -274,7 +274,7 @@ def test_closed_monitor_discards_native_request_completion(monkeypatch):
 
 def test_permission_scope_separates_source_installed_copies_and_adhoc_updates(monkeypatch, tmp_path):
     import proximic_ring.mac_permissions as module
-    executable = tmp_path / 'Proximic Voice.app/Contents/MacOS/ProximicVoice'
+    executable = tmp_path / 'Mythlink.app/Contents/MacOS/Mythlink'
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b'code')
     identity = dict(frozen=False, executable=str(executable), app_path='')
@@ -292,7 +292,7 @@ def test_permission_scope_separates_source_installed_copies_and_adhoc_updates(mo
     signed = module.permission_request_scope()
     executable.write_bytes(b'new signed binary')
     assert signed == module.permission_request_scope()
-    identity['app_path'] = '/Volumes/Proximic Voice/Proximic Voice.app'
+    identity['app_path'] = '/Volumes/Mythlink/Mythlink.app'
     assert signed != module.permission_request_scope()
 
 

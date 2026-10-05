@@ -480,8 +480,10 @@ def _build_session_controller(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="proximic-ring",
-        description="ProxiMic inference, Ringo dataset collection, and model training.",
+        prog="mythlink",
+        description=("Mythlink smart ring interaction platform: voice input, mouse control, "
+                     "and gesture recognition. CLI tools for audio inference, data collection, "
+                     "and model training; launch mythlink-ui for the desktop platform."),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

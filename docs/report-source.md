@@ -1,6 +1,6 @@
-# ProximicVoice 用户数据反馈、个性化增强与论文方案研究报告
+# Mythlink 用户数据反馈、个性化增强与论文方案研究报告
 
-**受众**：ProximicVoice 产品与研究开发者  
+**受众**：Mythlink 产品与研究开发者
 **日期**：2026-08-25  
 **范围**：中文、跨应用、Ring 近场语音输入与语音编辑；下游 ASR/LLM 主要视为封闭 API，不以微调大模型为前提。  
 **研究目标**：确定应收集哪些真实用户数据、怎样把数据转化为输入法能力，以及怎样组织成一项可发表的 HCI/IUI 研究。
@@ -21,7 +21,7 @@
 
 ### 1.1 已经具备的可利用触点
 
-ProximicVoice 已有不少适合构建数据闭环的基础：
+Mythlink 已有不少适合构建数据闭环的基础：
 
 - `TextProcessingRequest`/`TextProcessingResult` 已有关联 request、session、模式、ASR 原文、目标文本、LLM 结果、延迟、错误和原始模型输出的字段（`src/proximic_ring/text_processing/model.py:94-115`）。
 - ASR worker 已记录“开始接收音频”“最终推理开始”“模型结束”等阶段性时序（`src/proximic_ring/asr/streaming.py:245,291,307`）。
@@ -45,7 +45,7 @@ ProximicVoice 已有不少适合构建数据闭环的基础：
 
 CoAuthor 记录了 63 名作者、1,445 次写作会话的按键级事件，包括请求建议、接受、拒绝、光标移动和后续编辑，说明细粒度、可重放交互日志能够同时支持行为分析和模型能力评估。[CoAuthor 项目与 CHI 2022 论文](https://coauthor.stanford.edu/)
 
-对 ProximicVoice 的启示是：一次语音请求不应只有“输入—输出”两列，而应保存完整事件轨迹和时间戳；否则无法研究用户是如何达到最终文本的。
+对 Mythlink 的启示是：一次语音请求不应只有“输入—输出”两列，而应保存完整事件轨迹和时间戳；否则无法研究用户是如何达到最终文本的。
 
 ### 2.2 用户修正可以通过记忆改善冻结模型
 
@@ -67,7 +67,7 @@ Nifty 将用户未选择建议视为 one-shot implicit negative feedback，并�
 
 但一项对真实 Human-LLM 日志的研究发现，隐式反馈对理解用户很有价值，作为学习信号时却结果混合；只按正负极性训练可能退化，反馈内容和初始请求质量都会影响结果。[User Feedback in Human-LLM Dialogues, EMNLP 2025](https://aclanthology.org/2025.emnlp-main.133/)
 
-因此，ProximicVoice 必须采用多证据合成：最终文本差异 > 明确失败原因 > 重说/撤销 > 确认/取消。不能构造“confirm=1，cancel=0”的简单训练集。
+因此，Mythlink 必须采用多证据合成：最终文本差异 > 明确失败原因 > 重说/撤销 > 确认/取消。不能构造“confirm=1，cancel=0”的简单训练集。
 
 ### 2.5 Contextual bandit适合从部署反馈选择策略
 
@@ -75,7 +75,7 @@ Nifty 将用户未选择建议视为 one-shot implicit negative feedback，并�
 
 PURPLE 进一步指出，个性化记忆的语义相关性不等于对生成真正有用，并用 contextual bandit 优化应检索哪些用户记录。[PURPLE, ACL 2026](https://aclanthology.org/2026.acl-long.1467/)
 
-这些证据支持将 ProximicVoice 的策略选择建模为：给定当前输入、场景和用户历史，选择一个可执行策略，使用户最终成本最小、质量最高。
+这些证据支持将 Mythlink 的策略选择建模为：给定当前输入、场景和用户历史，选择一个可执行策略，使用户最终成本最小、质量最高。
 
 ### 2.6 语音编辑本身是多策略问题
 

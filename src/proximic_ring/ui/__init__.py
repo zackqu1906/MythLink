@@ -1,1 +1,1 @@
-"""PySide6/Qt Quick desktop application for ProxiMic Voice."""
+"""PySide6/Qt Quick desktop application for Mythlink."""

@@ -79,7 +79,7 @@ app.run()
         assert host["status"] == "ready", host.get("reason")
         own = [c for c in host["cards"] if c["pid"] == process.pid]
         assert len(own) == 1 and own[0]["number"] == target["number"]
-        assert own[0]["app"] == "ProxiMic Voice"
+        assert own[0]["app"] == "Mythlink"
         assert channel.call("selector_activate", token=host["token"], target=own[0]["id"]) == {"status": "activated"}
     finally:
         channel.close()

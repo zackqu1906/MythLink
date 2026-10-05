@@ -102,7 +102,7 @@ function Resolve-ComputeMode([string]$RequestedMode, [string[]]$GpuNames) {
 }
 
 if (-not [Environment]::Is64BitOperatingSystem) {
-    throw "Proximic Voice requires 64-bit Windows."
+    throw "Mythlink requires 64-bit Windows."
 }
 
 $NvidiaGpuNames = @(Get-NvidiaGpuNames)
@@ -192,7 +192,7 @@ if ($InstalledTorchFlavor -ne $ResolvedCompute) {
     Write-Host "The requested PyTorch runtime is already installed."
 }
 
-Write-Host "[7/9] Installing Proximic Voice and ASR dependencies..."
+Write-Host "[7/9] Installing Mythlink and ASR dependencies..."
 $Extras = if ($SkipFunASR) {
     ".[ring,asr-streaming-sensevoice,asr-volcengine,ui]"
 } else {

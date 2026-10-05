@@ -724,7 +724,7 @@ class OpenAICompatibleTextProcessor:
         headers = {
             "Content-Type": "application/json; charset=utf-8",
             "Accept": "application/json",
-            "User-Agent": "ProxiMic-Voice/0.6",
+            "User-Agent": "Mythlink/0.6",
         }
         api_key = settings.api_key.strip()
         key_env = settings.api_key_env.strip()

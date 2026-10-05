@@ -42,7 +42,7 @@ try {
     if ($WaitForProcessId -gt 0) {
         $RunningApp = Get-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue
         if ($null -ne $RunningApp) {
-            Write-Host "Waiting for Proximic Voice to exit before replacing PyTorch..."
+            Write-Host "Waiting for Mythlink to exit before replacing PyTorch..."
             $Deadline = [DateTime]::UtcNow.AddSeconds(30)
             while (
                 $null -ne (Get-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue) -and
@@ -51,7 +51,7 @@ try {
                 Start-Sleep -Milliseconds 250
             }
             if ($null -ne (Get-Process -Id $WaitForProcessId -ErrorAction SilentlyContinue)) {
-                throw "Proximic Voice did not exit within 30 seconds. Close it and run this script again."
+                throw "Mythlink did not exit within 30 seconds. Close it and run this script again."
             }
         }
     }

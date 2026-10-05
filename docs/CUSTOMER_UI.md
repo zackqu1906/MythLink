@@ -1,7 +1,9 @@
-# ProxiMic Voice 客户界面
+# Mythlink 客户界面
 
-桌面应用采用 PySide6 + Qt Quick/QML。CLI 继续用于调试和实验，UI 直接调用同一套
-Ring、ProxiMic、ASR、按住说话和文本注入模块，不启动或解析额外的终端进程。
+Mythlink 是融合语音输入、鼠标控制、手势识别与场景联动的戒指交互平台。
+桌面应用采用 PySide6 + Qt Quick/QML，通过首页、语音输入、触摸板和场景与手势页面，
+统一管理设备连接与戒指交互。CLI 继续用于调试和实验，UI 直接调用 Ring、ProxiMic、ASR、
+触摸板和手势模块，不启动或解析额外的终端进程。
 
 ## 安装
 
@@ -29,7 +31,7 @@ python -m pip install -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-vo
 ## 启动
 
 ```powershell
-proximic-ring-ui
+mythlink-ui
 ```
 
 也可以从源码入口启动：

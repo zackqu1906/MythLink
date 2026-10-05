@@ -151,7 +151,7 @@ def test_only_registered_host_main_window_is_included_and_can_activate():
     result = d.session.handle("selector_list", host_pid=10,
                               host_window={"number": 1, "title": "Alpha"})
     assert [c["title"] for c in result["cards"]] == ["Alpha", "Gamma"]
-    assert result["cards"][0]["app"] == "ProxiMic Voice"
+    assert result["cards"][0]["app"] == "Mythlink"
     assert result["cards"][0]["number"] == 1
     json.dumps(result)
     assert d.activate_card(result, 0)["status"] == "activated"

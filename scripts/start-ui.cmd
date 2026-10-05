@@ -11,7 +11,7 @@ set "PROXIMIC_OPUS_DIR=%CD%\.runtime\opus"
 set "PATH=%PROXIMIC_OPUS_DIR%;%PATH%"
 
 if not exist ".runtime\venv\Scripts\python.exe" (
-    echo Proximic Voice is not installed yet.
+    echo Mythlink is not installed yet.
     echo Run: powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
     pause
     exit /b 1
@@ -20,7 +20,7 @@ if not exist ".runtime\venv\Scripts\python.exe" (
 ".runtime\venv\Scripts\python.exe" -m proximic_ring.ui
 if errorlevel 1 (
     echo.
-    echo Proximic Voice exited with an error.
+    echo Mythlink exited with an error.
     echo Reinstall with: powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
     pause
     exit /b 1

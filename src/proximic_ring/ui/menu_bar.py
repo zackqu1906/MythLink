@@ -94,7 +94,7 @@ class MacMenuBar:
         self._actions = []
         self._last_state = None
         self._last_show_info = None
-        self._tooltip = "ProxiMic Voice"
+        self._tooltip = "Mythlink"
 
         self._target = _menu_target_class().alloc().init()
         self._target.owner = weakref.ref(self)
@@ -106,7 +106,7 @@ class MacMenuBar:
                 raise RuntimeError("macOS 未提供菜单栏按钮")
             button.setImagePosition_(AppKit.NSImageOnly)
             button.setTitle_("")
-            button.setAccessibilityLabel_("ProxiMic Voice")
+            button.setAccessibilityLabel_("Mythlink")
             self.setConnectionStatus(False, False, -1, False)
         except Exception:
             self.hide()
@@ -115,7 +115,7 @@ class MacMenuBar:
     def setContextMenu(self, menu):
         self._qt_menu = menu  # Keep QActions alive for native callbacks.
         self._actions = list(menu.actions())
-        self._menu = self._kit.NSMenu.alloc().initWithTitle_("ProxiMic Voice")
+        self._menu = self._kit.NSMenu.alloc().initWithTitle_("Mythlink")
         self._menu.setAutoenablesItems_(False)
         self._entries = []
         for index, action in enumerate(self._actions):
@@ -148,7 +148,7 @@ class MacMenuBar:
         if connected and percentage is None:
             detail += " · 电量未知"
         self._item.button().setToolTip_(self._tooltip + "\n" + detail)
-        self._item.button().setAccessibilityLabel_("ProxiMic Voice · " + detail)
+        self._item.button().setAccessibilityLabel_("Mythlink · " + detail)
 
     def _make_status_image(self, connected, percentage, charging, show_info):
         from Foundation import NSData

@@ -59,7 +59,7 @@ def test_service_navigation_preserves_custom_profiles_and_live_voice(inline_ui, 
 
     controller, bridge, _, root, _ = inline_ui
     controller.asrBackend = "funasr_nano"
-    controller.asrHotwords = "MythLink\n常用人名"
+    controller.asrHotwords = "Mythlink\n常用人名"
     controller.asrApiKey = "test-only-asr-key"
     controller.llmProvider = "volcengine"
     controller.llmModel = "ep-existing-custom-model"

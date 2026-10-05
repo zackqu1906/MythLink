@@ -39,7 +39,7 @@ def strip_bundle(app: Path, *, run=_run) -> dict:
     app = app.resolve(strict=True)
     with (app / "Contents/Info.plist").open("rb") as stream:
         if plistlib.load(stream).get("CFBundleIdentifier") != "com.proximic.voice":
-            raise ValueError("Expected a Proximic Voice application bundle")
+            raise ValueError("Expected a Mythlink application bundle")
     binaries = [app / "Contents/Frameworks" / name for name in LIBRARIES]
     # Validate the entire set before changing a file. A dependency upgrade
     # should request an explicit audit rather than silently miss a library.

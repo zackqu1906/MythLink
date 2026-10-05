@@ -56,7 +56,7 @@ TSMMessagePortCallBack
 
 ## 系统菜单替代入口实测（同日后续）
 
-在同一独立测试窗口中，比较辅助功能选择系统输入法菜单和前台进程调用 TIS 的对照。TextInputMenuAgent 的 AXExtrasMenuBar 能读取到 ProxiMic Voice、拼音和 ABC 项；辅助进程具有辅助功能权限。
+在同一独立测试窗口中，比较辅助功能选择系统输入法菜单和前台进程调用 TIS 的对照。TextInputMenuAgent 的 AXExtrasMenuBar 能读取到 Mythlink、拼音和 ABC 项；辅助进程具有辅助功能权限。
 
 - 直接 AXPress 隐藏菜单项：辅助程序约 98–107ms 返回，动作本身不足 1ms，但实际输入源仍是拼音。不能把此值当作成功切换延迟。
 - AXPress 展开菜单再选目标项：接口返回成功，实际菜单未确认展开，输入源未改变。加入展开和切换超时后约 810–822ms，仍失败。这是等待超时，不是正常操作耗时。

@@ -193,7 +193,7 @@ class TouchpadController(QObject):
         error = error or getattr(run, "output_error", None)
         self._state = "error" if error else "idle"
         if isinstance(error, PermissionError):
-            self._message = "请在系统设置的「隐私与安全性 → 辅助功能」中允许 MythLink 控制电脑，然后重新开启。"
+            self._message = "请在系统设置的「隐私与安全性 → 辅助功能」中允许 Mythlink 控制电脑，然后重新开启。"
         else:
             self._message = str(error) if error else run.reason or "已自动停止，可再次开启。"
         self.changed.emit()

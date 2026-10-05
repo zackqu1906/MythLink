@@ -49,7 +49,7 @@ def _open_startup_log() -> tuple[Path, object]:
         log_path = app_data_root() / "logs" / "startup.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
     except BaseException:
-        log_path = Path(tempfile.gettempdir()) / "ProximicVoice-startup.log"
+        log_path = Path(tempfile.gettempdir()) / "Mythlink-startup.log"
     try:
         from proximic_ring.diagnostic_log import (
             STARTUP_LOG_BACKUP_COUNT,
@@ -72,7 +72,7 @@ def _open_startup_log() -> tuple[Path, object]:
 def _show_fatal_startup_error(error: BaseException, log_path: Path) -> None:
     detail = str(error).strip() or type(error).__name__
     message = (
-        f"Proximic Voice 无法启动：\n{detail}\n\n"
+        f"Mythlink 无法启动：\n{detail}\n\n"
         f"诊断日志：{log_path}"
     )
     try:
@@ -84,7 +84,7 @@ def _show_fatal_startup_error(error: BaseException, log_path: Path) -> None:
                 "end run"
             )
             subprocess.run(
-                ["/usr/bin/osascript", "-e", script, "Proximic Voice", message],
+                ["/usr/bin/osascript", "-e", script, "Mythlink", message],
                 check=False,
                 timeout=20,
             )
@@ -92,7 +92,7 @@ def _show_fatal_startup_error(error: BaseException, log_path: Path) -> None:
             import ctypes
 
             ctypes.windll.user32.MessageBoxW(
-                None, message, "Proximic Voice 启动失败", 0x10
+                None, message, "Mythlink 启动失败", 0x10
             )
     except BaseException:
         # The persistent traceback remains available if even the native dialog
@@ -109,7 +109,7 @@ def run() -> int:
     except BaseException:
         pass
 
-    print("\n=== Proximic Voice startup ===")
+    print("\n=== Mythlink startup ===")
     print(f"time_utc={datetime.now(timezone.utc).isoformat()}")
     print(f"platform={platform.platform()} machine={platform.machine()}")
     print(f"python={sys.version.split()[0]} frozen={bool(getattr(sys, 'frozen', False))}")

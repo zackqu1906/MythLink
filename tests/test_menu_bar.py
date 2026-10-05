@@ -34,7 +34,7 @@ def test_changed_values_only_and_disconnect_clears_battery():
     bar._item = Item()
     bar._last_state = None
     bar._last_show_info = None
-    bar._tooltip = "ProxiMic Voice"
+    bar._tooltip = "Mythlink"
     bar._make_status_image = lambda *state: state
     bar.setConnectionStatus(True, True, 71, False)
     bar.setConnectionStatus(True, True, 71, False)

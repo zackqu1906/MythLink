@@ -1,17 +1,24 @@
-# ProxiMic Voice
+# Mythlink
 
 桌面安装包发布在 [GitHub Releases](https://github.com/zackqu1906/ProximicVoice/releases)。
 Windows 用户下载 `.exe`，Apple Silicon macOS 用户下载 `.dmg`；首次使用本地模型时
 应用会按需下载模型文件。
 
-ProxiMic Voice 是面向 Ringo 可穿戴设备的近场语音输入与语音编辑桌面应用。
-它持续接收 Ring 麦克风音频，用 ProxiMic 两阶段模型判断“是否有人贴近设备说话”，
-只把命中的语音片段交给 ASR，并在 Windows 和 macOS 中完成跨应用听写、文本修改和确认写回。
+**Mythlink 是融合语音输入、鼠标控制、手势识别与场景联动的戒指交互平台。**
+它以 Ringo 智能戒指为入口，将戒指连接、语音、触摸和手势能力整合到统一的桌面应用中，
+让你通过说话、触摸和手势完成输入与电脑控制。
 
-项目同时保留了完整的命令行、数据采集、模型训练和多 ASR 对比能力，既可以作为桌面产品使用，
-也可以作为近场、低声和耳语识别实验平台继续开发。
+- **语音输入与编辑**：近场语音检测、实时听写、跨应用文本修改，支持本地和云端识别。
+- **鼠标与触摸板控制**：通过戒指触摸板移动指针和轻触点击。
+- **手势识别与操作**：接收戒指固件识别的手势，自定义语音操作、快捷键和应用映射。
+- **场景联动**：按应用及阅读、播放、放映等场景配置操作，整合窗口切换和距离锁屏等能力。
+- **设备与功能管理**：统一管理戒指连接、权限、交互设置和语音记录。
 
-当前 macOS 源码通过独立输入法组件提供原生行内听写：手动选中“ProxiMic 语音”，ASR
+平台面向 Windows 和 macOS；具体功能以对应系统支持为准。语音模块使用 ProxiMic 两阶段模型
+筛选近场语音，再交给 ASR 识别。项目同时保留命令行、数据采集、模型训练和多 ASR 对比能力，
+便于继续开发戒指交互功能，以及研究近场、低声和耳语识别。
+
+当前 macOS 源码通过独立输入法组件提供原生行内听写：手动选中“Mythlink 语音”，ASR
 以原生未定稿文字逐段显示，光标旁操作条支持撤销和转编辑。需要拼音时手动切回。
 安装入口、交互规则及 Codex / 微信验收边界见 [输入法听写体验](docs/INLINE_DICTATION.md)。
 
@@ -34,7 +41,7 @@ ProxiMic Voice 是面向 Ringo 可穿戴设备的近场语音输入与语音编�
 3. 首次构建时执行：
 
 ```powershell
-cd C:\你的路径\ProximicVoice
+cd C:\你的路径\Mythlink
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Compute cpu -SkipLocalLLM
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
 ```
@@ -42,13 +49,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
 构建完成后，安装包位于：
 
 ```text
-dist\installer\ProximicVoice-0.6.0-windows-x64-setup.exe
+dist\installer\Mythlink-0.6.0-windows-x64-setup.exe
 ```
 
 双击 `.exe`，按安装向导完成安装。当前 Demo 尚未使用商业代码签名证书，SmartScreen
 可能显示“发布者未知”；确认文件来自本仓库后，可选择 **更多信息 → 仍要运行**。
 
-后续只修改 Python、QML、提示词或其他业务代码时，关闭正在运行的 ProxiMic Voice，
+后续只修改 Python、QML、提示词或其他业务代码时，关闭正在运行的 Mythlink，
 然后使用快速重建命令：
 
 ```powershell
@@ -71,23 +78,23 @@ xcode-select --install
 解压源码 ZIP，在“终端”进入项目根目录并执行：
 
 ```bash
-cd /你的路径/ProximicVoice
+cd /你的路径/Mythlink
 bash ./scripts/build-macos.sh
 ```
 
 构建完成后可找到：
 
 ```text
-dist/ProximicVoice-0.6.0-macos-arm64.dmg
+dist/Mythlink-0.6.0-macos-arm64.dmg
 ```
 
-双击 `.dmg`，把 **Proximic Voice.app** 拖入 **Applications**。正式 Release 必须使用
+双击 `.dmg`，把 **Mythlink.app** 拖入 **Applications**。正式 Release 必须使用
 Developer ID 签名并通过 Apple 公证；开发者本地未配置证书时生成的 ad-hoc 包只适合本机
 测试。首次启动按提示允许蓝牙，使用电脑麦克风时再允许麦克风权限。
 
 新构建的 DMG 已包含语音输入法：打开主程序，点击 **输入法设置 → 安装／更新输入法**，
-再从同一窗口打开辅助功能设置并允许 Proximic Voice。连接设备并开启识别后，点入目标文本框，
-在菜单栏手动选择 ProxiMic Voice；需要拼音时手动切回。用户不需要 Python、Xcode 或源码。
+再从同一窗口打开辅助功能设置并允许 Mythlink。连接设备并开启识别后，点入目标文本框，
+在菜单栏手动选择 Mythlink；需要拼音时手动切回。用户不需要 Python、Xcode 或源码。
 更新 app 后也要点一次“安装／更新输入法”；更新前先切回拼音或 ABC。DMG 内附完整安装说明。
 
 如果应用图标出现后立即退出，新版本会弹出启动错误并把完整诊断写到：
@@ -106,10 +113,10 @@ partial 和空闲状态下的普通 Stage2 reject 不逐条写入。`diagnostic.
 也可以在“终端”直接启动以复现，并把上述日志发给开发者：
 
 ```bash
-"/Applications/Proximic Voice.app/Contents/MacOS/ProximicVoice"
+"/Applications/Mythlink.app/Contents/MacOS/Mythlink"
 ```
 
-macOS 源码现在通过 ProxiMic Voice 输入法在文本框中流式听写；右滑或 `F8` 在本句
+macOS 源码现在通过 Mythlink 输入法在文本框中流式听写；右滑或 `F8` 在本句
 仍有下划线时将其确认为编辑指令。等待模型时保留指令，结果到达后才移除并应用。
 微信使用原生选区快捷键兼容其范围替换限制；Codex 定稿听写撤销使用本句选区＋退格，编辑通过 IME 直接替换，文字确认后用一次 Cmd+Down 定位到全文末尾。其他应用通过 IME 范围替换。
 具体行为和当前验收情况见[行内听写说明](docs/INLINE_DICTATION.md)。右 `Alt` 按住说话仍仅在 Windows 上提供。
@@ -130,6 +137,9 @@ macOS 源码现在通过 ProxiMic Voice 输入法在文本框中流式听写；�
 
 ## 当前可以做什么
 
+- 通过戒指触摸板控制鼠标指针和轻触点击，通过手势完成页面滚动。
+- 统一配置手势识别事件、应用映射和场景操作，联动窗口切换、阅读、播放与放映。
+- 在支持的 macOS 环境中配置戒指距离锁屏与返回解锁。
 - 发现并连接 Ringo BLE 设备，验证 NUS 服务和真实麦克风 PCM 数据。
 - 使用 ProxiMic Stage1 + CNN Stage2 检测近场说话，不把全部环境声音持续发送给 ASR。
 - 在桌面界面中选择三种 ASR：
@@ -202,7 +212,7 @@ Ring、ProxiMic、ASR、LLM 和桌面写入彼此解耦。更换 ASR 或 LLM 不
 
 ```powershell
 git clone <你的仓库地址>
-cd ProximicVoice
+cd Mythlink
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
@@ -234,7 +244,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipLocalLLM
 本地 LLM 默认位于 `.runtime/local-llm/`。磁盘空间不足时，可以在首次安装前指定其他位置：
 
 ```powershell
-$env:PROXIMIC_LLM_HOME = "D:\ProximicVoiceModels"
+$env:PROXIMIC_LLM_HOME = "D:\MythlinkModels"
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
@@ -421,7 +431,7 @@ PROXIMIC_PYTHON=/opt/homebrew/bin/python3.11 ./scripts/setup-macos.sh
 
 首次连接 Ring 时，需要允许 Terminal 或 Python 使用蓝牙。跨应用听写和编辑还必须在
 “系统设置 → 隐私与安全性 → 辅助功能”中允许 Terminal/Python（源码启动）或
-Proximic Voice（安装包启动），授权后重启程序。当前 macOS 路径使用 CPU，支持 Ring、
+Mythlink（安装包启动），授权后重启程序。当前 macOS 路径使用 CPU，支持 Ring、
 ProxiMic、ASR、失焦后仍可见的悬浮窗、外部文本读取和注入；不提供 Windows 的右 Alt
 按住说话与模式切换快捷键。
 Windows 默认本地 LLM 包中的 `llama-server.exe` 也不能直接用于 macOS。

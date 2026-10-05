@@ -13,9 +13,9 @@ spec.loader.exec_module(stripper)
 
 @pytest.fixture
 def bundle(tmp_path):
-    app = tmp_path / "Proximic Voice.app"
+    app = tmp_path / "Mythlink.app"
     (app / "Contents/MacOS").mkdir(parents=True)
-    (app / "Contents/MacOS/ProximicVoice").write_bytes(b"executable+python-archive")
+    (app / "Contents/MacOS/Mythlink").write_bytes(b"executable+python-archive")
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "com.proximic.voice"}))
     for name in stripper.LIBRARIES:
         binary = app / "Contents/Frameworks" / name
@@ -49,7 +49,7 @@ def test_only_audited_libraries_change_and_second_run_is_idempotent(bundle):
     extra.write_bytes(b"opus runtime")
     report = stripper.strip_bundle(bundle, run=runner())
     assert report["saved_bytes"] == len(stripper.LIBRARIES) * (160 - 8)
-    assert (bundle / "Contents/MacOS/ProximicVoice").read_bytes() == b"executable+python-archive"
+    assert (bundle / "Contents/MacOS/Mythlink").read_bytes() == b"executable+python-archive"
     assert extra.read_bytes() == b"opus runtime"
     assert stripper.strip_bundle(bundle, run=runner())["saved_bytes"] == 0
 
@@ -79,5 +79,5 @@ def test_missing_or_redirected_library_fails_before_any_stripping(bundle, tmp_pa
 
 def test_rejects_other_apps(bundle):
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "other.app"}))
-    with pytest.raises(ValueError, match="Expected a Proximic"):
+    with pytest.raises(ValueError, match="Expected a Mythlink"):
         stripper.strip_bundle(bundle, run=runner())

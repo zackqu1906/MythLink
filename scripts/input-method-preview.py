@@ -58,7 +58,7 @@ class PreviewWaitState:
             reason = "主机通信已启动，但尚未收到输入法组件连接。" + connection_status
         elif not ready:
             stage = "waiting_client"
-            reason = "输入法组件已连接，但没有就绪的输入会话；请手动选中 ProxiMic 语音并点入目标文本框。"
+            reason = "输入法组件已连接，但没有就绪的输入会话；请手动选中 Mythlink 语音并点入目标文本框。"
         elif application not in TARGET_APPLICATIONS:
             stage = "wrong_application"
             reason = f"输入法会话已就绪，但当前应用是 {application or '未知应用'}；正在等待 Codex 或微信输入框。"
@@ -85,7 +85,7 @@ def main() -> int:
     configure_runtime_environment()
     from proximic_ring.ui.controller import AppController
 
-    app = QApplication(["ProxiMic 输入法体验"])
+    app = QApplication(["Mythlink 输入法体验"])
     app.setQuitOnLastWindowClosed(False)
     host = AppController(inline_input_enabled=True)
     host._desktop_output = True
@@ -190,7 +190,7 @@ def main() -> int:
 
     preparation.timeout.connect(poll)
     print("请先退出正在运行的主程序，避免同一输入法连接两个 ASR 主机。", flush=True)
-    print(f"准备时间 {max(1, args.delay)} 秒；手动选择“ProxiMic 语音”，切到 Codex 普通消息框或微信文件传输助手输入框。", flush=True)
+    print(f"准备时间 {max(1, args.delay)} 秒；手动选择“Mythlink 语音”，切到 Codex 普通消息框或微信文件传输助手输入框。", flush=True)
     print("下划线、操作条和文字读写均来自真实输入法组件；仅 ASR 由脚本模拟。", flush=True)
     print("有下划线时可转编辑；F8 / 已配置转换快捷键确认本句为指令，Esc 可取消。定稿后只可撤销。", flush=True)
     print("脚本不会选择输入法、模拟按键、按回车或点发送。", flush=True)

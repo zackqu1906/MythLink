@@ -89,7 +89,7 @@ class InputMethodInstaller:
             if int(uid) != os.getuid():
                 continue
             if command != expected:
-                raise RuntimeError("另一份 ProxiMic 输入法仍在运行，请退出该组件后重试。")
+                raise RuntimeError("另一份 Mythlink 输入法仍在运行，请退出该组件后重试。")
             pids.append(pid)
         self._require_unselected()
         for pid in pids:
@@ -167,10 +167,10 @@ def main(argv: list[str] | None = None) -> int:
             print("输入法安装资源校验通过")
         elif args.action == "uninstall":
             installer.uninstall()
-            print("已移除当前用户的 ProxiMic 输入法。主程序、模型和用户数据保留。")
+            print("已移除当前用户的 Mythlink 输入法。主程序、模型和用户数据保留。")
         else:
             installer.install()
-            print("已安装并启用语音输入法。请在目标输入框从菜单栏手动选择 ProxiMic Voice；需要拼音时手动切回。")
+            print("已安装并启用语音输入法。请在目标输入框从菜单栏手动选择 Mythlink；需要拼音时手动切回。")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         print(str(exc), file=sys.stderr)

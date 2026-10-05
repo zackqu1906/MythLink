@@ -63,7 +63,7 @@ def test_user_bound_snap_switches_with_asr_paused_and_no_supported_app(route, mo
     wait_result(service)
     assert calls == [123]
     assert not keys and not messages
-    assert service.notice == '已切换到 ProxiMic Voice'
+    assert service.notice == '已切换到 Mythlink'
     emit('snap')  # duplicate model event, no second dispatch
     assert calls == [123]
 
@@ -79,7 +79,7 @@ def test_switch_does_not_gate_on_cached_sentence_state(route, monkeypatch, phase
     assert calls == [123]
     assert not messages and not keys
     assert inline._view['phase'] == phase  # selecting is not cancellation or restart
-    assert service.notice == '已切换到 ProxiMic Voice'
+    assert service.notice == '已切换到 Mythlink'
 
 
 @pytest.mark.parametrize('busy', ['writing', 'send', 'audio', 'model', 'undo'])
@@ -136,11 +136,11 @@ def test_error_feedback_has_no_false_success(route, monkeypatch):
     prepare(monkeypatch, service)
     import proximic_ring.ui.app_gesture_controller as module
     def fail(pid):
-        raise RuntimeError('未找到 ProxiMic Voice，请先安装')
+        raise RuntimeError('未找到 Mythlink，请先安装')
     monkeypatch.setattr(module, 'select_voice_input_source', fail)
     emit('snap')
     wait_result(service)
-    assert service.notice == '未找到 ProxiMic Voice，请先安装'
+    assert service.notice == '未找到 Mythlink，请先安装'
 
 
 def test_initial_selection_preserves_existing_custom_bindings(route):

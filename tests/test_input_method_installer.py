@@ -151,9 +151,9 @@ def test_different_executable_is_not_stopped(installer, monkeypatch):
 
 
 def test_frozen_payload_is_located_inside_relocated_app_without_source_tree(tmp_path, monkeypatch):
-    app = tmp_path / 'Another Mac/Proximic Voice.app'
+    app = tmp_path / 'Another Mac/Mythlink.app'
     monkeypatch.setattr(module.sys, 'frozen', True, raising=False)
-    monkeypatch.setattr(module.sys, 'executable', str(app / 'Contents/MacOS/ProximicVoice'))
+    monkeypatch.setattr(module.sys, 'executable', str(app / 'Contents/MacOS/Mythlink'))
     assert module.payload_directory() == app / 'Contents/Helpers'
 
 

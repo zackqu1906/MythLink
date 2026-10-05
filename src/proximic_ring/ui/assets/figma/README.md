@@ -1,6 +1,6 @@
-# MythLink 原始 Figma 素材
+# Mythlink 原始 Figma 素材
 
-来源：用户提供的 MythLink 文件 `KHu0n7WydXkMMHC8pp2TFo`。
+来源：用户提供的 Mythlink 文件 `KHu0n7WydXkMMHC8pp2TFo`。
 取得日期：2026-09-29。通过 Figma 官方连接读取并下载，素材文件保持原始导出内容，不重绘、不截取设计截图、不保留临时下载地址。
 
 - [首页原稿](https://www.figma.com/design/KHu0n7WydXkMMHC8pp2TFo/MythLink?node-id=416-384)

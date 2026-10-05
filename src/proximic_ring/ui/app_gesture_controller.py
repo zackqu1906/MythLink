@@ -241,8 +241,8 @@ class AppGestureController(QObject):
 
     @Property(str, notify=changed)
     def inputSourceHint(self):
-        return (GESTURE_LABELS[self._source_gesture] + " 切入 ProxiMic Voice"
-                if self._source_gesture else "从菜单栏选择 ProxiMic Voice")
+        return (GESTURE_LABELS[self._source_gesture] + " 切入 Mythlink"
+                if self._source_gesture else "从菜单栏选择 Mythlink")
 
     @Property("QVariantList", notify=changed)
     def inputSourceOptions(self):
@@ -300,7 +300,7 @@ class AppGestureController(QObject):
         self._source_busy = False
         if self._setup_closed:
             return
-        self.notify(error or "已切换到 ProxiMic Voice")
+        self.notify(error or "已切换到 Mythlink")
         self.owner._event_log("INPUT_SOURCE_GESTURE", result="failed" if error else "selected", reason=error)
 
     @Slot(str, str, str, str, bool, result=bool)

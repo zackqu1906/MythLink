@@ -88,7 +88,7 @@ func configurePassword() {
     let result = SecItemUpdate(credentialQuery() as CFDictionary, attributes as CFDictionary)
     if result == errSecItemNotFound {
         var query = credentialQuery(); query[kSecValueData as String] = data
-        query[kSecAttrLabel as String] = "ProxiMic 距离解锁 · \(NSUserName())"
+        query[kSecAttrLabel as String] = "Mythlink 距离解锁 · \(NSUserName())"
         let added = SecItemAdd(query as CFDictionary, nil)
         status(added == errSecSuccess ? "" : "密码未保存到钥匙串，请重新设置")
     } else { status(result == errSecSuccess ? "" : "无法更新钥匙串，请重新授权此组件") }

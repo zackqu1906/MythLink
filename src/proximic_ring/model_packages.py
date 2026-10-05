@@ -79,7 +79,7 @@ def _download(
                 partial.unlink(missing_ok=True)
                 downloaded = 0
 
-            headers = {"User-Agent": "ProxiMic-Voice/0.6"}
+            headers = {"User-Agent": "Mythlink/0.6"}
             if downloaded:
                 headers["Range"] = f"bytes={downloaded}-"
             with request.urlopen(

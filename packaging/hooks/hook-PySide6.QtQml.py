@@ -1,4 +1,4 @@
-"""Collect only the QML modules used by Proximic Voice."""
+"""Collect only the QML modules used by Mythlink."""
 
 from pathlib import PurePath
 

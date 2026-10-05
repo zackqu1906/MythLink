@@ -32,7 +32,7 @@ def send(kind, **extra):
 
 try:
     bridge.start()
-    print("等待独立诊断窗口手动选中 ProxiMic Voice；不会向其他应用写入。", flush=True)
+    print("等待独立诊断窗口手动选中 Mythlink；不会向其他应用写入。", flush=True)
     with log.open("w") as output:
         while time.monotonic() < deadline:
             try:

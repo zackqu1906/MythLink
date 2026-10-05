@@ -230,9 +230,9 @@ def test_host_main_descriptor_is_sent_instead_of_excluding_process(selector, mon
         if operation == "selector_list": captured.append(params)
         return original(operation, **params)
     channel.call = call
-    monkeypatch.setattr(s, "_host_window", lambda: {"number": 42, "title": "ProxiMic Voice"})
+    monkeypatch.setattr(s, "_host_window", lambda: {"number": 42, "title": "Mythlink"})
     opened(c, s)
-    assert captured == [{"host_pid": os.getpid(), "host_window": {"number": 42, "title": "ProxiMic Voice"}}]
+    assert captured == [{"host_pid": os.getpid(), "host_window": {"number": 42, "title": "Mythlink"}}]
 
 
 def test_bundle_identity_groups_multiple_processes_but_missing_bundle_uses_pid(selector):

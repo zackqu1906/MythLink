@@ -228,7 +228,7 @@ class WindowSelectorSession:
                         preview = matches[0] if len(matches) == 1 else named[0] if len(named) == 1 else None
                         handle = uuid.uuid4().hex
                         self.targets[handle] = WindowTarget(pid, apps[pid], node)
-                        info = ({"app": "ProxiMic Voice", "bundle": "com.proximic.voice"}
+                        info = ({"app": "Mythlink", "bundle": "com.proximic.voice"}
                                 if pid == self.host_pid else self.ax.app_info(apps[pid]))
                         cards.append({"id": handle, "pid": pid, "title": title, "order": order,
                                       "number": preview["number"] if preview else 0, "frame": frame,

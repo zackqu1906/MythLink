@@ -7819,7 +7819,7 @@ class AppController(QObject):
             raise RuntimeError("macOS 文字操作由输入法组件处理")
         if self._desktop_target is None:
             if sys.platform == "darwin":
-                raise RuntimeError("macOS 文字输入仅支持已选中的 ProxiMic 输入法组件")
+                raise RuntimeError("macOS 文字输入仅支持已选中的 Mythlink 输入法组件")
             else:
                 from ..desktop_target import WindowsDesktopTextTarget
                 from .clipboard import QtClipboardBridge

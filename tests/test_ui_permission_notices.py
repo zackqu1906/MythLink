@@ -35,7 +35,7 @@ def test_contact_is_separate_from_help_and_copies_only_basic_information(inline_
         QMetaObject.invokeMethod(root.findChild(QObject, 'copyContactEmailButton'), 'click')
         assert clipboard.text() == 'zackqu1906@gmail.com'
         QMetaObject.invokeMethod(root.findChild(QObject, 'copyContactAppInfoButton'), 'click')
-        assert clipboard.text().splitlines()[0] == 'MythLink'
+        assert clipboard.text().splitlines()[0] == 'Mythlink'
         assert len(clipboard.text().splitlines()) == 3
         assert '版本：' in clipboard.text() and '系统：' in clipboard.text()
         assert '明天三点开会' not in clipboard.text() and '/Users/' not in clipboard.text()

@@ -261,7 +261,7 @@ ColumnLayout {
         }
         SettingsFormRow {
             title: "授权排查"
-            description: "如授权未生效，核对系统中是否允许“ProxiMic 距离锁屏”或对应启动应用；更新后可能需要重新授权。"
+            description: "如授权未生效，核对系统中是否允许“Mythlink 距离锁屏”或对应启动应用；更新后可能需要重新授权。"
             UiAction {
                 objectName: "proximityRevealComponent"
                 Layout.alignment: Qt.AlignRight

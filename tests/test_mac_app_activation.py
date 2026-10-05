@@ -62,7 +62,7 @@ NSWorkspace.sharedWorkspace().runningApplications()
 hidden = native.activationPolicy()
 configure_app_activation(background=False)
 window = QWindow()
-window.setTitle("MythLink activation regression")
+window.setTitle("Mythlink activation regression")
 window.show()
 window.requestActivate()
 def done():
@@ -85,7 +85,7 @@ def test_worker_stays_out_of_dock_across_restarts():
 
     # Set this in packaging validation to exercise the actual frozen executable.
     bundle = os.environ.get("PROXIMIC_TEST_MACOS_APP")
-    args = ([str(Path(bundle) / "Contents/MacOS/ProximicVoice"), "--native-access-worker"]
+    args = ([str(Path(bundle) / "Contents/MacOS/Mythlink"), "--native-access-worker"]
             if bundle else [sys.executable, "-B", "-m", "proximic_ring.native_access_worker"])
     for _ in range(3):
         process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
