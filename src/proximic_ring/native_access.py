@@ -17,6 +17,7 @@ import threading
 import time
 
 from .mac_permissions import MacPermissionError, PermissionState
+from .scene_diagnostics import SceneActionError, safe_data
 
 
 class NativeAccessChannel:
@@ -25,6 +26,11 @@ class NativeAccessChannel:
         self._process = None
         self._buffer = b""
         self._sequence = 0
+        self._diagnostics = threading.local()
+
+    @property
+    def last_diagnostic(self):
+        return dict(getattr(self._diagnostics, "value", {}))
 
     def _start(self):
         if self._process is not None and self._process.poll() is None:
@@ -59,6 +65,7 @@ class NativeAccessChannel:
 
     def call(self, operation, **params):
         with self._lock:
+            self._diagnostics.value = {"operation": operation, "reason": "channel_start_failed"}
             self._start()
             self._sequence += 1
             sequence = self._sequence
@@ -78,12 +85,18 @@ class NativeAccessChannel:
                         raise RuntimeError("按键通道已断开，请重新操作")
                     self._buffer += chunk
                     if len(self._buffer) > (1048576 if menu_read else 262144):
-                        raise RuntimeError("按键通道响应异常")
+                        raise ValueError("按键通道响应异常")
                 line, self._buffer = self._buffer.split(b"\n", 1)
                 reply = json.loads(line)
+                if not isinstance(reply, dict):
+                    raise ValueError("按键通道响应格式异常")
+                self._diagnostics.value = safe_data(reply.get("diagnostic", {}))
                 if reply.get("id") != sequence:
-                    raise RuntimeError("按键通道响应已过期，请重新操作")
-            except Exception:
+                    raise ValueError("按键通道响应已过期，请重新操作")
+            except Exception as exc:
+                self._diagnostics.value = {"operation": operation, "reason": "channel_timeout" if isinstance(exc, TimeoutError)
+                    else "channel_protocol_error" if isinstance(exc, (ValueError, json.JSONDecodeError)) else "channel_disconnected",
+                    "error_type": type(exc).__name__, "delivery": "unknown" if operation == "shortcut" else "not_sent"}
                 # Delivery may already have happened. Never retry a write.
                 self._stop()
                 raise
@@ -97,6 +110,8 @@ class NativeAccessChannel:
                     raise MacPermissionError(state)
                 return state
             if reply.get("error"):
+                if reply.get("diagnostic", {}).get("reason"):
+                    raise SceneActionError(reply["diagnostic"]["reason"], reply["diagnostic"])
                 raise RuntimeError(reply["error"])
             return reply.get("result")
 

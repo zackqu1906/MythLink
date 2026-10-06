@@ -71,10 +71,13 @@ def application_metadata(path):
         except (ImportError, AttributeError):
             pass
         aliases = ' '.join(str(info.get(key) or '') for key in ('CFBundleDisplayName', 'CFBundleName', 'CFBundleExecutable'))
+        from .application_scene_policy import primary_scene
+        profiles = application_scene_profiles(bundle, info)
         return dict(value=bundle, label=label, path=str(path), running=False,
                     search=f'{label} {path.stem} {aliases} {bundle}'.casefold(),
                     presentationProfile=presentation_profile(bundle, info),
-                    sceneProfiles=application_scene_profiles(bundle, info))
+                    sceneProfiles=profiles,
+                    primaryScene=primary_scene(bundle, profiles, category=info.get('LSApplicationCategoryType', '')))
     except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
         return None
 
@@ -98,6 +101,7 @@ def installed_applications(running, *, roots=None, indexed=None):
         apps[bundle] = dict(value=bundle, label=label, path=path, running=True,
                             presentationProfile=metadata.get('presentationProfile', presentation_profile(bundle)),
                             sceneProfiles=metadata.get('sceneProfiles', application_scene_profiles(bundle)),
+                            primaryScene=metadata.get('primaryScene', ''),
                             search=f"{previous.get('search', '')} {label} {bundle}".casefold())
     return dict(candidates=sorted(apps.values(), key=lambda app: (not app['running'], app['label'].casefold())),
                 partial=partial or scan_errors)

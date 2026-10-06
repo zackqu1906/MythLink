@@ -51,17 +51,18 @@ def menu(label, key, path='Playback'):
     ('test.any.viewer', {scene:'generic' for scene in TEMPLATES}),
     ('com.apple.Preview', {PDF:'preview', IMAGE:'preview'}),
 ])
-def test_added_apps_save_every_supported_template_and_pending_intention(route, monkeypatch, bundle, modes):
+def test_added_apps_save_primary_template_and_pending_intention(route, monkeypatch, bundle, modes):
     c, service, *_ = route
     catalog = add(service, monkeypatch, bundle, modes)
     saved = json.loads(c._settings.value(SETTINGS_KEY))[bundle]
     assert catalog.hasDefaultMappings and not catalog.regularBindings[bundle]
-    for scene in modes:
+    assert set(saved['scenes']) == set(catalog.configured_scenes()[bundle])
+    for scene in catalog.configured_scenes()[bundle]:
         assert set(saved['scenes'][scene]) | set(saved['pendingDefaults'].get(scene, {})) == set(TEMPLATES[scene])
         assert not set(saved['scenes'][scene]) & set(saved['pendingDefaults'].get(scene, {}))
     restored = ApplicationMappingController(service)
     try:
-        for scene in modes:
+        for scene in catalog.configured_scenes()[bundle]:
             assert restored._bindings_for(bundle, scene) == saved['scenes'][scene]
         assert restored._apps[bundle]['pendingDefaults'] == saved['pendingDefaults']
     finally:
@@ -97,21 +98,21 @@ def test_delayed_menus_fill_pending_save_once_and_preserve_user_edits(route, mon
     assert catalog.pendingDefaultCount==5 and catalog.defaultMappingNotice
     assert not catalog.for_scene('test.media', MUSIC)
     catalog.setCustomBinding('test.media','swipe-left','我的上一首','Ctrl+Left')
-    catalog.setBinding('test.media','circle-clockwise','')  # Cancel this unresolved intention.
+    catalog.setBinding('test.media','swipe-up','')  # Cancel this unresolved intention.
     actions=[menu('Next Track','Cmd+Right'),menu('Previous Track','Cmd+Left'),
              menu('Play/Pause','Space'),menu('Volume Up','Cmd+Up')]
     catalog._apply_result('menu',catalog._generation['menu'],'test.media',dict(actions=actions), '')
     assert catalog.bindings['test.media']['swipe-left']['shortcut']=='Ctrl+Left'
     assert catalog.bindings['test.media']['swipe-right']['shortcut']=='Cmd+Right'
     assert catalog.bindings['test.media']['tap']['shortcut']=='Space'
-    assert catalog.pendingBindings=={'circle-counterclockwise':'降低音量'}
-    assert 'circle-clockwise' not in catalog.bindings['test.media']
+    assert catalog.pendingBindings=={'swipe-down':'降低音量'}
+    assert 'swipe-up' not in catalog.bindings['test.media']
     saved=c._settings.value(SETTINGS_KEY)
     catalog._apply_result('menu',catalog._generation['menu'],'test.media',dict(actions=actions), '')
     assert c._settings.value(SETTINGS_KEY)==saved
     restored=ApplicationMappingController(service)
     try:
-        assert restored._apps['test.media']['pendingDefaults']=={MUSIC:{'circle-counterclockwise':'volume-down'}}
+        assert restored._apps['test.media']['pendingDefaults']=={MUSIC:{'swipe-down':'volume-down'}}
         assert restored._bindings_for('test.media',MUSIC)==catalog.bindings['test.media']
     finally: restored.close()
 
@@ -120,7 +121,7 @@ def test_delayed_menus_fill_pending_save_once_and_preserve_user_edits(route, mon
 def test_clears_and_removals_survive_late_menu_scan_and_restart(route,monkeypatch,operation):
     c,service,*_=route
     catalog=add(service,monkeypatch,modes={MUSIC:'generic',VIDEO:'generic'})
-    catalog.selectScene(MUSIC)
+    assert catalog.setPrimaryScene(MUSIC)
     if operation=='clear': catalog.clearApplicationBindings('test.media')
     else: catalog.removeApplication('test.media')
     catalog._apply_result('menu',catalog._generation['menu'],'test.media',dict(actions=[menu('Play','Space')]),'')
@@ -149,21 +150,25 @@ def test_existing_scopes_are_user_owned_but_new_capabilities_receive_defaults(ro
         assert len(catalog._bindings_for('test.media',PDF))==2
         assert not catalog._apps['test.media']['pendingDefaults']
         catalog._apply_result('apps',0,'',[dict(value='test.media',label='Viewer',sceneProfiles={IMAGE:'preview'})],'')
+        assert not catalog._bindings_for('test.media',IMAGE)
+        catalog.selectApplication('test.media')
+        assert catalog.setPrimaryScene(IMAGE)
         assert len(catalog._bindings_for('test.media',IMAGE))==2
-        assert set(json.loads(c._settings.value(SETTINGS_KEY))['test.media']['initializedScenes'])=={MUSIC,PDF,IMAGE}
+        assert set(json.loads(c._settings.value(SETTINGS_KEY))['test.media']['initializedScenes'])=={PDF,IMAGE}
     finally: catalog.close()
 
 
 @pytest.mark.parametrize('bundle,scene,gesture,shortcut',[
     ('com.apple.Music',MUSIC,'swipe-right','Right'),
     ('com.colliderli.iina',VIDEO,'swipe-left','Left'),
-    ('org.videolan.vlc',MUSIC,'circle-clockwise','Cmd+Up'),
+    ('org.videolan.vlc',MUSIC,'swipe-right','Cmd+Right'),
     ('com.apple.Preview',PDF,'swipe-right','Alt+Down'),
     ('com.apple.Preview',IMAGE,'swipe-left','PageUp'),
 ])
 def test_default_bindings_use_existing_scene_and_foreground_guards(presentation,monkeypatch,bundle,scene,gesture,shortcut):
     c,service,_,backend,_,sent,_=presentation
     catalog=add(service,monkeypatch,bundle)
+    assert catalog.setPrimaryScene(scene)
     backend.target=replace(backend.target,bundle=bundle,profile=bundle,scene=scene,input_context='nontext')
     assert not request(c,gesture)
     assert sent==[(bundle,shortcut)]

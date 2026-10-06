@@ -178,6 +178,10 @@ def test_macos_notice_is_visible_on_other_spaces_without_taking_keyboard_focus(m
     events = []
     native = SimpleNamespace(
         collectionBehavior=lambda: 2 | 64,
+        styleMask=lambda: 0,
+        setStyleMask_=lambda value: events.append(("style", value)),
+        setLevel_=lambda value: events.append(("level", value)),
+        setHidesOnDeactivate_=lambda value: events.append(("hides", value)),
         setCollectionBehavior_=lambda value: events.append(("spaces", value)),
         orderFrontRegardless=lambda: events.append("front"),
     )
@@ -192,5 +196,7 @@ def test_macos_notice_is_visible_on_other_spaces_without_taking_keyboard_focus(m
         NSWindowCollectionBehaviorFullScreenAuxiliary=256,
         NSWindowCollectionBehaviorMoveToActiveSpace=2,
     ))
+    from proximic_ring.ui import overlay_stacking
+    monkeypatch.setattr(overlay_stacking, "foreground_content_window", lambda: None)
     _show_on_macos_spaces(SimpleNamespace(winId=lambda: 123))
-    assert events == [("spaces", 1 | 64 | 256), "front"]
+    assert events == [("style", 128), ("spaces", 1 | 64 | 256), ("level", 102), ("hides", False), "front"]

@@ -38,8 +38,15 @@ def desktop(monkeypatch):
 def test_posts_one_balanced_chord_to_pinned_pid(desktop, shortcut, code, flags):
     backend, state, _ = desktop
     backend.post(state.target, shortcut)
-    assert [(pid, e["code"], e["flags"], e["down"]) for pid, e in state.sent] == [
-        (42, code, flags, True), (42, code, flags, False)]
+    from proximic_ring.mac_shortcut_events import MODIFIER_KEYS
+    names=shortcut.split('+')[:-1]
+    device_flags=0
+    for name in names: device_flags |= MODIFIER_KEYS[name][1]
+    assert [(pid, e["code"], e["flags"], e["down"]) for pid, e in state.sent if e["code"] == code] == [
+        (42, code, flags | device_flags, True), (42, code, flags | device_flags, False)]
+    assert len(state.sent) == 2 + 2 * len(names)
+    assert all(pid == 42 for pid, _ in state.sent)
+    if names: assert state.sent[-1][1]["flags"] == 0
 
 
 @pytest.mark.parametrize("change", ["app", "pid", "window", "focus", "modal", "missing", "permission"])

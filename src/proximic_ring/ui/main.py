@@ -103,6 +103,17 @@ def main(argv: list[str] | None = None) -> int:
     window_selector = WindowSelectorOverlay(controller.ringGestures.windowSelector, app,
                                             diagnostic=controller._append_background_diagnostic)
     print("[startup] QML root window ready")
+    from .application_onboarding import ApplicationOnboarding
+    from .application_onboarding_overlay import ApplicationOnboardingOverlay
+    from .feedback_availability import feedback_block_reason
+    application_onboarding = ApplicationOnboarding(controller.appGestures.catalog, app,
+        busy=lambda: feedback_block_reason(controller))
+    application_suggestion = ApplicationOnboardingOverlay(application_onboarding, app)
+    from .scene_notice_controller import SceneNoticeController
+    from .scene_notice_overlay import SceneNoticeOverlay
+    scene_notice = SceneNoticeController(controller.appGestures, app,
+        busy=lambda: feedback_block_reason(controller, suggestion=application_onboarding))
+    scene_notice_overlay = SceneNoticeOverlay(scene_notice, app)
     # Load model weights and seed both stable prompt prefixes after the first
     # frame instead of making the user's first utterance pay this cost.
     if startup_probe:
@@ -134,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(150, controller.appGestures.catalog.initializeInstalledApplications)
         QTimer.singleShot(300, controller.permissionSetup.startIfNeeded)
         QTimer.singleShot(600, controller.warmLocalModel)
+        QTimer.singleShot(2500, application_onboarding.start)
+        QTimer.singleShot(2500, scene_notice.start)
 
     tray_available = QSystemTrayIcon.isSystemTrayAvailable()
     controller.setTrayAvailable(tray_available)

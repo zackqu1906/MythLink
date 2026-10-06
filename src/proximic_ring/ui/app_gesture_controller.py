@@ -1,7 +1,7 @@
 """App-level gesture routing, settings, and one-shot commit-then-send."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import sys
 import threading
@@ -14,6 +14,8 @@ from ..app_gestures import (ACTION_LABELS, APP_LABELS, AppBinding, action_phase,
                             default_profiles, profiles_from_json,
                             profiles_to_json, validate_profiles, reserve_ring_profiles)
 from ..app_shortcuts import MacAppShortcuts
+from ..mac_permissions import MacPermissionError
+from ..scene_diagnostics import SceneDiagnostics, new_trace_id, reason_message, exception_details
 from ..gesture_settings import BoundGestureEvent, GESTURE_LABELS
 from ..input_source_switch import foreground_pid, select_voice_input_source
 from ..scene_capabilities import SCENE_LABELS
@@ -36,6 +38,8 @@ class AppGestureEvent:
     capture_error: str = ""
     scene: str = ""
     exclusive: bool = False
+    trace_id: str = field(default_factory=new_trace_id, compare=False)
+    capture_reason: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,9 @@ class AppGestureController(QObject):
         super().__init__(owner)
         self.owner = owner
         self.backend = backend or MacAppShortcuts()
+        self._diagnostics = SceneDiagnostics(owner._diagnostic_log.path.with_name("scene-events.jsonl"),
+            run_id=owner._diagnostic_run_id)
+        self._diagnostics.start_session()
         self._generation = 0
         self._error = ""
         self._notice = ""
@@ -116,6 +123,53 @@ class AppGestureController(QObject):
         self._pending_timer.timeout.connect(lambda: self.cancel_pending("等待定稿超时，请定稿后重新上滑发送"))
         from .application_mapping_controller import ApplicationMappingController
         self._catalog = ApplicationMappingController(self)
+
+    def _native_diagnostic(self):
+        try:
+            return dict(getattr(self.backend, "last_diagnostic", {}) or {})
+        except Exception:
+            return {}
+
+    def _trace(self, trace_id, stage, reason, *, target=None, **facts):
+        try:
+            if target is not None:
+                facts.update(app=target.bundle, pid=target.pid, scene=target.scene,
+                             input_context=target.input_context, blocked=target.blocked)
+            self._diagnostics.record(trace_id, stage, reason, **facts)
+            self.owner._event_log("SCENE_TRACE", _live_message="", trace=trace_id,
+                                  stage=stage, reason=reason, app=facts.get("app", ""))
+        except Exception:
+            pass  # Diagnostics must not change gesture routing or execution.
+
+    def _capture_trace(self, trace_id, name, target, error=None):
+        info = dict(getattr(target, "diagnostic", {}) or self._native_diagnostic())
+        reason = info.get("reason") or ("capture_failed" if error else "captured" if target else "target_unavailable")
+        if error and reason in {"capture_started", "ready", "recognized", "target_verified", "shortcut_posted"}:
+            reason = "permission_denied" if isinstance(error, MacPermissionError) else "capture_failed"
+        self._trace(trace_id, "capture", reason, target=target,
+                    gesture=name, native=info, app=info.get("app", ""),
+                    **(exception_details(error) if error else {}))
+        return reason
+
+    def _stop_trace(self, event, reason):
+        source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
+        self._trace(event.trace_id, "outcome", reason, target=event.target,
+                    gesture=str(getattr(source, "name", "")),
+                    age_ms=round((time.monotonic() - event.created) * 1000, 2),
+                    event_generation=event.generation, current_generation=self._generation,
+                    phase=event.phase, current_phase=self.phase_state()["phase"],
+                    composing=event.composing, writing=event.writing, edit_requested=event.edit_requested)
+
+    def _override_stop_reason(self, event):
+        if self._recording:
+            return "shortcut_recording"
+        if event.generation != self._generation:
+            return "settings_changed"
+        if time.monotonic() - event.created > 1.0:
+            return "event_expired"
+        if event.sentence != self.sentence():
+            return "sentence_changed"
+        return ""
 
     @Property(QObject, constant=True)
     def catalog(self):
@@ -457,7 +511,8 @@ class AppGestureController(QObject):
         """Capture the destination and phase at recognition, before Qt queues it."""
         source = event.event if isinstance(event, BoundGestureEvent) else event
         name = str(getattr(source, "name", ""))
-        override = self.scene_envelope(source)
+        trace_id = new_trace_id()
+        override = self.scene_envelope(source, trace_id=trace_id)
         if override is not None:
             return override
         if name != "swipe-up" and name and name == self._source_gesture:
@@ -473,17 +528,19 @@ class AppGestureController(QObject):
             return event
         created = time.monotonic()
         state, sentence, generation = self.phase_state(), self.sentence(), self._generation
-        capture_error = ""
+        capture_error, error = "", None
+        self._trace(trace_id, "received", "received", gesture=name, route="application", **state)
         try:
             target = (self.backend.capture(plain_enter=True) if name == "swipe-up" else
                       self.backend.capture(menu_action=True) if menu_action else self.backend.capture())
         except Exception as exc:
-            target = None
+            target, error = None, exc
             capture_error = f"{type(exc).__name__}: {exc}"
+        capture_reason = self._capture_trace(trace_id, name, target, error)
         return AppGestureEvent(event, target, generation, created, sentence=sentence,
-                               capture_error=capture_error, **state)
+                               capture_error=capture_error, capture_reason=capture_reason, trace_id=trace_id, **state)
 
-    def scene_envelope(self, event):
+    def scene_envelope(self, event, *, trace_id=None):
         """Resolve application/scene ownership before any voice endpoint runs."""
         name = str(getattr(event, "name", ""))
         catalog = self._catalog
@@ -498,84 +555,115 @@ class AppGestureController(QObject):
         created, generation = time.monotonic(), self._generation
         state, sentence = self.phase_state(), self.sentence()
         bindings = self.owner._gesture_bindings
-        target, capture_error = None, ""
+        trace_id = trace_id or new_trace_id()
+        self._trace(trace_id, "received", "received", gesture=name, route="scene", **state)
+        target, capture_error, error = None, "", None
         try:
             target = self.backend.capture(menu_action=True, **({"scene": True} if scene_apps else {}))
         except Exception as exc:
+            error = exc
             capture_error = f"{type(exc).__name__}: {exc}"
+        capture_reason = self._capture_trace(trace_id, name, target, error)
         if target is None:
             self.owner._event_log("APP_SCENE", gesture=name, result="unavailable",
-                                  reason="capture_failed" if capture_error else "foreground_changed",
-                                  error=capture_error)
+                                  reason=capture_reason, trace=trace_id)
             # Unknown foreground must not accidentally start voice or execute
             # a default gesture that could have been overridden in that app.
             return AppGestureEvent(BoundGestureEvent(event, bindings), None, generation, created,
                                    sentence=sentence, capture_error=capture_error or "无法确认当前前台应用",
-                                   exclusive=True, **state)
+                                   exclusive=True, trace_id=trace_id, capture_reason=capture_reason, **state)
         if scene_apps:
             catalog.observe_scene(target)
         active_scene = (target.scene if target.scene in scene_apps.get(target.bundle, [])
                         and not target.blocked and target.input_context == "nontext" else "")
+        reason = "application_not_configured"
         if target.bundle in scene_apps:
-            reason = ("blocked_window" if target.blocked else "no_scene" if not target.scene else
+            reason = (capture_reason if target.blocked or not target.scene else
                       "text_focus" if target.input_context == "text" else
                       "unknown_focus" if target.input_context != "nontext" else
                       "unconfigured_scene" if not active_scene else "ready")
-            self.owner._event_log("APP_SCENE", _live_message="", gesture=name, app=target.bundle,
-                                  scene=target.scene, input_context=target.input_context, reason=reason)
-        if active_scene:
+            self._trace(trace_id, "route", reason, target=target, gesture=name,
+                        configured_scenes=scene_apps.get(target.bundle, []))
+        shared_navigation = catalog.shared_navigation_for(target.bundle, name)
+        if shared_navigation:
+            # Window-level browser navigation always inherits regular bindings.
+            # Keep the captured page/focus identity for queued-event validation.
+            active_scene = ""
+            claimed = True
+        elif active_scene:
             # Scene mappings are independent of regular bindings. Unassigned
             # voice gestures stay silent instead of falling back to voice.
-            claimed = (voice_gesture or "scene:" + name in catalog.for_scene(target.bundle, active_scene, target.website)
+            claimed = (voice_gesture or "scene:" + name in catalog.for_scene(target.bundle, active_scene)
                        or "menu:" + name in catalog.for_target(target.bundle))
         else:
             claimed = ((voice_gesture and catalog.voice_overridden(target.bundle))
                        or (name == self._source_gesture and "menu:" + name in catalog.for_target(target.bundle)))
         if not claimed:
+            self._trace(trace_id, "route", reason, target=target, gesture=name,
+                        active_scene=active_scene, claimed=False, fallback="regular")
             return None
+        self._trace(trace_id, "route", "ready", target=target, gesture=name,
+                    active_scene=active_scene, claimed=True)
         return AppGestureEvent(BoundGestureEvent(event, bindings), target, generation, created,
-                               sentence=sentence, scene=active_scene, exclusive=True, **state)
+                               sentence=sentence, scene=active_scene, exclusive=True, trace_id=trace_id, **state)
 
     def handle_override(self, event):
         """Consumed overrides never fall through, even if stale or unassigned."""
-        if (self._recording or event.generation != self._generation
-                or time.monotonic() - event.created > 1.0 or event.sentence != self.sentence()):
+        reason = self._override_stop_reason(event)
+        if reason:
+            self._stop_trace(event, reason)
             return
         if event.capture_error:
-            self.notify("暂时无法确认前台应用，未执行手势，请重试")
+            reason = event.capture_reason or "capture_failed"
+            self._stop_trace(event, reason)
+            self.notify(reason_message(reason))
             return
         target = event.target
         if target is not None and target.blocked:
-            self.notify("当前有弹窗或菜单，请关闭后在目标应用中重试")
+            reason = target.diagnostic.get("reason", "blocked_window")
+            self._stop_trace(event, reason)
+            self.notify(reason_message(reason))
             return
         if target is None or self.owner._ring_gestures.speech_busy():
+            self._stop_trace(event, "target_unavailable" if target is None else "speech_busy")
             return
         if action_phase("next", phase=event.phase, composing=event.composing,
                         writing=event.writing, edit_requested=event.edit_requested) != "dispatch":
+            self._stop_trace(event, "phase_blocked")
             return
         source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
         name = str(getattr(source, "name", ""))
         action = ("scene:" if event.scene else "menu:") + name
-        actions = self._catalog.for_scene(target.bundle, event.scene, target.website) if event.scene else self._catalog.for_target(target.bundle)
+        actions = self._catalog.for_scene(target.bundle, event.scene) if event.scene else self._catalog.for_target(target.bundle)
         binding = actions.get(action)
         if binding is not None:
-            self._dispatch(action, binding, target)
+            self._dispatch(action, binding, target, trace_id=event.trace_id)
+        else:
+            self._stop_trace(event, "binding_missing")
 
     def handle_scene(self, event):
         """A claimed scene gesture never falls through to a global/voice action."""
         source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
         action = "scene:" + str(getattr(source, "name", ""))
         target = event.target
-        if (target is None or target.blocked or not event.scene or target.scene != event.scene
-                or target.input_context != "nontext" or self._recording
-                or event.generation != self._generation or time.monotonic() - event.created > 1.0
-                or event.sentence != self.sentence() or self.owner._ring_gestures.speech_busy()
-                or action_phase("next", phase=event.phase, composing=event.composing,
-                                writing=event.writing, edit_requested=event.edit_requested) != "dispatch"):
+        reason = ("target_unavailable" if target is None else
+                  "blocked_window" if target.blocked else
+                  "scene_changed" if not event.scene or target.scene != event.scene else
+                  "text_focus" if target.input_context == "text" else
+                  "unknown_focus" if target.input_context != "nontext" else
+                  self._override_stop_reason(event) or
+                  ("speech_busy" if self.owner._ring_gestures.speech_busy() else ""))
+        if not reason and action_phase("next", phase=event.phase, composing=event.composing,
+                writing=event.writing, edit_requested=event.edit_requested) != "dispatch":
+            reason = "phase_blocked"
+        if reason:
+            self._stop_trace(event, reason)
             return
-        binding = self._catalog.for_scene(target.bundle, event.scene, target.website).get(action)
+        binding = self._catalog.for_scene(target.bundle, event.scene).get(action)
         if binding is not None:
-            self._dispatch(action, binding, target)
+            self._dispatch(action, binding, target, trace_id=event.trace_id)
+        else:
+            self._stop_trace(event, "binding_missing")
 
     def is_menu_mapping_event(self, event) -> bool:
         """Only explicit menu mappings may use the operation-mode app route."""
@@ -603,24 +691,31 @@ class AppGestureController(QObject):
         if event.capture_error:
             self.notify("应用手势无法读取前台应用，请查看运行日志")
             self.owner._event_log("APP_GESTURE", gesture=name, result="blocked",
-                                  reason="target_capture_failed", error=event.capture_error)
+                                  reason=event.capture_reason or "capture_failed", trace=event.trace_id)
+            self._stop_trace(event, event.capture_reason or "capture_failed")
             return True
         if target is None:
+            self._stop_trace(event, event.capture_reason or "target_unavailable")
             return False
         actions = ({"send": AppBinding("swipe-up", "Return")} if name == "swipe-up"
                    else self._catalog.for_target(target.bundle) if self._catalog.owns(target.bundle)
                    else self._profiles.get(target.profile, {}) if self._legacy_configured else {})
         action = next((key for key, b in actions.items() if b.enabled and b.gesture == name), None)
         if action is None:
+            self._stop_trace(event, "binding_missing")
             return False
         if self._recording:
+            self._stop_trace(event, "shortcut_recording")
             return True
         if event.generation != self._generation or time.monotonic() - event.created > 1.0:
+            self._stop_trace(event, "settings_changed" if event.generation != self._generation else "event_expired")
             self.notify("操作已过期，请重新触发手势")
             return True
         if target.blocked:
-            self.notify("当前有弹窗或菜单，请关闭后在目标应用中重试" if target.menu_action
-                        else "请回到主聊天输入区域操作")
+            self._stop_trace(event, target.diagnostic.get("reason", "blocked_window"))
+            reason = target.diagnostic.get("reason", "")
+            self.notify((reason_message(reason) if reason else "当前有弹窗或菜单，请关闭后在目标应用中重试")
+                        if target.menu_action else "请回到主聊天输入区域操作")
             self.owner._event_log("APP_GESTURE", app=target.bundle, gesture=name,
                                   result="blocked", reason="blocked_window_or_control")
             return True
@@ -629,9 +724,11 @@ class AppGestureController(QObject):
                                 writing=event.writing, edit_requested=event.edit_requested)
         current = action_phase(phase_action, **self.phase_state())
         if original not in {"dispatch", "finish_then_send"}:
+            self._stop_trace(event, "phase_blocked")
             self.notify(original)
             return True
         if current not in {"dispatch", "finish_then_send"}:
+            self._stop_trace(event, "phase_blocked")
             self.notify(current)
             return True
         just_committed = (original == "finish_then_send" and current == "dispatch"
@@ -640,9 +737,11 @@ class AppGestureController(QObject):
                           and bool(str(self.owner._inline_input._view.get("raw", "")).strip())
                           and not self.owner._inline_input.error)
         if (original != current and not just_committed) or (original == "finish_then_send" and event.sentence != self.sentence()):
+            self._stop_trace(event, "sentence_changed")
             self.notify("本句状态已变化，请重新上滑发送")
             return True
         if self._pending is not None:
+            self._stop_trace(event, "pending_commit")
             if action != "send":
                 self.notify("正在定稿并准备发送，请稍后再切换对话")
             return True
@@ -664,18 +763,24 @@ class AppGestureController(QObject):
             inline.finish()
             self.notify("正在定稿，完成后发送；左滑可取消", duration=12000)
             return True
-        self._dispatch(action, actions[action], target)
+        self._dispatch(action, actions[action], target, trace_id=event.trace_id)
         return True
 
-    def _dispatch(self, action, binding, target):
-        signature = (target.bundle, target.pid, action)
+    def _dispatch(self, action, binding, target, *, trace_id=""):
+        trace_id = trace_id or new_trace_id()
+        signature = (target.bundle, target.pid, action, target.scene, target.page_key,
+                     target.document_key, binding.shortcut)
         now = time.monotonic()
         if self._last_dispatch and self._last_dispatch[0] == signature and now - self._last_dispatch[1] < 0.35:
+            self._trace(trace_id, "outcome", "duplicate_suppressed", target=target, action=action)
             return
+        self._trace(trace_id, "dispatch", "dispatch_started", target=target, action=action, shortcut=binding.shortcut)
         try:
             if action == "send" and not target.plain_enter and target.role and target.role not in {"AXTextArea", "AXTextField"}:
                 raise RuntimeError("请先点入消息输入框，再上滑发送")
             self.backend.post(target, binding.shortcut, require_focus=action == "send")
+            self._trace(trace_id, "outcome", "shortcut_posted", target=target, action=action,
+                        shortcut=binding.shortcut, delivery="posted_unverified", native=self._native_diagnostic())
             self._last_dispatch = (signature, now)
             if not action.startswith("scene:"):
                 self._retire_sentence(target)
@@ -683,12 +788,21 @@ class AppGestureController(QObject):
                                   shortcut=binding.shortcut, result="posted")
             self.dismissNotice()
         except Exception as exc:
+            native = getattr(exc, "diagnostic", {}) or self._native_diagnostic()
+            reason = ("permission_denied" if isinstance(exc, MacPermissionError) else
+                      getattr(exc, "reason", "") or native.get("reason") or "native_exception")
+            # A successful capture/validation is not the cause of a later exception.
+            if reason in {"ready", "captured", "recognized", "target_verified", "shortcut_posted", "dispatch_started"}:
+                reason = "native_exception"
+            self._trace(trace_id, "outcome", reason, target=target, action=action,
+                        shortcut=binding.shortcut, native=native, **exception_details(exc))
             permissions = getattr(self.owner._inline_input, "permissions", None)
             if permissions is not None:
                 permissions.report_error(exc)
-            self.notify(str(exc))
+            self.notify(reason_message("delivery_unknown" if native.get("delivery") == "unknown" else reason)
+                        if action.startswith(("menu:", "scene:")) else str(exc))
             self.owner._event_log("APP_GESTURE", app=target.profile, action=action,
-                                  result="blocked", reason=str(exc))
+                                  result="blocked", reason=reason, trace=trace_id, error_type=type(exc).__name__)
 
     def _retire_sentence(self, target):
         inline = self.owner._inline_input
@@ -711,7 +825,7 @@ class AppGestureController(QObject):
             return
         self._pending = None
         self._pending_timer.stop()
-        self._dispatch("send", binding, event.target)
+        self._dispatch("send", binding, event.target, trace_id=event.trace_id)
 
     def state_changed(self):
         if self._pending is None:

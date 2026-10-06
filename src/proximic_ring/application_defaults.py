@@ -12,6 +12,7 @@ from .app_gestures import APP_LABELS, default_profiles, profile_for_application,
 from .gesture_scenes import PRESENTATION, presentation_profile, scene_actions
 from .scene_capabilities import application_scene_profiles
 from .scene_defaults import scene_defaults
+from .browser_shortcuts import shared_navigation
 
 DEFAULTS_VERSION = 2
 AUTO_ADD_PROFILES = frozenset({"codex", "workbuddy", "wps", "powerpoint"})
@@ -46,8 +47,15 @@ def chat_actions(bundle: str, label: str, scene: str) -> list[dict]:
 
 
 def default_mappings(bundle: str, label: str = "", *, presentation: str = "", scene_profiles=None, menus=()) -> dict[str, dict]:
-    profiles = {**(scene_profiles or {}), **application_scene_profiles(bundle)}
+    profiles = application_scene_profiles(bundle) if scene_profiles is None else dict(scene_profiles)
     result = _base_mappings(bundle, label, presentation=presentation, menus=menus)
+    if PRESENTATION not in profiles and not presentation:
+        result.pop(PRESENTATION, None)
+        if presentation_profile(bundle):
+            result.pop('regular', None)
+    navigation = shared_navigation(bundle)
+    if navigation:
+        result.setdefault("regular", {}).update(navigation)
     result.update(scene_defaults(bundle, profiles, menus)[0])
     return result
 

@@ -38,21 +38,16 @@ def install_ring_disconnect_notice(root, controller) -> None:
 def _show_on_macos_spaces(window) -> None:
     import ctypes
     import objc
-    from AppKit import (
-        NSWindowCollectionBehaviorCanJoinAllSpaces,
-        NSWindowCollectionBehaviorFullScreenAuxiliary,
-        NSWindowCollectionBehaviorMoveToActiveSpace,
-    )
+    import AppKit
+    from .overlay_stacking import configure_native_overlay, foreground_content_window
 
     # Qt on Cocoa exposes the window's NSView through winId().
     view = objc.objc_object(c_void_p=ctypes.c_void_p(int(window.winId())))
     native_window = view.window()
     if native_window is None:
         return
-    behavior = int(native_window.collectionBehavior())
-    native_window.setCollectionBehavior_(
-        (behavior & ~NSWindowCollectionBehaviorMoveToActiveSpace)
-        | NSWindowCollectionBehaviorCanJoinAllSpaces
-        | NSWindowCollectionBehaviorFullScreenAuxiliary
-    )
-    native_window.orderFrontRegardless()
+    try:
+        content = foreground_content_window() or {}
+    except Exception:
+        content = {}  # A metadata failure must not prevent the hint appearing.
+    configure_native_overlay(native_window, AppKit, content_level=content.get("kCGWindowLayer", 0))

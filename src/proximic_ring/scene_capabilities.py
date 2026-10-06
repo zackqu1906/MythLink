@@ -1,6 +1,7 @@
-"""Scene availability from application identity and declared document support.
+"""Application capabilities and purpose from identity and installed metadata.
 
-Availability exposes an editor tab, never activates an override at runtime.
+Capabilities expose editor tabs; purpose disambiguates observed playback.
+Neither activates an override without current content and focus evidence.
 """
 from __future__ import annotations
 
@@ -42,6 +43,16 @@ BROWSERS = {"com.apple.safari", "com.google.chrome", "com.google.chrome.canary",
 MUSIC_APPS = {bundle for bundle, modes in KNOWN.items() if set(modes) == {MUSIC}}
 
 
+def is_music_application(bundle, category=""):
+    """Application purpose is independent of the full list of readable files.
+
+    This only disambiguates existing playback evidence; it does not activate a
+    scene or consult the user's selected/enabled scene configuration.
+    """
+    return bundle.casefold() in MUSIC_APPS or (
+        bundle.casefold() not in BROWSERS and category == "public.app-category.music")
+
+
 def application_scene_profiles(bundle, metadata=None):
     profiles = dict(KNOWN.get(bundle.casefold(), {}))
     if bundle.casefold() in BROWSERS:
@@ -50,6 +61,10 @@ def application_scene_profiles(bundle, metadata=None):
     if presentation:
         profiles[PRESENTATION] = presentation
     if isinstance(metadata, dict) and metadata.get("CFBundleIdentifier") == bundle:
+        category = {"public.app-category.music": MUSIC, "public.app-category.video": VIDEO,
+                    "public.app-category.photography": IMAGE}.get(metadata.get("LSApplicationCategoryType", ""))
+        if category:
+            profiles.setdefault(category, "generic")
         declarations = {}
         for key in ("UTExportedTypeDeclarations", "UTImportedTypeDeclarations"):
             for item in metadata.get(key, []):
@@ -73,20 +88,30 @@ def application_scene_profiles(bundle, metadata=None):
 
 
 @lru_cache(maxsize=256)
-def _read_profiles(bundle, path, mtime):
+def _read_metadata(path, mtime):
     with Path(path).open("rb") as stream:
-        return application_scene_profiles(bundle, plistlib.load(stream))
+        return plistlib.load(stream)
 
 
-def installed_scene_profiles(bundle, path=""):
+def _installed_metadata(bundle, path):
     app = Path(path)
     if app.is_absolute() and app.suffix.casefold() == ".app":
         info = app / "Contents/Info.plist"
         try:
-            return dict(_read_profiles(bundle, str(info), info.stat().st_mtime_ns))
+            metadata = _read_metadata(str(info), info.stat().st_mtime_ns)
+            if isinstance(metadata, dict) and metadata.get("CFBundleIdentifier") == bundle:
+                return metadata
         except (OSError, ValueError, TypeError):
             pass
-    return application_scene_profiles(bundle)
+    return {}
+
+
+def installed_scene_profiles(bundle, path=""):
+    return application_scene_profiles(bundle, _installed_metadata(bundle, path))
+
+
+def installed_application_category(bundle, path=""):
+    return str(_installed_metadata(bundle, path).get("LSApplicationCategoryType", ""))
 
 
 # Apple Support: Preview cpprvw0003, Music mus1019, QuickTime qtpa4808515d.

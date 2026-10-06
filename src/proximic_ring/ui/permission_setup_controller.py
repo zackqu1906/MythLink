@@ -63,6 +63,14 @@ class PermissionSetupController(QObject):
     def busy(self):
         return self._requesting or self._permissions.systemPermissionRequesting
 
+    @Property(bool, notify=changed)
+    def blocksFeedback(self):
+        # Pending onboarding is not a visible prompt. The user may already be
+        # working in another app while the sequence waits for main-window focus.
+        # Only an actual in-flight/unanswered system prompt suppresses feedback.
+        return not self._closed and bool(self.busy or (self._active and self._waiting
+            and not self._returned and not self._permissions.permissionGranted(self.currentKind)))
+
     @Property(str, notify=changed)
     def currentKind(self):
         return STEPS[self._index] if 0 <= self._index < len(STEPS) else ""
@@ -133,13 +141,20 @@ class PermissionSetupController(QObject):
 
     def _resume(self):
         self._scheduled = False
-        if not self._active or self._closed or self.busy or not self._is_active():
+        if not self._active or self._closed or self.busy:
             return
-        # Wait for the initial/passive native status read before choosing a step.
+        # Settle already-granted or answered steps even in the background. An
+        # asynchronous initial read must not leave active=True indefinitely.
         if self._permissions.checking:
             return
-        if self._advance_pending or (self._waiting and (
-                self._permissions.permissionGranted(self.currentKind) or self._returned)):
+        if self._advance_pending or ((self._pending_request or self._waiting)
+                and self._permissions.permissionGranted(self.currentKind)):
+            self._next()
+            return
+        # Opening the next OS prompt still requires an active app and key window.
+        if not self._is_active():
+            return
+        if self._waiting and self._returned:
             self._next()
         elif self._pending_request:
             self._request_current()

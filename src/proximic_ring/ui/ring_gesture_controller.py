@@ -285,17 +285,33 @@ class RingGestureController(QObject):
         with self._lock:
             if (isinstance(event, ModeGestureEvent) and getattr(event.source, "exclusive", False)
                     and (self._fields.pending.is_set() or self._scroll.pending.is_set())):
+                self._trace_rejected(event)
                 return False
             mode_allowed = self._mode == "input" or (
                 self._mode == "operation" and isinstance(event, ModeGestureEvent)
                 and not self._scroll.applying.is_set() and not self._fields.pending.is_set()
                 and self.owner._app_gestures.is_menu_mapping_event(event.source)
             )
-            return (not self.session_blocked() and mode_allowed and self._transition is None
+            accepted = (not self.session_blocked() and mode_allowed and self._transition is None
                     and not self._selector.blocked.is_set()
                     and not self._fields.picker.active.is_set()
                     and (not isinstance(event, ModeGestureEvent)
                          or event.generation == self._generation))
+            if not accepted:
+                self._trace_rejected(event)
+            return accepted
+
+    def _trace_rejected(self, event):
+        source = event.source if isinstance(event, ModeGestureEvent) else event
+        if not getattr(source, "trace_id", ""):
+            return
+        # Diagnostic metadata only. No additional target capture or routing.
+        self.owner._app_gestures._trace(source.trace_id, "outcome", "ring_route_blocked",
+            target=source.target, mode=self._mode, session_blocked=self.session_blocked(),
+            event_generation=getattr(event, "generation", None), current_generation=self._generation,
+            transition=self._transition is not None, selector=self._selector.blocked.is_set(),
+            field_pending=self._fields.pending.is_set(), scroll_pending=self._scroll.pending.is_set(),
+            scroll_applying=self._scroll.applying.is_set(), picker=self._fields.picker.active.is_set())
 
     @Slot()
     def showMenu(self):
@@ -332,8 +348,6 @@ class RingGestureController(QObject):
             if disabled or items:
                 label = catalog._apps.get(target.bundle, {}).get("label", "应用")
                 scene_label = SCENE_LABELS.get(scene, "常规")
-                if scene and target.website:
-                    scene_label += " · " + target.website
                 actions = {g: (b["label"], "scene" if scene else "application")
                            for g, b in items.items() if catalog._can_bind_regular(g)}
                 actions.update({g: (action, "global") for g, action in catalog.globalOccupancy.items()})

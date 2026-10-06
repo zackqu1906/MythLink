@@ -267,7 +267,7 @@ def test_capture_failure_is_reported_not_mislabeled_as_unmapped(route, monkeypat
     emit("swipe-up")
     assert not sent and "读取前台应用" in s.notice
     log = c._diagnostic_log.path.read_text()
-    assert 'reason="target_capture_failed"' in log
+    assert 'reason="capture_failed"' in log
     assert 'reason="unmapped_gesture"' not in log
 
 

@@ -9,16 +9,18 @@ from __future__ import annotations
 import re
 
 from .app_gestures import normalize_shortcut
+from .browser_shortcuts import NAVIGATION
 from .scene_capabilities import PDF, IMAGE, VIDEO, MUSIC, BROWSERS, SCENE_LABELS, activity_actions
 
-SCENE_DEFAULTS_VERSION = 1
+SCENE_DEFAULTS_VERSION = 2
+LEGACY_MUSIC_VOLUME = {"circle-clockwise": "volume-up", "circle-counterclockwise": "volume-down"}
 TEMPLATES = {
     PDF: {"swipe-left": "previous", "swipe-right": "next"},
     IMAGE: {"swipe-left": "previous", "swipe-right": "next"},
     VIDEO: {"tap": "play", "swipe-left": "backward", "swipe-right": "forward",
             "circle-clockwise": "volume-up", "circle-counterclockwise": "volume-down"},
     MUSIC: {"tap": "play", "swipe-left": "previous", "swipe-right": "next",
-            "circle-clockwise": "volume-up", "circle-counterclockwise": "volume-down"},
+            "swipe-up": "volume-up", "swipe-down": "volume-down"},
 }
 LABELS = {
     PDF: {"previous": "上一页", "next": "下一页"},
@@ -107,11 +109,60 @@ def resolve_action(bundle, scene, action, profile="", menus=()):
     shortcut = ADAPTERS.get(bundle.casefold(), {}).get(scene, {}).get(action)
     if bundle.casefold() in BROWSERS and scene == VIDEO:
         shortcut = {"play": "Space", "backward": "Left", "forward": "Right", "volume-up": "Up", "volume-down": "Down"}.get(action)
+    if bundle.casefold() in BROWSERS and scene == MUSIC:
+        shortcut = {"volume-up": "Up", "volume-down": "Down"}.get(action)
+    if bundle.casefold() in BROWSERS and scene == PDF:
+        shortcut = {"previous": "PageUp", "next": "PageDown"}.get(action)
     if not shortcut:
         return None
     identity = "web-video:" + action if bundle.casefold() in BROWSERS and scene == VIDEO else f"scene-default:{scene}:{action}"
     return dict(id=identity, label=action_label(scene, action),
                 path=SCENE_LABELS[scene] + " 默认快捷键", shortcut=normalize_shortcut(shortcut))
+
+
+def migrate_music_volume_defaults(bundle, app):
+    """Upgrade old factory volume gestures once, preserving edits and clears.
+
+    Resolved menu defaults retain their actual shortcut when moved. Custom
+    circle bindings and occupied swipe bindings are never overwritten. Browsers
+    previously omitted volume defaults because circles belong to tab navigation.
+    Disabled scenes are migrated too, without enabling them.
+    """
+    if app.get("sceneDefaultsVersion", 0) >= 2:
+        return False
+    app["sceneDefaultsVersion"] = 2
+    if app.get("removed") or app.get("defaultsCleared"):
+        return True
+    bindings = app.get("scenes", {}).get(MUSIC, {})
+    pending = app.get("pendingDefaults", {}).get(MUSIC, {})
+    if not bindings and not pending:
+        return True  # Explicitly empty scenes stay empty.
+    browser = bundle.casefold() in BROWSERS
+    profile = app.get("sceneProfiles", {}).get(MUSIC, "")
+    for old, meaning in LEGACY_MUSIC_VOLUME.items():
+        gesture = "swipe-up" if meaning == "volume-up" else "swipe-down"
+        previous = bindings.get(old)
+        factory = resolve_action(bundle, MUSIC, meaning, profile)
+        migrated = previous is not None and (previous == factory or (
+            not previous["id"].startswith("custom:") and menu_action(MUSIC, meaning, [previous]) == previous))
+        waiting = pending.get(old) == meaning
+        if migrated:
+            bindings.pop(old)
+        if waiting:
+            pending.pop(old)
+        if gesture in bindings or gesture in pending or not (migrated or waiting or browser):
+            continue
+        record = previous if migrated else factory
+        if record:
+            bindings[gesture] = dict(record)
+        else:
+            pending[gesture] = meaning
+    app.setdefault("scenes", {})[MUSIC] = bindings
+    if pending:
+        app.setdefault("pendingDefaults", {})[MUSIC] = pending
+    else:
+        app.get("pendingDefaults", {}).pop(MUSIC, None)
+    return True
 
 
 def scene_defaults(bundle, profiles, menus=()):
@@ -122,6 +173,8 @@ def scene_defaults(bundle, profiles, menus=()):
             continue
         resolved[scene] = {}
         for gesture, action in TEMPLATES[scene].items():
+            if bundle.casefold() in BROWSERS and gesture in NAVIGATION:
+                continue  # Browser navigation is shared by every scene.
             item = resolve_action(bundle, scene, action, profile, menus)
             if item:
                 resolved[scene][gesture] = item

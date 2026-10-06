@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from proximic_ring.app_shortcuts import LocalMacAppShortcuts
+from test_app_shortcuts import desktop
 
 
 @pytest.fixture
@@ -50,27 +51,29 @@ def test_capture_recovers_after_switching_from_unsupported_app(workspace, bundle
     assert target is not None and target.profile == profile
 
 
-def test_target_revalidation_rejects_app_switch_before_posting(workspace, monkeypatch):
+def test_target_revalidation_rejects_app_switch_before_posting(workspace, desktop):
     backend = LocalMacAppShortcuts()
     workspace.actual = workspace.cached = "com.openai.codex"
     target = backend.capture()
     workspace.actual = "com.tencent.xinWeChat"
-    # post() must reject the cached Codex target before allocating any events.
-    monkeypatch.setitem(sys.modules, "Quartz", SimpleNamespace())
-    with pytest.raises(RuntimeError, match="目标窗口已变化"):
+    # Allocating events is read-only; none may be posted to a stale target.
+    with pytest.raises(RuntimeError, match="前台应用已变化") as error:
         backend.post(target, "Cmd+Shift+]")
+    assert error.value.reason == "foreground_changed"
+    assert not desktop[1].sent
     assert backend.capture().profile == "wechat"
 
 
-def test_menu_mapping_refreshes_cached_frontmost_record_before_capture_and_post(workspace, monkeypatch):
+def test_menu_mapping_refreshes_cached_frontmost_record_before_capture_and_post(workspace, desktop):
     backend = LocalMacAppShortcuts()
     workspace.cached, workspace.actual = "com.openai.codex", "com.apple.finder"
     target = backend.capture(menu_action=True)
     assert target.bundle == "com.apple.finder" and target.menu_action
     assert backend.same_target(target)
     workspace.actual = "com.tencent.xinWeChat"
-    monkeypatch.setitem(sys.modules, "Quartz", SimpleNamespace())
-    with pytest.raises(RuntimeError, match="目标窗口已变化"):
+    with pytest.raises(RuntimeError, match="前台应用已变化") as error:
         backend.post(target, "Cmd+N")
+    assert error.value.reason == "foreground_changed"
+    assert not desktop[1].sent
     fresh = backend.capture(menu_action=True)
     assert fresh.bundle == "com.tencent.xinWeChat" and fresh.pid == 2

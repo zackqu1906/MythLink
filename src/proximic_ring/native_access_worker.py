@@ -9,6 +9,7 @@ import sys
 import uuid
 
 from .mac_permissions import MacPermissionError, read_permission_state
+from .scene_diagnostics import SceneActionError, safe_data, exception_details
 
 
 class Dispatcher:
@@ -19,6 +20,20 @@ class Dispatcher:
         self.text_focus = None
         self.page_scroll = None
         self.window_selector = None
+        self._observed_page = None
+        self._observed_page_token = ''
+
+    def _page_token(self, target):
+        # Keep only one read-only identity, never an AX handle usable for sends.
+        # URL hashes alone cannot distinguish two tabs showing the same URL.
+        if not target.page_key or target.web_area is None:
+            return ''
+        identity = (target.bundle, target.pid, target.window, target.web_area, target.page_key,
+                    target.player if target.page_key == 'native-pdf' else None)
+        if identity != self._observed_page:
+            self._observed_page = identity
+            self._observed_page_token = uuid.uuid4().hex
+        return self._observed_page_token
 
     def handle(self, message):
         operation = message["operation"]
@@ -38,6 +53,21 @@ class Dispatcher:
                 raise MacPermissionError(state)
             from .application_menus import read_application_menu
             return {"result": read_application_menu(str(message["bundle"]))}
+        if operation == "scene_observe":
+            # Read-only scene notice probe. No target handles, activation or keys;
+            # observing a mode requires AX access but not permission to post keys.
+            if state.accessibility is not True:
+                raise MacPermissionError(state)
+            target = self.shortcuts.capture(menu_action=True, scene=True, scene_observation=True)
+            if target is None:
+                return {"result": None, "diagnostic": getattr(self.shortcuts, "last_diagnostic", {})}
+            if (target.bundle != message.get("expected_bundle")
+                    or target.pid != message.get("expected_pid")):
+                return {"result": None, "diagnostic": {"reason": "foreground_changed"}}
+            return {"result": dict(bundle=target.bundle, pid=target.pid, scene=target.scene,
+                                    blocked=target.blocked, input_context=target.input_context,
+                                    page_token=self._page_token(target),
+                                    trace_id=target.trace_id, diagnostic=target.diagnostic)}
         if operation in {"focus_probe", "focus_plan", "focus_apply", "focus_selection"}:
             # Normal AX focus only needs Accessibility. The bounded Safari
             # click fallback checks event-posting permission at point of use.
@@ -98,7 +128,7 @@ class Dispatcher:
                 options["scene"] = True
             target = self.shortcuts.capture(**options)
             if target is None:
-                return {"result": None}
+                return {"result": None, "diagnostic": getattr(self.shortcuts, "last_diagnostic", {})}
             handle = uuid.uuid4().hex
             self.targets[handle] = target
             while len(self.targets) > 64:
@@ -110,17 +140,20 @@ class Dispatcher:
                                "plain_enter": target.plain_enter, "menu_action": target.menu_action,
                                "scene": target.scene, "scene_checked": target.scene_checked,
                                "input_context": target.input_context,
-                               "website": target.website, "page_key": target.page_key}}
+                               "page_key": target.page_key,
+                               "trace_id": target.trace_id, "diagnostic": target.diagnostic},
+                    "diagnostic": target.diagnostic}
         if operation in {"same_target", "shortcut"}:
             target = self.targets.get(message["target"])
             if target is None:
                 if operation == "same_target":
-                    return {"result": False}
-                raise RuntimeError("按键通道或目标窗口已变化，请重新触发手势")
+                    return {"result": False, "diagnostic": {"reason": "target_expired"}}
+                raise SceneActionError("target_expired")
             if operation == "same_target":
-                return {"result": self.shortcuts.same_target(target, require_focus=message["require_focus"])}
+                valid = self.shortcuts.same_target(target, require_focus=message["require_focus"])
+                return {"result": valid, "diagnostic": getattr(self.shortcuts, "last_diagnostic", {})}
             self.shortcuts.post(target, message["shortcut"], require_focus=message["require_focus"])
-            return {"result": None}
+            return {"result": None, "diagnostic": getattr(self.shortcuts, "last_diagnostic", {})}
         raise ValueError("未知按键通道请求")
 
 
@@ -143,8 +176,17 @@ def main():
         except MacPermissionError as exc:
             reply = {"error": str(exc), "permissions": asdict(replace(
                 exc.state, control_channel="worker", control_pid=os.getpid()))}
+            reply["diagnostic"] = {"reason": "permission_denied", "accessibility": exc.state.accessibility,
+                                   "post_events": exc.state.post_events}
+        except SceneActionError as exc:
+            reply = {"error": str(exc), "diagnostic": {**exc.diagnostic, "reason": exc.reason}}
         except Exception as exc:
-            reply = {"error": str(exc)}
+            details = (getattr(dispatcher.shortcuts, "last_diagnostic", {})
+                       if message.get("operation") in {"capture", "shortcut", "same_target"} else {})
+            reply = {"error": str(exc), "diagnostic": {**details, "reason": "native_exception", **exception_details(exc)}}
+        if message.get("operation") in {"capture", "shortcut", "same_target"}:
+            reply["diagnostic"] = safe_data({**reply.get("diagnostic", {}), "worker_pid": os.getpid(),
+                                             "operation": message.get("operation")})
         sys.stdout.write(json.dumps({"id": message.get("id"), **reply}, ensure_ascii=False) + "\n")
         sys.stdout.flush()
     return 0

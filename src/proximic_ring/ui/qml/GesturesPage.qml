@@ -65,6 +65,7 @@ ScrollView {
             : catalog.voiceGestures.indexOf(key) >= 0 || controller.appGestures.inputSourceGesture === key
     }
     function sourceLabel(key) {
+        if (applicationScope && catalog.isSharedNavigation(key)) return "浏览器通用"
         if (catalog.globalOccupancy[key]) return applicationScope ? "全局占用" : "全局功能"
         if (applicationScope && catalog.pendingBindings[key]) return "已保存预设"
         if (sceneScope) return (catalog.bindings[selectedApp] || {})[key] ? catalog.selectedSceneLabel : "场景独立配置"
@@ -84,57 +85,28 @@ ScrollView {
         onApplicationAdded: function(bundle) { page.selectApplication(bundle) }
     }
     Dialog {
-        id: websiteDialog
-        objectName: "addGestureWebsiteDialog"
+        id: purposeDialog
+        objectName: "applicationPurposeDialog"
         property string application: ""
-        property string errorMessage: ""
         parent: Overlay.overlay; anchors.centerIn: parent
-        width: Math.min(460, page.Window.width - 48)
-        modal: true; popupType: Popup.Item; padding: 24
-        title: "添加视频网站"
-        onAboutToShow: { application = page.selectedApp; websiteField.text = ""; errorMessage = "" }
-        onOpened: websiteField.forceActiveFocus()
-        background: Rectangle { color: theme.surface; radius: 16; border.color: theme.line }
+        modal: true; popupType: Popup.Item; width: Math.min(440, page.Window.width - 48); padding: 24
+        title: "添加场景"
+        onAboutToShow: {
+            application = page.selectedApp
+            purposeChoice.currentIndex = 0
+        }
+        background: Rectangle { radius: 16; color: theme.surface; border.color: theme.line }
         contentItem: ColumnLayout {
             spacing: 14
-            Label { Layout.fillWidth: true; text: "为网站单独设置视频手势，匹配域名及其子域名。"; color: theme.muted; wrapMode: Text.Wrap; font.pixelSize: 13 }
-            UiTextField { id: websiteField; objectName: "gestureWebsiteDomain"; Layout.fillWidth: true; hintText: "例如 bilibili.com 或网站地址"; maximumLength: 2048 }
-            UiAction { objectName: "suggestBilibiliWebsite"; text: "哔哩哔哩"; onClicked: websiteField.text = "bilibili.com" }
-            Label { Layout.fillWidth: true; text: "哔哩哔哩默认：Tap 播放 / 暂停，左右滑快退 / 快进，上下滑调节音量。添加后可修改；其他网站从空配置开始。"; color: theme.muted; wrapMode: Text.Wrap; font.pixelSize: 12 }
-            Label { Layout.fillWidth: true; visible: text.length > 0; text: websiteDialog.errorMessage; color: "#A35527"; wrapMode: Text.Wrap }
+            Label { Layout.fillWidth: true; text: "选择要添加的场景，自动配置对应的手势；原有场景和快捷键会保留。"; wrapMode: Text.Wrap; color: theme.muted }
+            SettingsSelect { id: purposeChoice; objectName: "applicationPurposeChoice"; Layout.fillWidth: true; model: page.catalog.addableScenes; textRole: "label"; valueRole: "value" }
         }
         footer: DialogButtonBox {
-            padding: 20; spacing: 10
-            UiAction { text: "取消"; onClicked: websiteDialog.reject() }
-            UiAction {
-                objectName: "confirmAddGestureWebsite"; text: "添加网站"; primary: true
-                enabled: websiteField.text.trim().length > 0
-                onClicked: {
-                    if (websiteDialog.application === page.selectedApp && page.catalog.addWebsite(websiteField.text)) websiteDialog.close()
-                    else websiteDialog.errorMessage = page.catalog.message
-                }
-            }
-        }
-    }
-    Dialog {
-        id: removeWebsiteDialog
-        objectName: "removeGestureWebsiteDialog"
-        property string application: ""
-        property string website: ""
-        parent: Overlay.overlay; anchors.centerIn: parent
-        width: Math.min(440, page.Window.width - 48)
-        modal: true; popupType: Popup.Item; padding: 24
-        title: "移除网站配置？"
-        onAboutToShow: { application = page.selectedApp; website = page.catalog.selectedWebsite }
-        background: Rectangle { color: theme.surface; radius: 16; border.color: theme.line }
-        contentItem: Label {
-            text: "移除「" + removeWebsiteDialog.website + "」的独立映射和未保存修改。之后使用通用视频配置；其他网站保持不变。"
-            wrapMode: Text.Wrap; color: theme.muted; font.pixelSize: 13
-        }
-        footer: DialogButtonBox {
-            padding: 20; spacing: 10
-            UiAction { text: "取消"; onClicked: removeWebsiteDialog.reject() }
-            UiAction { objectName: "confirmRemoveGestureWebsite"; text: "移除配置"; primary: true; onClicked: { page.catalog.removeWebsite(removeWebsiteDialog.application, removeWebsiteDialog.website); removeWebsiteDialog.close() } }
+            padding: 18
+            UiAction { objectName: "cancelApplicationPurpose"; text: "取消"; onClicked: purposeDialog.reject() }
+            UiAction { objectName: "saveApplicationPurpose"; text: "添加"; primary: true; enabled: purposeChoice.currentIndex >= 0; onClicked: {
+                if (purposeDialog.application === page.selectedApp && page.catalog.addScene(purposeChoice.currentValue)) purposeDialog.close()
+            } }
         }
     }
     Dialog {
@@ -185,7 +157,7 @@ ScrollView {
                     ? "将从 Mythlink 的应用列表移除，同时清空它的映射和未保存修改。不会卸载电脑上的应用，之后可重新添加。"
                     : managementDialog.operation === "restore"
                     ? "将此应用的常规与场景映射恢复为内置默认配置，替换已保存的映射并清除未保存修改。恢复后仍可自由修改，其他应用及全局配置保持不变。"
-                    : "将清空这个应用的映射和未保存修改，保留应用图标。其他应用的配置及语音、系统手势保持不变。"
+                    : "将清空这个应用的映射和未保存修改，保留应用图标。浏览器保留默认的转圈切换页面操作。其他应用的配置及语音、系统手势保持不变。"
                 color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap
             }
             Label { Layout.fillWidth: true; visible: text.length > 0; text: managementDialog.errorMessage; color: "#A35527"; font.pixelSize: 12; wrapMode: Text.Wrap }
@@ -269,7 +241,7 @@ ScrollView {
         }
         Rectangle {
             objectName: "applicationSceneBar"
-            visible: page.applicationScope && page.catalog.availableScenes.length > 1
+            visible: page.applicationScope && Boolean(page.selectedApp) && (page.catalog.availableScenes.length > 1 || page.catalog.addableScenes.length > 0)
             Layout.fillWidth: true; implicitHeight: sceneControls.implicitHeight + 28
             color: theme.surface; radius: 12; border.color: theme.line
             ColumnLayout {
@@ -277,7 +249,7 @@ ScrollView {
                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                 anchors.margins: 14; spacing: 10
                 RowLayout {
-                    Label { text: "配置场景"; color: theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
+                    Label { text: "手势配置"; color: theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
                     Item { Layout.fillWidth: true }
                     Label { text: "按前台状态自动生效"; color: theme.muted; font.pixelSize: 11 }
                 }
@@ -293,46 +265,27 @@ ScrollView {
                             onClicked: page.catalog.selectScene(modelData.value)
                         }
                     }
-                }
-                Flow {
-                    objectName: "gestureWebsiteBar"
-                    visible: page.catalog.browserVideoScope
-                    Layout.fillWidth: true; spacing: 8
-                    Label { height: 42; verticalAlignment: Text.AlignVCenter; text: "适用网站"; color: theme.muted; font.pixelSize: 12 }
-                    Repeater {
-                        model: page.catalog.websites
-                        UiAction {
-                            required property var modelData
-                            objectName: "gestureWebsite_" + modelData.value
-                            text: modelData.label; primary: page.catalog.selectedWebsite === modelData.value
-                            onClicked: page.catalog.selectWebsite(modelData.value)
-                            ToolTip.visible: hovered && modelData.value.length > 0
-                            ToolTip.text: modelData.value
-                        }
+                    UiAction {
+                        objectName: "addApplicationSceneButton"
+                        text: "＋ 添加场景"; visible: page.catalog.addableScenes.length > 0
+                        onClicked: purposeDialog.open()
                     }
-                    UiAction { objectName: "addGestureWebsiteButton"; text: "＋ 添加网站"; onClicked: websiteDialog.open() }
-                    UiAction { objectName: "removeGestureWebsiteButton"; visible: page.catalog.selectedWebsite.length > 0; text: "移除网站"; quiet: true; onClicked: removeWebsiteDialog.open() }
-                }
-                Label {
-                    objectName: "gestureWebsiteHint"
-                    visible: page.catalog.browserVideoScope
-                    Layout.fillWidth: true; font.pixelSize: 12; wrapMode: Text.Wrap; color: theme.muted
-                    text: page.catalog.selectedWebsite
-                        ? "仅在当前标签页匹配 " + page.catalog.selectedWebsite + " 且播放器可操作时生效。此网站使用独立配置，未绑定手势不执行；评论、弹幕和地址栏输入时不触发视频动作。"
-                        : "通用配置用于未单独配置的网站，需先点击播放器且播放器支持相应按键。哔哩哔哩可添加专用适配；切换标签页后重新识别。"
                 }
                 Label {
                     objectName: "gestureSceneHint"
-                    visible: !page.catalog.browserVideoScope
                     Layout.fillWidth: true; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
-                    text: page.sceneScope
+                    text: page.catalog.isBrowser
+                        ? "自动识别当前网页的视频、PDF 等场景，无需添加网站。顺时针切换下一个 Chat / 标签页，逆时针切换上一个；所有场景共用默认配置中的转圈绑定。输入文字时暂停场景动作，转圈仍可切换页面。"
+                        : !page.catalog.isBrowser && page.catalog.supportsPresentation && page.catalog.selectedScene === "regular"
+                        ? "默认配置用于未进入放映时的应用快捷键，例如响指开始放映；放映中的翻页、结束动作请在「放映」中设置。"
+                        : page.sceneScope
                         ? "仅在此应用前台处于「" + page.catalog.selectedSceneLabel + "」且未输入文字时生效；场景手势独立于常规配置。"
                           + (["video", "music"].indexOf(page.catalog.selectedScene) >= 0 ? "播放暂停时仍可使用播放控制。" : "")
                         : "覆盖任意语音组手势后，该应用常规状态下停用整组语音操作。全局占用的手势不能在应用内修改。"
                 }
                 Label {
                     objectName: "gestureSceneObservation"
-                    visible: page.sceneScope; Layout.fillWidth: true
+                    visible: page.sceneScope && page.catalog.isBrowser; Layout.fillWidth: true
                     text: page.catalog.sceneHint; color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap
                 }
                 Label {
@@ -402,6 +355,19 @@ ScrollView {
                                 onClicked: applicationMenu.popup()
                                 Menu {
                                     id: applicationMenu
+                                    MenuItem {
+                                        objectName: "changeApplicationPurpose"
+                                        text: "添加场景"
+                                        visible: page.catalog.addableScenes.length > 0
+                                        height: visible ? implicitHeight : 0
+                                        onTriggered: purposeDialog.open()
+                                    }
+                                    MenuItem {
+                                        objectName: "disableApplicationScene"
+                                        text: "停用当前场景（保留配置）"
+                                        visible: page.sceneScope; height: visible ? implicitHeight : 0
+                                        onTriggered: page.catalog.disableScene(page.catalog.selectedScene)
+                                    }
                                     MenuItem {
                                         objectName: "restoreDefaultApplicationMappings"
                                         text: "恢复默认映射"

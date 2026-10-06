@@ -40,3 +40,7 @@ pretrained_models/
 # OS-generated files
 .DS_Store
 Thumbs.db
+
+# Local previews, diagnostic exports and personal drafts
+/outputs/
+/tmp/

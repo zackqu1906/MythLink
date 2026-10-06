@@ -27,6 +27,8 @@ def page():
     web = Node("AXWebArea", window, AXURL="https://www.bilibili.com/video/BVtest/?p=1", AXValueSettable=False)
     wrapper = Node("AXGroup", web, AXDOMClassList=["bpx-player-primary-area"])
     video = Node("AXGroup", wrapper, AXSubrole="AXVideo", AXEnabled=True)
+    Node("AXButton", wrapper, AXDescription="Pause", AXEnabled=True)
+    Node("AXSlider", wrapper, AXDescription="Playback progress", AXEnabled=True)
     return window, web, wrapper, video
 
 
@@ -232,7 +234,7 @@ def test_browser_pdf_identity_is_checked_before_dispatch(monkeypatch, change):
         ax = sys.modules['ApplicationServices']; original = ax.AXUIElementCopyAttributeValue
         def switch(node, key, unused):
             result = original(node, key, unused)
-            if node is focus and key == 'AXChildren': focus['AXURL'] = 'https://example.test/two.pdf'
+            if node is focus and key == 'AXURL': focus['AXURL'] = 'https://example.test/two.pdf'
             return result
         ax.AXUIElementCopyAttributeValue = switch
         assert backend.capture(menu_action=True, scene=True) is None

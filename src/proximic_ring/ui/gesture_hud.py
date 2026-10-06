@@ -34,27 +34,13 @@ def hud_geometry(area: QRect) -> QRect:
 def foreground_window_bounds() -> QRect | None:
     if sys.platform != "darwin":
         return None
-    import Quartz
-
-    from ..mac_workspace import frontmost_application
-    front = frontmost_application()
-    if front is None:
+    from .overlay_stacking import foreground_content_window
+    window = foreground_content_window()
+    if window is None:
         return None
-    pid = int(front.processIdentifier())
-    windows = Quartz.CGWindowListCopyWindowInfo(
-        Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
-        Quartz.kCGNullWindowID,
-    ) or []
-    # WindowServer returns front-to-back order. Only geometry is read: no window
-    # image, document text, AX traversal or permission prompt is needed here.
-    for window in windows:
-        if window.get(Quartz.kCGWindowOwnerPID) != pid or window.get(Quartz.kCGWindowLayer) != 0:
-            continue
-        bounds = window.get(Quartz.kCGWindowBounds, {})
-        if bounds.get("Width", 0) > 1 and bounds.get("Height", 0) > 1:
-            return QRect(round(bounds["X"]), round(bounds["Y"]),
-                         round(bounds["Width"]), round(bounds["Height"]))
-    return None
+    bounds = window["kCGWindowBounds"]
+    return QRect(round(bounds["X"]), round(bounds["Y"]),
+                 round(bounds["Width"]), round(bounds["Height"]))
 
 
 class GestureHud(QObject):
@@ -71,6 +57,9 @@ class GestureHud(QObject):
         self.window.setSource(QUrl.fromLocalFile(str(Path(__file__).parent / "qml/GestureHud.qml")))
         if self.window.status() == QQuickView.Error:
             raise RuntimeError("手势提示层加载失败：" + "\n".join(str(error) for error in self.window.errors()))
+        from .overlay_stacking import OverlayVisibilityGuard
+        self._visibility_guard = OverlayVisibilityGuard(self.window, self,
+            diagnostic=lambda exc: self._diagnostic(f"[GESTURE HUD] 浮窗显示失败：{exc}"))
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.setSingleShot(True)

@@ -270,6 +270,7 @@ def test_all_known_presenters_get_scene_and_standard_gesture_defaults(route, mon
     c, s, _, _, _, _, _ = route
     catalog = configure(s, monkeypatch, bundle)
     assert catalog.supportsPresentation and catalog.selectedScene == "regular"
+    catalog.selectScene("regular")
     assert catalog.bindingCount(bundle) == 4
     assert catalog.scene_bundles() == [bundle]
     presets = [a for a in catalog.actions if a.get("preset")]

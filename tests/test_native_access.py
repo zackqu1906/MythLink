@@ -134,8 +134,9 @@ def test_worker_keeps_ax_targets_local_and_rejects_handles_after_restart(monkeyp
     json.dumps(captured)
     command = {"operation": "shortcut", "target": captured["remote_id"], "shortcut": "Enter", "require_focus": True}
     second = worker.Dispatcher()
-    with pytest.raises(RuntimeError, match="变化"):
+    with pytest.raises(RuntimeError, match="失效") as error:
         second.handle(command)
+    assert error.value.reason == "target_expired"
     assert not posted
     first.handle(command)
     assert posted == [(target, "Enter")]

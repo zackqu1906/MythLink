@@ -227,7 +227,7 @@ def test_default_mappings_are_selected_editable_and_restorable(mapping_ui, tmp_p
 
 
 @pytest.mark.parametrize("size", [(1440, 1040), (940, 700)])
-def test_all_activity_modes_visible_and_bindings_drafts_are_separate(mapping_ui, tmp_path, size):
+def test_added_activities_visible_and_switch_preserves_bindings_drafts(mapping_ui, tmp_path, size):
     from PySide6.QtCore import QObject
     from PySide6.QtTest import QTest
     from proximic_ring.scene_capabilities import PDF, IMAGE, VIDEO, MUSIC
@@ -238,6 +238,9 @@ def test_all_activity_modes_visible_and_bindings_drafts_are_separate(mapping_ui,
     catalog._candidates = [dict(value=bundle, label="多媒体查看器", path="",
         sceneProfiles={PDF: "preview", IMAGE: "preview", VIDEO: "quicktime", MUSIC: "music"})]
     assert catalog.addApplication(bundle)
+    for scene in (PDF, VIDEO, IMAGE, MUSIC):
+        assert catalog.addScene(scene)
+    catalog.selectScene('regular')
     catalog.clearApplicationBindings(bundle)  # This test exercises drafts independently of defaults.
     QTest.qWait(60)
     click("gestureApplication_" + bundle)
@@ -246,6 +249,9 @@ def test_all_activity_modes_visible_and_bindings_drafts_are_separate(mapping_ui,
     assert editor.property("editable")
     for scene, action in [(PDF, "preview:pdf:next"), (VIDEO, "quicktime:video:play"),
                           (IMAGE, "preview:image:next"), (MUSIC, "music:music:play")]:
+        assert catalog.setPrimaryScene(scene)
+        QTest.qWait(30)
+        assert len(catalog.availableScenes) == 5
         button = visual_child(root.contentItem(), scene + "GestureScene")
         assert button is not None and button.property("visible")
         click(scene + "GestureScene")
@@ -254,6 +260,8 @@ def test_all_activity_modes_visible_and_bindings_drafts_are_separate(mapping_ui,
         assert editor.property("dirty")
     assert catalog.bindingCount(bundle) == 0
     for scene in (PDF, VIDEO, IMAGE, MUSIC):
+        assert catalog.setPrimaryScene(scene)
+        QTest.qWait(30)
         click(scene + "GestureScene")
         assert editor.property("dirty")
         click("saveMenuMappingButton")
@@ -787,8 +795,17 @@ def test_new_scene_defaults_are_visible_without_manually_assigning_actions(mappi
     assert catalog.addApplication(bundle)
     QTest.qWait(60)
     click('gestureApplication_'+bundle)
+    assert catalog.setPrimaryScene(scene)
+    QTest.qWait(30)
     click(scene+'GestureScene')
     assert len(catalog.bindings[bundle])==count
+    if scene == 'music':
+        for gesture, action in [('swipe-up', 'volume-up'), ('swipe-down', 'volume-down')]:
+            click('gestureCard_' + gesture)
+            editor = root.findChild(QObject, 'gestureActionEditor')
+            assert editor.property('savedId').endswith(':' + action)
+            assert editor.property('currentDescription') == ('提高音量' if gesture == 'swipe-up' else '降低音量')
+        assert 'circle-clockwise' not in catalog.bindings[bundle]
     click('gestureCard_swipe-right')
     editor=root.findChild(QObject,'gestureActionEditor')
     assert editor.property('savedId') and not editor.property('dirty')
@@ -819,3 +836,103 @@ def test_pending_scene_preset_can_be_seen_cancelled_and_replaced_in_editor(mappi
     click('gestureCard_swipe-right')
     assert editor.property('savedId')=='native-next'
     assert '等待快捷键' not in editor.property('currentDescription')
+
+
+def test_add_scene_requires_confirmation_and_presentation_can_add_pdf(mapping_ui):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    _,_,root,catalog,_,click,_=mapping_ui
+    bundle='com.apple.Preview'
+    catalog._candidates=[dict(value=bundle,label='预览',path='')]
+    assert catalog.addApplication(bundle)
+    QTest.qWait(40)
+    click('gestureApplication_'+bundle)
+    click('manageApplicationButton'); click('changeApplicationPurpose')
+    choice=root.findChild(QObject,'applicationPurposeChoice')
+    choice.setProperty('currentIndex',0)
+    assert catalog.primaryScene=='pdf'
+    click('cancelApplicationPurpose')
+    assert catalog.primaryScene=='pdf'
+    click('manageApplicationButton'); click('changeApplicationPurpose')
+    choice.setProperty('currentIndex',0)
+    click('saveApplicationPurpose')
+    assert catalog.primaryScene=='pdf' and len(catalog.availableScenes)==3
+    assert catalog.selectedScene=='image'
+    assert catalog._bindings_for(bundle,'pdf')
+    catalog._candidates.append(dict(value='com.microsoft.Powerpoint',label='PowerPoint',path='',sceneProfiles={'pdf':'generic'}))
+    assert catalog.addApplication('com.microsoft.Powerpoint')
+    assert [item['value'] for item in catalog.availableScenes]==['regular','presentation']
+    assert [item['value'] for item in catalog.addableScenes]==['pdf']
+    assert catalog.addScene('pdf')
+    assert [item['value'] for item in catalog.availableScenes]==['regular','presentation','pdf']
+
+
+def test_default_and_scene_editors_remain_accessible_without_gesture_driven_navigation(mapping_ui):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    from proximic_ring.ui.application_mapping_controller import ApplicationMappingController
+    c,bridge,root,catalog,_,click,_=mapping_ui
+    bundle='com.microsoft.Powerpoint'
+    catalog._candidates=[dict(value=bundle,label='PowerPoint',path='')]
+    assert catalog.addApplication(bundle)
+    QTest.qWait(60)
+    click('gestureApplication_'+bundle)
+    assert catalog.selectedScene=='regular'
+    assert [item['value'] for item in catalog.availableScenes]==['regular','presentation']
+    for gesture in ['circle-clockwise','swipe-left','snap']:
+        click('gestureCard_'+gesture)
+        assert catalog.selectedScene=='regular'
+    editor=root.findChild(QObject,'gestureActionEditor')
+    assert editor.property('savedId')=='powerpoint:start-current'
+    click('menuAction_powerpoint:start-first');click('saveMenuMappingButton')
+    click('gestureCard_circle-clockwise')
+    click('menuAction_next-tab');click('saveMenuMappingButton')
+    click('presentationGestureScene')
+    for gesture in ['snap','swipe-left','swipe-right']:
+        click('gestureCard_'+gesture)
+        assert catalog.selectedScene=='presentation'
+    click('gestureCard_snap')
+    assert editor.property('savedId')=='powerpoint:end'
+    click('regularGestureScene')
+    assert editor.property('savedId')=='powerpoint:start-first'
+    restored=ApplicationMappingController(catalog.service)
+    try:
+        restored.selectApplication(bundle)
+        assert restored.selectedScene=='regular'
+        assert restored.regularBindings[bundle]['circle-clockwise']['id']=='next-tab'
+        assert restored.regularBindings[bundle]['snap']['id']=='powerpoint:start-first'
+        assert restored._bindings_for(bundle,'presentation')['snap']['id']=='powerpoint:end'
+    finally:restored.close()
+
+
+@pytest.mark.parametrize('size', [(1440,1040),(940,700)])
+def test_add_scene_button_dialog_and_disable_preserve_default_editor(mapping_ui,tmp_path,size):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    _,_,root,catalog,_,click,_=mapping_ui
+    root.resize(*size)
+    bundle='com.kingsoft.wpsoffice.mac'
+    catalog._candidates=[dict(value=bundle,label='WPS Office',path='')]
+    assert catalog.addApplication(bundle)
+    QTest.qWait(40);click('gestureApplication_'+bundle)
+    assert catalog.selectedScene=='regular'
+    before=dict(catalog.regularBindings[bundle])
+    click('addApplicationSceneButton')
+    dialog=root.findChild(QObject,'applicationPurposeDialog')
+    assert dialog.property('visible') and dialog.property('title')=='添加场景'
+    assert catalog.addableScenes==[dict(value='pdf',label='PDF 阅读')]
+    shots=Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR',str(tmp_path)));shots.mkdir(parents=True,exist_ok=True)
+    QTest.qWait(100)
+    assert root.grabWindow().save(str(shots/f'add-scene-{size[0]}.png'))
+    click('saveApplicationPurpose');QTest.qWait(50)
+    assert catalog.selectedScene=='pdf'
+    assert catalog.configured_scenes()[bundle]==['presentation','pdf']
+    assert catalog.regularBindings[bundle]==before
+    click('manageApplicationButton');click('disableApplicationScene');QTest.qWait(30)
+    assert catalog.selectedScene=='regular'
+    assert catalog.configured_scenes()[bundle]==['presentation']
+    assert catalog.regularBindings[bundle]==before
+    click('addApplicationSceneButton');click('saveApplicationPurpose');QTest.qWait(40)
+    assert catalog.configured_scenes()[bundle]==['presentation','pdf']
+    click('regularGestureScene');QTest.qWait(40)
+    assert root.grabWindow().save(str(shots/f'added-scene-{size[0]}.png'))

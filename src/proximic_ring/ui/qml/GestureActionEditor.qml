@@ -14,6 +14,8 @@ Rectangle {
     readonly property var catalog: service.catalog
     readonly property string bundle: catalog.selectedApp
     readonly property bool sceneScope: applicationScope && catalog.selectedScene !== "regular"
+    readonly property bool sharedNavigation: applicationScope && bundle.length > 0 && catalog.isBrowser && ["circle-clockwise", "circle-counterclockwise"].indexOf(gesture) >= 0
+    readonly property bool sharedSceneNavigation: sharedNavigation && sceneScope
     readonly property bool anchorGesture: Boolean(catalog.globalOccupancy[gesture])
     readonly property var globalOptions: {
         var bindings = globalController.globalBindings
@@ -24,7 +26,7 @@ Rectangle {
         : globalOptions.filter(function(a) { return editor.globalController.globalBindings[a.id] === editor.gesture })[0] || null
     readonly property string pendingDefault: applicationScope ? catalog.pendingBindings[gesture] || "" : ""
     readonly property string savedId: saved ? saved.id : ""
-    readonly property string contextKey: applicationScope ? bundle + "/" + catalog.selectedScene + "/" + catalog.selectedWebsite + "/" + gesture : "global/" + gesture
+    readonly property string contextKey: applicationScope ? bundle + "/" + catalog.selectedScene + "/" + gesture : "global/" + gesture
     readonly property string savedVersion: applicationScope ? savedId + (pendingDefault ? "/pending:" + pendingDefault : "") : JSON.stringify(globalController.globalBindings)
     // Drafts survive a gesture/app/page switch, but never alter live bindings.
     property var drafts: ({})
@@ -61,6 +63,7 @@ Rectangle {
     }
     readonly property string savedStatus: {
         if (!saved) return ""
+        if (sharedNavigation) return "浏览器所有场景共用 · 在默认配置中修改"
         if (!applicationScope) return "全局生效 · 应用内不可覆盖此手势"
         if (savedAction && savedAction.preset === true) return savedAction.path + " · 可按应用设置自定义"
         if (savedId.indexOf("custom:") === 0) return "自定义快捷键 · 请与目标应用中的设置保持一致"
@@ -112,12 +115,6 @@ Rectangle {
     Connections {
         target: editor.catalog
         function onApplicationBindingsCleared(application) { editor.discardApplication(application) }
-        function onWebsiteBindingsCleared(application, website) {
-            var next = Object.assign({}, editor.drafts)
-            var prefix = application + "/video/" + website + "/"
-            Object.keys(next).forEach(function(key) { if (key.indexOf(prefix) === 0) delete next[key] })
-            editor.drafts = next
-        }
         function onDiscoveryChanged() {
             if (editor.applicationScope && (editor.catalog.busy || editor.catalog.menuState === "error" || editor.catalog.menuState === "partial"))
                 editor.feedback = ""
@@ -208,7 +205,7 @@ Rectangle {
                     objectName: "menuActionList"
                     anchors.fill: parent; anchors.margins: 4
                     clip: true; spacing: 3
-                    model: editor.applicationScope ? [{id: "", label: "无", path: editor.sceneScope ? "移除此场景的动作绑定" : "移除此手势的应用覆盖", shortcut: "", available: true}].concat(editor.filteredActions) : editor.filteredActions
+                    model: editor.applicationScope ? (editor.sharedNavigation ? [] : [{id: "", label: "无", path: editor.sceneScope ? "移除此场景的动作绑定" : "移除此手势的应用覆盖", shortcut: "", available: true}]).concat(editor.filteredActions) : editor.filteredActions
                     ScrollBar.vertical: ScrollBar { }
                     delegate: AbstractButton {
                         id: actionRow
@@ -267,17 +264,17 @@ Rectangle {
                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 14; spacing: 10
                 Label {
                     Layout.fillWidth: true
-                    text: !editor.applicationScope ? (editor.voiceLocked ? "语音手势组" : "保留手势")
+                    text: editor.sharedSceneNavigation ? "浏览器通用绑定" : !editor.applicationScope ? (editor.voiceLocked ? "语音手势组" : "保留手势")
                         : editor.anchorGesture ? "已被全局占用" : "尚未添加应用"
                     font.weight: Font.DemiBold; color: theme.text; font.pixelSize: 14
                 }
                 Label {
                     objectName: "selectedGestureDescription"
-                    Layout.fillWidth: true; text: editor.currentDescription; wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted
+                    Layout.fillWidth: true; text: editor.currentDescription + (editor.sharedSceneNavigation && editor.saved ? " · " + editor.saved.shortcut : ""); wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted
                 }
                 Label {
                     Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: theme.muted
-                    text: !editor.applicationScope ? (editor.voiceLocked
+                    text: editor.sharedSceneNavigation ? "所有场景沿用浏览器默认配置中的转圈绑定，不会被音量等场景动作覆盖。修改请切换到「默认配置」。" : !editor.applicationScope ? (editor.voiceLocked
                         ? "Tap 和上下左右滑保留给语音输入，不能绑定全局功能。可在应用中覆盖；覆盖任意一个，该应用常规状态下停用整个语音手势组。"
                         : "此手势用于切换输入法，不能绑定全局功能。")
                         : editor.anchorGesture ? "当前用于「" + catalog.globalOccupancy[editor.gesture] + "」。请先在全局默认中更换该功能的手势，再设置应用绑定。"

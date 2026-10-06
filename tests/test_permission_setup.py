@@ -381,3 +381,33 @@ def test_source_and_installed_scopes_do_not_share_request_markers(flow):
         assert permissions.requests == ["accessibility"]
     finally:
         installed.close()
+
+
+def test_pending_onboarding_does_not_block_feedback_and_async_grants_finish_in_background(flow):
+    setup,permissions,_,_,foreground=flow
+    permissions.states.update(bluetooth=True,microphone=True)
+    foreground[0]=False
+    permissions.checking=True
+    setup.startIfNeeded();settle()
+    assert setup.active and not setup.blocksFeedback and not permissions.requests
+    permissions.states.update(accessibility=True,screen=True)
+    permissions.checking=False;permissions.changed.emit();settle()
+    assert not setup.active and not setup.blocksFeedback and not permissions.requests
+
+
+def test_only_actual_unanswered_prompt_blocks_feedback(flow):
+    setup,permissions,_,_,foreground=flow
+    permissions.states.update(bluetooth=True,microphone=True)
+    foreground[0]=False
+    setup.startIfNeeded();settle()
+    assert setup.active and not setup.blocksFeedback and not permissions.requests
+    foreground[0]=True;setup._application_state_changed(Qt.ApplicationActive);settle()
+    assert setup.blocksFeedback and permissions.requests==['accessibility']
+    permissions.complete_native('accessibility');settle()
+    assert not setup.busy and setup.blocksFeedback  # AX API return is not dismissal.
+    foreground[0]=False;setup._application_state_changed(Qt.ApplicationInactive)
+    permissions.grant('accessibility');settle()
+    assert setup.active and not setup.blocksFeedback
+    assert permissions.requests==['accessibility']  # No new prompt in background.
+    permissions.grant('screen');settle()
+    assert not setup.active and not setup.blocksFeedback

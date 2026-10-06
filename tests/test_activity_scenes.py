@@ -119,7 +119,7 @@ def test_scene_tap_routes_before_voice_in_both_modes_and_restores_after_leaving(
     c, service, inline, backend, _, sent, _ = presentation
     bundle = "com.apple.Preview" if scene in {PDF, IMAGE} else "com.apple.QuickTimePlayerX"
     catalog = configure(service, monkeypatch, bundle)
-    catalog.selectScene(scene)
+    assert catalog.setPrimaryScene(scene)
     assert catalog.setCustomBinding(bundle, "tap", "测试动作", "Space")
     assert not catalog.canBind("index-pinch") and not catalog.canBind("middle-pinch")
     backend.target = replace(backend.target, bundle=bundle, scene=scene)
@@ -135,18 +135,24 @@ def test_same_app_scene_change_drops_queued_shortcut_and_persists_independent_bi
     c, service, _, backend, _, sent, _ = presentation
     bundle = "com.apple.Preview"; catalog = configure(service, monkeypatch, bundle)
     for scene, shortcut in [(PDF, "Alt+Down"), (IMAGE, "PageDown")]:
-        catalog.selectScene(scene)
+        assert catalog.setPrimaryScene(scene)
         assert catalog.setCustomBinding(bundle, "swipe-right", "下一项", shortcut)
+    assert catalog.setPrimaryScene(PDF)
     backend.target = replace(backend.target, bundle=bundle, scene=PDF)
     assert not request(c, "swipe-right", deliver=False)
     backend.target = replace(backend.target, scene=IMAGE)
     QCoreApplication.processEvents()
     assert not sent
+    assert catalog.setPrimaryScene(IMAGE)
     assert not request(c, "swipe-right") and sent == [(bundle, "PageDown")]
     restored = ApplicationMappingController(service)
     try:
         assert restored.configured_scenes()[bundle] == [PDF, IMAGE]
+        assert restored.for_scene(bundle, PDF)
+        restored.selectApplication(bundle)
+        assert restored.setPrimaryScene(PDF)
         assert restored.for_scene(bundle, PDF)['scene:swipe-right'].shortcut == 'Alt+Down'
+        assert restored.setPrimaryScene(IMAGE)
         assert restored.for_scene(bundle, IMAGE)['scene:swipe-right'].shortcut == 'PageDown'
         assert restored.regularBindings[bundle] == {}
     finally:

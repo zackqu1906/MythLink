@@ -6821,6 +6821,8 @@ class AppController(QObject):
             "disconnected" if not self._connected else ""
         )
         if boundary_reason:
+            if app_event is not None:
+                self._app_gestures._stop_trace(app_event, boundary_reason)
             self._event_log(
                 "GESTURE_ACTION", gesture=name, action="ignored", reason=boundary_reason,
                 confidence=getattr(event, "confidence", None),
@@ -6839,6 +6841,8 @@ class AppController(QObject):
             # correction, input-source switching, or the input-mode Enter action.
             if app_event is not None and not self._ring_gestures.speech_busy():
                 self._app_gestures.handle(app_event)
+            elif app_event is not None:
+                self._app_gestures._stop_trace(app_event, "speech_busy")
             return
         # Also protect direct GUI dispatchers; the normal runtime reserves
         # these gestures before confirmation and before native target capture.
