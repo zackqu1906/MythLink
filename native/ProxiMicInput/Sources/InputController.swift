@@ -96,6 +96,7 @@ final class ProxiMicInputController: IMKInputController {
     private var activationApplication = ""
     private var ownsActivation: Bool { IMEService.shared.activation.owns(self, activationLease) }
     private let panel = ActionPanel()
+    private var strokeCode = ""
     private var isWriting = false
     private var lastError = ""
     private var lastContext: EditorSnapshot?
@@ -148,6 +149,7 @@ final class ProxiMicInputController: IMKInputController {
         timer?.invalidate()
         timer = nil
         panel.hide()
+        strokeCode = ""
         undoHistory.clear()
         undoHistory.configure(enabled: service.multiUndoEnabled)
         undoSourceUtteranceID = nil
@@ -157,6 +159,7 @@ final class ProxiMicInputController: IMKInputController {
             previous.timer?.invalidate()
             previous.timer = nil
             previous.panel.hide()
+            previous.strokeCode = ""
             previous.invalidate("已切换输入框")
         }
         guard service.activation.owns(self, lease) else { return }
@@ -229,6 +232,7 @@ final class ProxiMicInputController: IMKInputController {
     private func retireActivation(_ event: String, reason: String) {
         traceLifecycle(event)
         let lease = activationLease
+        if !strokeCode.isEmpty, ownsActivation { adapter?.mark("") }
         activated = false
         preparingActivation = false
         activationTimer?.invalidate()
@@ -236,6 +240,7 @@ final class ProxiMicInputController: IMKInputController {
         timer?.invalidate()
         timer = nil
         panel.hide()
+        strokeCode = ""
         lastLifecycleEvent = event
         // Publish inactivity before cleanup (which can activate a newer client).
         if IMEService.shared.activation.end(self, lease) {
@@ -273,12 +278,22 @@ final class ProxiMicInputController: IMKInputController {
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard activated, ownsActivation, let event else { return false }
         if event.type == .leftMouseDown {
+            if !strokeCode.isEmpty {
+                adapter?.mark("")
+                strokeCode = ""
+                panel.hide()
+            }
             if session?.active == true || undoHistory.enabled || adapter?.clientOperationPending == true {
                 invalidate("鼠标操作已接管本句")
             }
             return false
         }
         guard event.type == .keyDown else { return false }
+        if !strokeCode.isEmpty {
+            adapter?.mark("")
+            strokeCode = ""
+            panel.hide()
+        }
         if let compatibility = adapter?.pendingCompatibility,
            compatibility.acceptsKey(code: Int(event.keyCode), command: event.modifierFlags.contains(.command),
                                     shift: event.modifierFlags.contains(.shift),
@@ -311,6 +326,12 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     override func commitComposition(_ sender: Any!) {
+        if !strokeCode.isEmpty {
+            adapter?.mark("")
+            strokeCode = ""
+            panel.hide()
+            return
+        }
         guard activated, ownsActivation, !isWriting, let session else { return }
         lastLifecycleEvent = session.active && session.hasComposition ? "commit_composition" : "commit_composition_ignored"
         isWriting = true
@@ -339,6 +360,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostDisconnected() {
+        if !strokeCode.isEmpty { adapter?.mark(""); strokeCode = "" }
         undoHistory.clear()
         rejectedBeginID = nil
         lastLifecycleEvent = "host_disconnected"
@@ -352,6 +374,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostConnected() {
+        if !strokeCode.isEmpty { adapter?.mark(""); strokeCode = "" }
         undoHistory.clear()
         rejectedBeginID = nil
         lastLifecycleEvent = "host_connected"
@@ -389,15 +412,22 @@ final class ProxiMicInputController: IMKInputController {
     func receive(_ message: [String: Any]) {
         guard activated, ownsActivation, !preparingActivation, let adapter, let type = message["type"] as? String else { return }
         if type == "reset", message["all"] as? Bool == true {
+            if !strokeCode.isEmpty { adapter.mark(""); strokeCode = ""; panel.hide() }
             lastLifecycleEvent = "reset"
             invalidate("主程序已结束本句")
             sendState(includeSnapshot: true)
+            return
+        }
+        guard message["client_id"] as? String == currentClientID else { return }
+        if type.hasPrefix("stroke_") {
+            receiveStroke(message, adapter: adapter, type: type)
             return
         }
         guard message["client_id"] as? String == currentClientID,
               let utteranceID = message["utterance_id"] as? String,
               let sequence = message["seq"] as? Int else { return }
         if type == "begin" {
+            if !strokeCode.isEmpty { adapter.mark(""); strokeCode = ""; panel.hide() }
             let requestedClientID = currentClientID
             if session?.utteranceID == utteranceID { return }
             if let session, session.phase == .error, session.hasComposition || session.awaitingReadback {
@@ -472,6 +502,47 @@ final class ProxiMicInputController: IMKInputController {
                 session.interrupt("主程序已结束本句")
             default: break
             }
+        }
+    }
+
+    private func receiveStroke(_ message: [String: Any], adapter: NativeInputClient, type: String) {
+        guard session?.active != true, !isWriting else { return }
+        let clientID = currentClientID
+        switch type {
+        case "stroke_update":
+            let code = String((message["code"] as? String ?? "").prefix(64))
+            let candidates = Array((message["candidates"] as? [String] ?? []).prefix(5))
+            let selected = message["selected"] as? Int ?? 0
+            if code != strokeCode {
+                isWriting = true
+                adapter.mark(code)
+                isWriting = false
+                guard activated, ownsActivation, currentClientID == clientID else { return }
+                strokeCode = code
+            }
+            if code.isEmpty { panel.hide() }
+            else { panel.updateStroke(code: code, candidates: candidates, selected: selected) }
+            tick()
+        case "stroke_clear":
+            if !strokeCode.isEmpty { adapter.mark("") }
+            strokeCode = ""
+            panel.hide()
+        case "stroke_commit":
+            let request = message["request_id"] as? String ?? ""
+            let value = message["text"] as? String ?? ""
+            let accepted = !request.isEmpty && value.count == 1 && !strokeCode.isEmpty
+            if accepted {
+                isWriting = true
+                adapter.commit(value)
+                isWriting = false
+                guard activated, ownsActivation, currentClientID == clientID else { return }
+                strokeCode = ""
+                panel.hide()
+            }
+            IMEService.shared.send(["type": "stroke_result", "client_id": clientID,
+                                    "request_id": request, "success": accepted,
+                                    "error": accepted ? "" : "笔画组合已失效，请重新书写"])
+        default: break
         }
     }
 
@@ -621,6 +692,13 @@ final class ProxiMicInputController: IMKInputController {
         }
         guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
         selectionPolls += 1
+        if !strokeCode.isEmpty {
+            if panel.needsPosition {
+                panel.position(caret: adapter.caret(compositionLength: (strokeCode as NSString).length, trace: false),
+                               clientLevel: adapter.client.windowLevel())
+            }
+            return
+        }
         if !isWriting, needsIdleTargetRefresh, selectionPolls % 15 == 0,
            session?.hasComposition != true, session?.awaitingReadback != true {
             // Retry an unavailable selection without reading or modifying

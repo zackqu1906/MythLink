@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from ring_python_sdk import RingSession
-from ring_python_sdk.touchpad import TouchpadMove
+from ring_python_sdk.touchpad import TouchpadMove, TouchpadClick, TouchpadContact
 
 
 async def run(args):
@@ -26,7 +26,8 @@ async def run(args):
         if mouse:mouse.handle(event)
         elif isinstance(event, TouchpadMove):
             if event.dx or event.dy:print(f'move {event.dx:.3f} {event.dy:.3f}')
-        else:print('left click')
+        elif isinstance(event, TouchpadClick):print('left click')
+        elif isinstance(event, TouchpadContact):print(f'contact {event.state} frame={event.step}')
     def on_stopped(error):
         outcome.append(error)
         if mouse:mouse.disable()

@@ -885,6 +885,7 @@ class AppController(QObject):
         self._ring_gestures = RingGestureController(self)
         from .touchpad_controller import TouchpadController
         self._touchpad = TouchpadController(self)
+        self._touchpad.changed.connect(self._update_audio_settings_readiness)
         from .proximity_controller import ProximityController
         self._proximity = ProximityController(self, settings=self._settings)
         self._proximity.diagnostic.connect(lambda info: self._event_log("PROXIMITY", **info))
@@ -2642,6 +2643,7 @@ class AppController(QObject):
                        and not self._pending_text_requests and not self._pending_mode_routes
                        and self._mode_switch_application is None
                        and self._undo_active is None
+                       and not self._touchpad.active and not self._touchpad.busy
                        and not self._audio_change_needs_microphone())
         previous = changes.allowed.is_set()
         if allowed:
@@ -3662,6 +3664,7 @@ class AppController(QObject):
         accepted = bool(
             self._connected and not self._busy and not self._recognition_enabled
             and not self._proximity.gestures_blocked
+            and not self._touchpad.active and not self._touchpad.busy
         )
         self._event_log(
             "USER_ACTION",
@@ -3671,6 +3674,8 @@ class AppController(QObject):
             busy=self._busy,
         )
         if not accepted:
+            if self._touchpad.active or self._touchpad.busy:
+                self._set_status("触摸板运行中", "请先关闭触摸板，再开启语音识别", "paused")
             return
         self._interaction_recognition_suspended = False
         self._recognition_event.set()

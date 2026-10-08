@@ -11,13 +11,26 @@ from proximic_ring.touchpad_mouse import TouchpadMouseOutput
 from ring_python_sdk.touchpad import TouchpadMove, TouchpadClick
 
 
-def test_dynamic_controls_use_existing_loop_without_stopping_audio():
+def test_dynamic_controls_suspend_competing_streams_and_restore_them():
     async def run():
         source = RingAudioSource()
         calls = []
+        audio = []
+        gesture_states = []
+        source.pause_stream = lambda: audio.append("paused")
+        source.begin_buffering = lambda: audio.append("resumed")
+        source.gesture_observer = lambda _event: None
+        source.gesture_state_observer = gesture_states.append
         class Session:
             touchpad_active = False
             mic_active = True
+            swipe_active = True
+            async def swipe_off(self):
+                calls.append("swipe_off")
+                self.swipe_active = False
+            async def swipe_on(self, **options):
+                calls.append("swipe_on")
+                self.swipe_active = True
             async def touchpad_on(self, **options):
                 assert asyncio.get_running_loop() is loop
                 calls.append(options)
@@ -30,11 +43,19 @@ def test_dynamic_controls_use_existing_loop_without_stopping_audio():
         loop = asyncio.get_running_loop()
         source._touchpad_endpoint = (loop, session)
         events = []
-        future = await asyncio.to_thread(source.start_touchpad, on_event=events.append, duration_s=90)
+        stopped_states = []
+        future = await asyncio.to_thread(
+            source.start_touchpad, on_event=events.append, duration_s=90,
+            on_stopped=lambda error: stopped_states.append((error, list(audio), session.swipe_active)))
         await asyncio.wrap_future(future)
-        assert source.touchpad_active and calls[0]['duration_s'] == 90
+        assert source.touchpad_active and calls[1]['duration_s'] == 90
+        assert calls[0] == "swipe_off" and audio == ["paused"]
+        assert not session.swipe_active and gesture_states == [False]
         await asyncio.wrap_future(source.stop_touchpad())
         assert not source.touchpad_active and session.mic_active and not source._stop.is_set()
+        assert session.swipe_active and calls[-1] == "swipe_on"
+        assert audio == ["paused", "resumed"] and gesture_states == [False, True]
+        assert stopped_states == [(None, ["paused", "resumed"], True)]
         assert not source._touchpad_requests
         source._touchpad_endpoint = None
         with pytest.raises(ConnectionError):
@@ -42,14 +63,55 @@ def test_dynamic_controls_use_existing_loop_without_stopping_audio():
     asyncio.run(run())
 
 
+def test_stroke_gestures_replace_normal_route_and_restore_after_touchpad():
+    async def run():
+        source = RingAudioSource()
+        normal = lambda event: None
+        stroke = lambda event: None
+        source.gesture_observer = normal
+        class Session:
+            swipe_active = True
+            touchpad_active = False
+            mic_active = False
+            async def swipe_off(self):
+                self.swipe_active = False
+                self.callback = None
+            async def swipe_on(self, **options):
+                assert not self.swipe_active
+                self.swipe_active = True
+                self.callback = options['on_trigger']
+            async def touchpad_on(self, **options):
+                self.touchpad_active = True
+                self.stopped = options['on_stopped']
+            async def touchpad_off(self):
+                self.touchpad_active = False
+                self.stopped(None)
+        session = Session()
+        source._touchpad_endpoint = (asyncio.get_running_loop(), session)
+        await asyncio.wrap_future(source.start_touchpad(on_event=lambda event: None, on_gesture=stroke))
+        assert session.touchpad_active and session.callback is stroke
+        await asyncio.wrap_future(source.set_touchpad_gestures(None))
+        assert not session.swipe_active
+        await asyncio.wrap_future(source.set_touchpad_gestures(stroke))
+        assert session.swipe_active and session.callback is stroke
+        await asyncio.wrap_future(source.stop_touchpad())
+        assert session.callback is normal and session.swipe_active
+    asyncio.run(run())
+
+
 def test_touchpad_failure_does_not_poison_audio_source():
     async def run():
         source = RingAudioSource()
+        audio = []
+        source.pause_stream = lambda: audio.append("paused")
+        source.begin_buffering = lambda: audio.append("resumed")
         class Session:
+            mic_active = True
             async def touchpad_on(self, **options): raise RuntimeError('model unavailable')
         source._touchpad_endpoint = (asyncio.get_running_loop(), Session())
         with pytest.raises(RuntimeError, match='model unavailable'):
             await asyncio.wrap_future(source.start_touchpad(on_event=lambda e: None))
+        assert audio == ["paused", "resumed"]
         assert source.error is None and not source._stop.is_set()
     asyncio.run(run())
 

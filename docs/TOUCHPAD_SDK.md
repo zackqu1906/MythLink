@@ -63,7 +63,8 @@ SDK 的 90 秒是**触摸板流时长**。下载文件夹中的独立测试窗�
 
 ## 事件约定
 
-- `TouchpadMove(dx, dy, contact_probability, step, timestamp)`：`dx/dy` 是原 AAR 后处理后的相对位移，默认 Mac 适配器以屏幕坐标单位应用；正 x 向右、正 y 向下。`contact_probability` 是最新已确认概率，属于诊断值，不是额外移动开关。
+- `TouchpadMove(dx, dy, contact_probability, step, timestamp)`：`dx/dy` 是原 AAR 后处理后的相对位移，默认 Mac 适配器以屏幕坐标单位应用；正 x 向右、正 y 向下。`contact_probability` 是最新已确认概率，仅作诊断，不判断笔画起落。
+- `TouchpadContact(state, step, timestamp, confirmed_step)`：原 ClickDetector 确认的 `down`／`up` 帧边界，或数据失效时的 `reset`。`step` 是原检测给出的实际边界，`confirmed_step` 是确认时的模型帧。笔画采集使用这一结果，独立于短时点击的时长／距离限制。
 - `TouchpadClick(step, timestamp, button='left')`：已经通过原算法短时、小位移条件的左键单击。
 - `timestamp`：主机 `time.monotonic()` 秒数，表示事件产生时刻，不是墙钟或固件 uptime。`step` 是本次连续推理段的索引，断流重置后从头计数。
 - `TouchpadStats`：包数、token 数、预热帧数、重置次数、无效/重复/过期包数、队列溢出次数、接触概率和最近有效数据年龄。
@@ -107,16 +108,19 @@ source = RingAudioSource(
 )
 ```
 
-它复用主程序已有连接，在固件手势启动后启动触摸板，关闭/断线时自动清理。`source.touchpad_active` 和 `source.touchpad_error` 可供 UI 展示。接收事件不代表自动发送系统鼠标动作，产品层可以选择将事件传给 `MacSystemMouse.handle` 或其他应用逻辑。桌面导航栏新增“触摸板”页面，可动态开启/关闭系统鼠标控制，默认 90 秒自动停止。设置包含指针速度、轻触点击、反转上下方向和自动停止时长。Esc、断线或锁屏会停止控制，重连后需手动再次开启。
+它复用主程序已有连接，关闭/断线时自动清理。`source.touchpad_active` 和 `source.touchpad_error` 可供 UI 展示。接收事件不代表自动发送系统鼠标动作，产品层可以选择将事件传给系统鼠标适配器或其他应用逻辑。桌面导航栏的“触摸板”页面可动态开启/关闭系统鼠标控制，默认 90 秒自动停止。开启期间主程序暂停 Ring 麦克风和固件手势，关闭后恢复；语音识别运行中需先暂停才能开启触摸板。设置包含指针速度、轻触点击、反转上下方向和自动停止时长。Esc、断线或锁屏会停止控制，重连后需手动再次开启。
 
 ## 互斥与清理
 
 - 触摸板 token、原始 IMU、四元数共用 `21 00` / `21 01` 数据流，三个模式互斥，冲突时抛 RuntimeError；先关闭已有模式再切换。
-- 语音保持 ADPCM；手势保持固件 `26 06` / `26 07` 识别。它们在主机端独立路由；实际固件并发稳定性仍需设备验证。
-- 队列最多 64 包，溢出清空并重置推理；序号缺口、250 ms 断流、无效包会重新预热。超过 8 秒无有效 token，停止并报告 TimeoutError。
+- SDK 允许 MIC、固件手势和触摸板共用连接；Windows 实机测试发现并发时触摸板缺包显著增多，因此主程序的触摸板模式会暂停 MIC 与固件手势，关闭后恢复。
+- 队列最多 64 包，溢出清空并重置推理；真实序号缺口、无效包会重新预热。Windows 短暂通知停顿若序号连续则保留模型状态；空闲超过 2 秒才主动重置，超过 8 秒无有效 token 则停止并报告 TimeoutError。
 - STOP、disconnect、stop_all 都会关闭触摸板输出；START 失败或被取消会尝试 STOP，STOP 写入失败仍释放模型和线程。断线不会自动恢复触摸板。
 
 ## 离线模型／录制数据接口
+
+笔画消费者还接收 `TouchpadClickVerdict(start_step, step, is_click, timestamp)`：它观察原检测器对该接触的最终判定，包含“是点击”和“不是点击”，不改变原点击门槛或系统鼠标事件。
+笔画提交必须等待对应结束帧的明确判定；后续移动帧数或短暂超时不代表点击判定已经交付。缺失判定的接触会丢弃，不会自动写入笔画。
 
 ```python
 from ring_python_sdk.touchpad import TouchpadBackbone, TouchpadProcessor
@@ -127,7 +131,7 @@ model.reset()
 
 processor = TouchpadProcessor()
 processor.feed(packet_bytes, arrival=received_monotonic, now=now_monotonic)
-events = processor.poll(now_monotonic)  # 定时约 1–5 ms 调用，排出待处理位移
+events = processor.poll(now_monotonic)  # 定时调用；Windows 约 15 ms 唤醒时会批量排出位移
 ```
 
 同一个 model/processor 只在单一线程使用。`feed` 输入完整 `21 05` 通知包；`poll` 不连接蓝牙或发送鼠标事件。原生模型输出三列为 vx、vy、接触 logit，SDK 负责 sigmoid 和后处理。
@@ -138,14 +142,16 @@ events = processor.poll(now_monotonic)  # 定时约 1–5 ms 调用，排出待�
 
 必须保持“推理前上传全部状态；推理后缓存全部状态”的顺序，不能边读输出边回写输入。详见 `docs/TOUCHPAD_ADAPTATION_AUDIT.md`；原数据 27,790 帧回放已验证修复效果，无校准或静止冻结。
 
-测试入口：`tests/test_touchpad_sdk.py`（会话、互斥、线程、清理、超时、路由、主项目适配及真实 MNN 虚拟 BLE 流），`tests/test_touchpad_backbone.py`（真实 MNN 状态覆盖回归）。仍未宣称 Android 设备逐帧输出完全一致，也未进行本轮 SDK 与语音/手势并发实机验收。
+测试入口：`tests/test_touchpad_sdk.py`（会话、互斥、线程、清理、超时、路由、主项目适配及真实 MNN 虚拟 BLE 流），`tests/test_touchpad_backbone.py`（真实 MNN 状态覆盖回归）。Windows 实机已验证主程序在触摸板开启时暂停 MIC 与手势、关闭后恢复；真实鼠标手感仍需界面复测。尚未宣称 Android 设备逐帧输出完全一致。
 
 ## 桌面动态控制
 
-`RingAudioSource.start_touchpad(**options)` 和 `stop_touchpad()` 从 GUI / 其他线程调用，立即返回 `concurrent.futures.Future`，通过现有 BLE 事件循环执行 SDK 操作。不要在 GUI 线程调用 `.result()` 等待。运行期间无需修改构造参数，也不重启语音。
+`RingAudioSource.start_touchpad(**options)` 和 `stop_touchpad()` 从 GUI / 其他线程调用，立即返回 `concurrent.futures.Future`，通过现有 BLE 事件循环执行 SDK 操作。不要在 GUI 线程调用 `.result()` 等待。主程序会在开启前暂停 Ring 麦克风及固件手势，在停止后恢复，保持同一 BLE 连接。
 
 `ui/touchpad_controller.py` 管理页面状态和连接代次；`touchpad_mouse.py` 将高频事件放入最多 32 项的队列，在专用线程发送系统鼠标事件。连续位移合并但不越过点击，超过 100 ms 的旧事件丢弃；停止立即关闭本地输出门。推理仍由 SDK 的单线程 executor 执行，BLE 回调只入队，GUI 仅接收低频统计和状态变化。
 
+同一页面可手动切换「光标控制 / 笔画输入」。切换只替换输出端，沿用已开启的触摸板 token 流，不重新开启 Ring 麦克风。光标模式保持固件手势通道关闭；笔画模式单独启用固件手势触发事件，右滑选下一个、左滑选上一个、上滑退一笔、下滑清空。固件手势直接送入笔画控制器，不经过语音或应用手势映射；切回光标模式再次关闭通道，结束触摸板后恢复原有映射。笔画模式在工作线程按模型接触概率分笔，仅把完成的轨迹交给 UI；UI 使用原型的 32 点模板识别横、竖、撇、点／捺、折，离线字库按笔画前缀给出候选。界面中的五类按钮可单独测试候选流程。Ring 轻触确认高亮候选；外部文本框仍获焦点时 Windows 使用 Unicode 输入、macOS 对可确认的文本焦点发送 Cmd+V。点击本窗口里的候选时，该字复制到剪贴板供用户粘贴，避免误投递到当前窗口。macOS 的笔画输入路径尚需 Mac 实机验证；笔画模式同时传输触摸板 token 与固件手势，需在真实 Ring 上复查丢包率和轨迹质量。
+
 Windows 使用 `ring_python_sdk.touchpad.windows.WindowsSystemMouse` 发送系统指针事件；macOS 继续使用 `MacSystemMouse`。触摸板默认关闭，仅在页面手动开启。
 
-设置仅在关闭时修改并持久保存，开启状态不持久化。触摸板失败单独显示，不终止语音或固件手势；SDK 的原始 IMU / 四元数互斥约束仍然适用。
+设置仅在关闭时修改并持久保存，开启状态不持久化。触摸板失败单独显示并尝试恢复暂停的通道；SDK 的原始 IMU / 四元数互斥约束仍然适用。

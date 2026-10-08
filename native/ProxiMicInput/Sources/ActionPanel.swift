@@ -141,6 +141,28 @@ final class ActionPanel: NSObject {
         }
     }
 
+    func updateStroke(code: String, candidates: [String], selected: Int) {
+        dismissTimer?.invalidate()
+        dismissTimer = nil
+        busy = false
+        progress.stopAnimation(nil)
+        progress.isHidden = true
+        errorTint.isHidden = true
+        effect.appearance = nil
+        cancelButton.isHidden = true
+        convertButton.isHidden = true
+        let choices = candidates.enumerated().map { index, value in
+            index == selected ? "【\(value)】" : value
+        }.joined(separator: "  ")
+        status.stringValue = code + (choices.isEmpty ? "" : "   " + choices)
+        status.toolTip = "左右滑动选字，轻触确认；上滑退笔，下滑清空"
+        anchor.update(utteranceID: "stroke", editing: false, currentSize: panel.frame.size)
+        shouldShow = !code.isEmpty
+        stack.layoutSubtreeIfNeeded()
+        panel.setContentSize(NSSize(width: min(560, max(140, stack.fittingSize.width + 20)), height: 40))
+        if !shouldShow { panel.orderOut(nil) }
+    }
+
     func position(caret: NSRect?, clientLevel: Int32) {
         guard shouldShow else { return }
         // Some clients temporarily stop returning geometry while waiting for

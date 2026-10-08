@@ -68,11 +68,19 @@ class TouchpadStream:
                     items.append(self.queue.get_nowait())
                 reset, self.overflow = self.overflow, False
                 def advance():
+                    batch_start = time.monotonic()
+                    queue_age = max((batch_start-arrival for _, arrival in items), default=0.)
                     if reset:self.processor.reset()
                     for packet, arrival in items:self.processor.feed(packet, arrival=arrival)
                     events = self.processor.poll()
-                    return events, self.processor.stats, self.processor.last_valid
+                    stats = replace(self.processor.stats,
+                                    inference_batch_ms=(time.monotonic()-batch_start)*1000,
+                                    packet_queue_age_ms=max(0.,queue_age)*1000)
+                    return events, stats, self.processor.last_valid
                 events, stats, last_valid = await loop.run_in_executor(self.executor, advance)
+                if not items:
+                    stats = replace(stats, inference_batch_ms=self.stats.inference_batch_ms,
+                                    packet_queue_age_ms=self.stats.packet_queue_age_ms)
                 self.stats = replace(stats, queue_overflows=self.overflows)
                 now = time.monotonic()
                 if self.closed:break

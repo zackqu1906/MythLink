@@ -247,6 +247,11 @@ def inline_ui(tmp_path, monkeypatch):
     if app is not None and not isinstance(app, QApplication):
         pytest.skip("QML requires a QApplication process")
     app = app or QApplication(["ime-tests", "-platform", "offscreen"])
+    # Offscreen Qt cannot always discover the Windows Chinese font collection.
+    from PySide6.QtGui import QFontDatabase
+    for font_path in ("C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msyhbd.ttc"):
+        if Path(font_path).exists():
+            QFontDatabase.addApplicationFont(font_path)
     monkeypatch.setattr(module, "app_data_root", lambda: tmp_path)
     monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
     monkeypatch.setattr(inline, "IMEBridge", FakeBridge)

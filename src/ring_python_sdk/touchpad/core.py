@@ -32,6 +32,8 @@ class ClickDetector:
     def reset(self):
         self.window=deque(maxlen=15); self.raw={}; self.pending=deque()
         self.start=self.transition=self.last_prob=self.last_move=None
+        self.contact_edges=deque(maxlen=64)
+        self.contact_verdicts=deque(maxlen=64)
     def probability(self,index,p):
         if self.last_prob is not None and index!=self.last_prob+1: self.reset()
         self.last_prob=index; self.window.append((index,p))
@@ -44,6 +46,9 @@ class ClickDetector:
         if previous[-1]>=current[0] or current[-1]!=index:return []
         if self.transition is not None and current[0]<=self.transition:return []
         self.transition=index
+        # Expose the boundary this original detector already confirmed. These
+        # observations do not change its probability, duration or click rules.
+        self.contact_edges.append((self.start is None,current[0],index))
         if self.start is None:self.start=current[0]
         else:
             self.pending.append((self.start,current[0]));self.start=None
@@ -57,10 +62,13 @@ class ClickDetector:
         result=[]
         while self.pending and self.last_move is not None and self.last_move>=self.pending[0][1]-1:
             start,end=self.pending.popleft()
+            self.contact_verdicts.append((start,end,False))
             if not 0<end-start<40 or any(k not in self.raw for k in range(start,end)):continue
             dx=sum(self.raw[k][0] for k in range(start,end))*.005
             dy=sum(self.raw[k][1] for k in range(start,end))*.005
-            if math.hypot(dx,dy)<=.02:result.append({'kind':'click','step':end})
+            if math.hypot(dx,dy)<=.02:
+                result.append({'kind':'click','step':end})
+                self.contact_verdicts[-1]=(start,end,True)
         return result
 
 
@@ -83,7 +91,12 @@ class Postprocessor:
                     self.prob.setdefault(k,[]).append(p)
             for k in sorted(k for k in self.prob if k<=n-2):
                 samples=self.prob.pop(k);self.contact=sum(samples)/len(samples)
-                self.events.extend(self.click.probability(k,self.contact))
+                clicks=self.click.probability(k,self.contact)
+                for down,step,confirmed_step in self.click.contact_edges:
+                    self.events.append({'kind':'contact','state':'down' if down else 'up',
+                                        'step':step,'confirmed_step':confirmed_step})
+                self.click.contact_edges.clear()
+                self.events.extend(clicks)
         for k in list(self.times):
             if k<n-66 and k not in self.vel:del self.times[k]
     def drain(self,now):
@@ -92,34 +105,46 @@ class Postprocessor:
             if now-self.times[k][0]<=.1:break
             del self.vel[k];del self.times[k];self.last=max(self.last,k)
             self.click.reset()  # Never allow a click to span discarded movement.
+            self.events.append({'kind':'contact','state':'reset','step':k,'confirmed_step':k})
             if self.next_step is not None and k>=self.next_step:self.next_step=k+1
         available=sorted(self.vel.keys() & self.times.keys())
         if self.next_time is None:
             if not available:return self.take_events()
-            self.next_step=available[0];self.next_time=max(now,(self.last_time or now-.005)+.005)
-        if now<self.next_time:return self.take_events()
-        k=self.next_step
-        if k not in available:
-            self.next_time=self.next_step=None
-            return self.take_events()
-        v=np.mean(self.vel.pop(k),axis=0)
-        x=float(v[0])*1.595;y=float(v[1])
-        cd=float(np.interp(math.hypot(x,y),CD_SPEED,CD_GAIN));gain=cd*.7*.005
-        dx,dy=x*gain*.75,y*gain*1.10
-        if math.hypot(dx,dy)<.1:dx=dy=0.
-        self.events.append({'kind':'move','step':k,'dx':dx,'dy':dy,'contact':self.contact})
-        self.events.extend(self.click.movement(k,(float(v[0]),float(v[1]))))
-        del self.times[k];self.last=k;self.last_time=now;self.next_step=k+1
-        available=sorted(self.vel.keys() & self.times.keys())
-        if not available:self.next_step=self.next_time=None;self.catchup=False
-        else:
+            self.next_step=available[0]
+            # Windows' asyncio 1 ms sleep normally wakes after ~15.6 ms. Start
+            # at the oldest frame's time so a single poll can catch up.
+            self.next_time=min(now,self.times[self.next_step][0])
+        # Emit every due frame (bounded to one packet's maximum of 20). The
+        # mouse worker coalesces adjacent moves, preserving the full distance.
+        for _ in range(20):
+            if now<self.next_time:break
+            k=self.next_step
+            if k not in self.vel or k not in self.times:
+                self.next_time=self.next_step=None
+                break
+            v=np.mean(self.vel.pop(k),axis=0)
+            x=float(v[0])*1.595;y=float(v[1])
+            cd=float(np.interp(math.hypot(x,y),CD_SPEED,CD_GAIN));gain=cd*.7*.005
+            dx,dy=x*gain*.75,y*gain*1.10
+            if math.hypot(dx,dy)<.1:dx=dy=0.
+            self.events.append({'kind':'move','step':k,'dx':dx,'dy':dy,'contact':self.contact})
+            self.events.extend(self.click.movement(k,(float(v[0]),float(v[1]))))
+            del self.times[k];self.last=k;self.last_time=now;self.next_step=k+1
+            available=sorted(self.vel.keys() & self.times.keys())
+            if not available:
+                self.next_step=self.next_time=None;self.catchup=False
+                break
             age=now-self.times[available[0]][1]
             if self.catchup and age<.015:self.catchup=False
             elif not self.catchup and age>.025:self.catchup=True
             interval=.00475 if self.catchup else .005
             self.next_time+=interval
-            if self.next_time<=now:self.next_time+=(int((now-self.next_time)/interval)+1)*interval
         return self.take_events()
     def take_events(self):
+        # Observe the original completed decision, including a negative verdict.
+        # Consumers must not infer this from elapsed time or later movement.
+        for start,end,is_click in self.click.contact_verdicts:
+            self.events.append({'kind':'click_verdict','start_step':start,'step':end,'is_click':is_click})
+        self.click.contact_verdicts.clear()
         events,self.events=self.events,[]
         return events

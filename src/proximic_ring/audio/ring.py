@@ -112,6 +112,10 @@ class RingAudioSource(AudioSource):
         self.touchpad_error = None
         self._touchpad_endpoint = None
         self._touchpad_requests = set()
+        self._touchpad_suspension = None
+        self._touchpad_restore_task = None
+        self._touchpad_gesture_callback = None
+        self._touchpad_gesture_lock = asyncio.Lock()
         self.gestures_active = False
         self.gesture_error = None
         self.battery_observer = battery_observer
@@ -1061,6 +1065,8 @@ class RingAudioSource(AudioSource):
             raise
         finally:
             self._touchpad_endpoint = None
+            self._touchpad_gesture_callback = None
+            self._touchpad_suspension = None
             requests = list(self._touchpad_requests)
             for task in requests:
                 task.cancel()
@@ -1101,6 +1107,48 @@ class RingAudioSource(AudioSource):
             return result
         loop, session = endpoint
 
+        async def restore():
+            suspended, self._touchpad_suspension = self._touchpad_suspension, None
+            if not suspended or self._stop.is_set() or self._touchpad_endpoint is not endpoint:
+                return
+            error = None
+            async with self._touchpad_gesture_lock:
+                if self._touchpad_gesture_callback is not None:
+                    self._touchpad_gesture_callback = None
+                    if getattr(session, "swipe_active", False):
+                        try:
+                            await session.swipe_off()
+                        except Exception as exc:
+                            error = exc
+            if suspended["gestures"] and not getattr(session, "swipe_active", False):
+                try:
+                    await self._start_gestures(session)
+                except Exception as exc:
+                    error = exc
+            if suspended["microphone"] and self.audio_enabled:
+                try:
+                    await asyncio.to_thread(self.begin_buffering)
+                except Exception as exc:
+                    error = error or exc
+            if error is not None:
+                raise error
+
+        def restore_after_stop():
+            task = asyncio.create_task(restore(), name="ring-touchpad-restore")
+            self._touchpad_restore_task = task
+            self._touchpad_requests.add(task)
+            def finished(done):
+                self._touchpad_requests.discard(done)
+                try:
+                    done.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    self.touchpad_error = exc
+                    self._signal_error(exc)
+            task.add_done_callback(finished)
+            return task
+
         async def apply():
             task = asyncio.current_task()
             self._touchpad_requests.add(task)
@@ -1108,18 +1156,62 @@ class RingAudioSource(AudioSource):
                 if self._stop.is_set() or self._touchpad_endpoint is not endpoint:
                     raise ConnectionError("Ring 连接已结束")
                 if enabled:
+                    if self._touchpad_restore_task is not None:
+                        await self._touchpad_restore_task
+                        self._touchpad_restore_task = None
+                    if getattr(session, "touchpad_active", False):
+                        raise RuntimeError("Touchpad is already active")
+                    suspended = {"microphone": False, "gestures": False}
+                    self._touchpad_suspension = suspended
+                    try:
+                        if getattr(session, "mic_active", False):
+                            suspended["microphone"] = True
+                            await asyncio.to_thread(self.pause_stream)
+                        if getattr(session, "swipe_active", False):
+                            suspended["gestures"] = True
+                            await session.swipe_off()
+                            self.gestures_active = False
+                            if self.gesture_state_observer is not None:
+                                self.gesture_state_observer(False)
+                    except BaseException:
+                        await restore()
+                        raise
                     callback = options.pop("on_stopped", None)
+                    gesture_callback = options.pop("on_gesture", None)
                     def stopped(error):
                         self.touchpad_active = False
                         self.touchpad_error = error
+                        restore_task = restore_after_stop()
                         if callback is not None:
-                            callback(error)
-                    await session.touchpad_on(**options, on_stopped=stopped)
+                            def report_restored(done):
+                                try:
+                                    done.result()
+                                    callback(error)
+                                except Exception as exc:
+                                    callback(error or exc)
+                            restore_task.add_done_callback(report_restored)
+                    try:
+                        await session.touchpad_on(**options, on_stopped=stopped)
+                        if gesture_callback is not None:
+                            async with self._touchpad_gesture_lock:
+                                await session.swipe_on(on_trigger=gesture_callback, print_events=False,
+                                                       print_triggers=False, print_profile=False)
+                                self._touchpad_gesture_callback = gesture_callback
+                    except BaseException:
+                        if getattr(session, "touchpad_active", False):
+                            await session.touchpad_off()
+                        if self._touchpad_restore_task is not None:
+                            await self._touchpad_restore_task
+                        else:
+                            await restore()
+                        raise
                     self.touchpad_active = bool(session.touchpad_active)
                     self.touchpad_error = None
                 else:
                     await session.touchpad_off()
                     self.touchpad_active = False
+                    if self._touchpad_restore_task is not None:
+                        await self._touchpad_restore_task
             finally:
                 self._touchpad_requests.discard(task)
 
@@ -1138,6 +1230,31 @@ class RingAudioSource(AudioSource):
 
     def stop_touchpad(self):
         return self._submit_touchpad(False, {})
+
+    def set_touchpad_gestures(self, callback=None):
+        """Reserve firmware swipes for stroke mode without restarting touchpad."""
+        from concurrent.futures import Future
+        endpoint = self._touchpad_endpoint
+        if endpoint is None or self._stop.is_set():
+            result = Future()
+            result.set_exception(ConnectionError("Ring 未连接"))
+            return result
+        loop, session = endpoint
+
+        async def apply():
+            async with self._touchpad_gesture_lock:
+                if (self._stop.is_set() or self._touchpad_endpoint is not endpoint
+                        or not getattr(session, "touchpad_active", False)):
+                    raise ConnectionError("触摸板未运行")
+                if self._touchpad_gesture_callback is not None:
+                    await session.swipe_off()
+                    self._touchpad_gesture_callback = None
+                if callback is not None:
+                    await session.swipe_on(on_trigger=callback, print_events=False,
+                                           print_triggers=False, print_profile=False)
+                    self._touchpad_gesture_callback = callback
+
+        return asyncio.run_coroutine_threadsafe(apply(), loop)
 
     async def _start_touchpad(self, session) -> None:
         """Opt-in typed events on the existing BLE loop; no OS mouse injection."""

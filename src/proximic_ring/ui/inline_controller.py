@@ -32,6 +32,7 @@ class InlineInputController(QObject):
     interrupted = Signal()
     settled = Signal(str, str)
     actionRequested = Signal(str)
+    strokeCommitted = Signal(str, bool, str)
 
     def __init__(self, parent=None, *, enabled=None, bridge_factory=None, source_switch_factory=None):
         super().__init__(parent)
@@ -57,6 +58,10 @@ class InlineInputController(QObject):
         self._edit_intents = {}
         self.settled_session_id = None
         self._bridge = None
+        self._stroke_request = None
+        self._stroke_timer = QTimer(self)
+        self._stroke_timer.setSingleShot(True)
+        self._stroke_timer.timeout.connect(self._stroke_timed_out)
         self._transport_error = ""
         self._installing = False
         self._installation_message = "安装后，点入文本框并 tap，即可自动切入语音输入法。"
@@ -241,6 +246,38 @@ class InlineInputController(QObject):
         self._seq += 1
         return self._bridge.send({"type": operation, "client_id": self._client_id,
                                   "utterance_id": self._utterance_id, "seq": self._seq, **fields})
+
+    def stroke_update(self, code, candidates, selected):
+        if (not self.ready or not self._bridge or self._begin_origin is not None
+                or self._view.get("phase") in {"starting", "listening", "finishing", "editing"}):
+            return False
+        return self._bridge.send({"type": "stroke_update", "client_id": self._client_id,
+                                  "code": str(code)[:64], "candidates": list(candidates)[:5],
+                                  "selected": int(selected)})
+
+    def stroke_clear(self):
+        if self._bridge and self._client_id:
+            self._bridge.send({"type": "stroke_clear", "client_id": self._client_id})
+        self._stroke_request = None
+        self._stroke_timer.stop()
+
+    def stroke_commit(self, char):
+        if (not self.ready or not self._bridge or self._stroke_request or self._begin_origin is not None
+                or self._view.get("phase") in {"starting", "listening", "finishing", "editing"}):
+            return False
+        request = uuid.uuid4().hex
+        sent = self._bridge.send({"type": "stroke_commit", "client_id": self._client_id,
+                                  "request_id": request, "text": str(char)})
+        if sent:
+            self._stroke_request = (request, str(char), self._client_id)
+            self._stroke_timer.start(5000)
+        return sent
+
+    def _stroke_timed_out(self):
+        if self._stroke_request is not None:
+            _, char, _ = self._stroke_request
+            self._stroke_request = None
+            self.strokeCommitted.emit(char, False, "输入法未确认本次输入，请检查目标文本框")
 
     def _diagnose(self, kind, *, characters=None, error=None, reason=None):
         """Publish an explicit metadata allowlist, never editor or ASR text."""
@@ -652,7 +689,19 @@ class InlineInputController(QObject):
         if self._closed or not isinstance(message, dict):
             return
         kind = message.get("type")
+        if kind == "stroke_result":
+            pending = self._stroke_request
+            if (pending and message.get("epoch") == self._epoch
+                    and message.get("client_id") == pending[2]
+                    and message.get("request_id") == pending[0]):
+                self._stroke_request = None
+                self._stroke_timer.stop()
+                self.strokeCommitted.emit(pending[1], bool(message.get("success")),
+                                          str(message.get("error") or ""))
+            return
         if kind == "connected":
+            if self._stroke_request is not None:
+                self._stroke_timed_out()
             self._utterance_sessions.clear()
             self.settled_session_id = None
             self._compatibility_requests.clear()
@@ -692,6 +741,11 @@ class InlineInputController(QObject):
                                   if key in allowed and isinstance(value, (str, int, bool))})
             return
         if kind == "disconnected":
+            if self._stroke_request is not None:
+                self._stroke_timer.stop()
+                _, char, _ = self._stroke_request
+                self._stroke_request = None
+                self.strokeCommitted.emit(char, False, "输入法连接已断开")
             if self._begin_origin is not None and self._startup_buffering:
                 # No ASR text has been released yet. Keep the same sentence
                 # through a cold IME reconnect, bounded by its existing deadline.
@@ -794,6 +848,11 @@ class InlineInputController(QObject):
             previous_active = self.active
             changed_client = client_id != self._client_id
             if changed_client:
+                if self._stroke_request is not None:
+                    self._stroke_timer.stop()
+                    _, char, _ = self._stroke_request
+                    self._stroke_request = None
+                    self.strokeCommitted.emit(char, False, "已切换输入框")
                 self._utterance_sessions.clear()
                 self._client_id = client_id
                 self._utterance_id = ""

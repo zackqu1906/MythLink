@@ -26,7 +26,7 @@ ApplicationWindow {
 
     UiTheme { id: uiTheme }
     property int currentPage: 0
-    readonly property var pageTitles: ["我的 Ring", "语音输入", "场景与手势", "触摸板"]
+    readonly property var pageTitles: ["我的 Ring", "语音输入", "场景与手势", "触摸板与笔画输入"]
     readonly property int sidebarWidth: width < 1100 ? 180 : 218
     function showVoice(history) {
         currentPage = 1
@@ -617,7 +617,7 @@ ApplicationWindow {
                 Accessible.name: "MythLink"
             }
             Repeater {
-                model: [{label: "首页", icon: "home", page: 0}, {label: "语音输入", icon: "voice", page: 1}, {label: "触摸板", icon: "pointer", page: 3}, {label: "场景与手势", icon: "gesture", page: 2}]
+                model: [{label: "首页", icon: "home", page: 0}, {label: "语音输入", icon: "voice", page: 1}, {label: "触摸板与笔画", icon: "pointer", page: 3}, {label: "场景与手势", icon: "gesture", page: 2}]
                 delegate: AbstractButton {
                     required property int index
                     required property var modelData
@@ -659,7 +659,7 @@ ApplicationWindow {
             Column {
                 anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: 5
                 Label { text: root.pageTitles[root.currentPage]; color: uiTheme.text; font.pixelSize: 32; font.weight: Font.Bold }
-                Label { text: root.currentPage === 0 ? (appController.deviceName || "连接你的 Ring，开始使用") : root.currentPage === 1 ? "说话完成输入与修改，回顾每一次语音记录" : root.currentPage === 3 ? "让 Ring 成为你的触摸板，直接控制系统指针" : "查看手势与应用操作的对应关系"; color: uiTheme.muted; font.pixelSize: 12 }
+                Label { text: root.currentPage === 0 ? (appController.deviceName || "连接你的 Ring，开始使用") : root.currentPage === 1 ? "说话完成输入与修改，回顾每一次语音记录" : root.currentPage === 3 ? "用 Ring 控制指针或书写笔画" : "查看手势与应用操作的对应关系"; color: uiTheme.muted; font.pixelSize: 12 }
             }
             RowLayout {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 8

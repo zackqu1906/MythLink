@@ -40,3 +40,6 @@ pretrained_models/
 # OS-generated files
 .DS_Store
 Thumbs.db
+
+# Superdesign downloaded CLI cache
+.superdesign/npm-cache/

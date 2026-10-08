@@ -87,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     text_fields = controller.ringGestures.textFields
     from .focus_band import FocusBand
     focus_band = FocusBand(text_fields.picker, app, diagnostic=controller._append_background_diagnostic)
+    if sys.platform == "win32":
+        from .stroke_candidate_overlay import StrokeCandidateOverlay
+        stroke_candidates = StrokeCandidateOverlay(controller.touchpad, app)
     controller.ringGestures.showRequested.connect(
         lambda mode, message: gesture_hud.show_mode(
             mode, message=message, input_fields_available=text_fields.available,

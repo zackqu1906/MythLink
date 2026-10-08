@@ -11,7 +11,7 @@ ScrollView {
     UiTheme { id: theme }
     clip: true
     contentWidth: availableWidth
-    contentHeight: content.height
+    contentHeight: touchpad.inputMode === "stroke" ? availableHeight : content.height
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
     ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -20,6 +20,34 @@ ScrollView {
         width: page.availableWidth
         spacing: 18
         Rectangle {
+            width: parent.width; height: modeRow.implicitHeight + 36
+            radius: 16
+            color: theme.surface
+            border.color: theme.line
+            RowLayout {
+                id: modeRow
+                anchors.fill: parent; anchors.margins: 18; spacing: 12
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 3
+                    Label { text: "输入模式"; color: theme.text; font.pixelSize: 17; font.bold: true }
+                    Label { text: "手动切换；运行中切换无需重新连接 Ring。"; color: theme.muted; font.pixelSize: 12 }
+                }
+                UiAction {
+                    objectName: "pointerModeButton"
+                    text: "光标控制"; primary: page.touchpad.inputMode === "pointer"
+                    enabled: !page.touchpad.busy
+                    onClicked: page.touchpad.setInputMode("pointer")
+                }
+                UiAction {
+                    objectName: "strokeModeButton"
+                    text: "笔画输入"; primary: page.touchpad.inputMode === "stroke"
+                    enabled: !page.touchpad.busy
+                    onClicked: page.touchpad.setInputMode("stroke")
+                }
+            }
+        }
+        Rectangle {
+            visible: page.touchpad.inputMode !== "stroke"
             width: parent.width
             height: statusContent.implicitHeight + 44
             radius: 16; color: theme.surface; border.color: theme.line
@@ -39,14 +67,15 @@ ScrollView {
                         Label {
                             objectName: "touchpadStatusTitle"
                             Layout.fillWidth: true
-                            text: !page.touchpad.supported ? "触摸板支持 macOS 与 Windows"
+                            text: !page.touchpad.supported ? "输入模式支持 macOS 与 Windows"
                                 : !page.controller.connected ? "请先在首页连接 Ring" : page.touchpad.title
                             color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold; wrapMode: Text.Wrap
                         }
                         Label {
                             objectName: "touchpadStatusDetail"
                             Layout.fillWidth: true
-                            text: !page.controller.connected ? "连接后即可用 Ring 控制电脑鼠标。"
+                            text: !page.controller.connected ? "连接后即可用 Ring 控制鼠标或输入笔画。"
+                                : page.controller.recognitionEnabled && !page.touchpad.active ? "请先暂停语音识别，再开启触摸板。"
                                 : page.controller.busy && !page.touchpad.active ? "设备正在准备，完成后即可开启。" : page.touchpad.message
                             color: page.touchpad.state === "error" ? "#B54756" : theme.muted
                             font.pixelSize: 12; wrapMode: Text.Wrap
@@ -59,7 +88,7 @@ ScrollView {
                         enabled: page.touchpad.active || (page.touchpad.available && !page.touchpad.busy)
                         text: page.touchpad.state === "starting" ? "取消开启"
                             : page.touchpad.state === "stopping" ? "正在停止…"
-                            : page.touchpad.active ? "关闭触摸板" : "开启触摸板"
+                            : page.touchpad.active ? "关闭输入" : "开启输入"
                         primary: !page.touchpad.active
                         onClicked: page.touchpad.toggle()
                     }
@@ -78,10 +107,15 @@ ScrollView {
                     Label {
                         objectName: "touchpadCountdown"
                         Layout.fillWidth: true
-                        text: page.touchpad.state === "running" ? "正在控制鼠标 · " + page.touchpad.remaining + " 秒后自动停止"
-                            : "开启后按 Esc 随时停止，也可使用电脑鼠标点击关闭。"
+                        text: page.touchpad.state === "running" ? (page.touchpad.inputMode === "stroke" ? "正在采集笔画 · " : "正在控制鼠标 · ") + page.touchpad.remaining + " 秒后自动停止"
+                            : "开启后可随时点击关闭。光标模式也可按 Esc 停止。"
                         color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
                     }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "开启触摸板期间会暂时停止 Ring 麦克风和固件手势；关闭后自动恢复。"
+                    color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
                 }
                 PermissionNotice {
                     objectName: "touchpadPermissionNotice"
@@ -91,7 +125,16 @@ ScrollView {
                 }
             }
         }
+        StrokeInputBox {
+            width: parent.width
+            height: Math.max(300, page.availableHeight - y)
+            visible: page.touchpad.inputMode === "stroke"
+            inputVisible: page.visible && visible
+            controller: page.controller
+            onHomeRequested: page.homeRequested()
+        }
         Rectangle {
+            visible: page.touchpad.inputMode === "pointer"
             width: parent.width
             height: settings.implicitHeight + 44
             radius: 16; color: theme.surface; border.color: theme.line

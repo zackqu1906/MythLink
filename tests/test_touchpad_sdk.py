@@ -57,10 +57,88 @@ def test_processor_protocol_gap_reboot_and_no_calibration():
     assert p.stats.tokens==260 and p.stats.warmup_frames==200
     assert any(isinstance(e,TouchpadMove) and e.dx>0 for e in events)
     p.feed(packet(25),arrival=2.3,now=2.3);assert p.stats.duplicate_packets==1
-    p.feed(packet(29),arrival=2.4,now=2.4);assert p.stats.resets==1
-    p.poll(3);assert p.stats.warmup_frames==0 and p.stats.resets==2
-    p.feed(packet(30)[:-1],now=3.1);assert p.stats.invalid_packets==1
-    p.feed(packet(31),arrival=3.,now=4.);assert p.stats.stale_packets==1
+    p.feed(packet(29),arrival=2.4,now=2.4)
+    assert p.stats.resets==1 and p.stats.sequence_gaps==1 and p.stats.missing_packets==3
+    p.poll(4.5)
+    assert p.stats.warmup_frames==0 and p.stats.resets==2 and p.stats.idle_resets==1
+    p.feed(packet(30)[:-1],now=4.6);assert p.stats.invalid_packets==1
+    p.feed(packet(31),arrival=4.7,now=5.7);assert p.stats.stale_packets==1
+
+
+def test_contiguous_packet_after_windows_notification_pause_keeps_warmup():
+    p = TouchpadProcessor(backbone=Backbone())
+    for seq in range(22):
+        arrival = 1. + seq * .05
+        p.feed(packet(seq), arrival=arrival, now=arrival)
+    assert p.stats.warmup_frames == 0  # poll updates the public warmup snapshot
+    p.poll(2.06)
+    assert p.stats.warmup_frames == 200
+    p.poll(2.35)
+    p.feed(packet(22), arrival=2.4, now=2.4)
+    p.poll(2.41)
+    assert p.stats.arrival_gaps == 1
+    assert p.stats.resets == 0
+    assert p.stats.warmup_frames == 200
+    p.feed(packet(22), arrival=2.75, now=2.75)
+    assert p.stats.duplicate_packets == 1 and p.stats.resets == 0
+
+
+def test_windows_timer_cadence_preserves_touchpad_movement():
+    # asyncio.sleep(.001) resolves to about 15.6 ms on Windows. A single
+    # movement per wakeup would lose most of the 200 Hz model output.
+    p = TouchpadProcessor(backbone=Backbone())
+    moves = []
+    for seq in range(28):
+        arrival = 1. + seq * .05
+        p.feed(packet(seq), arrival=arrival, now=arrival)
+        for offset in (.0156, .0312, .0468):
+            moves.extend(e for e in p.poll(arrival + offset) if isinstance(e, TouchpadMove))
+    assert p.stats.resets == 0
+    assert len(moves) >= 55
+    assert all(e.dx > 0 for e in moves)
+
+
+@pytest.mark.parametrize('start,end,speed,is_click', [(225,240,.1,True), (225,240,.4,False), (225,275,.1,False)])
+def test_stroke_contact_tracks_each_frame_across_packet_boundaries(start, end, speed, is_click):
+    from proximic_ring.stroke_input import StrokeCollector
+    from ring_python_sdk.touchpad import TouchpadContact, TouchpadClickVerdict
+
+    class ContactBackbone(Backbone):
+        def __init__(self, constant=False):
+            self.n = 0
+            self.constant = constant
+        def step(self, token):
+            self.n += 1
+            return np.array([[speed, .1, np.log(99 if self.constant or start <= self.n+j-2 <= end else 1/99)]
+                             for j in range(5)])
+
+    processor = TouchpadProcessor(backbone=ContactBackbone())
+    baseline = TouchpadProcessor(backbone=ContactBackbone(constant=True))
+    collector = StrokeCollector()
+    paths, contacts, movement, original_movement, verdicts = [], [], [], [], []
+    for seq in range(34):
+        arrival = 1 + seq * .05
+        processor.feed(packet(seq), arrival=arrival, now=arrival)
+        baseline.feed(packet(seq), arrival=arrival, now=arrival)
+        original_movement.extend((e.step, e.dx, e.dy) for e in baseline.poll(arrival)
+                                 if isinstance(e, TouchpadMove))
+        for event in processor.poll(arrival):
+            if isinstance(event, TouchpadMove):
+                movement.append((event.step, event.dx, event.dy))
+                assert event.contact_probability == processor.post.contact
+            if isinstance(event, TouchpadContact): contacts.append((event.state, event.step))
+            if isinstance(event, TouchpadClickVerdict): verdicts.append(event)
+            points = collector.feed(event)
+            if points is not None:
+                paths.append(points)
+    assert contacts == [('down', start), ('up', end+1)]
+    assert len(verdicts) == 1
+    assert (verdicts[0].start_step, verdicts[0].step, verdicts[0].is_click) == (start, end+1, is_click)
+    assert len(paths) == 1 and len(paths[0]) == end - start + 1
+    expected = [(dx,dy) for step,dx,dy in movement if start < step <= end]
+    assert paths[0][-1] == pytest.approx((sum(x for x,y in expected), sum(y for x,y in expected)))
+    assert movement == original_movement  # No pointer gain, timing or distance change.
+    assert not collector.points
 
 
 def test_real_events_on_loop_inference_off_loop_and_shared_routing(tmp_path,fake_inference):
@@ -94,9 +172,9 @@ def test_real_mnn_virtual_ble_stream(tmp_path):
         try:
             for seq in range(31):session._demux(None,packet(seq))
             await asyncio.wait_for(seen.wait(),4)
-            assert isinstance(events[0],TouchpadMove)
-            assert 0<=events[0].contact_probability<=1
-            assert np.isfinite((events[0].dx,events[0].dy)).all()
+            move = next(e for e in events if isinstance(e,TouchpadMove))
+            assert 0<=move.contact_probability<=1
+            assert np.isfinite((move.dx,move.dy)).all()
         finally:
             await session.touchpad_off()
         assert commands==[START,STOP]

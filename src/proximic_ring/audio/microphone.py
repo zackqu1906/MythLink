@@ -129,25 +129,32 @@ class MicrophoneSource(AudioSource):
                 self.device_name = selected["name"]
             info = sd.query_devices(self.device, "input")
             self.device_name = str(info["name"])
-            rate = 16_000
-            try:
-                sd.check_input_settings(device=self.device, samplerate=rate, channels=1, dtype="float32")
-            except sd.PortAudioError:
-                rate = int(round(info["default_samplerate"]))
-                sd.check_input_settings(device=self.device, samplerate=rate, channels=1, dtype="float32")
-            self.native_sample_rate = rate
-            self._resampler = _StreamingMonoResampler(rate)
-            self._stream = sd.InputStream(
-                device=self.device, samplerate=rate, channels=1, dtype="float32",
-                blocksize=max(1, rate // 50),
-                callback=self._on_audio, finished_callback=self._on_finished,
-            )
-            try:
-                self._stream.start()
-            except BaseException:
-                self._stream.close()
-                self._stream = None
-                raise
+            default_rate = int(round(info["default_samplerate"]))
+            error = None
+            # Some Windows backends accept check_input_settings(16 kHz) but
+            # reject the actual InputStream. Retry at the device's native rate.
+            for rate in dict.fromkeys((16_000, default_rate)):
+                try:
+                    sd.check_input_settings(device=self.device, samplerate=rate,
+                                            channels=1, dtype="float32")
+                    self.native_sample_rate = rate
+                    self._resampler = _StreamingMonoResampler(rate)
+                    stream = sd.InputStream(
+                        device=self.device, samplerate=rate, channels=1, dtype="float32",
+                        blocksize=max(1, rate // 50),
+                        callback=self._on_audio, finished_callback=self._on_finished,
+                    )
+                    try:
+                        stream.start()
+                    except BaseException:
+                        stream.close()
+                        raise
+                    self._stream = stream
+                    return
+                except sd.PortAudioError as exc:
+                    error = exc
+            if error is not None:
+                raise error
 
     def _on_audio(self, data, frames, timing, status) -> None:
         if self._stopped.is_set() or self._error is not None:
@@ -167,7 +174,7 @@ class MicrophoneSource(AudioSource):
 
     def _on_finished(self) -> None:
         if not self._stopped.is_set() and self._error is None:
-            self._error = RuntimeError("麦克风连接已中断，请检查 DJI 接收器并重新连接")
+            self._error = RuntimeError("麦克风连接已中断，请检查所选输入设备并重新连接")
 
     def close(self) -> None:
         self._stopped.set()

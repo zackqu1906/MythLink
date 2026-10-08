@@ -42,7 +42,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 ring_python_sdk = ["touchpad/assets/*"]
-proximic_ring = ["assets/*.model", "assets/*.json", "assets/*.npy", "ui/qml/*.qml", "ui/assets/*.svg", "ui/assets/*.png", "ui/assets/figma/*.svg", "ui/assets/figma/*.png"]
+proximic_ring = ["assets/*.model", "assets/*.json", "assets/*.npy", "assets/*.gz", "ui/qml/*.qml", "ui/assets/*.svg", "ui/assets/*.png", "ui/assets/figma/*.svg", "ui/assets/figma/*.png"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

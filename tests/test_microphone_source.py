@@ -96,6 +96,32 @@ def test_native_rate_fallback_and_mic_failure_are_interruptible(monkeypatch):
     assert calls[-2:] == ["abort", "close"]
 
 
+def test_actual_windows_stream_failure_retries_native_rate(monkeypatch):
+    attempts = []
+    class PortAudioError(Exception):
+        pass
+    class Stream:
+        def __init__(self, **kwargs):
+            attempts.append(kwargs["samplerate"])
+            if kwargs["samplerate"] == 16000:
+                raise PortAudioError("Invalid device")
+        def start(self): pass
+        def abort(self): pass
+        def close(self): pass
+    sd = SimpleNamespace(
+        PortAudioError=PortAudioError,
+        check_input_settings=lambda **kwargs: None,
+        InputStream=Stream,
+        query_devices=lambda *args: {"name": "Realtek Mic", "default_samplerate": 44100},
+    )
+    monkeypatch.setattr(module, "_sounddevice", lambda: sd)
+    source = module.MicrophoneSource(device=21)
+    source.open()
+    assert attempts == [16000, 44100]
+    assert source.native_sample_rate == 44100
+    source.close()
+
+
 def test_close_unblocks_read_without_submitting_partial_audio():
     source = module.MicrophoneSource()
     result = []
