@@ -35,7 +35,7 @@ def install_ring_disconnect_notice(root, controller) -> None:
     controller.ringDisconnectNoticeChanged.connect(present)
 
 
-def _show_on_macos_spaces(window) -> None:
+def _show_on_macos_spaces(window, *, level_offset=0) -> None:
     import ctypes
     import objc
     import AppKit
@@ -50,4 +50,5 @@ def _show_on_macos_spaces(window) -> None:
         content = foreground_content_window() or {}
     except Exception:
         content = {}  # A metadata failure must not prevent the hint appearing.
-    configure_native_overlay(native_window, AppKit, content_level=content.get("kCGWindowLayer", 0))
+    configure_native_overlay(native_window, AppKit, content_level=content.get("kCGWindowLayer", 0),
+                             level_offset=level_offset)

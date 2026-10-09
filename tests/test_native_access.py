@@ -108,11 +108,12 @@ print(json.dumps({"id": m["id"], "result": {"actions": actions}}), flush=True)
 
 
 def test_frozen_channel_launches_same_executable_without_source_python(monkeypatch):
+    import io
     import proximic_ring.native_access as module
     calls = []
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", "/Applications/Mythlink.app/Contents/MacOS/Mythlink")
-    monkeypatch.setattr(module.subprocess, "Popen", lambda args, **kw: calls.append((args, kw)) or SimpleNamespace())
+    monkeypatch.setattr(module.subprocess, "Popen", lambda args, **kw: calls.append((args, kw)) or SimpleNamespace(stderr=io.BytesIO(), pid=42))
     channel = NativeAccessChannel()
     channel._start()
     assert calls[0][0] == [sys.executable, "--native-access-worker"]
@@ -142,14 +143,45 @@ def test_worker_keeps_ax_targets_local_and_rejects_handles_after_restart(monkeyp
     assert posted == [(target, "Enter")]
 
 
-def test_worker_denial_prevents_capture_and_writes(monkeypatch):
+def test_worker_event_permission_denial_prevents_writes(monkeypatch):
     import proximic_ring.native_access_worker as worker
     monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, False))
     dispatcher = worker.Dispatcher()
-    for operation in ["capture", "shortcut", "sentence_key", "scroll_plan", "scroll_apply"]:
+    for operation in ["shortcut", "sentence_key", "scroll_apply"]:
         with pytest.raises(MacPermissionError):
             dispatcher.handle({"operation": operation})
     assert dispatcher.handle({"operation": "status"})["permissions"]["post_events"] is False
+
+
+@pytest.mark.parametrize('post_events', [False, None])
+def test_readonly_shortcut_and_scroll_discovery_need_no_event_posting_permission(monkeypatch, post_events):
+    import proximic_ring.native_access_worker as worker
+    from proximic_ring.app_shortcuts import ShortcutTarget
+    monkeypatch.setattr(worker, 'read_permission_state', lambda: PermissionState(True, post_events))
+    target = ShortcutTarget('example.app', 42, 'example.app')
+    dispatcher = worker.Dispatcher()
+    calls = []
+    dispatcher.shortcuts = SimpleNamespace(capture=lambda **kw: target,
+        same_target=lambda t, **kw: t is target,
+        post=lambda *args, **kw: calls.append('post'))
+    dispatcher.page_scroll = SimpleNamespace(handle=lambda operation, **kw: calls.append(operation) or {'status': 'ready'})
+    captured = dispatcher.handle({'operation': 'capture', 'menu_action': True})['result']
+    assert dispatcher.handle({'operation': 'same_target', 'target': captured['remote_id'], 'require_focus': False})['result']
+    assert dispatcher.handle({'operation': 'scroll_plan'})['result'] == {'status': 'ready'}
+    for command in [dict(operation='shortcut', target=captured['remote_id'], shortcut='Cmd+N', require_focus=False),
+                    dict(operation='scroll_apply')]:
+        with pytest.raises(MacPermissionError):
+            dispatcher.handle(command)
+    assert calls == ['scroll_plan']
+
+
+@pytest.mark.parametrize('accessibility', [False, None])
+@pytest.mark.parametrize('operation', ['capture', 'same_target', 'scroll_plan', 'shortcut', 'scroll_apply'])
+def test_ax_permission_is_still_required_for_target_reads_and_writes(monkeypatch, accessibility, operation):
+    import proximic_ring.native_access_worker as worker
+    monkeypatch.setattr(worker, 'read_permission_state', lambda: PermissionState(accessibility, True))
+    with pytest.raises(MacPermissionError):
+        worker.Dispatcher().handle({'operation': operation})
 
 
 def test_window_selector_uses_only_ax_permission_and_never_key_posting(monkeypatch):
@@ -169,6 +201,22 @@ def test_window_selector_uses_only_ax_permission_and_never_key_posting(monkeypat
     assert dispatcher.handle({"operation": "selector_activate", "token": result["token"],
                               "target": result["cards"][2]["id"]})["result"] == {"status": "activated"}
     assert d.activated == [(10, d.b)]
+
+
+def test_windowless_selector_diagnostics_cross_worker_boundary_without_window_content(monkeypatch):
+    import proximic_ring.native_access_worker as worker
+    from test_window_selector import Desktop
+    d = Desktop()
+    d.stamp = {"pid": 0, "window": 0}
+    dispatcher = worker.Dispatcher()
+    dispatcher.window_selector = d.session
+    monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, False))
+    reply = dispatcher.handle({"operation": "selector_list"})
+    assert reply["result"]["status"] == "ready"
+    diagnostic = reply["diagnostic"]
+    assert diagnostic["origin_visible"] is False and diagnostic["screen_source"] == "pointer"
+    assert diagnostic["card_count"] == 3
+    assert "Alpha" not in json.dumps(diagnostic) and "title" not in diagnostic
 
 
 def test_focus_uses_ax_permission_and_keeps_plans_inside_worker(monkeypatch):

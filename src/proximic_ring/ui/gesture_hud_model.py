@@ -47,7 +47,7 @@ def hint_view(mode, actions=None, global_bindings=None):
                                  label="Tap + 右滑" if key == "swipe-right" else gesture_label(key), action=label,
                                  scope="mode", inputField=key == "swipe-down" and mode == "input"))
     # Also in the permanent footer, so capping the orbit never hides the entry.
-    if not scene_active:
+    if not scene_active and bindings.get("window_selector"):
         orbs.append(dict(key=bindings["window_selector"], symbol="apps",
                          label=gesture_label(bindings["window_selector"]), action="窗口选择",
                          scope="global", inputField=False))

@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 import time
 from .core import Postprocessor, parse_tokens
-from .events import TouchpadMove, TouchpadClick, TouchpadStats
+from .events import TouchpadMove, TouchpadClick, TouchpadContact, TouchpadClickVerdict, TouchpadStats
 from .model import TouchpadBackbone
 
 
@@ -17,12 +17,18 @@ class TouchpadProcessor:
         self.stats = TouchpadStats()
         self.last_valid = None
         self.sequence = self.uptime = self.arrival = None
+        self.contact_reset_pending = False
+
+    def enable_pointer_moves(self):
+        """Opt in before feeding data; model inference is still performed once."""
+        self.post.enable_pointer_moves()
 
     def reset(self):
         self.backbone.reset()
         self.post.reset()
         self.sequence = self.uptime = self.arrival = None
         self.stats = replace(self.stats, resets=self.stats.resets+1, warmup_frames=0)
+        self.contact_reset_pending = True
 
     def feed(self, packet: bytes, *, arrival: float | None = None, now: float | None = None):
         now = time.monotonic() if now is None else now
@@ -43,28 +49,55 @@ class TouchpadProcessor:
             delta = (seq-self.sequence) & 65535
             reboot = uptime < self.uptime and self.uptime-uptime < 0x80000000
             gap = arrival-self.arrival > .25
-            if not reboot and not gap and (delta == 0 or delta >= 32768):
+            if not reboot and (delta == 0 or delta >= 32768):
                 self.stats = replace(self.stats, duplicate_packets=self.stats.duplicate_packets+1)
                 return
-            if delta != 1 or reboot or gap:
+            if gap:
+                self.stats = replace(self.stats, arrival_gaps=self.stats.arrival_gaps+1)
+            # Windows can deliver a complete, ordered stream after a >250 ms
+            # notification pause. Preserve the recurrent state when the packet
+            # sequence proves no tokens were lost.
+            if delta != 1 or reboot:
+                if reboot:
+                    self.stats = replace(self.stats, reboots=self.stats.reboots+1)
+                elif delta != 1:
+                    self.stats = replace(self.stats, sequence_gaps=self.stats.sequence_gaps+1,
+                                         missing_packets=self.stats.missing_packets+max(0, delta-1))
                 self.reset()
         self.sequence, self.uptime, self.arrival = seq, uptime, arrival
         for index, token in enumerate(tokens):
-            self.post.add(self.backbone.step(token), arrival, arrival-(len(tokens)-1-index)*.005)
+            output = self.backbone.step(token)
+            frame_time = arrival-(len(tokens)-1-index)*.005
+            self.post.add(output, arrival, frame_time)
         self.last_valid = now
         self.stats = replace(self.stats, packets=self.stats.packets+1, tokens=self.stats.tokens+len(tokens))
 
     def poll(self, now: float | None = None):
         now = time.monotonic() if now is None else now
-        if self.arrival is not None and now-self.arrival > .25:
+        if self.arrival is not None and now-self.arrival > 2.:
+            self.stats = replace(self.stats, idle_resets=self.stats.idle_resets+1)
             self.reset()
         events = []
+        if self.contact_reset_pending:
+            events.append(TouchpadContact('reset', 0, now))
+            self.contact_reset_pending = False
         for event in self.post.drain(now):
             if event['kind'] == 'move':
                 events.append(TouchpadMove(event['dx'], event['dy'], event['contact'], event['step'], now))
+            elif event['kind'] == 'contact':
+                events.append(TouchpadContact(event['state'], event['step'], now,
+                                              event['confirmed_step']))
+            elif event['kind'] == 'click_verdict':
+                events.append(TouchpadClickVerdict(event['start_step'], event['step'], event['is_click'], now))
             else:
                 events.append(TouchpadClick(event['step'], now))
         self.stats = replace(self.stats, warmup_frames=min(self.post.n, 200),
                              contact_probability=self.post.contact,
                              last_data_age_s=None if self.last_valid is None else now-self.last_valid)
         return events
+
+    def poll_pointer(self, now: float | None = None):
+        """Paced mouse movement from the shared buffer; no click processing."""
+        now = time.monotonic() if now is None else now
+        return [TouchpadMove(e['dx'], e['dy'], e['contact'], e['step'], now)
+                for e in self.post.drain_pointer(now)]

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from proximic_ring.scene_capabilities import (MUSIC_APPS, MUSIC, VIDEO, BROWSERS,
     installed_application_category, installed_scene_profiles)
-from proximic_ring.scene_recognition.engine import detect_scene
+from proximic_ring.scenes.recognition.engine import detect_scene
 from test_activity_scenes import content, metadata
 from test_application_catalog import application
 from test_presentation_portability import native_backend

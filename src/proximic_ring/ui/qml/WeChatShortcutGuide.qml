@@ -41,10 +41,10 @@ ColumnLayout {
             text: "1. 打开「App 快捷键」后点击「＋」。\n2. 按下方两项分别填写，每项填完后保存。\n3. 回到微信即可使用手势，无需额外测试或勾选确认。\n\n「菜单标题」决定快捷键执行的操作，必须原样填写，不能自行起名。"
             color: "#687286"; font.pixelSize: 12
         }
-        Label {
+        UiNotice {
             Layout.fillWidth: true; wrapMode: Text.Wrap
             text: settings.service.systemSettingsStatus
-            visible: text.length > 0; color: "#986A15"; font.pixelSize: 12
+            visible: text.length > 0; font.pixelSize: 12
         }
         Label {
             objectName: "wechatDetectedMenuLabel"

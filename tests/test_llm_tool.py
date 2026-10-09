@@ -90,7 +90,7 @@ def test_comparison_sends_identical_instruction_input_to_every_model(capsys):
     assert "[竞速胜出]" in output
     assert "最终结果集中比较（4 次运行）" in output
     assert "本地 Qwen / model-a" in output
-    assert "DeepSeek V4 Flash / model-b" in output
+    assert "DeepSeek V4.1 Flash / model-b" in output
     assert " vs " not in output
 
 
@@ -114,7 +114,7 @@ def test_comparison_groups_all_models_with_elapsed_time(capsys):
         ),
         test_llm.ModelRunResult(
             provider=test_llm.PROVIDER_DEEPSEEK,
-            label="DeepSeek V4 Flash",
+            label="DeepSeek V4.1 Flash",
             model="deepseek-test",
             success=False,
             elapsed_s=4.12,
@@ -128,7 +128,7 @@ def test_comparison_groups_all_models_with_elapsed_time(capsys):
     assert "最终结果集中比较（3 次运行）" in output
     assert "本地 Qwen / qwen-local | 成功 | 2.55s" in output
     assert "豆包 Seed 2.0 Lite / doubao-test | 成功 | 3.98s" in output
-    assert "DeepSeek V4 Flash / deepseek-test | 失败 | 4.12s" in output
+    assert "DeepSeek V4.1 Flash / deepseek-test | 失败 | 4.12s" in output
     assert "本地结果" in output
     assert "豆包结果" in output
     assert "错误：编辑失败" in output

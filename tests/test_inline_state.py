@@ -61,6 +61,39 @@ def test_multi_undo_setting_survives_shortcut_updates_and_reconnect(component):
     assert c._bridge.messages[-1]["multi_undo_enabled"] is True
 
 
+def test_hud_configuration_is_independent_of_voice_and_survives_reconnect(component):
+    c, _ = component
+    c.begin()
+    receive(c, phase="listening", ready=True)
+    state = (dict(c._view), c._utterance_id, c._seq, c._shortcut, c._multi_undo_enabled)
+    signals = []
+    c.changed.connect(lambda: signals.append("changed"))
+    c.audioEndRequested.connect(lambda: signals.append("end"))
+    c.interrupted.connect(lambda: signals.append("interrupt"))
+    bindings = {"confirm": ["tap", ""], "undo": ["snap", "swipe-left"], "switch_mode": ["swipe-right", ""]}
+    c._bridge.messages.clear()
+    c.set_gesture_hints(bindings)
+    assert c._bridge.messages == [{"type": "configure_hud", "gesture_hints": bindings, "scale_percent": 80}]
+    assert (c._view, c._utterance_id, c._seq, c._shortcut, c._multi_undo_enabled) == state
+    assert signals == []
+    c.set_gesture_hints(bindings)
+    assert len(c._bridge.messages) == 1
+    c.set_hud_scale(120)
+    assert c._bridge.messages[-1]["scale_percent"] == 120
+    assert (c._view, c._utterance_id, c._seq, c._shortcut, c._multi_undo_enabled) == state
+    assert signals == []
+    c.set_hud_scale(120)
+    assert len(c._bridge.messages) == 2
+    bindings["undo"][0] = "circle-clockwise"
+    c.configure("F9")
+    assert c._bridge.messages[-1]["type"] == "configure"
+    assert "gesture_hints" not in c._bridge.messages[-1]
+    c._accept({"type": "connected", "epoch": "hud-reconnect"})
+    hud = [m for m in c._bridge.messages if m["type"] == "configure_hud"][-1]
+    assert hud["gesture_hints"]["undo"] == ["snap", "swipe-left"]
+    assert hud["scale_percent"] == 120
+
+
 def test_undo_history_remains_accessible_after_current_sentence_is_undone(component):
     c, _ = component
     c.configure("F8", multi_undo_enabled=True)

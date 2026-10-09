@@ -1,5 +1,7 @@
 # 场景默认配置
 
+当前统一代码结构见 [SCENES.md](SCENES.md)。旧顶层模块仅作兼容导入，修改应进入 `src/proximic_ring/scenes/`。
+
 原生应用添加时启用一个推荐场景，浏览器默认启用视频和 PDF 两类。用户可通过“添加场景”继续启用该应用支持的其他场景；浏览器按当前页面内容自动识别，不添加网站。场景的动作含义一致，实际快捷键按软件适配。应用声明能打开某类文件，不代表应该同时启用其所有场景。
 
 | 场景 | 默认动作 |
@@ -12,12 +14,11 @@
 
 ## 场景识别结构
 
-所有场景识别实现统一放在 `src/proximic_ring/scene_recognition/`：
+所有场景识别实现统一放在 `src/proximic_ring/scenes/recognition/`；共用结果结构在 `scenes/models.py`：
 
 ```text
-scene_recognition/
+scenes/recognition/
 ├── engine.py        统一入口 detect_scene，负责调度和识别顺序
-├── models.py        所有识别器共用 SceneResult 返回结构和场景名称
 ├── presentation.py  放映识别，适用于各个演示应用
 ├── content.py       PDF、图片、原生视频和音乐识别
 ├── browser.py       当前网页 PDF、图片、视频和音频证据适配
@@ -36,7 +37,7 @@ PDF、图片、视频或音乐场景，不再交给原生窗口扫描兜底。�
 浏览器与原生适配器各最多 300 ms，多用途原生放映仍为 240 ms，总预算 480 ms。
 
 识别模块只返回判断结果，不保存绑定、不发送按键、不调用语音端点。
-`browser_shortcuts.py` 保存浏览器共用转圈导航和通用播放器按键；应用能力、默认动作、配置管理与
+`scenes/adapters/browser.py` 保存浏览器共用转圈导航和通用播放器按键；应用能力、默认动作、配置管理与
 手势分发仍由下述各层负责。QML 编辑器选择的模式不作为运行时识别依据。
 
 原来的 `activity_scenes.py`、`presentation_detection.py`、`scene_focus.py`、
@@ -46,12 +47,14 @@ PDF、图片、视频或音乐场景，不再交给原生窗口扫描兜底。�
 
 ## 模块职责
 
-- `scene_capabilities.py`：应用身份、文件扩展名和 UTI 声明决定支持哪些场景；这不代表当前场景已激活。
-- `scene_defaults.py`：场景 → 手势 → 动作语义；软件快捷键适配与菜单语义匹配。无 Qt、配置读写、焦点判断、按键发送。
-- `application_defaults.py`：组合放映、聊天、阅读和媒体的配置。各场景互不覆盖，多个应用不共享可变记录。
-- `ApplicationMappingController`：添加、持久化、恢复、清空；菜单异步结果只补齐尚未完成且未被用户删除的预设。
-- `scene_recognition/`：统一场景识别及共用焦点、文档判断。
-- `app_shortcuts.py` 与手势控制器：读取映射，校验最新前台并执行。除显式展示的浏览器共用转圈导航外，默认模板不作为运行时的隐藏兜底。
+- `scenes/registry.py`：五类场景的统一定义、标签、默认手势及进入动作。
+- `scenes/capabilities.py`、`policy.py`：应用身份、文件类型和推荐/启用策略。
+- `scenes/adapters/`、`menus.py`、`resolver.py`：应用键位、菜单匹配及统一动作解析，保留原解析优先级。
+- `scenes/defaults.py`：所有场景共用模板生成流程，组合普通应用和场景内配置。
+- `scenes/configuration.py`、`migrations.py`：配置初始化、待配置补全、刷新和既有迁移规则。
+- `scenes/recognition/`：统一场景识别及共用焦点、文档判断，算法和时间预算不变。
+- `ApplicationMappingController`：编辑器状态、异步菜单、设置持久化和信号通知；不再实现默认生成或应用键位修复。
+- `app_shortcuts.py` 与手势控制器：读取映射，校验最新前台并执行，分发规则不变。
 
 ## 保存和升级
 
@@ -78,11 +81,11 @@ PDF、图片、视频或音乐场景，不再交给原生窗口扫描兜底。�
 
 ## 后台场景诊断
 
-场景诊断自动落盘，不新增界面入口、诊断面板或用户操作。语音流程和手势优先级不变。
+场景诊断自动落盘，并显示在已有实时日志窗口中。语音流程和手势优先级不变。
 
-- `scene-events.jsonl`：结构化场景记录，一行一个 JSON；`diagnostic.log` 中的 `SCENE_TRACE` 记录相同的运行编号 `run` 和操作编号 `trace`。
+- `diagnostic.log`：统一运行日志；`[SCENE]` 后是结构化场景 JSON，保留运行编号 `run` 和操作编号 `trace`，不再另写 `scene-events.jsonl` 或重复的 `SCENE_TRACE` 摘要。
 - 源码运行默认位于项目的 `logs/`；macOS 安装版位于 `~/Library/Application Support/ProxiMic Voice/logs/`。设置 `PROXIMIC_DATA_HOME` 时位于该目录的 `logs/`。
-- 每个文件上限 2 MiB，保留 `.1`、`.2`、`.3` 三份轮转文件；退出、重开后保留落盘记录。旧日志会轮转淘汰，日志写入失败不阻断手势、不重试按键。
+- 按 8 MiB 轮转，保留 `.1` 至 `.5` 五份轮转文件；退出、重开后保留落盘记录。“导出完整日志”按旧到新合并为一个文件。旧日志会轮转淘汰，日志写入失败不阻断手势、不重试按键。
 - 启动记录包含系统版本、应用版本、进程号和可用源码指纹，用于区分机器差异和未重启导致的旧代码。场景记录与原有语音、戒指事件共享 `run`，可按时间关联。
 
 一次操作沿 `received → capture → route → dispatch → outcome` 追踪；未执行的操作在相应阶段记录原因。原生捕获编号通过 `native.trace_id` 保留，发送前的重新校验记录在 `native.validation`；每次使用新前台记录，不为诊断额外抓取窗口。若回到常规／语音路径，记录 `fallback=regular`，后续结合 `diagnostic.log` 的语音事件检查。
@@ -101,7 +104,7 @@ PDF、图片、视频或音乐场景，不再交给原生窗口扫描兜底。�
 
 新增场景日志只记录控制元数据、绑定快捷键、布尔状态、错误码和异常代码位置；不记录窗口标题、文件名、完整网址、输入文字、语音正文、原始 AX 对象、异常消息或堆栈局部变量。
 
-实现位置：`scene_recognition/diagnostics.py` 为纯识别结果附加原因，`scene_diagnostics.py` 提供日志与安全序列化，`app_shortcuts.py` 提供目标校验信息，`native_access*.py` 传递跨进程原因，`ui/app_gesture_controller.py` 将同一次操作串联落盘。
+实现位置：`scenes/recognition/diagnostics.py` 为纯识别结果附加原因，`scene_diagnostics.py` 提供日志与安全序列化，`app_shortcuts.py` 提供目标校验信息，`native_access*.py` 传递跨进程原因，`ui/app_gesture_controller.py` 将同一次操作串联落盘。
 
 ## 应用窗口快捷键与控件焦点的边界
 
@@ -109,7 +112,7 @@ PDF、图片、视频或音乐场景，不再交给原生窗口扫描兜底。�
 
 共用 `inspect_focus(..., window_shortcut=True)` 区分应用窗口命令与需要具体控件焦点的操作。`LocalMacAppShortcuts.capture(menu_action=True)` 和发送前的重验均采用该策略，无应用名称或 bundle 特判。布局／内容容器可报告禁用状态；只在验证完整归属链、无隐藏／忙碌／失效／菜单／弹窗、无编辑性且目标窗口可用后，才将其视为不影响窗口命令的附加信息。禁用的输入框、按钮、网页、窗口及未知控件仍不放行。
 
-`scene_recognition` 的放映、PDF、图片、媒体及网页识别器继续使用默认严格的控件检查，语音输入规则、场景优先级和快捷键配置不变。不自动点击容器，不抢焦点，不延迟重发或重试按键。前台应用、PID、窗口、文档／网页身份与必要的焦点仍在发送前重新验证。
+`scenes/recognition` 的放映、PDF、图片、媒体及网页识别器继续使用默认严格的控件检查，语音输入规则、场景优先级和快捷键配置不变。不自动点击容器，不抢焦点，不延迟重发或重试按键。前台应用、PID、窗口、文档／网页身份与必要的焦点仍在发送前重新验证。
 
 日志新增 `focus_policy=window_shortcut|focused_control`、`disabled_containers`，发送前校验仍保留在 `native.validation.observed`。这样可区分“容器属性被合理忽略”和“真正失效的控件被拦截”，避免以后再将其统一解释为弹窗问题。相关回归位于 `tests/test_window_shortcut_focus.py`。
 
@@ -133,7 +136,7 @@ PDF、图片、视频或音乐场景，不再交给原生窗口扫描兜底。�
 
 视频“快进”是统一动作语义，不保证所有播放器跳过相同秒数。QuickTime 当前适配是提高播放速度；IINA/VLC 的跳转步长由播放器自身配置决定。界面沿用真实动作标签，不虚构固定秒数。逐应用准确跳转到指定秒数需要该应用提供相应可验证能力。
 
-诊断继续写入 `scene-events.jsonl`；新应用提示用 `application_onboarding` 阶段记录展示、同意、暂不配置、界面失败及配置数量，不新增主界面诊断入口。
+诊断统一写入 `diagnostic.log` 的 `[SCENE]` 记录；新应用提示用 `application_onboarding` 阶段记录展示、同意、暂不配置、界面失败及配置数量。
 
 ## 本轮验证记录（2026-10-05）
 
@@ -154,19 +157,30 @@ PDF、图片、视频或音乐场景，不再交给原生窗口扫描兜底。�
 
 默认配置一直保存在应用的 `bindings` 中，本次恢复其编辑入口，不迁移或重写已有用户绑定。场景页签仅决定编辑范围，不会强制切换运行时模式。
 
-`ui/scene_notice_controller.py` 每秒异步检查当前已配置应用，复用 `scene_recognition` 的统一识别入口。`native_access_worker.scene_observe` 是独立只读通道：需要辅助功能权限，不要求按键发送权限，不激活应用、不创建发送句柄，不派发按键。语音、权限引导、窗口选择、录制快捷键及新应用确认期间暂停。
+`ui/scene_notice_controller.py` 每秒异步检查当前已配置应用，复用 `scenes/recognition` 的统一识别入口。`native_access_worker.scene_observe` 是独立只读通道：需要辅助功能权限，不要求按键发送权限，不激活应用、不创建发送句柄，不派发按键。语音、权限引导、窗口选择、录制快捷键及新应用确认期间暂停。
 
 同一前台 bundle/PID 连续两次确认为已配置场景且具有可操作的非文本焦点后，`SceneNoticeOverlay` / `SceneNotice.qml` 在该窗口所在屏幕右上角显示“已进入…模式”，约 3.2 秒消失。窗体穿透鼠标且不接收焦点，兼容 macOS 全屏空间。保留应用名称便于辨认；进入放映、PDF 阅读、图片预览、视频播放、音乐播放共用此逻辑。连续同模式不重复提示，输入框/弹窗打断后恢复同模式也不刷屏；连续两次确认离开后重新进入才再次提示。切换前台/PID、修改配置、过期响应或繁忙状态会使待处理结果失效。
 
-场景进入/离开、只读通道不可用与提示窗失败沿用 `scene-events.jsonl` 的 `scene_notice` 阶段；进入记录关联原生识别 trace。界面无新增诊断入口。新测试覆盖五类模式、无需手势的自动检测、重复/交错检测、焦点打断、过期结果、权限、只读无按键以及窗口位置/焦点/自动消失。
+场景进入/离开、只读通道不可用与提示窗失败写入 `diagnostic.log` 的 `[SCENE]` 记录，使用 `scene_notice` 阶段；进入记录关联原生识别 trace。新测试覆盖五类模式、无需手势的自动检测、重复/交错检测、焦点打断、过期结果、权限、只读无按键以及窗口位置/焦点/自动消失。
 
 ## macOS 应用组合键发送（2026-10-05）
 
-WPS 15:19–15:20 的 tap 日志进入普通应用 `menu:tap`，键位为 `Cmd+Return`，发送前后均不处于放映。原发送器只向目标 PID 投递 Return 的 down/up 并设置 Command 标记（`events_posted=2`）。WPS 本机资源 `SlideShowFromCurrent` 声明当前页放映，临时空白文稿的正常 Cmd+Return 已验证能进入放映。键位与场景识别均无需为此改动。
+WPS 15:19–15:20 的 tap 日志进入普通应用 `menu:tap`，键位为 `Cmd+Return`，发送前后均不处于放映。原发送器只向目标 PID 投递 Return 的 down/up 并设置 Command 标记（`events_posted=2`）。当时据本机资源和临时文稿将 `Cmd+Return` 视为正确预设；2026-10-08 用户在实际文稿中手动按键也会新增幻灯片，已推翻这一结论。组合键事件序列修复保留，WPS 当前页键位另按下节纠正；不能用投递成功证明键位正确。
 
 `mac_shortcut_events.py` 将应用快捷键组装为完整的修饰键按下、主键按下/松开、修饰键逆序松开。所有应用映射共用，不按 WPS 身份分支。CoreGraphics 为修饰键码创建 `FlagsChanged` 事件，包含对应左右键标记；无修饰键的 Enter/方向键仍是两个事件，语音编辑专用通道保持原样。全部事件预先分配，再检查最新前台/窗口/场景及权限；整组固定目标 PID，失败不重发主键，只尝试释放可能已按下的键。
 
 日志新增 `event_sequence=balanced_modifiers_v1`、`modifier_keys`、`events_planned`，部分失败记录释放数量和失败数。Cmd+Return 正常投递四个事件，Cmd+Shift+Return 六个。`shortcut_posted` 仍仅表示投递成功，不能作为目标应用已经放映的证明。运行版本指纹包含新增的发送模块。回归覆盖模拟维护修饰键状态的应用、真实 CoreGraphics 事件类型（仅创建、不发送）、每个分配/发送失败位置、前台切换、Safari 连续切标签和语音/手势路由。
+
+
+## 放映启动的画布焦点与 WPS 预设纠正（2026-10-08）
+
+11:51:36–11:51:57 和 11:54:41–11:54:59 的 PowerPoint Tap 在普通编辑窗口被 `stale_focus` 拦截，未发送放映命令。日志中的当前 `AXFocusedUIElement` 是 `AXLayoutArea`，同时报告 `AXEnabled=false`、`AXFocused=false`；窗口正常、无模态弹窗。先前只允许禁用的画布，遗漏了同一容器自身未聚焦的标记。
+
+共用 `inspect_focus(..., window_shortcut=True)` 现在对已知非交互布局容器同时容忍这两个属性，不按应用身份分支。仍必须验证完整窗口归属、父链、编辑性以及隐藏／忙碌／菜单／弹窗；真实失效的输入框、按钮和未知角色仍被拦截。普通场景识别、浏览器 `page_focus` 和文本操作不继承此放宽。发送前前台／PID／窗口检查、平衡按键序列和语音状态保护保留。日志既有 `unfocused_containers`、`disabled_containers` 会说明采用了哪项容器策略。
+
+WPS 11:50:12 等 Tap 记录则已经发出 `Cmd+Return`，但用户直接按此组合键同样新增幻灯片，属于默认键位错误。实机在同一已打开文稿验证：`Cmd+Shift+Return` 从第一页放映；选中第二页后 `Shift+F5` 从第二页开始放映。WPS 的 `wps:start-current` 改为 `Shift+F5`，从头放映保留 `Cmd+Shift+Return`。PowerPoint 原生菜单仍提供 `Cmd+Return` 的“从当前页放映”，点击该菜单已确认能进入放映，不修改其键位。
+
+加载配置时，仅将 WPS 国内／国际版内置 `wps:start-current` 的旧 `Cmd+Return` 改为 `Shift+F5`，保留 Tap／响指等原手势位置。已经正确的 `Shift+F5`、用户自定义动作、读取的菜单动作、其他键位及其他应用均保持原样；现有 `F5` 从头放映旧预设迁移保留。修正会随正常配置保存落盘，重启不再把正确键位改回去。回归覆盖用户 Tap 配置、响指、两种交互模式、跨应用共用焦点策略、窗口变化取消，以及配置保存／重新加载。实机验证覆盖上述两款本机应用，不代表其他机器和版本都已验证。
 
 
 ## 多场景配置与全屏浮窗（2026-10-05）
@@ -194,7 +208,7 @@ WPS 15:19–15:20 的 tap 日志进入普通应用 `menu:tap`，键位为 `Cmd+R
 
 修复保持分层：
 - `scene_capabilities.py` 根据已知音乐类应用或经过 bundle 身份校验的安装分类识别应用用途，完整文件能力列表不变，不读取 UI 当前选中的场景。
-- `app_shortcuts.py` 将安装分类传给统一 `scene_recognition/engine.py`，由 `content.py` 在播放与进度控件可用、且没有视频文件/视频画面等冲突证据时确认音乐。正在播放和暂停都可识别；仅打开空应用不足以确认。通用播放器与浏览器仍需明确内容类型。
+- `app_shortcuts.py` 将安装分类传给统一 `scenes/recognition/engine.py`，由 `content.py` 在播放与进度控件可用、且没有视频文件/视频画面等冲突证据时确认音乐。正在播放和暂停都可识别；仅打开空应用不足以确认。通用播放器与浏览器仍需明确内容类型。
 - `focus.py` 共用支持 AXGrid，仍校验焦点归属、可编辑性、隐藏/禁用、弹窗和前台时效。搜索框继续归为 text，音乐动作不接管。
 - `scene_notice_controller.py` 在自动观察结果变化时记录 observation_result（原因、场景、焦点及已有原生诊断），补全“未进入模式”的日志；相同结果不逐秒重复写入。
 
@@ -228,8 +242,8 @@ browser.py 负责当前网页的证据和页面边界；playback.py 与原生应
 
 11:17–11:18 的场景日志反复出现 `page_scan_incomplete`、`scanned_nodes=220`，其中部分记录已找到一个视频元素。Safari 当前哔哩哔哩视频页的实际辅助功能结构还显示：播放按钮可用，但时间轴为 `AXGroup`，没有标准 `AXSlider`。这是共用浏览器层的扫描容量和播放控件证据问题，不是域名缺失，也不是要求用户先进入语音模式。
 
-- `scene_recognition/browser.py` 将页面扫描上限调整为 1200 个节点、24 层，仍保留 300ms 时间预算。扫描不完整时仍不能猜测播放器唯一性；焦点明确属于播放器的原有路径保留。
-- `scene_recognition/playback.py` 的网页选项支持播放器内部 DOM class/id 暴露的 progress、timeline、seekbar 等时间轴容器。仍要求真实 `AXVideo` / `AXAudio` 和同组可用播放按钮，音量或加载指示不能作为时间轴。原生播放器识别不启用这个 HTML 选项。
+- `scenes/recognition/browser.py` 将页面扫描上限调整为 1200 个节点、24 层，仍保留 300ms 时间预算。扫描不完整时仍不能猜测播放器唯一性；焦点明确属于播放器的原有路径保留。
+- `scenes/recognition/playback.py` 的网页选项支持播放器内部 DOM class/id 暴露的 progress、timeline、seekbar 等时间轴容器。仍要求真实 `AXVideo` / `AXAudio` 和同组可用播放按钮，音量或加载指示不能作为时间轴。原生播放器识别不启用这个 HTML 选项。
 - Safari 原生 PDF 容器的 `AXPDFPluginSubrole` 与 `AXPage` 纳入同一个浏览器适配器。没有 URL 时，使用插件与第一页 AX 对象作为派发身份；切文档后旧操作失效。缺少内容焦点时，只在当前窗口找到唯一原生插件且完整确认内容不可编辑后推断非文本区域；不扫描其他网页或后台标签。表单、未知可编辑性、菜单、弹窗和不完整扫描继续阻止这种推断。
 - 识别日志记录扫描节点数、每个播放器的播放／进度证据、自定义进度结构及 PDF 推断依据。只记录结构与布尔值，不记录网页地址、文档正文或输入内容。
 
@@ -248,3 +262,31 @@ browser.py 负责当前网页的证据和页面边界；playback.py 与原生应
 右上角卡片从 336×88 缩至 284×68，标题 16px、应用名 12px 保持不变，收紧留白和图标尺寸。背景不透明度为 88%，文字不透明度保持 100%；继续穿透点击、不抢焦点、兼容全屏空间并在约 3.2 秒后消失。
 
 验证覆盖跨浏览器同场景切页、相同网址的不同标签、加载期间切页、评论框/页面外焦点、真实内容消失、停用场景、过期捕获、只读工作进程和原有手势分发。视频及 PDF 卡片通过独立 QML 渲染检查，未替代浏览器和真实戒指的交互实测。
+
+
+## WPS 当前页放映与原生功能键标记（2026-10-08）
+
+本机 WPS 12.1.29166、macOS 15.7.5。12:43–12:44 的多次 Shift+F5 发送均通过目标校验，焦点分别为 AXWindow、AXSplitGroup、AXGroup，未被焦点或模式检查拦截；日志只证明投递完成，没有观察到放映。随后通过界面自动化发送 Shift+F5，可从当前页进入放映，退出后保持原文档和当前页，未修改内容。不能据此宣称戒指端到端已通过。
+
+发现公共事件构造缺陷：CoreGraphics 为 F5 自动生成 SecondaryFn（0x800000）标记，而 prepare_chord 原来用 Shift（含左 Shift 位：0x20002）覆盖所有 flags，把功能键身份清除了。修正后 F5 的 down/up 均为 0x820002；方向键和小键盘键也保留系统生成的 SecondaryFn / NumericPad 身份位。仅保留这两项身份位，不继承无关修饰键；修饰键仍成对释放、目标仍固定 PID、发送前重验且不自动重发。原生构造回归在旧实现上稳定失败，在修复后通过，无需向用户应用注入测试按键。
+
+发送日志补充 native.event_flags，顺序与 events_planned 一致，仍保留 delivery=posted_unverified。这修正了已证实的事件格式缺陷；WPS 是否处理命令、是否实际进入放映，需要以实际手势及后续 scene_notice/识别结果验证，不把投递当成功。
+
+WPS 官方 Mac 快捷键表列当前页放映为 Shift+F5：https://help.wps.com/articles/the-shortcuts-of-wps-office-for-mac/ 。Cmd+Return 不能套用为 WPS 的通用当前页放映键。官方社区有 Mac 快捷键间歇失效的用户报告（https://bbs.wps.cn/topic/34517 ，主要涉及文档/表格、不同旧版本），不是本次问题同根因的证明。Apple 对 function 标记的定义：https://developer.apple.com/documentation/appkit/nsevent/modifierflags-swift.struct/function 。
+
+
+## 浏览器跨电脑识别与打包验证（2026-10-08）
+
+针对打包应用在其他电脑的 Safari / Chrome 无法识别 Bilibili 的报告，修复三项可复现的可移植性缺陷：
+
+- 原生场景通道以前直接读取网页树，没有请求浏览器初始化辅助功能。`browser_accessibility.py` 在当前浏览器的场景捕获前请求 `AXEnhancedUserInterface=true`，按 bundle/PID/启动时间记录；不依赖开发机上的其他辅助工具。Chromium 的启用有约两秒去抖，因此不在每次轮询重复写入、不阻塞线程等待；继续使用正常场景轮询读取真实证据。临时失败延后重试，已启用的状态不重写，永不写 false。Safari/AppKit 可返回 NotImplemented 但仍受理请求，不能以 setter 返回值代替网页证据。
+- 播放控件的可访问标签可能位于 `AXTitle` 而非 `AXDescription`。仅在已归组的播放器内部，对启用的按钮/复选框/进度控件读取标签；不读标签页标题、网页正文、输入值和选中文字，也不凭 Bilibili 域名或标题判定视频。
+- 以前完整页面需要几千次逐项跨进程调用，300ms 预算使慢电脑反复超时。现在在单次快照内批量读角色、可用性、隐藏状态、DOM 标记和子节点，正确解包各项 AX 错误；不支持批量时回退逐项读取。仍有节点/时间上限，仍拒绝歧义播放器及不完整扫描，不跨捕获复用网页数据。
+
+`tests/test_browser_portability.py` 覆盖 Safari/Chrome 冷启动、延迟建树、不重复启用、浏览器重启、临时失败/权限不足、视频/音乐/PDF/图片、控件标签、批量错误、文本保护和慢速 IPC。550 个播放器附加节点、每次 IPC 0.18ms 的确定性回放中，旧逐项路径超时，新路径能完整识别。
+
+本机 Safari 已打开的 Bilibili 视频页只读实测：369 个扫描节点，一个视频元素，播放与自定义进度控件匹配；批量路径识别为 video，捕获内 IPC 从 2579 次降至 845 次，识别阶段约 60ms（逐项约 82ms）。未操作播放、进度或发送戒指手势，未取得其他电脑日志，因此这些结果不等于其他电脑端到端验证。测试后恢复原标签页。
+
+日志新增 `browser_accessibility` 初始化结果和 `ax_batches`，源码指纹包含新模块。打包启动自检增加浏览器 AX API 导出校验；源码改动不会更新已发出的旧安装包，需替换新包并退出重启应用及其原生工作进程。现有场景启用/停用和自定义绑定保留。
+
+机制依据：[Chromium 辅助功能说明](https://www.chromium.org/developers/design-documents/accessibility/)、[Chromium 应用辅助功能启用实现](https://github.com/chromium/chromium/blob/main/chrome/browser/chrome_browser_application_mac.mm)、[Chromium 控件标签实现](https://github.com/chromium/chromium/blob/main/ui/accessibility/platform/ax_platform_node_cocoa.mm)。

@@ -1254,4 +1254,27 @@ test("Unreadable suffix cannot make an insertion at scope start look like replac
     check(client.replaceCount == 0, "unverified scope was used as a destructive probe")
 }
 
+do {
+    let client = FakeClient()
+    let session = try! CompositionSession(client: client, utteranceID: "stroke-handoff", sequence: 1)
+    var edits = 0
+    session.onEdit = { _, _, _ in edits += 1 }
+    session.update("当前输入", final: false)
+    session.convert()
+    session.finishAsDictation()
+    session.update("当前输入已完成", final: true)
+    check(session.phase == .dictated && !session.editRequested && edits == 0, "stroke handoff ran editing instead of dictation")
+    check(client.body == "当前输入已完成" && !session.hasComposition, "stroke handoff lost the final dictation")
+}
+do {
+    let client = FakeClient("原文")
+    let session = try! CompositionSession(client: client, utteranceID: "empty-stroke-handoff", sequence: 1)
+    var finishes = 0
+    session.onFinishAudio = { finishes += 1 }
+    session.finishAsDictation()
+    session.update("迟到的语音", final: true)
+    check(session.phase == .interrupted && client.body == "原文", "empty voice handoff accepted late ASR")
+    check(finishes == 1 && client.markCount == 0 && client.commitCount == 0, "empty handoff wrote or stopped audio twice")
+}
+
 print("\(passed) native composition tests passed")

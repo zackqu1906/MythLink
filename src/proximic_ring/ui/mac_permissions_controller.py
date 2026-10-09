@@ -29,7 +29,7 @@ class MacPermissionsController(QObject):
     _screenRequestFinished = Signal()
     _screenPreviewFinished = Signal(object, str)
     systemPermissionRequestFinished = Signal(str, bool)
-    _systemRequestFinished = Signal(str, bool)
+    _systemRequestFinished = Signal(str, bool, str)
 
     def __init__(self, parent=None, *, enabled=True, reader=None):
         super().__init__(parent)
@@ -226,25 +226,29 @@ class MacPermissionsController(QObject):
 
         def request():
             success = True
+            error = ""
             try:
                 (request_accessibility_access if kind == "accessibility" else request_screen_capture_access)()
-            except Exception:
+            except Exception as exc:
                 success = False
+                error = f"{type(exc).__name__}: {exc}"
             try:
-                self._systemRequestFinished.emit(kind, success)
+                self._systemRequestFinished.emit(kind, success, error)
             except RuntimeError:
                 pass
         threading.Thread(target=request, name="ProxiMicNativePermission", daemon=True).start()
         return True
 
-    @Slot(str, bool)
-    def _finish_system_request(self, kind, success):
+    @Slot(str, bool, str)
+    def _finish_system_request(self, kind, success, error):
         if self._closed or self._system_request_kind != kind:
             return
         self._system_request_kind = ""
         self.refresh()
         if kind == "screen":
             self.refreshScreenRecording()
+        self.diagnostic.emit(dict(kind="permission_request", permission=kind,
+                                  success=success, error=error))
         self.changed.emit()
         self.systemPermissionRequestFinished.emit(kind, success)
 

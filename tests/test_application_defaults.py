@@ -126,7 +126,7 @@ def test_global_occupancy_suspends_defaults_without_changing_global_or_voice_rul
     assert not catalog.voice_overridden(WPS)
     assert (c.gestureBindings, c.ringGestures.globalBindings) == before
     assert c.ringGestures.setGlobalBinding("window_selector", "clench")
-    assert catalog.for_target(WPS)["menu:snap"].shortcut == "Cmd+Return"
+    assert catalog.for_target(WPS)["menu:snap"].shortcut == "Shift+F5"
 
 
 @pytest.mark.parametrize("bundle,prefix", [(CODEX, "Cmd+Shift"), (WORKBUDDY, "Cmd")])
@@ -155,11 +155,11 @@ def test_wps_defaults_route_only_in_their_own_app_and_scene(presentation, monkey
     assert request(c, "snap")  # Normal app shortcuts continue down the existing route.
     event = c.ringGestures.envelope(SimpleNamespace(name="snap"))
     c._apply_gesture(event, c._disconnect_event)
-    assert sent == [(WPS, "Cmd+Return")]
+    assert sent == [(WPS, "Shift+F5")]
     backend.target = replace(backend.target, scene=PRESENTATION)
     for gesture in ("swipe-left", "swipe-right", "snap"):
         assert not request(c, gesture)
-    assert sent == [(WPS, "Cmd+Return"), (WPS, "Backspace"), (WPS, "Right"), (WPS, "Escape")]
+    assert sent == [(WPS, "Shift+F5"), (WPS, "Backspace"), (WPS, "Right"), (WPS, "Escape")]
     assert not catalog.voice_overridden(WPS)  # Scene swipes do not suppress regular voice.
     backend.target = replace(backend.target, bundle="other.app", profile="", scene="")
     request(c, "swipe-left")

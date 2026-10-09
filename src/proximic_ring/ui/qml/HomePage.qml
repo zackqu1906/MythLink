@@ -15,13 +15,14 @@ ScrollView {
     clip: true
     contentWidth: availableWidth
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
 
     ColumnLayout {
         width: page.availableWidth
         spacing: 24
         ColumnLayout {
             objectName: "homePermissionNotices"
-            Layout.fillWidth: true; spacing: 2
+            Layout.fillWidth: true; spacing: 8
             readonly property var notices: page.controller.inlineInput.permissions.essentialWarnings.filter(
                 function(item) { return item.kind !== "microphone" || page.controller.audioSource === "microphone" })
             visible: notices.length > 0

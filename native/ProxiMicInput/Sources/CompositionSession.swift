@@ -766,6 +766,24 @@ final class CompositionSession {
         onChanged?()
     }
 
+    /// Explicit handoff from an in-progress voice sentence to stroke input.
+    /// The ordinary stroke start never invokes this method.
+    func finishAsDictation() {
+        if [.listening, .finishing].contains(phase) {
+            editRequested = false
+            revision += 1 // Late edit results cannot regain ownership.
+            if raw.isEmpty {
+                interrupt("已切换到笔画输入", commitIfOwned: false)
+            } else {
+                finish()
+                onChanged?()
+            }
+        } else if phase == .editing {
+            // Reuse the existing verified restoration of dictated text.
+            cancel()
+        }
+    }
+
     func convert() {
         guard !cancelPending else { return }
         guard canEdit else {

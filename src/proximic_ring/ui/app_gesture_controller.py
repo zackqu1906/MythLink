@@ -18,7 +18,7 @@ from ..mac_permissions import MacPermissionError
 from ..scene_diagnostics import SceneDiagnostics, new_trace_id, reason_message, exception_details
 from ..gesture_settings import BoundGestureEvent, GESTURE_LABELS
 from ..input_source_switch import foreground_pid, select_voice_input_source
-from ..scene_capabilities import SCENE_LABELS
+from ..scenes.registry import SCENE_LABELS
 from ..wechat_setup import (KEYBOARD_SETTINGS_URL, MENU_TITLES,
                             KeyboardShortcutsNavigator, detect_wechat_menu)
 from .shortcut_recorder import shortcut_from_event, shortcut_from_key
@@ -64,8 +64,8 @@ class AppGestureController(QObject):
         super().__init__(owner)
         self.owner = owner
         self.backend = backend or MacAppShortcuts()
-        self._diagnostics = SceneDiagnostics(owner._diagnostic_log.path.with_name("scene-events.jsonl"),
-            run_id=owner._diagnostic_run_id)
+        self._diagnostics = SceneDiagnostics(owner._diagnostic_log.path,
+                                            run_id=owner._diagnostic_run_id, writer=owner._diagnostic_log)
         self._diagnostics.start_session()
         self._generation = 0
         self._error = ""
@@ -136,8 +136,6 @@ class AppGestureController(QObject):
                 facts.update(app=target.bundle, pid=target.pid, scene=target.scene,
                              input_context=target.input_context, blocked=target.blocked)
             self._diagnostics.record(trace_id, stage, reason, **facts)
-            self.owner._event_log("SCENE_TRACE", _live_message="", trace=trace_id,
-                                  stage=stage, reason=reason, app=facts.get("app", ""))
         except Exception:
             pass  # Diagnostics must not change gesture routing or execution.
 

@@ -100,6 +100,43 @@ def test_macos_desktop_output_migrates_old_forced_off_setting(tmp_path, monkeypa
     restarted._text_processing_worker.close(wait=True)
 
 
+@pytest.mark.parametrize(
+    ("provider", "saved_model", "expected_model"),
+    [
+        ("volcengine", "deepseek-v4-flash-260425", "deepseek-v4-1-flash-260910"),
+        ("volcengine", "deepseek-v4-1-flash-260910", "deepseek-v4-1-flash-260910"),
+        ("volcengine", "ep-custom-model", "ep-custom-model"),
+        ("volcengine", "doubao-seed-2-0-lite-260215", "doubao-seed-2-0-lite-260215"),
+        ("openai", "deepseek-v4-flash-260425", "deepseek-v4-flash-260425"),
+    ],
+)
+def test_expired_ark_deepseek_model_migrates_on_startup(provider, saved_model, expected_model):
+    from PySide6.QtCore import QCoreApplication, QSettings
+    from PySide6.QtWidgets import QApplication
+    from proximic_ring.ui.controller import AppController
+
+    _app = QCoreApplication.instance()
+    if _app is not None and not isinstance(_app, QApplication):
+        pytest.skip("Run GUI controller tests separately from QCoreApplication tests")
+    _app = _app or QApplication(["llm-model-migration"])
+    settings = QSettings("ProxiMic", "ProxiMic Voice")
+    settings.setValue("llm/provider", provider)
+    settings.setValue("llm/model", saved_model)
+    settings.setValue("llm/baseUrl", "https://ark.cn-beijing.volces.com/api/v3")
+    settings.setValue("llm/apiKey", "test-only-key")
+    settings.sync()
+
+    controller = AppController(inline_input_enabled=False)
+    try:
+        assert controller.llmModel == expected_model
+        assert controller._settings.value("llm/model") == expected_model
+        assert controller.llmProvider == provider
+        assert controller.llmBaseUrl == "https://ark.cn-beijing.volces.com/api/v3"
+        assert controller.llmApiKey == "test-only-key"
+    finally:
+        controller._text_processing_worker.close(wait=True)
+
+
 def test_macos_edit_does_not_report_success_without_verified_replacement(
     tmp_path, monkeypatch
 ):
@@ -450,7 +487,8 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     assert submitted[1].target_text == "已有文本。"
     assert "自动路由判断完成：编辑指令（耗时 0.125s）" in controller.logText
     assert re.search(
-        r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] "
+        r"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}\] "
+        r"\[INFO\] \[runtime\] run=\w+ process=\d+ thread='[^']+' "
         r"\[session=702 route=\d+\] 自动路由判断完成",
         controller.logText,
     )

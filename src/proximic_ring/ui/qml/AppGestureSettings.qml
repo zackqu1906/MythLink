@@ -39,10 +39,10 @@ ColumnLayout {
         Accessible.name: "选择要控制的应用"
         onActivated: settings.service.recording = false
     }
-    Label {
+    UiNotice {
         Layout.fillWidth: true; wrapMode: Text.Wrap
         text: settings.service.recordingError || (settings.service.recording ? "正在录制：按下组合键，Esc 取消" : "点击快捷键框后，直接按下组合键即可保存。")
-        color: settings.service.recordingError ? "#986A15" : "#687286"; font.pixelSize: 12
+        warning: settings.service.recordingError.length > 0; font.pixelSize: 12
     }
     Repeater {
         model: settings.service.profiles[settings.selectedApp] || []
@@ -117,10 +117,10 @@ ColumnLayout {
         text: "查看微信设置步骤"
         onClicked: settings.wechatSetupRequested()
     }
-    Label {
+    UiNotice {
         Layout.fillWidth: true; wrapMode: Text.Wrap
         text: settings.service.error
-        visible: text.length > 0; color: "#986A15"; font.pixelSize: 12
+        visible: text.length > 0; font.pixelSize: 12
     }
     UiAction {
         objectName: "resetAppGesturesButton"

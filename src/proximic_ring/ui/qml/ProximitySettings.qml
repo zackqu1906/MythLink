@@ -147,7 +147,7 @@ ColumnLayout {
             descriptionObjectName: "proximityPermissionStatus"
             description: (pane.controller.permissionReady ? "辅助功能权限已就绪。" : "请允许距离锁屏组件使用辅助功能。")
                 + "开启功能时还需允许蓝牙权限。"
-            descriptionColor: pane.controller.passwordStatusChecked && !pane.controller.permissionReady ? "#9A6817" : theme.muted
+            descriptionWarning: pane.controller.passwordStatusChecked && !pane.controller.permissionReady
             UiAction {
                 objectName: "proximityRequestPermissions"
                 Layout.alignment: Qt.AlignRight

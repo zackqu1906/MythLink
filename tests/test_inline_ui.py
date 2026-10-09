@@ -410,13 +410,13 @@ def test_runtime_log_does_no_hidden_layout_and_coalesces_visible_bursts(inline_u
     assert area.property("text") == before
     QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(250)
-    assert area.property("text") == controller.logText
+    assert area.property("text") == controller.readDiagnosticLog()
     before = area.property("text")
     for index in range(60):
         controller._append_log(f"visible event {index}")
     assert area.property("text") == before
     QTest.qWait(200)
-    assert area.property("text") == controller.logText
+    assert area.property("text") == controller.readDiagnosticLog()
     QMetaObject.invokeMethod(dialog, "close")
     QTest.qWait(250)
     before = area.property("text")
@@ -425,7 +425,7 @@ def test_runtime_log_does_no_hidden_layout_and_coalesces_visible_bursts(inline_u
     assert area.property("text") == before
     QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(250)
-    assert area.property("text") == "尚未启动"
+    assert area.property("text") == "暂无日志"
 
 
 def test_partial_geometry_is_persisted_without_growing_live_log(inline_ui):

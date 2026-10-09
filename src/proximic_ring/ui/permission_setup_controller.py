@@ -8,8 +8,11 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QGuiApplication
 from ..mac_permissions import permission_request_scope
+from .permission_callback import PermissionCallback
 
 
+# Screen recording may ask the user to quit/reopen the app. Always request it
+# after every other permission has been handled.
 STEPS = ("bluetooth", "microphone", "accessibility", "screen")
 
 
@@ -112,6 +115,9 @@ class PermissionSetupController(QObject):
         self._next()
 
     def _next(self):
+        if self._callback is not None:
+            self._callback.cancel()
+            self._callback = None
         self._waiting = self._advance_pending = False
         self._left_app = self._returned = False
         self._index += 1
@@ -192,24 +198,31 @@ class PermissionSetupController(QObject):
                     self.changed.emit()
 
                     def completed(_permission=None):
-                        if self._closed or generation != self._generation:
+                        if (self._closed or generation != self._generation
+                                or not self._active or kind != self.currentKind
+                                or self._callback is not callback):
                             return
                         self._callback = None
                         self._requesting = False
                         self._advance_pending = True
                         self._mark_attempted(kind)
-                        self.diagnostic.emit(dict(action="answered", kind=kind))
+                        self.diagnostic.emit(dict(action="answered", kind=kind,
+                                                  status=_permission.status().name))
                         self._permissions.refreshDevicePermissions()
                         self.changed.emit()
                         self._schedule()
 
-                    self._callback = completed
-                    self._app.requestPermission(permission, self, completed)
+                    callback = PermissionCallback(completed, self)
+                    self._callback = callback
+                    self._app.requestPermission(permission, callback, callback.completed)
         except Exception as exc:
             self._requesting = False
+            if self._callback is not None:
+                self._callback.cancel()
             self._callback = None
             self._advance_pending = True
-            self.diagnostic.emit(dict(action="request_error", kind=kind, error=type(exc).__name__))
+            self.diagnostic.emit(dict(action="request_error", kind=kind,
+                                      error=type(exc).__name__, detail=str(exc)))
         self.changed.emit()
         self._schedule()
 
@@ -261,6 +274,8 @@ class PermissionSetupController(QObject):
         self._closed = True
         self._generation += 1
         self._active = False
+        if self._callback is not None:
+            self._callback.cancel()
         self._callback = None
         self._permissions.changed.disconnect(self._permissions_changed)
         self._permissions.systemPermissionRequestFinished.disconnect(self._native_finished)

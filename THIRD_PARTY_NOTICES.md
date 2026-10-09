@@ -44,6 +44,28 @@ Mythlink integrates the following third-party components. Most downloaded ASR/LL
 
 Third-party names and trademarks belong to their respective owners.
 
+## Stroke input data
+
+- The offline stroke dictionary in `src/proximic_ring/assets/strokes.json.gz` is imported
+  unchanged from ProximicVoice `yyf` commit `741517b`. That branch generated it with
+  `tools/build_stroke_assets.py` from the local `ring-stroke-ime-demo` prototype. It combines
+  Rime stroke codes (`rime/rime-stroke`, commit `1e8fff9`, LGPL-3.0) and Conway stroke codes
+  (`stroke-input/stroke-input-data`, commit `d66ba5f`, CC BY 4.0). Conway's simplified
+  character ranking is public domain. Attribution and source details are retained in
+  the prototype's `THIRD_PARTY.md`.
+- The 32-point handwriting templates are derived from the prototype's local P01 mouse
+  recordings. They are a baseline for Ring testing, not a trained Ring-specific model.
+
+## Stroke context data
+
+The local next-character model `assets/stroke-context.json.gz` reuses the
+existing demo's Tatoeba Mandarin counts (CC BY 2.0 FR) and Chinese Wikipedia
+counts (CC BY-SA 4.0). Contributor names, article links/revisions and source
+checksums are retained in `assets/stroke-context-sources.json.gz`; packaging
+does not change those counts. Original processing and attribution are described
+in `ring-stroke-ime-demo/THIRD_PARTY.md`. The generator is retained on the source `yyf`
+branch as `tools/build_stroke_context.py`; this integration includes the generated data.
+
 ## Ringo touchpad model and MNN
 
 - SDK location: `src/ring_python_sdk/touchpad`; model: `assets/touchpad_model.mnn`.

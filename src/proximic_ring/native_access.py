@@ -21,7 +21,8 @@ from .scene_diagnostics import SceneActionError, safe_data
 
 
 class NativeAccessChannel:
-    def __init__(self):
+    def __init__(self, *, pass_fds=()):
+        self._pass_fds = tuple(pass_fds)
         self._lock = threading.Lock()
         self._process = None
         self._buffer = b""
@@ -41,7 +42,22 @@ class NativeAccessChannel:
         else:
             args = [sys.executable, "-B", "-m", "proximic_ring.native_access_worker"]
         self._process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                         stderr=subprocess.DEVNULL, bufsize=0)
+                                         stderr=subprocess.PIPE, bufsize=0,
+                                         pass_fds=self._pass_fds,
+                                         env={**os.environ, 'PYTHONFAULTHANDLER': '1'})
+        from .diagnostic_log import RotatingDiagnosticLog, diagnostic_log_path
+        writer = RotatingDiagnosticLog(diagnostic_log_path())
+        process = self._process
+        def collect_stderr():
+            try:
+                # Bound reads even if a failing native library omits newlines.
+                for data in iter(lambda: process.stderr.readline(65536), b''):
+                    writer.record(data.decode('utf-8', errors='replace').rstrip(),
+                                  source=f'native.stderr.{process.pid}', level='ERROR')
+            except (OSError, ValueError):
+                pass
+        self._stderr_reader = threading.Thread(target=collect_stderr, name='NativeDiagnostics', daemon=True)
+        self._stderr_reader.start()
 
     def _stop(self):
         process, self._process = self._process, None
@@ -58,6 +74,11 @@ class NativeAccessChannel:
         finally:
             process.stdin.close()
             process.stdout.close()
+            if getattr(process, 'stderr', None) is not None:
+                reader = getattr(self, '_stderr_reader', None)
+                if reader is not None:
+                    reader.join(timeout=.3)
+                process.stderr.close()
 
     def close(self):
         with self._lock:
@@ -96,7 +117,8 @@ class NativeAccessChannel:
             except Exception as exc:
                 self._diagnostics.value = {"operation": operation, "reason": "channel_timeout" if isinstance(exc, TimeoutError)
                     else "channel_protocol_error" if isinstance(exc, (ValueError, json.JSONDecodeError)) else "channel_disconnected",
-                    "error_type": type(exc).__name__, "delivery": "unknown" if operation == "shortcut" else "not_sent"}
+                    "error_type": type(exc).__name__, "delivery": "unknown" if operation in {
+                        "shortcut", "touchpad_apply"} else "not_sent"}
                 # Delivery may already have happened. Never retry a write.
                 self._stop()
                 raise

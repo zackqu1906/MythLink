@@ -17,6 +17,7 @@ import uuid
 
 PROTOCOL = 1
 MAX_MESSAGE = 8 * 1024 * 1024
+STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared"})
 
 
 def default_socket_path() -> Path:
@@ -134,6 +135,11 @@ class IMEBridge:
                     and not self._outgoing[-1].get("final") and not self._outgoing[-1].get("error")
                     and all(self._outgoing[-1].get(key) == data.get(key) for key in ("epoch", "client_id", "utterance_id"))):
                 self._outgoing[-1] = data
+            elif (data.get("type") == "stroke_trace" and not data.get("finished")
+                    and self._outgoing and self._outgoing[-1].get("type") == "stroke_trace"
+                    and not self._outgoing[-1].get("finished")
+                    and all(self._outgoing[-1].get(key) == data.get(key) for key in ("epoch", "client_id", "stroke_session"))):
+                self._outgoing[-1] = data
             else:
                 self._outgoing.append(data)
             self._condition.notify_all()
@@ -183,7 +189,8 @@ class IMEBridge:
                 message = json.loads(raw)
                 if not isinstance(message, dict) or message.get("epoch") != epoch:
                     continue
-                if message.get("type") not in {"state", "finish_audio", "edit_requested", "interrupted", "settled", "pong", "wechat_key", "activation_recovery"}:
+                kind = message.get("type")
+                if kind not in {"state", "finish_audio", "edit_requested", "interrupted", "settled", "pong", "wechat_key", "activation_recovery"} | STROKE_REPLIES:
                     continue
                 with self._condition:
                     if self._connection is not connection:
@@ -196,7 +203,15 @@ class IMEBridge:
                         if request_id in self._context_replies:
                             self._context_replies[request_id] = dict(message)
                         self._condition.notify_all()
-                if not message.get("request_id") or message.get("type") in {"wechat_key", "activation_recovery"}:
+                request_id = message.get("request_id")
+                # Correlated ASR context is private to asr_context(). Stroke
+                # readiness and commit replies belong to the UI state machine,
+                # even though they also carry request IDs. Keep epoch checks
+                # above and let that controller check the client/session token.
+                stroke_probe = (kind == "state" and isinstance(request_id, str)
+                                and request_id.startswith("stroke:"))
+                if (not request_id or stroke_probe
+                        or kind in {"wechat_key", "activation_recovery"} | STROKE_REPLIES):
                     self._notify(message)
         except (OSError, ValueError, TypeError):
             pass

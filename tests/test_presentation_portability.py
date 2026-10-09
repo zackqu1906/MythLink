@@ -83,7 +83,7 @@ def test_fullscreen_other_content_does_not_use_slide_bindings(bundle, extension)
 
 @pytest.mark.parametrize("evidence", ["title", "controls", "canvas"])
 def test_generic_presenter_needs_no_shortcut_profile_for_shared_detection(evidence):
-    from proximic_ring.scene_recognition.presentation import detect_presentation
+    from proximic_ring.scenes.recognition.presentation import detect_presentation
     from proximic_ring.gesture_scenes import scene_actions
     name = "Example Slides [Plus]"
     window, focus = window_tree(name + " - Slide Show - Review.odp")
@@ -188,7 +188,7 @@ def test_capture_caches_only_within_snapshot_and_discards_mid_read_focus_change(
 
 
 def test_slower_ax_responses_still_identify_wps_without_reusing_a_previous_snapshot(monkeypatch):
-    import proximic_ring.scene_recognition.presentation as scenes
+    import proximic_ring.scenes.recognition.presentation as scenes
     window, focus = wps_window_tree()
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle=WPS)
     ax, elapsed = sys.modules["ApplicationServices"], [0.]

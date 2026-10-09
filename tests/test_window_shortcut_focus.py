@@ -1,13 +1,13 @@
-"""Window commands must not inherit a decorative container's enabled state."""
+"""Window commands must not inherit a layout container's enabled/focused state."""
 from dataclasses import replace
 import sys
 from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.scene_recognition.focus import inspect_focus, WINDOW_SHORTCUT_CONTAINERS
-from proximic_ring.scene_recognition.engine import detect_scene
-from proximic_ring.scene_recognition.models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
+from proximic_ring.scenes.recognition.focus import inspect_focus, WINDOW_SHORTCUT_CONTAINERS
+from proximic_ring.scenes.recognition.engine import detect_scene
+from proximic_ring.scenes.models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
 from proximic_ring.scene_diagnostics import SceneActionError
 from test_presentation_portability import native_backend
 from test_activity_scenes import content, metadata
@@ -15,12 +15,12 @@ from test_gesture_scenes import window_tree
 from test_app_shortcuts import desktop
 
 
-def activation_snapshot(role='AXLayoutArea'):
-    # Shape of the failed Oct 5 trace: an active ordinary document window,
-    # no modal/sheet/minimize, and a disabled focused layout canvas.
+def activation_snapshot(role='AXLayoutArea', focused=True):
+    # Oct 5/8 traces: active ordinary document window with a disabled layout
+    # canvas; on Oct 8 that AXFocusedUIElement also reported AXFocused=false.
     window = dict(AXRole='AXWindow', AXSubrole='AXStandardWindow', AXModal=False,
                   AXMinimized=False, AXSheets=[], AXFullScreen=False)
-    focus = dict(AXRole=role, AXEnabled=False, AXFocused=True, AXWindow=window,
+    focus = dict(AXRole=role, AXEnabled=False, AXFocused=focused, AXWindow=window,
                  AXParent=window, AXChildren=[])
     window['AXChildren'] = [focus]
     return window, focus
@@ -30,28 +30,37 @@ def activation_snapshot(role='AXLayoutArea'):
     'com.apple.iWork.Keynote', 'com.apple.Preview', 'com.apple.QuickTimePlayerX',
     'com.apple.Music', 'com.openai.codex', 'test.unknown.application'])
 @pytest.mark.parametrize('scene_capture', [False, True])
-def test_all_app_window_shortcuts_work_from_disabled_canvas_and_revalidate(monkeypatch, bundle, scene_capture):
-    window, focus = activation_snapshot()
+@pytest.mark.parametrize('focused', [True, False])
+def test_all_app_window_shortcuts_work_from_disabled_canvas_and_revalidate(monkeypatch, bundle, scene_capture, focused):
+    window, focus = activation_snapshot(focused=focused)
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle=bundle)
     target = backend.capture(menu_action=True, scene=scene_capture)
     assert target is not None and not target.blocked
     assert target.diagnostic['focus_policy'] == 'window_shortcut'
     assert target.diagnostic['disabled_containers'] == ['AXLayoutArea']
+    assert target.diagnostic.get('unfocused_containers', []) == ([] if focused else ['AXLayoutArea'])
     assert backend.same_target(target)
     # Selecting a thumbnail was why the same command started working later.
-    focus.update(AXRole='AXList', AXEnabled=True)
+    focus.update(AXRole='AXList', AXEnabled=True, AXFocused=True)
     enabled = backend.capture(menu_action=True, scene=scene_capture)
     assert not enabled.blocked and backend.same_target(enabled)
 
 
 @pytest.mark.parametrize('role', sorted(WINDOW_SHORTCUT_CONTAINERS))
-def test_container_flag_is_advisory_only_for_proven_window_commands(role):
-    window, focus = activation_snapshot(role)
+@pytest.mark.parametrize('focused,enabled', [(True, False), (False, False), (False, True)])
+def test_container_flag_is_advisory_only_for_proven_window_commands(role, focused, enabled):
+    window, focus = activation_snapshot(role, focused)
+    focus['AXEnabled'] = enabled
     strict = inspect_focus(window, focus, metadata)
-    assert strict.blocked and strict.context == 'unknown' and strict.reason == 'disabled_focus'
+    assert strict.blocked and strict.context == 'unknown'
+    assert strict.reason == ('stale_focus' if enabled else 'disabled_focus')
+    # Browser recognition's special web-root policy must not relax native canvases.
+    assert inspect_focus(window, focus, metadata, page_focus=True).blocked
     snapshot = inspect_focus(window, focus, metadata, window_shortcut=True)
     assert not snapshot.blocked and snapshot.context == 'nontext'
-    assert snapshot.ancestors[-1] is window and snapshot.disabled_containers == (role,)
+    assert snapshot.ancestors[-1] is window
+    assert snapshot.disabled_containers == (() if enabled else (role,))
+    assert snapshot.unfocused_containers == (() if focused else (role,))
 
 
 @pytest.mark.parametrize('role', ['AXTextField', 'AXTextArea', 'AXSearchField', 'AXComboBox',
@@ -61,14 +70,14 @@ def test_disabled_interactive_or_unknown_controls_and_windows_still_block(role):
     assert inspect_focus(window, focus, metadata, window_shortcut=True).blocked
 
 
-@pytest.mark.parametrize('state', ['hidden', 'busy', 'stale', 'editable', 'is_editable',
+@pytest.mark.parametrize('focused', [True, False])
+@pytest.mark.parametrize('state', ['hidden', 'busy', 'editable', 'is_editable',
     'menu', 'sheet', 'dialog', 'foreign_window', 'missing_parent', 'cycle', 'depth',
     'disabled_window', 'hidden_parent'])
-def test_disabled_container_exception_cannot_skip_ownership_and_safety_checks(state):
-    window, focus = activation_snapshot()
+def test_disabled_container_exception_cannot_skip_ownership_and_safety_checks(state, focused):
+    window, focus = activation_snapshot(focused=focused)
     if state == 'hidden': focus['AXHidden'] = True
     if state == 'busy': focus['AXElementBusy'] = True
-    if state == 'stale': focus['AXFocused'] = False
     if state == 'editable': focus['AXEditable'] = True
     if state == 'is_editable': focus['AXIsEditable'] = True
     if state == 'menu': focus['AXParent'] = dict(AXRole='AXMenu', AXParent=window)
@@ -100,16 +109,18 @@ def test_window_command_capture_keeps_real_window_guards(monkeypatch, state):
 
 
 @pytest.mark.parametrize('scene', [PRESENTATION, PDF, IMAGE, VIDEO, MUSIC])
-def test_scene_recognition_does_not_inherit_relaxed_window_command_policy(scene):
+@pytest.mark.parametrize('focused,enabled', [(True, False), (False, False), (False, True)])
+def test_scene_recognition_does_not_inherit_relaxed_window_command_policy(scene, focused, enabled):
     window, focus = window_tree() if scene == PRESENTATION else content(scene)
-    focus.update(AXRole='AXLayoutArea', AXEnabled=False)
+    focus.update(AXRole='AXLayoutArea', AXEnabled=enabled, AXFocused=focused)
     result = detect_scene('test.app', {scene:'generic'}, window, focus, metadata)
     assert result.input_context != 'nontext'
 
 
-def test_send_from_log_snapshot_posts_one_balanced_command_and_stops_on_window_change(monkeypatch, desktop):
+@pytest.mark.parametrize('focused', [True, False])
+def test_send_from_log_snapshot_posts_one_balanced_command_and_stops_on_window_change(monkeypatch, desktop, focused):
     _, state, quartz = desktop
-    window, focus = activation_snapshot()
+    window, focus = activation_snapshot(focused=focused)
     backend, root, _ = native_backend(monkeypatch, window, focus)
     target = backend.capture(menu_action=True)
     backend.post(target, 'Cmd+Return')
@@ -129,18 +140,20 @@ from test_ring_gestures import request
 
 @pytest.mark.parametrize('mode', ['input', 'operation'])
 @pytest.mark.parametrize('bundle', ['com.microsoft.Powerpoint', 'com.kingsoft.wpsoffice.mac', 'test.unknown.application'])
-def test_real_gesture_route_sends_bound_window_command_without_clicking_another_control(route, desktop, monkeypatch, mode, bundle):
+@pytest.mark.parametrize('focused', [True, False])
+@pytest.mark.parametrize('gesture', ['tap', 'snap'])
+def test_real_gesture_route_sends_bound_window_command_without_clicking_another_control(route, desktop, monkeypatch, mode, bundle, focused, gesture):
     c, service, inline, _, _, messages, _ = route
     _, state, _ = desktop
     catalog = configure(service, monkeypatch, bundle)
     catalog.selectScene('regular')
-    assert catalog.setCustomBinding(bundle, 'snap', 'Window command', 'Cmd+Return')
-    window, focus = activation_snapshot()
+    assert catalog.setCustomBinding(bundle, gesture, 'Window command', 'Cmd+Return')
+    window, focus = activation_snapshot(focused=focused)
     service.backend, _, _ = native_backend(monkeypatch, window, focus, bundle=bundle)
     c.ringGestures._mode = mode
     before_voice = dict(inline._view)
-    if request(c, 'snap'):
-        c._apply_gesture(c.ringGestures.envelope(SimpleNamespace(name='snap')), c._disconnect_event)
+    if request(c, gesture):
+        c._apply_gesture(c.ringGestures.envelope(SimpleNamespace(name=gesture)), c._disconnect_event)
     assert len(state.sent) == 4 and all(pid == 42 for pid, _ in state.sent)
     assert [event['down'] for _,event in state.sent] == [True, True, False, False]
     assert not messages and inline._view == before_voice

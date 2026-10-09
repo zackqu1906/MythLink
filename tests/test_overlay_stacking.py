@@ -18,8 +18,9 @@ def test_fullscreen_canvas_wins_over_toolbar_and_other_apps_on_second_monitor():
     assert module.content_window([window(width=20,height=20)],5) is None
 
 
-@pytest.mark.parametrize('level,expected',[(0,102),(300,301),(1000,999)])
-def test_native_panel_joins_fullscreen_without_activation_or_secure_window_level(level,expected):
+@pytest.mark.parametrize('level,offset,expected',[(0,0,102),(300,0,301),(1000,0,999),
+                                               (0,1,103),(300,1,302),(1000,1,999)])
+def test_native_panel_joins_fullscreen_without_activation_or_secure_window_level(level,offset,expected):
     names=['CanJoinAllSpaces','MoveToActiveSpace','Managed','Transient','Stationary',
         'ParticipatesInCycle','IgnoresCycle','FullScreenPrimary','FullScreenAuxiliary',
         'FullScreenNone','FullScreenAllowsTiling','FullScreenDisallowsTiling','Primary',
@@ -33,7 +34,7 @@ def test_native_panel_joins_fullscreen_without_activation_or_secure_window_level
         setLevel_=lambda v:calls.append(('level',v)),setHidesOnDeactivate_=lambda v:calls.append(('hides',v)),
         orderFrontRegardless=lambda:calls.append(('front',)),
         makeKeyAndOrderFront_=lambda _:pytest.fail('must not take focus'))
-    module.configure_native_overlay(native,kit,content_level=level)
+    module.configure_native_overlay(native,kit,content_level=level,level_offset=offset)
     assert calls[0]==('style',142)
     assert calls[1]==('behavior',sum(flags[n] for n in ['CanJoinAllSpaces','Transient','IgnoresCycle',
                                     'FullScreenAuxiliary','FullScreenDisallowsTiling','CanJoinAllApplications']))

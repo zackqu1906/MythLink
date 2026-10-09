@@ -44,14 +44,14 @@ Dialog {
             UiAction { objectName: "showAllInstalledApplications"; visible: dialog.showingRunning; text: "所有应用"; quiet: true; implicitHeight: 30; onClicked: dialog.showAll = true }
             UiAction { text: dialog.catalog.listBusy ? "搜索中…" : "刷新"; quiet: true; implicitHeight: 30; enabled: !dialog.catalog.listBusy; onClicked: dialog.catalog.refreshApplications() }
         }
-        Label { Layout.fillWidth: true; visible: text.length > 0; text: dialog.catalog.listMessage; wrapMode: Text.Wrap; color: "#A35527"; font.pixelSize: 12 }
+        UiNotice { Layout.fillWidth: true; visible: text.length > 0; text: dialog.catalog.listMessage; wrapMode: Text.Wrap; font.pixelSize: 12 }
         ListView {
             id: applicationList
             objectName: "availableGestureApplications"
             Layout.fillWidth: true; Layout.fillHeight: true
             clip: true; spacing: 8
             model: dialog.results
-            ScrollBar.vertical: ScrollBar { }
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
             delegate: Rectangle {
                 required property var modelData
                 width: applicationList.width; height: 70; radius: 10; color: theme.subtle

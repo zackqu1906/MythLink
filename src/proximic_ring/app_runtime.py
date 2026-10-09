@@ -556,6 +556,7 @@ class RecognitionRuntime:
         on_raw_audio: Callable[[int, object], None] | None = None,
         on_raw_imu: Callable[[int, object, dict], None] | None = None,
         on_gesture: Callable[[object], None] | None = None,
+        on_gesture_detected: Callable[[object], None] | None = None,
         on_gesture_health: Callable[[bool], None] | None = None,
         on_battery: Callable[
             [int | None, int | None, int | None], None
@@ -776,7 +777,8 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            if on_gesture is not None or end_on_gesture or gesture_filter is not None or audio_settings is not None:
+            if (on_gesture is not None or on_gesture_detected is not None or end_on_gesture
+                    or gesture_filter is not None or audio_settings is not None):
                 on_state("正在准备固件手势事件通道…")
                 try:
                     from proximic_ring.firmware_gestures import FirmwareGestureWorker
@@ -861,6 +863,14 @@ class RecognitionRuntime:
                         # ordering. Never hold this lock during model/device IO.
                         with audio_change_lock:
                             dispatch_gesture(event)
+                        # Optional feedback observes every recognized gesture,
+                        # including consumed/unmapped ones, after action routing
+                        # and outside the audio lock. It cannot fail the runtime.
+                        if on_gesture_detected is not None and not disconnect_event.is_set():
+                            try:
+                                on_gesture_detected(event)
+                            except Exception:
+                                pass
 
                     gesture_worker = FirmwareGestureWorker(on_gesture=publish_gesture)
                     gesture_worker.start()

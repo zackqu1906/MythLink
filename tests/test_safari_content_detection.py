@@ -3,8 +3,8 @@ from dataclasses import replace
 import sys
 import pytest
 
-from proximic_ring.scene_recognition.browser import MAX_PAGE_NODES
-from proximic_ring.scene_recognition.playback import PlaybackControls
+from proximic_ring.scenes.recognition.browser import MAX_PAGE_NODES
+from proximic_ring.scenes.recognition.playback import PlaybackControls
 from proximic_ring.scene_capabilities import BROWSERS, PDF, IMAGE, VIDEO, MUSIC
 from test_browser_scene_unification import Node, read, page, player, scene
 from test_app_shortcuts import desktop
@@ -142,7 +142,7 @@ def test_pdf_plugin_inside_background_webpage_is_not_a_missing_focus_fallback():
 
 
 def test_explicit_pdf_focus_does_not_scan_unrelated_page_bodies():
-    from proximic_ring.scene_recognition.browser import detect_browser
+    from proximic_ring.scenes.recognition.browser import detect_browser
     window, plugin, first = pdf_plugin()
     unrelated = Node('AXPage', plugin)
     def minimal_read(node, key):

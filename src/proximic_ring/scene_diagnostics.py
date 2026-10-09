@@ -42,6 +42,7 @@ MESSAGES = {
     'multiple_content_surfaces': '页面有多个文档或播放器，请点入要操作的内容',
     'page_scan_incomplete': '网页结构暂未完整确认，请点入播放器后重试',
     'no_web_player': '未读到当前页面的播放器，请点入播放器后重试',
+    'browser_accessibility_initializing': '浏览器正在准备网页辅助功能信息，稍后自动重试',
     'multiple_players': '当前页面有多个播放器，暂时无法确定操作对象',
     'no_focused_webpage': '焦点未在网页内容内，请点入目标页面',
     'web_player_unconfirmed': '播放器状态尚未确认，请点入播放器后重试',
@@ -146,7 +147,7 @@ class SceneActionError(RuntimeError):
 
 
 class SceneDiagnostics:
-    """Host-only rotating JSONL writer and a small thread-safe feedback buffer."""
+    """Structured scene records in the unified log, plus a small feedback buffer."""
     def __init__(self, path, *, run_id='', writer=None):
         self.path = path
         self.run_id = run_id
@@ -161,7 +162,8 @@ class SceneDiagnostics:
                 stage=stage, reason=reason, **facts))
             with self._lock:
                 self._events.append(event)
-                self.writer.append(json.dumps(event, ensure_ascii=False, separators=(',', ':')))
+                self.writer.record('[SCENE] ' + json.dumps(event, ensure_ascii=False, separators=(',', ':')),
+                                   source='scene', run=self.run_id)
             return event
         except Exception:
             return {}  # Logging cannot veto a gesture or replay a shortcut.
@@ -183,11 +185,11 @@ class SceneDiagnostics:
                 except PackageNotFoundError:
                     pass
             root = Path(__file__).resolve().parent
-            names = ["scene_diagnostics.py", "app_shortcuts.py", "mac_shortcut_events.py", "native_access.py", "native_access_worker.py",
+            names = ["scene_diagnostics.py", "diagnostic_log.py", "runtime_diagnostics.py", "app_shortcuts.py", "browser_accessibility.py", "mac_shortcut_events.py", "native_access.py", "native_access_worker.py",
                      "ui/app_gesture_controller.py", "ui/ring_gesture_controller.py", "ui/controller.py",
                      "ui/scene_notice_controller.py", "ui/scene_notice_overlay.py", "ui/overlay_stacking.py",
                      "ui/feedback_availability.py", "ui/permission_setup_controller.py", "ui/main.py"]
-            names += [str(path.relative_to(root)) for path in sorted((root / "scene_recognition").glob("*.py"))]
+            names += [str(path.relative_to(root)) for path in sorted((root / "scenes").rglob("*.py"))]
             fingerprints = {name: hashlib.sha256((root / name).read_bytes()).hexdigest()[:16]
                             for name in names if (root / name).is_file()}
             self.record("session-" + self.run_id, "session", "session_started", app_version=app_version,

@@ -11,6 +11,7 @@ from ..native_access import NativeAccessChannel
 from ..text_focus import foreground_stamp
 from ..window_selector import MESSAGES, grid_move
 from ..gesture_settings import GESTURE_LABELS
+from ..scene_diagnostics import exception_details, safe_data
 
 
 class WindowSelectorController(QObject):
@@ -67,7 +68,7 @@ class WindowSelectorController(QObject):
         return "选择应用" if self.atApps else self._groups[self._app_index]["card"]["app"]
     @Property("QVariantMap", notify=changed)
     def globalLabels(self):
-        return {key: GESTURE_LABELS[value].split("（")[0] for key, value in self.ring.globalBindings.items()}
+        return {key: GESTURE_LABELS.get(value, "").split("（")[0] for key, value in self.ring.globalBindings.items()}
     @Property(int, notify=selectionChanged)
     def selected(self): return self._selected
     @Property(int, notify=changed)
@@ -127,9 +128,8 @@ class WindowSelectorController(QObject):
         if not self._enabled:
             self.notice.emit(MESSAGES["unsupported"])
             return
-        if request.stamp is None:
-            self.notice.emit(MESSAGES["unavailable"])
-            return
+        # Listing windows is global and read-only. A missing origin stamp must
+        # not prevent it; the worker reads the current desktop independently.
         self._connection, self._generation = connection, request.generation
         self._epoch += 1
         self.blocked.set()
@@ -142,6 +142,8 @@ class WindowSelectorController(QObject):
         self._app_index = None
         self._window_selections = {}
         self._started = request.created
+        self.ring.owner._event_log("RING_WINDOW_SELECTOR", action="start", epoch=self._epoch,
+                                  origin_pid=(request.stamp or {}).get("pid", 0))
         self._deadline = self._clock() + 3
         self.ring.owner._app_gestures.cancel_pending()
         self.ring._fields.picker.stop()
@@ -256,13 +258,18 @@ class WindowSelectorController(QObject):
     def _submit(self, operation, **params):
         epoch = self._epoch
         def work():
+            failure = {}
             try:
                 result = (self._channel.call(operation, **params) if self._valid(epoch)
                           else {"status": "cancelled"})
             except MacPermissionError:
                 result = {"status": "permission"}
-            except Exception:
+                failure = {"reason": "permission_denied"}
+            except Exception as exc:
                 result = {"status": "unavailable"}
+                failure = {"reason": "native_exception", **exception_details(exc)}
+            diagnostic = safe_data(getattr(self._channel, "last_diagnostic", {}))
+            result = {**result, "diagnostic": {**failure, **diagnostic}}
             try:
                 self._result.emit(epoch, operation, result)
             except RuntimeError:
@@ -281,10 +288,26 @@ class WindowSelectorController(QObject):
             self.cancel()
             return
         status = result.get("status", "unavailable")
+        diagnostic = result.get("diagnostic", {})
+        elapsed = round((time.monotonic() - self._started) * 1000)
+        # The shared logger bounds each field to 240 characters. Keep decision
+        # metadata scalar so a long nested dict cannot hide the failure reason.
+        native = {"native_" + key: value for key, value in diagnostic.items()
+                  if isinstance(value, (bool, int, float, str))}
+        errors = [diagnostic, diagnostic.get("origin_error", {}), *diagnostic.get("app_errors", [])]
+        for error in errors:
+            if not error.get("error_type"):
+                continue
+            self.ring.owner._event_log("RING_WINDOW_SELECTOR", _live_message="",
+                action="native_error", operation=operation, epoch=epoch,
+                stage=diagnostic.get("stage", ""), pid=error.get("pid", diagnostic.get("target_pid", 0)),
+                error_type=error["error_type"],
+                locations=" > ".join(f"{f['module']}:{f['line']}:{f['function']}"
+                                     for f in error.get("error_frames", [])[-3:]))
         if status == "ready" and operation == "selector_list":
             self.ring.owner._event_log("RING_WINDOW_SELECTOR", action="list_ready",
-                                      elapsed_ms=round((time.monotonic() - self._started) * 1000),
-                                      count=len(result["cards"]))
+                                      epoch=epoch, elapsed_ms=elapsed, count=len(result["cards"]),
+                                      **native)
             self._set_snapshot(result)
             self._phase = "ready"
             self._touch()
@@ -293,7 +316,9 @@ class WindowSelectorController(QObject):
             self.presentRequested.emit()
             return
         self.ring.owner._event_log("RING_WINDOW_SELECTOR", status=status, action=operation,
-                                  reason=result.get("reason", ""))
+                                  epoch=epoch, elapsed_ms=elapsed, phase=self._phase,
+                                  reason=result.get("reason") or diagnostic.get("reason", ""),
+                                  **native)
         self.cancel()
         if status not in {"activated", "cancelled"}:
             self.notice.emit(MESSAGES.get(status, MESSAGES["unavailable"]))
@@ -302,6 +327,9 @@ class WindowSelectorController(QObject):
     def poll(self):
         if not self.blocked.is_set(): return
         if not self._valid(self._epoch) or self._clock() >= self._deadline:
+            self.ring.owner._event_log("RING_WINDOW_SELECTOR", action="cancel",
+                epoch=self._epoch, phase=self._phase,
+                reason="context_invalid" if not self._valid(self._epoch) else "timeout")
             self.cancel()
             return
         if self._phase != "ready": return

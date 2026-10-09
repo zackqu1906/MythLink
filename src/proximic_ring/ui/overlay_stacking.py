@@ -31,7 +31,7 @@ def foreground_content_window():
     return content_window(windows, int(front.processIdentifier()))
 
 
-def configure_native_overlay(native, appkit, *, content_level=0):
+def configure_native_overlay(native, appkit, *, content_level=0, level_offset=0):
     def flag(name):
         return int(getattr(appkit, "NSWindowCollectionBehavior" + name, 0))
     # FullScreenNone/Primary and Stage Manager Primary/Auxiliary conflict with
@@ -52,7 +52,7 @@ def configure_native_overlay(native, appkit, *, content_level=0):
     # Stay above presentation/video canvases, below OS screensavers/secure UI.
     level = min(int(getattr(appkit, "NSScreenSaverWindowLevel", 1000)) - 1,
                 max(int(getattr(appkit, "NSPopUpMenuWindowLevel", 101)) + 1,
-                    int(content_level) + 1))
+                    int(content_level) + 1) + level_offset)
     native.setLevel_(level)
     native.setHidesOnDeactivate_(False)
     native.orderFrontRegardless()
@@ -64,9 +64,10 @@ class OverlayVisibilityGuard(QObject):
     Owns no display lifetime: hide/close stops it, and it never calls show().
     The normal HUD/toast timers remain the only owners of their duration.
     """
-    def __init__(self, window, parent=None, *, diagnostic=None):
+    def __init__(self, window, parent=None, *, diagnostic=None, level_offset=0):
         super().__init__(parent)
         self.window = window
+        self._level_offset = level_offset
         self._diagnostic = diagnostic or (lambda _exc: None)
         self._last_error = None
         self._timer = QTimer(self)
@@ -87,7 +88,10 @@ class OverlayVisibilityGuard(QObject):
             return
         try:
             from .notifications import _show_on_macos_spaces
-            _show_on_macos_spaces(self.window)
+            if self._level_offset:
+                _show_on_macos_spaces(self.window, level_offset=self._level_offset)
+            else:
+                _show_on_macos_spaces(self.window)
             self._last_error = None
         except Exception as exc:
             signature = (type(exc).__name__, str(exc))

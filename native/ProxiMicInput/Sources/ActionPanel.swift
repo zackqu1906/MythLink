@@ -8,13 +8,24 @@ private final class PassivePanel: NSPanel {
 /// Native IME palette. It never activates the input method or steals the client caret.
 final class ActionPanel: NSObject {
     private let panel: NSPanel
-    private let effect = NSVisualEffectView()
-    private let errorTint = NSView()
+    private let effect = InputPaletteSurface()
     private let status = NSTextField(labelWithString: "听写中")
-    private let progress = NSProgressIndicator()
-    private let cancelButton = NSButton(title: "撤销", target: nil, action: nil)
-    private let convertButton = NSButton(title: "转换为编辑", target: nil, action: nil)
-    private let stack: NSStackView
+    private let progress = VoiceHudProgress()
+    private let statusSymbol = NSImageView()
+    private let spinner = VoiceHudSpinner(frame: .zero)
+    private let cancelButton = VoiceHudHint(action: "undo")
+    private let convertButton = VoiceHudHint(action: "switch_mode")
+    private let stack = NSStackView()
+    private let state = NSStackView()
+    private let hints = NSStackView()
+    private var hintWidthConstraint: NSLayoutConstraint!
+    private var scaledConstraints: [(NSLayoutConstraint, CGFloat)] = []
+    private var appearance = VoiceHudAppearance()
+    private var visualState = ""
+    private var gestureHints = VoiceHudBindings()
+    private var cancelAvailable = false
+    private var editAvailable = false
+    private var cancelDetail = "取消本句"
     private var dismissTimer: Timer?
     private var shouldShow = false
     private var anchor = ActionPanelAnchor()
@@ -29,9 +40,8 @@ final class ActionPanel: NSObject {
     var onConvert: (() -> Void)?
 
     override init() {
-        panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 290, height: 42),
+        panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 290, height: 60),
                              styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        stack = NSStackView(views: [progress, status, cancelButton, convertButton])
         super.init()
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
@@ -40,74 +50,136 @@ final class ActionPanel: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.animationBehavior = .none
-        effect.material = .popover
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = 10
-        effect.layer?.masksToBounds = true
         panel.contentView = effect
-        errorTint.identifier = NSUserInterfaceItemIdentifier("errorTint")
-        errorTint.wantsLayer = true
-        errorTint.layer?.backgroundColor = NSColor(srgbRed: 0.43, green: 0.06, blue: 0.09, alpha: 0.96).cgColor
-        errorTint.isHidden = true
-        errorTint.translatesAutoresizingMaskIntoConstraints = false
-        effect.addSubview(errorTint)
-        NSLayoutConstraint.activate([
-            errorTint.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-            errorTint.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-            errorTint.topAnchor.constraint(equalTo: effect.topAnchor),
-            errorTint.bottomAnchor.constraint(equalTo: effect.bottomAnchor)
-        ])
+
         status.identifier = NSUserInterfaceItemIdentifier("status")
-        status.font = .systemFont(ofSize: 12, weight: .medium)
-        status.textColor = .labelColor
-        progress.style = .spinning
-        progress.controlSize = .small
-        progress.isIndeterminate = true
-        progress.isDisplayedWhenStopped = false
-        progress.isHidden = true
+        status.font = VoiceHudStyle.font(12)
+        status.textColor = VoiceHudStyle.text
+        status.lineBreakMode = .byTruncatingTail
+        status.maximumNumberOfLines = 1
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        progress.identifier = NSUserInterfaceItemIdentifier("voiceProcessingDots")
+        progress.image = VoiceHudAssets.image("processing-dots")
+        progress.imageScaling = .scaleProportionallyUpOrDown
         progress.setAccessibilityLabel("正在处理")
-        progress.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            progress.widthAnchor.constraint(equalToConstant: 16),
-            progress.heightAnchor.constraint(equalToConstant: 16)
-        ])
-        status.setContentCompressionResistancePriority(.required, for: .horizontal)
+        progress.isHidden = true
+        statusSymbol.identifier = NSUserInterfaceItemIdentifier("voiceStatusSymbol")
+        statusSymbol.imageScaling = .scaleProportionallyUpOrDown
+        statusSymbol.image = VoiceHudAssets.image("listening-waveform")
+        let symbolSlot = NSView()
+        spinner.identifier = NSUserInterfaceItemIdentifier("voiceProcessingSpinner")
+        for view in [statusSymbol, spinner] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            symbolSlot.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.centerXAnchor.constraint(equalTo: symbolSlot.centerXAnchor),
+                view.centerYAnchor.constraint(equalTo: symbolSlot.centerYAnchor),
+                view.widthAnchor.constraint(equalTo: symbolSlot.widthAnchor),
+                view.heightAnchor.constraint(equalTo: symbolSlot.heightAnchor)
+            ])
+        }
+        state.setViews([symbolSlot, progress, status], in: .center)
+        state.orientation = .horizontal
+        state.distribution = .fill
+        state.alignment = .centerY
+        state.spacing = 8
+        state.detachesHiddenViews = true
+        hints.setViews([cancelButton, convertButton], in: .center)
+        hints.identifier = NSUserInterfaceItemIdentifier("voiceGestureHints")
+        hints.orientation = .horizontal
+        hints.alignment = .centerY
+        hints.spacing = 6
+        hints.detachesHiddenViews = true
+        hintWidthConstraint = hints.widthAnchor.constraint(equalToConstant: 0)
+        for hint in [cancelButton, convertButton] {
+            scaledConstraints += [(hint.widthAnchor.constraint(equalToConstant: 59), 59),
+                                  (hint.heightAnchor.constraint(equalToConstant: 32), 32)]
+        }
+        scaledConstraints += [
+            (progress.widthAnchor.constraint(equalToConstant: 31), 31),
+            (progress.heightAnchor.constraint(equalToConstant: 5), 5),
+            (symbolSlot.widthAnchor.constraint(equalToConstant: 30), 30),
+            (symbolSlot.heightAnchor.constraint(equalToConstant: 24), 24),
+            (state.widthAnchor.constraint(equalToConstant: 180), 180)
+        ]
+        stack.setViews([state, hints], in: .center)
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 7
+        stack.detachesHiddenViews = true
+        stack.wantsLayer = true
+        stack.identifier = NSUserInterfaceItemIdentifier("voiceHudContent")
         stack.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 11),
-            stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -9),
-            stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor)
-        ])
-        for button in [cancelButton, convertButton] {
-            button.bezelStyle = .roundRect
-            button.controlSize = .small
-            button.font = .systemFont(ofSize: 12)
-            button.focusRingType = .none
-            button.target = self
-        }
-        cancelButton.action = #selector(cancel)
-        convertButton.action = #selector(convert)
+        scaledConstraints += [(stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 16), 16),
+                              (stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -14), -14)]
+        NSLayoutConstraint.activate(scaledConstraints.map { $0.0 } + [hintWidthConstraint, stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor)])
+        cancelButton.target = self; cancelButton.action = #selector(cancel)
+        convertButton.target = self; convertButton.action = #selector(convert)
+        refreshHints()
+        applyAppearance()
     }
 
     @objc private func cancel() { onCancel?() }
     @objc private func convert() { onConvert?() }
 
+    func configureGestureHints(_ hints: VoiceHudBindings) {
+        guard hints != gestureHints else { return }
+        gestureHints = hints
+        refreshHints() // Updating icons must not replay the panel or reset its timer/anchor.
+    }
+
+    func configureAppearance(_ value: VoiceHudAppearance) {
+        guard appearance != value else { return }
+        appearance = value
+        applyAppearance() // No state update, caret read, replay or timer reset.
+    }
+
+    private func applyAppearance() {
+        let scale = appearance.scale
+        for (constraint, original) in scaledConstraints { constraint.constant = original * scale }
+        status.font = VoiceHudStyle.font(max(11, 12 * scale))
+        state.spacing = 8 * scale
+        hints.spacing = 6 * scale
+        for hint in [cancelButton, convertButton] { hint.uiScale = scale }
+        effect.cornerRadius = InputPaletteStyle.cornerRadius
+        fitVisibleActions()
+    }
+
+    private func fitVisibleActions() {
+        let scale = appearance.scale
+        let count = [cancelButton, convertButton].filter { !$0.isHidden }.count
+        let actionsWidth = CGFloat(count * 59 + max(0, count - 1) * 6) * scale
+        hintWidthConstraint.constant = actionsWidth
+        hints.isHidden = count == 0
+        stack.spacing = count == 0 ? 0 : 18 * scale
+        let size = NSSize(width: 210 * scale + actionsWidth + stack.spacing,
+                          height: InputPaletteStyle.rowHeight * scale / 0.8)
+        // Keep the status region and left anchor steady. Only actual visible
+        // actions occupy space; hiding the last action also removes its gap.
+        let origin = panel.frame.origin
+        if panel.frame.size != size {
+            panel.setContentSize(size)
+            panel.setFrameOrigin(origin)
+        }
+        effect.layoutSubtreeIfNeeded()
+    }
+
+    private func refreshHints() {
+        cancelButton.configure(gestures: gestureHints.actions["undo"] ?? [], functionAsset: "function-cancel",
+                               available: cancelAvailable, detail: cancelDetail)
+        convertButton.configure(gestures: gestureHints.actions["switch_mode"] ?? [], functionAsset: "function-edit",
+                                available: editAvailable, detail: "转换为编辑")
+    }
+
     func applyPresentation(_ presentation: ActionPanelPresentation) {
         status.stringValue = presentation.title
-        status.toolTip = presentation.detail
-        status.textColor = presentation.isError ? .white : .labelColor
-        errorTint.isHidden = !presentation.isError
-        effect.appearance = presentation.isError ? NSAppearance(named: .darkAqua) : nil
-        effect.layer?.borderWidth = presentation.isError ? 1 : 0
-        effect.layer?.borderColor = presentation.isError ? NSColor.systemRed.cgColor : nil
+        status.toolTip = presentation.detail ?? presentation.title
+        status.textColor = VoiceHudStyle.text
+        statusSymbol.image = presentation.isError ? VoiceHudAssets.image("status-error") : nil
+        statusSymbol.isHidden = !presentation.isError
+        statusSymbol.setAccessibilityLabel(presentation.isError ? "操作失败" : "")
     }
 
     func update(_ session: CompositionSession, historyDepth: Int = 0) {
@@ -121,20 +193,32 @@ final class ActionPanel: NSObject {
         let presentation = ActionPanelPresentation(phase: session.phase, error: session.error,
             empty: session.raw.isEmpty, editRequested: session.editRequested,
             readableRange: session.editScope == "readable_range")
+        let nextVisualState = "\(session.phase)|\(presentation.title)|\(presentation.isError)|\(session.canCancel)|\(session.canEdit)|\(historyDepth > 0)"
+        let animateState = panel.isVisible && visualState != nextVisualState
+        visualState = nextVisualState
         applyPresentation(presentation)
-        let nextBusy = !presentation.isError && (session.phase == .editing || session.phase == .finishing)
-        if nextBusy != busy {
-            busy = nextBusy
-            progress.isHidden = !busy
-            if busy { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
+        busy = !presentation.isError && (session.phase == .editing || session.phase == .finishing)
+        progress.setAnimating(busy)
+        spinner.setAnimating(busy)
+        if busy {
+            statusSymbol.isHidden = true
+        } else if !presentation.isError && session.phase == .listening {
+            statusSymbol.image = VoiceHudAssets.image("listening-waveform")
+            statusSymbol.isHidden = false
+            status.textColor = VoiceHudStyle.blue
         }
-        cancelButton.title = session.cancelLabel
-        cancelButton.isHidden = !session.canCancel && !(session.phase == .undone && historyDepth > 0)
-        convertButton.isHidden = !session.canEdit
+        if !presentation.isError && !session.raw.isEmpty && [.dictated, .edited].contains(session.phase) {
+            statusSymbol.image = VoiceHudAssets.image("status-done")
+            statusSymbol.setAccessibilityLabel("已完成")
+            statusSymbol.isHidden = false
+        }
+        cancelDetail = session.cancelLabel
+        cancelAvailable = session.canCancel || (session.phase == .undone && historyDepth > 0)
+        editAvailable = session.canEdit
+        refreshHints()
         shouldShow = true
-        stack.layoutSubtreeIfNeeded()
-        let size = anchor.layoutSize(NSSize(width: max(132, stack.fittingSize.width + 20), height: 40), busy: busy)
-        if panel.frame.size != size { panel.setContentSize(size) }
+        fitVisibleActions()
+        if animateState { VoiceHudMotion.transition(stack) }
         if let origin = anchor.heldOrigin, panel.frame.origin != origin { panel.setFrameOrigin(origin) }
         if [.dictated, .edited, .undone, .interrupted, .error].contains(session.phase) {
             dismissTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in self?.hide() }
@@ -152,8 +236,8 @@ final class ActionPanel: NSObject {
         let visible = screen.visibleFrame.insetBy(dx: 6, dy: 6)
         let size = panel.frame.size
         let x = min(max(caret.minX, visible.minX), max(visible.minX, visible.maxX - size.width))
-        var y = caret.minY - size.height - 6
-        if y < visible.minY { y = caret.maxY + 6 }
+        var y = caret.minY - size.height - InputPaletteStyle.caretGap
+        if y < visible.minY { y = caret.maxY + InputPaletteStyle.caretGap }
         y = min(max(y, visible.minY), max(visible.minY, visible.maxY - size.height))
         let scale = screen.backingScaleFactor
         let origin = anchor.place(NSPoint(x: (x * scale).rounded() / scale, y: (y * scale).rounded() / scale), size: size)
@@ -173,8 +257,10 @@ final class ActionPanel: NSObject {
         // edit. Its next state update must reuse this operation's anchor.
         // ActionPanelAnchor.update resets it when a new utterance starts.
         busy = false
-        progress.stopAnimation(nil)
-        progress.isHidden = true
+        progress.setAnimating(false)
+        spinner.setAnimating(false)
+        stack.layer?.removeAnimation(forKey: kCATransition)
+        visualState = ""
         dismissTimer?.invalidate()
         dismissTimer = nil
         panel.orderOut(nil)

@@ -150,6 +150,10 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(ro
             catalog.clearApplicationBindings("com.openai.codex")
         assert catalog.setBinding("com.openai.codex", "swipe-left", ACTION["id"])
     state, started, finals, actions, shown = {}, [], [], [], []
+    detected = []
+    def feedback(event):
+        detected.append(event.name)
+        raise RuntimeError("optional feedback unavailable")
     c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
     recognition, disconnect = threading.Event(), c._disconnect_event
     recognition.set()
@@ -235,9 +239,13 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(ro
         disconnect, recognition, on_update=lambda _: None, on_state=lambda _: None,
         on_connected=lambda: None, on_disconnected=lambda: None, on_started=lambda: None,
         on_gesture=actions.append,
+        on_gesture_detected=feedback,
         gesture_filter=lambda event, busy: c.ringGestures.filter(event, busy, disconnect))
     assert [event.name for event in actions] == (["circle-clockwise"] if app_mapping else []) + ["swipe-right"]
     assert len(finals) == len(started) == 1
+    assert detected == (["middle-pinch", "tap", "tap", "swipe-left", "swipe-right", "circle-clockwise",
+                         "middle-pinch"] + (["tap"] if voice_override else [])
+                        + ["tap", "middle-pinch", "index-pinch", "swipe-right", "tap", "middle-pinch"])
 
 
 def test_lock_consumes_gestures_before_voice_focus_scroll_and_menu(route):

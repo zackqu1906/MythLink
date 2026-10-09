@@ -52,7 +52,7 @@ from ..desktop_target import (
     DesktopTextSnapshot,
     macos_texts_equivalent,
 )
-from ..diagnostic_log import RotatingDiagnosticLog
+from ..diagnostic_log import RotatingDiagnosticLog, diagnostic_log_path, diagnostic_run_id, format_record
 from ..gesture_settings import (
     BoundGestureEvent, GestureBindings, GESTURE_LABELS,
     reserve_ring_gestures, GlobalGestureBindings, GLOBAL_BINDINGS_KEY,
@@ -78,6 +78,7 @@ from ..runtime_paths import app_data_root, is_frozen, resource_root
 from ..text_processing import (
     DEFAULT_ARK_API_KEY_ENV,
     DEFAULT_ARK_BASE_URL,
+    DEFAULT_ARK_DEEPSEEK_MODEL,
     DEFAULT_ARK_MODEL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_CONTEXT_SIZE,
@@ -351,6 +352,7 @@ class AppController(QObject):
     interactionChanged = Signal()
     logChanged = Signal()
     settingsChanged = Signal()
+    voiceHudAppearanceChanged = Signal()
     trayAvailableChanged = Signal()
     devicesChanged = Signal()
     scanBusyChanged = Signal()
@@ -480,9 +482,10 @@ class AppController(QObject):
         self._proximity_reconnect_after = 0.0
         self._proximity_reconnect_attempts = 0
         self._proximity_reconnect_cancelled = False
-        self._diagnostic_run_id = uuid.uuid4().hex[:8]
+        self._diagnostic_run_id = diagnostic_run_id()
+        self._diagnostic_view_marker = ''
         self._diagnostic_log = RotatingDiagnosticLog(
-            app_data_root() / "logs" / "diagnostic.log"
+            diagnostic_log_path(app_data_root())
         )
         self._diagnostic_session_started_at: dict[int, float] = {}
         self._ptt_active = False
@@ -504,6 +507,10 @@ class AppController(QObject):
         )
         self._gesture_settings_error = ""
         self._multi_undo_enabled = self._bool_setting("input/multiUndoEnabled", False)
+        try:
+            self._voice_hud_scale = max(80, min(140, int(self._settings.value("ui/voiceHudScale", 80))))
+        except (TypeError, ValueError):
+            self._voice_hud_scale = 80
         self._speech_control_mode = str(self._settings.value("input/speechControlMode", "gesture"))
         if self._speech_control_mode not in {"proximity", "gesture"}:
             self._speech_control_mode = "proximity"
@@ -574,6 +581,12 @@ class AppController(QObject):
         self._llm_model = str(
             self._settings.value("llm/model", default_llm_model)
         ).strip()
+        if (
+            self._llm_provider == LLM_PROVIDER_VOLCENGINE
+            and self._llm_model == "deepseek-v4-flash-260425"
+        ):
+            self._llm_model = DEFAULT_ARK_DEEPSEEK_MODEL
+            self._settings.setValue("llm/model", self._llm_model)
         default_key_env = ""
         if self._llm_provider == LLM_PROVIDER_VOLCENGINE:
             default_key_env = DEFAULT_ARK_API_KEY_ENV
@@ -881,8 +894,13 @@ class AppController(QObject):
         self._inline_input.diagnostic.connect(self._log_inline_diagnostic)
         self._inline_input.configure(self._mode_correction_shortcut,
                                      multi_undo_enabled=self._multi_undo_enabled)
+        self._inline_input.set_gesture_hints(self.gestureBindings)
+        self._inline_input.set_hud_scale(self._voice_hud_scale)
+        self.gestureSettingsChanged.connect(lambda: self._inline_input.set_gesture_hints(self.gestureBindings))
         self._app_gestures = AppGestureController(self)
         self._ring_gestures = RingGestureController(self)
+        from .gesture_trigger_controller import GestureTriggerController
+        self._gesture_trigger = GestureTriggerController(self)
         from .touchpad_controller import TouchpadController
         self._touchpad = TouchpadController(self)
         from .proximity_controller import ProximityController
@@ -1144,6 +1162,10 @@ class AppController(QObject):
         return self._ring_gestures
 
     @Property(QObject, constant=True)
+    def gestureTrigger(self) -> QObject:
+        return self._gesture_trigger
+
+    @Property(QObject, constant=True)
     def touchpad(self) -> QObject:
         return self._touchpad
 
@@ -1246,7 +1268,8 @@ class AppController(QObject):
                 self._inline_input.cancel()
             return
         if (not self._inline_enabled() or not self._desktop_output
-                or not self._recognition_event.is_set() or self._disconnect_event.is_set()):
+                or not self._recognition_event.is_set() or self._disconnect_event.is_set()
+                or self._touchpad.strokeSession.engaged):
             completion(False)
             return
         pending, self._pending_inline_audio_start = self._pending_inline_audio_start, (completion, connection)
@@ -2403,6 +2426,10 @@ class AppController(QObject):
     def diagnosticLogPath(self) -> str:
         return str(self._diagnostic_log.path)
 
+    @Slot(result=str)
+    def readDiagnosticLog(self) -> str:
+        return self._diagnostic_log.tail(after_marker=self._diagnostic_view_marker)
+
     @Property(bool, notify=trayAvailableChanged)
     def trayAvailable(self) -> bool:
         return self._tray_available
@@ -2477,6 +2504,20 @@ class AppController(QObject):
     @Property("QVariantList", constant=True)
     def modeCorrectionShortcutOptions(self) -> list[str]:
         return list(MODE_SWITCH_SHORTCUTS)
+
+    @Property(int, notify=voiceHudAppearanceChanged)
+    def voiceHudScale(self) -> int:
+        return self._voice_hud_scale
+
+    @voiceHudScale.setter
+    def voiceHudScale(self, value: int) -> None:
+        value = max(80, min(140, int(value)))
+        if value == self._voice_hud_scale:
+            return
+        self._voice_hud_scale = value
+        self._settings.setValue("ui/voiceHudScale", value)
+        self._inline_input.set_hud_scale(value)
+        self.voiceHudAppearanceChanged.emit()
 
     @Property(bool, notify=settingsChanged)
     def multiUndoEnabled(self) -> bool:
@@ -3540,6 +3581,7 @@ class AppController(QObject):
                         self._ring_gestures.envelope(event), gesture_connection
                     ),
                     on_gesture_health=lambda healthy: self._runtimeGestureHealth.emit(gesture_connection, healthy),
+                    on_gesture_detected=lambda event: self._gesture_trigger.submit(event.name, gesture_connection),
                     gesture_filter=lambda event, busy: self._ring_gestures.filter(
                         event, busy, gesture_connection
                     ),
@@ -3673,10 +3715,15 @@ class AppController(QObject):
         if not accepted:
             return
         self._interaction_recognition_suspended = False
-        self._recognition_event.set()
+        if not self._touchpad.blocksVoice:
+            self._recognition_event.set()
         self._recognition_enabled = True
         self.recognitionEnabledChanged.emit()
         self.runningChanged.emit()
+        if self._touchpad.blocksVoice:
+            self._set_status("笔画输入中", "语音已启用，退出笔画后恢复待命", "running")
+            self._append_log("语音识别已启用，等待笔画输入结束")
+            return
         detail = (
             f"{self.confirmGestureHint} 开始，再做一次结束本句"
             if self._speech_control_mode == "gesture"
@@ -3703,6 +3750,8 @@ class AppController(QObject):
             and not self._quitting
             and not self._disconnect_event.is_set()
         ):
+            if self._touchpad.blocksVoice:
+                return
             self._recognition_event.set()
             self._append_log("当前语句处理完成，已恢复下一段语音识别")
 
@@ -4020,12 +4069,29 @@ class AppController(QObject):
 
     @Slot()
     def clearLog(self) -> None:
+        marker = uuid.uuid4().hex
         self._append_background_diagnostic(
             f"[EVENT USER_ACTION] run={self._diagnostic_run_id} "
-            'action="clear_live_log"'
+            f'action="clear_live_log" view_marker={marker}'
         )
+        self._diagnostic_view_marker = marker
         self._log_lines.clear()
         self.logChanged.emit()
+
+    @Slot()
+    def exportDiagnosticLog(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        name = 'Mythlink-diagnostic-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.log'
+        destination, _ = QFileDialog.getSaveFileName(None, '导出完整诊断日志',
+            str(Path.home() / 'Downloads' / name), '日志文件 (*.log)')
+        if not destination:
+            return
+        try:
+            self._event_log('USER_ACTION', action='export_diagnostic_log')
+            self._diagnostic_log.export(destination)
+            self._append_log('完整诊断日志已导出：' + destination)
+        except (OSError, ValueError) as exc:
+            self._append_log(f'导出诊断日志失败：{exc}')
 
     @Slot()
     def openDiagnosticLogDirectory(self) -> None:
@@ -4177,6 +4243,7 @@ class AppController(QObject):
         self._app_gestures.close()
         self._touchpad.close()
         self._ring_gestures.close()
+        self._gesture_trigger.close()
         self._undo_queue_timer.stop()
         self._undo_queue.clear()
         self._undo_writer.shutdown(wait=True)
@@ -4421,6 +4488,11 @@ class AppController(QObject):
                 except BaseException as exc:
                     self._append_log(f"ASR 时序证据保存失败：{exc}")
         if summary.startswith("[ASR] START"):
+            if self._touchpad.blocksVoice:
+                # A start may already be queued when the stroke gate closes.
+                self._cancel_utterance_event.set()
+                self._ignore_asr_updates_until_next_start = True
+                return
             # Stage2 activation is the authoritative start of a detected voice
             # session. Enter listening state before ASR has any text to emit.
             if self._failed_edit_fallback_interaction() is not None:
@@ -6918,6 +6990,9 @@ class AppController(QObject):
 
     @Slot(str)
     def _apply_voice_action(self, action: str, *, _from_gesture: bool = False) -> None:
+        if self._touchpad.blocksVoice:
+            self._set_status("笔画输入中", "请先停止笔画输入，再使用语音操作", "paused")
+            return
         action = str(action).strip().lower()
         if action in {ACTION_CANCEL, ACTION_UNDO, ACTION_EDIT, ACTION_SWITCH_MODE}:
             self._app_gestures.cancel_pending()
@@ -7991,13 +8066,10 @@ class AppController(QObject):
         # Wall-clock time is useful for correlating device/model logs.  Actual
         # durations are measured separately with perf_counter in the ASR
         # worker so an OS clock adjustment cannot corrupt latency numbers.
-        timestamp = datetime.now().astimezone().strftime(
-            "%Y-%m-%d %H:%M:%S.%f"
-        )[:-3]
-        line = f"[{timestamp}] {text}"
+        line = format_record(text, source='runtime', run=self._diagnostic_run_id)
         self._log_lines.append(line)
-        # Keep enough context in the live viewer for several full utterances;
-        # the separate diagnostic file preserves the same lines across runs.
+        # Retain a bounded summary for existing internal consumers. The live
+        # viewer reads the unified disk log, including background producers.
         del self._log_lines[:-1000]
         if deferred:
             if not self._voice_history_closed:
@@ -8007,17 +8079,12 @@ class AppController(QObject):
         self.logChanged.emit()
 
     def _write_log_line(self, line: str) -> None:
-        """File/console output only; safe for the ordered undo writer."""
+        """Persist once; stdout is captured separately and must not echo this."""
         try:
             self._diagnostic_log.append(line)
         except BaseException:
             # Diagnostics are strictly observational and may not interrupt UI,
             # ASR, desktop injection, undo, or mode conversion.
-            pass
-        try:
-            print(line, flush=True)
-        except BaseException:
-            # A closed diagnostic stream must never affect voice input.
             pass
 
     def _append_background_diagnostic(self, message: str) -> None:
@@ -8026,11 +8093,8 @@ class AppController(QObject):
         text = str(message).strip()
         if not text:
             return
-        timestamp = datetime.now().astimezone().strftime(
-            "%Y-%m-%d %H:%M:%S.%f"
-        )[:-3]
         try:
-            self._diagnostic_log.append(f"[{timestamp}] {text}")
+            self._diagnostic_log.record(text, source='runtime.background', run=self._diagnostic_run_id)
         except BaseException:
             pass
 

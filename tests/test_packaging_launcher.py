@@ -72,35 +72,40 @@ def test_native_access_worker_does_not_launch_ui_or_another_asr_host(monkeypatch
     assert launcher._entrypoint() == 17
 
 
-def test_open_startup_log_rotates_oversized_previous_run(
+def test_open_unified_log_rotates_oversized_previous_run(
     monkeypatch, tmp_path
 ) -> None:
     launcher = _load_launcher()
-    import proximic_ring.diagnostic_log as diagnostic_log
+    import proximic_ring.runtime_diagnostics as diagnostics
+    from proximic_ring.diagnostic_log import RotatingDiagnosticLog
 
     runtime_paths = types.ModuleType("proximic_ring.runtime_paths")
     runtime_paths.app_data_root = lambda: tmp_path
     monkeypatch.setitem(sys.modules, "proximic_ring.runtime_paths", runtime_paths)
-    monkeypatch.setattr(diagnostic_log, "STARTUP_LOG_MAX_BYTES", 64)
-    monkeypatch.setattr(diagnostic_log, "STARTUP_LOG_BACKUP_COUNT", 2)
+    monkeypatch.setattr(diagnostics, 'RotatingDiagnosticLog',
+                        lambda path: RotatingDiagnosticLog(path, max_bytes=64, backup_count=2))
 
-    log_path = tmp_path / "logs" / "startup.log"
+    log_path = tmp_path / "logs" / "diagnostic.log"
     log_path.parent.mkdir(parents=True)
     log_path.write_text("previous run\n" * 8, encoding="utf-8")
 
-    opened_path, handle = launcher._open_startup_log()
-    handle.close()
+    opened_path, capture = launcher._open_diagnostic_log()
+    capture.close()
 
     assert opened_path == log_path
     assert log_path.exists()
-    assert log_path.with_name("startup.log.1").exists()
+    assert log_path.with_name("diagnostic.log.1").exists()
+    assert not (log_path.parent / 'startup.log').exists()
 
 
 def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> None:
     launcher = _load_launcher()
     output = io.StringIO()
-    log_path = tmp_path / "startup.log"
-    monkeypatch.setattr(launcher, "_open_startup_log", lambda: (log_path, output))
+    log_path = tmp_path / "diagnostic.log"
+    def open_log():
+        sys.stdout = sys.stderr = output
+        return log_path, output
+    monkeypatch.setattr(launcher, "_open_diagnostic_log", open_log)
     monkeypatch.setattr(
         launcher.sys,
         "argv",

@@ -274,6 +274,31 @@ def test_demo_exercises_all_eleven_triggers_without_bluetooth(tmp_path, monkeypa
     assert set(summary["trigger_counts"]) == set(SWIPE_CLASS_LABELS_V2.values()) - {"empty"}
 
 
+def test_double_pinch_demo_records_pairs_without_bluetooth(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(tool, "RingSession", lambda **_kw: pytest.fail("demo touched BLE"))
+    path = tmp_path / "double.csv"
+    assert tool.main(["--demo", "--double-pinch", "--csv", str(path)]) == 0
+    summary = json.loads(path.with_suffix(".summary.json").read_text())
+    assert summary["source"] == "demo"
+    assert summary["double_pinch"]["count"] == 2
+    assert summary["trigger_count"] == 11  # Raw repeats remain visible.
+    with path.open(encoding="utf-8-sig") as source:
+        pairs = [row for row in csv.DictReader(source) if row["double_pinch_index"]]
+    assert [row["double_pinch_interval_ms"] for row in pairs] == ["300", "300"]
+    assert [row["double_pinch_first_seq"] for row in pairs] == ["1", "7"]
+    assert "DOUBLE PINCH #0002" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("args", [
+    ["--min-interval-ms", "0"], ["--max-interval-ms", "nan"],
+    ["--min-interval-ms", "700", "--max-interval-ms", "600"],
+])
+def test_invalid_double_pinch_timing_rejected(args):
+    with pytest.raises(SystemExit) as error:
+        tool.main(["--double-pinch", *args])
+    assert error.value.code == 2
+
+
 @pytest.mark.parametrize("args", [["--duration", "nan"], ["--timeout", "0"], ["--status-interval", "-1"]])
 def test_invalid_cli_timing_rejected(args):
     with pytest.raises(SystemExit) as error:

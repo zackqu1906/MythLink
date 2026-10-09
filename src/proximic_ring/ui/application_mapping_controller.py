@@ -13,18 +13,21 @@ from ..app_gestures import AppBinding, normalize_shortcut
 from ..gesture_settings import GESTURE_LABELS, VOICE_GESTURE_GROUP, GLOBAL_ACTION_LABELS
 from ..native_access import NativeAccessChannel
 from ..application_catalog import installed_applications
-from ..application_scene_policy import primary_scene, enabled_profiles, scene_choices, migrate_enabled_scenes
-from ..scene_defaults import (TEMPLATES, SCENE_DEFAULTS_VERSION, LEGACY_MUSIC_VOLUME,
-                             scene_defaults, resolve_action, action_label, migrate_music_volume_defaults)
-from ..application_defaults import (chat_actions, default_mappings, default_profile,
-                                    DEFAULTS_VERSION, AUTO_ADD_PROFILES, start_action)
-from ..browser_shortcuts import NAVIGATION, shared_navigation, video_actions
-from ..gesture_scenes import (PRESENTATION, PROFILES, scene_actions,
-                             presentation_profile, installed_presentation_profile)
-from ..scene_capabilities import (SCENE_LABELS, application_scene_profiles,
-                                 installed_scene_profiles, activity_actions, BROWSERS, MUSIC_APPS, MUSIC, VIDEO)
-
-SETTINGS_KEY = "gestures/applicationMenusV1"
+from ..scenes.policy import primary_scene, enabled_profiles, scene_choices
+from ..scenes.registry import PENDING_TEMPLATES as TEMPLATES, action_label, SCENE_LABELS
+from ..scenes.defaults import (SCENE_DEFAULTS_VERSION, pending_scene_defaults as scene_defaults,
+    chat_actions, default_mappings, default_profile, DEFAULTS_VERSION, AUTO_ADD_PROFILES)
+from ..scenes.menus import start_action
+from ..scenes.migrations import (LEGACY_MUSIC_VOLUME, migrate_enabled_scenes,
+    migrate_music_volume_defaults, migrate_presentation_presets, retire_browser_scene_navigation)
+from ..scenes.adapters.browser import NAVIGATION, shared_navigation
+from ..scenes.adapters.presentation import PROFILES
+from ..scenes.capabilities import (presentation_profile, installed_presentation_profile,
+    application_scene_profiles, installed_scene_profiles, BROWSERS, MUSIC_APPS)
+from ..scenes.models import PRESENTATION, MUSIC, VIDEO
+from ..scenes.resolver import catalog_actions
+from ..scenes import configuration
+from ..scenes.configuration import SETTINGS_KEY
 
 
 class ApplicationMappingController(QObject):
@@ -144,23 +147,11 @@ class ApplicationMappingController(QObject):
                     self._defaults_dirty = True
                 if migrate_music_volume_defaults(bundle, app):
                     self._defaults_dirty = True
-                if bundle.casefold() in BROWSERS:
-                    for items in scenes.values():
-                        for gesture in NAVIGATION:
-                            items.pop(gesture, None)
-                    for items in app.get("pendingDefaults", {}).values():
-                        for gesture in NAVIGATION:
-                            items.pop(gesture, None)
-                    app["pendingDefaults"] = {scene: items for scene, items in app.get("pendingDefaults", {}).items() if items}
+                retire_browser_scene_navigation(bundle, app, scenes)
                 if removed:
                     self._apps[bundle]["removed"] = True
-                if profile == "wps":
-                    # Repair only our obsolete presets, never a recorded or
-                    # discovered user shortcut. Persist on the next normal save.
-                    for item in bindings.values():
-                        old = {"wps:start-current": "Shift+F5", "wps:start-first": "F5"}
-                        if item["id"] in old and item["shortcut"] == old[item["id"]]:
-                            item["shortcut"] = "Cmd+Return" if item["id"].endswith("start-current") else "Cmd+Shift+Return"
+                if migrate_presentation_presets(profile, bindings):
+                    self._defaults_dirty = True
         except (ValueError, TypeError, KeyError):
             self._apps = {}
             self._config_valid = False
@@ -170,123 +161,24 @@ class ApplicationMappingController(QObject):
             self._upgrade_scene_defaults()
 
     def _defaults_for(self, bundle, app, menus=()):
-        profiles = enabled_profiles(bundle, app.get("sceneProfiles", {}), app.get("primaryScene", ""), app.get("enabledScenes"))
-        return default_mappings(bundle, app.get("label", ""),
-                                presentation=profiles.get(PRESENTATION, ""),
-                                scene_profiles=profiles, menus=menus)
+        return configuration.defaults_for(bundle, app, menus)
 
     def _upgrade_defaults(self):
-        # One-time fill for existing populated records. Custom keys win, and
-        # explicitly empty scopes remain empty. Future clears never refill.
-        for bundle, app in self._apps.items():
-            if app.get("removed") or app.get("defaultsVersion", 0) >= DEFAULTS_VERSION:
-                continue
-            defaults = {scene: items for scene, items in self._defaults_for(bundle, app).items()
-                        if scene in {"regular", PRESENTATION}}
-            if not defaults:
-                continue
-            if app.get("bindings") or any(app.get("scenes", {}).values()):
-                for scene, items in defaults.items():
-                    existing = app.get("bindings") if scene == "regular" else app.get("scenes", {}).get(scene)
-                    if existing == {}:
-                        continue
-                    if scene == "regular":
-                        target = app["bindings"]
-                    else:
-                        target = app.setdefault("scenes", {}).setdefault(scene, {})
-                    for gesture, action in items.items():
-                        target.setdefault(gesture, action)
-            app["defaultsVersion"] = DEFAULTS_VERSION
+        if configuration.upgrade_defaults(self._apps, self._defaults_for):
             self._defaults_dirty = True
 
     def _upgrade_scene_defaults(self):
-        # A scope is initialized once, even if its shortcuts have not been read.
-        # Existing scopes (including empty ones) are owned by the user.
-        for bundle, app in self._apps.items():
-            if app.get("removed"):
-                continue
-            profiles = self._profiles_for(bundle)
-            modes = [scene for scene in profiles if scene in TEMPLATES]
-            if not modes:
-                continue
-            initialized = set(app.get("initializedScenes", []))
-            resolved, pending = scene_defaults(bundle, profiles)
-            for scene in modes:
-                if scene in initialized:
-                    continue
-                if not app.get("defaultsCleared") and scene not in app.get("scenes", {}):
-                    app.setdefault("scenes", {})[scene] = resolved[scene]
-                    if pending.get(scene):
-                        app.setdefault("pendingDefaults", {})[scene] = pending[scene]
-                initialized.add(scene)
-                self._defaults_dirty = True
-            app["initializedScenes"] = [scene for scene in TEMPLATES if scene in initialized]
-            if app.get("sceneDefaultsVersion", 0) != SCENE_DEFAULTS_VERSION:
-                app["sceneDefaultsVersion"] = SCENE_DEFAULTS_VERSION
-                self._defaults_dirty = True
+        if configuration.initialize_scene_defaults(self._apps, self._profiles_for):
+            self._defaults_dirty = True
 
     def _resolve_scene_defaults(self, bundle):
-        app = self._apps[bundle]
-        pending = {scene: dict(items) for scene, items in app.get("pendingDefaults", {}).items()}
-        changed = False
-        for scene, items in pending.items():
-            if scene not in self._profiles_for(bundle):
-                continue
-            target = app.setdefault("scenes", {}).setdefault(scene, {})
-            for gesture, action in list(items.items()):
-                if gesture in target:
-                    del items[gesture]  # A saved user action always wins.
-                    changed = True
-                    continue
-                record = resolve_action(bundle, scene, action, self._profiles_for(bundle).get(scene, ""), self._menus)
-                if record:
-                    target[gesture] = record
-                    del items[gesture]
-                    changed = True
-        if changed:
-            app["pendingDefaults"] = {scene: items for scene, items in pending.items() if items}
-        return changed
+        return configuration.resolve_pending_defaults(bundle, self._apps[bundle], self._profiles_for(bundle), self._menus)
 
     def _refresh_pristine_scene_defaults(self, bundle):
-        """Prefer the app's complete menu over unchanged built-in key adapters.
-
-        Exact factory records only: recorded keys, edited/deleted actions and
-        already resolved menu records remain user-owned.
-        """
-        app = self._apps[bundle]
-        changed = False
-        for scene, profile in self._profiles_for(bundle).items():
-            for gesture, meaning in TEMPLATES.get(scene, {}).items():
-                target = app.get("scenes", {}).get(scene, {})
-                original = resolve_action(bundle, scene, meaning, profile)
-                if original and target.get(gesture) == original:
-                    discovered = resolve_action(bundle, scene, meaning, profile, self._menus)
-                    if discovered and discovered != original:
-                        target[gesture] = discovered
-                        changed = True
-        return changed
+        return configuration.refresh_pristine_defaults(bundle, self._apps[bundle], self._profiles_for(bundle), self._menus)
 
     def _new_application(self, candidate):
-        bundle = candidate["value"]
-        capabilities = {**candidate.get("sceneProfiles", {}),
-                        **installed_scene_profiles(bundle, candidate.get("path", ""))}
-        profile = presentation_profile(bundle) or candidate.get("presentationProfile", "") or capabilities.get(PRESENTATION, "")
-        app = dict(label=candidate["label"], path=candidate.get("path", ""),
-                   sceneProfiles=capabilities, presentationProfile=profile if profile in PROFILES else "")
-        if app["presentationProfile"]:
-            capabilities[PRESENTATION] = app["presentationProfile"]
-        app["primaryScene"] = primary_scene(bundle, capabilities, candidate.get("primaryScene", ""))
-        selected_profiles = enabled_profiles(bundle, capabilities, app["primaryScene"])
-        app["enabledScenes"] = list(selected_profiles)
-        defaults = self._defaults_for(bundle, app)
-        _, pending = scene_defaults(bundle, selected_profiles)
-        app.update(initializedScenes=[scene for scene in TEMPLATES if scene in selected_profiles],
-                   pendingDefaults=pending, sceneDefaultsVersion=SCENE_DEFAULTS_VERSION, defaultsCleared=False,
-                   bindings=defaults.get("regular", {}),
-                   scenes={scene: items for scene, items in defaults.items() if scene != "regular"},
-                   defaultsVersion=DEFAULTS_VERSION,
-                   pendingStart=bool(PRESENTATION in selected_profiles and "snap" not in defaults.get("regular", {})))
-        return app
+        return configuration.new_application(candidate)
 
     @Property("QVariantList", notify=changed)
     def apps(self):
@@ -327,7 +219,7 @@ class ApplicationMappingController(QObject):
     @Property("QVariantMap", notify=changed)
     def globalOccupancy(self):
         bindings = self.service.owner._global_gesture_bindings
-        return {gesture: GLOBAL_ACTION_LABELS[action] for action, gesture in bindings.as_dict().items()}
+        return {gesture: GLOBAL_ACTION_LABELS[action] for action, gesture in bindings.as_dict().items() if gesture}
 
     @Property("QVariantList", notify=changed)
     def voiceGestures(self):
@@ -547,11 +439,8 @@ class ApplicationMappingController(QObject):
         custom = {item["id"]: {**item, "available": None, "custom": True}
                   for group in groups for item in group.values()
                   if item["id"].startswith("custom:")}
-        presets = (scene_actions(self._bundle, self._scene, profile=self._profile_for(self._bundle))
-                   if self._scene in {"regular", PRESENTATION} else
-                   activity_actions(self._bundle, self._scene, self._profiles_for(self._bundle).get(self._scene, "")))
-        if self.isBrowser and self._scene == VIDEO:
-            presets = video_actions()
+        presets = catalog_actions(self._bundle, self._scene, self._profiles_for(self._bundle),
+                                  presentation=self._profile_for(self._bundle))
         chat = chat_actions(self._bundle, app.get("label", ""), self._scene)
         known_ids = {item["id"] for item in presets + chat}
         presets += [{**item, "available": None, "preset": True}

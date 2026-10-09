@@ -88,6 +88,7 @@ ColumnLayout {
         title: "识别热词"
         description: "添加常用人名或专有名词，每行一个；也支持逗号、分号分隔。重新连接戒指后生效。"
         ScrollView {
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             id: hotwordsScroll
             Layout.fillWidth: true; Layout.preferredHeight: 116
             enabled: !pane.deviceSettingsLocked

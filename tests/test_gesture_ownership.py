@@ -222,3 +222,49 @@ def test_native_worker_does_not_focus_fields_in_voice_overridden_app(monkeypatch
     result = dispatcher.handle(dict(operation=operation, voice_disabled_apps=[BUNDLE], plan="old"))
     assert result["result"]["status"] == "voice_overridden"
     if operation == "focus_apply": assert dispatcher.text_focus.plans == {}
+
+
+def test_global_none_releases_occupancy_persists_and_does_not_trigger_old_command(route, monkeypatch):
+    c, service, _, backend, sent, _, _ = route
+    catalog = configure(service, monkeypatch)
+    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
+    ring = c.ringGestures
+    assert ring.globalActionOptions('clench')[0]['id'] == ''
+    assert ring.setGlobalGestureAction('clench', '')
+    assert ring.globalBindings['window_selector'] == ''
+    assert 'clench' not in catalog.globalOccupancy and '' not in catalog.globalOccupancy
+    assert catalog.canBind('clench') and '' not in c._global_gesture_bindings.reserved
+    c._settings.sync()
+    assert GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY)).window_selector == ''
+    starts = []
+    monkeypatch.setattr(ring._selector, 'start', lambda *args: starts.append(True))
+    assert catalog.setBinding(BUNDLE, 'clench', ACTION['id'])
+    assert request(c, 'clench')
+    c._apply_gesture(ring.envelope(SimpleNamespace(name='clench')), c._disconnect_event)
+    assert not starts and sent == [(BUNDLE, 'Ctrl+Tab')]
+    assert ring.setGlobalGestureAction('clench', 'window_selector')
+    assert not catalog.canBind('clench') and catalog.for_target(BUNDLE) == {}
+
+
+def test_all_global_actions_can_be_disabled_and_hints_do_not_invent_gestures(route):
+    from proximic_ring.ui.gesture_hud_model import hint_view
+    c, _, _, _, _, _, _ = route
+    ring = c.ringGestures
+    for action in ring.globalBindings:
+        assert ring.globalGestureOptions(action)[0] == dict(value='', label='无')
+        assert ring.setGlobalBinding(action, '')
+    assert not c._global_gesture_bindings.reserved
+    assert c._global_gesture_bindings.action_for('') == ''
+    assert ring.windowSelector.globalLabels == dict(show_menu='', switch_mode='', window_selector='')
+    assert all(row['key'] and row['scope'] != 'global' for row in hint_view('input', global_bindings=ring.globalBindings)['orbs'])
+    assert GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY)) == c._global_gesture_bindings
+    assert ring.setGlobalGestureAction('snap', 'show_menu')
+    assert ring.setGlobalGestureAction('snap', 'window_selector')
+    assert ring.globalBindings == dict(show_menu='', switch_mode='', window_selector='snap')
+    assert len(ring.globalActionOptions('clench')) == 4
+
+
+@pytest.mark.parametrize('value', [None, 42, False, [], 'unknown', 'tap'])
+def test_global_none_does_not_accept_invalid_or_voice_assignments(value):
+    with pytest.raises(ValueError):
+        GlobalGestureBindings(show_menu=value)

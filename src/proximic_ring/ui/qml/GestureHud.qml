@@ -179,7 +179,9 @@ Item {
         color: "#F5F8FC"
         Text {
             anchors.fill: parent
-            text: root.globalLabels.show_menu + " 提示 · " + root.globalLabels.switch_mode + " 切换 · " + root.globalLabels.window_selector + " 窗口"
+            text: [root.globalLabels.show_menu ? root.globalLabels.show_menu + " 提示" : "",
+                   root.globalLabels.switch_mode ? root.globalLabels.switch_mode + " 切换" : "",
+                   root.globalLabels.window_selector ? root.globalLabels.window_selector + " 窗口" : ""].filter(function(label) { return label.length > 0 }).join(" · ")
             color: "#334760"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
         }

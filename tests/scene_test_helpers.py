@@ -1,5 +1,5 @@
 """Tuple assertions retained for the established scene regression matrix."""
-from proximic_ring.scene_recognition.engine import detect_scene
+from proximic_ring.scenes.recognition.engine import detect_scene
 from proximic_ring.gesture_scenes import PRESENTATION, presentation_profile
 
 

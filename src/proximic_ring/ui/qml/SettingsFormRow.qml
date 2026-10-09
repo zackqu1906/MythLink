@@ -8,6 +8,7 @@ GridLayout {
     property string description: ""
     property string descriptionObjectName: ""
     property color descriptionColor: theme.muted
+    property bool descriptionWarning: false
     property int controlWidth: 216
     default property alias controls: controlColumn.data
     columns: width < 540 ? 1 : 2
@@ -26,13 +27,14 @@ GridLayout {
             font.pixelSize: 16; font.bold: true
             color: theme.text; wrapMode: Text.Wrap
         }
-        Label {
+        UiNotice {
             objectName: row.descriptionObjectName
+            warning: row.descriptionWarning
             Layout.fillWidth: true
             visible: text.length > 0
             text: row.description
             font.pixelSize: 13; lineHeight: 1.15
-            color: row.descriptionColor; wrapMode: Text.Wrap
+            color: warning ? theme.warning : row.descriptionColor; wrapMode: Text.Wrap
         }
     }
     ColumnLayout {

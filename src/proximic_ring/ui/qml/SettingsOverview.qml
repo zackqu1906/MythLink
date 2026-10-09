@@ -16,12 +16,12 @@ ColumnLayout {
         objectName: "settingsAudioGroup"
         title: "麦克风与语音"; symbol: "microphone"
         description: "连接期间可修改；正在进行的语音处理完成后，再应用新的音频来源与启停方式。"
-        Label {
+        UiNotice {
             objectName: "audioSettingsStatus"
             Layout.fillWidth: true
             visible: text.length > 0
             text: pane.controller.audioSettingsStatus
-            color: pane.controller.audioSettingsError ? "#9A6817" : theme.muted
+            warning: pane.controller.audioSettingsError
             font.pixelSize: 13; wrapMode: Text.Wrap
         }
         SettingsFormRow {
@@ -206,6 +206,50 @@ ColumnLayout {
     }
 
     SettingsFormGroup {
+        objectName: "settingsAppearanceGroup"
+        title: "界面显示"; symbol: "settings"
+        SettingsFormRow {
+            title: "手势触发提示"
+            description: "识别到手势（含 click 和 double-click）时，在屏幕右下角显示提示；新提示将旧提示向上推，每条独立显示 1 秒。"
+            SettingsSwitch {
+                objectName: "gestureTriggerHintsSwitch"
+                Layout.alignment: Qt.AlignRight
+                Accessible.name: "手势触发提示"
+                checked: pane.controller.gestureTrigger.enabled
+                onClicked: pane.controller.gestureTrigger.enabled = checked
+            }
+        }
+        SettingsFormRow {
+            visible: pane.controller.inlineInput.enabled
+            title: "输入法浮窗大小"
+            description: "默认使用小浮窗，调整后立即生效。"
+            Slider {
+                objectName: "voiceHudScaleSlider"
+                Layout.fillWidth: true
+                Accessible.name: "输入法浮窗大小"
+                from: 80; to: 140; stepSize: 10
+                value: pane.controller.voiceHudScale
+                onMoved: pane.controller.voiceHudScale = Math.round(value)
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    objectName: "voiceHudScaleLabel"
+                    Layout.fillWidth: true
+                    text: pane.controller.voiceHudScale + "%" + (pane.controller.voiceHudScale === 80 ? "（默认）" : "")
+                    color: theme.muted; font.pixelSize: 12
+                }
+                UiAction {
+                    objectName: "resetVoiceHudScaleButton"
+                    text: "恢复默认"; quiet: true
+                    enabled: pane.controller.voiceHudScale !== 80
+                    onClicked: pane.controller.voiceHudScale = 80
+                }
+            }
+        }
+    }
+
+    SettingsFormGroup {
         objectName: "settingsPermissionsGroup"
         title: "系统与权限"; symbol: "tool"
         visible: Qt.platform.os === "osx"
@@ -225,7 +269,7 @@ ColumnLayout {
             title: "辅助功能"
             description: pane.controller.inlineInput.permissions.accessibilityWarningText
                 || (pane.controller.inlineInput.permissions.accessibilityGranted ? "已开启" : "用于语音编辑与手势控制。")
-            descriptionColor: pane.controller.inlineInput.permissions.accessibilityWarningText ? "#9A6817" : theme.muted
+            descriptionWarning: pane.controller.inlineInput.permissions.accessibilityWarningText.length > 0
             UiAction {
                 objectName: "settingsAccessibilityButton"
                 Layout.alignment: Qt.AlignRight
@@ -248,7 +292,7 @@ ColumnLayout {
             title: "窗口实时预览"
             description: pane.controller.inlineInput.permissions.screenRecordingWarning ? "未开启屏幕录制权限，无法显示窗口预览。"
                 : pane.controller.inlineInput.permissions.screenRecordingGranted ? "已开启" : "用于显示窗口实时画面。"
-            descriptionColor: pane.controller.inlineInput.permissions.screenRecordingWarning ? "#9A6817" : theme.muted
+            descriptionWarning: pane.controller.inlineInput.permissions.screenRecordingWarning
             UiAction {
                 objectName: "settingsCategory6"
                 Layout.alignment: Qt.AlignRight

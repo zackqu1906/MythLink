@@ -165,7 +165,7 @@ def _provider_label(provider: str) -> str:
         PROVIDER_LOCAL: "本地 Qwen",
         PROVIDER_OPENAI: "OpenAI-compatible API",
         PROVIDER_DOUBAO: "豆包 Seed 2.0 Lite",
-        PROVIDER_DEEPSEEK: "DeepSeek V4 Flash",
+        PROVIDER_DEEPSEEK: "DeepSeek V4.1 Flash",
         PROVIDER_COMPARE: "本地 Qwen / 豆包 / DeepSeek 对比",
     }[provider]
 

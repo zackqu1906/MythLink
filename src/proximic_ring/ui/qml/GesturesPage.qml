@@ -75,6 +75,7 @@ ScrollView {
     clip: true
     contentWidth: availableWidth
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
     AddGestureApplicationDialog {
         id: addDialog
         parent: Overlay.overlay
@@ -116,7 +117,6 @@ ScrollView {
         property string application: ""
         property string applicationName: ""
         property int bindingCount: 0
-        property int draftCount: 0
         property string errorMessage: ""
         function review(action) {
             if (!page.selectedApplication) return
@@ -124,7 +124,6 @@ ScrollView {
             application = page.selectedApp
             applicationName = page.selectedApplication.label
             bindingCount = page.catalog.bindingCount(application)
-            draftCount = actionEditor.draftCount(application)
             errorMessage = ""
             open()
         }
@@ -148,19 +147,19 @@ ScrollView {
             Label { Layout.fillWidth: true; text: managementDialog.applicationName; color: theme.text; font.pixelSize: 16; wrapMode: Text.Wrap }
             Label {
                 Layout.fillWidth: true
-                text: managementDialog.bindingCount + " 个已保存映射" + (managementDialog.draftCount ? " · " + managementDialog.draftCount + " 项未保存修改" : "")
+                text: managementDialog.bindingCount + " 个已保存映射"
                 color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap
             }
             Label {
                 Layout.fillWidth: true
                 text: managementDialog.operation === "remove"
-                    ? "将从 Mythlink 的应用列表移除，同时清空它的映射和未保存修改。不会卸载电脑上的应用，之后可重新添加。"
+                    ? "将从 Mythlink 的应用列表移除，同时清空它的映射。不会卸载电脑上的应用，之后可重新添加。"
                     : managementDialog.operation === "restore"
-                    ? "将此应用的常规与场景映射恢复为内置默认配置，替换已保存的映射并清除未保存修改。恢复后仍可自由修改，其他应用及全局配置保持不变。"
-                    : "将清空这个应用的映射和未保存修改，保留应用图标。浏览器保留默认的转圈切换页面操作。其他应用的配置及语音、系统手势保持不变。"
+                    ? "将此应用的常规与场景映射恢复为内置默认配置，替换已保存的映射。恢复后仍可自由修改，其他应用及全局配置保持不变。"
+                    : "将清空这个应用的映射，保留应用图标。浏览器保留默认的转圈切换页面操作。其他应用的配置及语音、系统手势保持不变。"
                 color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap
             }
-            Label { Layout.fillWidth: true; visible: text.length > 0; text: managementDialog.errorMessage; color: "#A35527"; font.pixelSize: 12; wrapMode: Text.Wrap }
+            UiNotice { Layout.fillWidth: true; visible: text.length > 0; text: managementDialog.errorMessage; font.pixelSize: 12; wrapMode: Text.Wrap }
         }
         footer: DialogButtonBox {
             leftPadding: 24; rightPadding: 24; topPadding: 0; bottomPadding: 20; spacing: 10
@@ -288,11 +287,11 @@ ScrollView {
                     visible: page.sceneScope && page.catalog.isBrowser; Layout.fillWidth: true
                     text: page.catalog.sceneHint; color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap
                 }
-                Label {
+                UiNotice {
                     Layout.fillWidth: true
                     visible: page.catalog.defaultMappingNotice.length > 0
                     text: page.catalog.defaultMappingNotice
-                    color: "#A35527"; font.pixelSize: 11; wrapMode: Text.Wrap
+                    font.pixelSize: 11; wrapMode: Text.Wrap
                 }
             }
         }
@@ -379,7 +378,7 @@ ScrollView {
                                         text: "清空此应用的映射"
                                         enabled: {
                                             var bindings = page.catalog.bindings
-                                            return page.catalog.bindingCount(page.selectedApp) > 0 || page.catalog.pendingDefaultCount > 0 || actionEditor.draftCount(page.selectedApp) > 0
+                                            return page.catalog.bindingCount(page.selectedApp) > 0 || page.catalog.pendingDefaultCount > 0
                                         }
                                         onTriggered: managementDialog.review("clear")
                                     }

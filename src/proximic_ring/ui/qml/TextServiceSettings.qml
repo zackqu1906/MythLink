@@ -6,7 +6,7 @@ ColumnLayout {
     id: pane
     required property var controller
     readonly property bool local: controller.llmProvider === "local"
-    readonly property var presetModels: ["doubao-seed-2-0-lite-260215", "deepseek-v4-flash-260425"]
+    readonly property var presetModels: ["doubao-seed-2-0-lite-260215", "deepseek-v4-1-flash-260910"]
     spacing: 30
     UiTheme { id: theme }
 
@@ -68,7 +68,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Accessible.name: "在线文本模型"
                 visible: pane.controller.llmProvider === "volcengine"
-                model: ["豆包 Seed 2.0", "DeepSeek V4"]
+                model: ["豆包 Seed 2.0", "DeepSeek V4.1"]
                 currentIndex: pane.presetModels.indexOf(pane.controller.llmModel)
                 displayText: currentIndex < 0 ? "当前模型：" + pane.controller.llmModel : currentText
                 onActivated: pane.controller.llmModel = pane.presetModels[currentIndex]

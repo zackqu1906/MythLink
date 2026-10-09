@@ -51,7 +51,8 @@ def test_detected_scene_hides_other_actions_then_restores_app_modes_on_exit(pres
     views = []
     ring.sceneHudRequested.connect(lambda mode, rows: views.append(hint_view(mode, rows)))
     def show(target):
-        ring._show_scene_hud(ring._generation, time.monotonic(), c._disconnect_event, target)
+        ring._pending_hud = (ring._generation, time.monotonic(), c._disconnect_event)
+        ring._show_scene_hud(*ring._pending_hud, target)
     for mode in ("input", "operation"):
         ring._mode = mode
         show(backend.target)
@@ -65,7 +66,7 @@ def test_detected_scene_hides_other_actions_then_restores_app_modes_on_exit(pres
     assert defaults == ["operation"]  # The user's previous mode survives leaving the scene.
 
 
-@pytest.mark.parametrize("change", ["generation", "expired", "connection"])
+@pytest.mark.parametrize("change", ["generation", "connection"])
 def test_delayed_context_does_not_replace_newer_hints(presentation, change):
     import threading
     c, _, _, backend, _, _, _ = presentation
@@ -75,7 +76,8 @@ def test_delayed_context_does_not_replace_newer_hints(presentation, change):
     ring.showRequested.connect(lambda *args: shown.append(args))
     generation, created, connection = ring._generation, time.monotonic(), c._disconnect_event
     if change == "generation": generation -= 1
-    elif change == "expired": created -= 2
     else: connection = threading.Event()
+    ring._pending_hud = (generation, created, connection)
     ring._show_scene_hud(generation, created, connection, backend.target)
     assert not shown
+

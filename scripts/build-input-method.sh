@@ -15,7 +15,8 @@ xcrun swiftc -swift-version 5 -O -module-cache-path "$BUILD_ROOT/module-cache" \
   -o "$APP_BUNDLE/Contents/MacOS/ProxiMicInput"
 cp "$TASK_ROOT/native/ProxiMicInput/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 if [[ -d "$TASK_ROOT/native/ProxiMicInput/Resources" ]]; then
-  ditto "$TASK_ROOT/native/ProxiMicInput/Resources" "$APP_BUNDLE/Contents/Resources"
+  # A rebuild must remove retired artwork as well as copy new resources.
+  rsync -a --delete "$TASK_ROOT/native/ProxiMicInput/Resources/" "$APP_BUNDLE/Contents/Resources/"
 fi
 plutil -lint "$APP_BUNDLE/Contents/Info.plist"
 codesign --force --sign "${PROXIMIC_SIGN_IDENTITY:--}" "$APP_BUNDLE"

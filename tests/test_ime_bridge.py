@@ -161,3 +161,38 @@ def test_activation_recovery_reply_reaches_host_and_does_not_replace_context(bri
     assert not any(m.get('request_id') == 'old' for m in messages)
     assert not server._state
     stream.close(); sock.close()
+
+
+def test_stroke_ready_probe_reaches_host_but_asr_context_stays_private(bridge):
+    server, messages = bridge
+    sock, stream = connect(server)
+    try:
+        epoch = receive(stream)["epoch"]
+        server.send(dict(type="ping", request_id="stroke:session-one"))
+        ping = receive(stream)
+        response = dict(type="state", epoch=epoch, client_id="editor", ready=True,
+                        phase="idle", application="test.editor", request_id=ping["request_id"])
+        send(stream, {**response, "epoch": "old", "request_id": "stroke:old"})
+        send(stream, {**response, "request_id": "asr-context-request"})
+        send(stream, response)
+        wait_until(lambda: response in messages)
+        assert not any(m.get("request_id") in {"stroke:old", "asr-context-request"} for m in messages)
+    finally:
+        stream.close(); sock.close()
+
+
+@pytest.mark.parametrize("kind", ["stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared"])
+def test_stroke_replies_cross_transport_with_request_and_epoch_intact(bridge, kind):
+    server, messages = bridge
+    sock, stream = connect(server)
+    try:
+        epoch = receive(stream)["epoch"]
+        response = dict(type=kind, epoch=epoch, client_id="editor", stroke_session="session-one",
+                        success=True, request_id="commit-one")
+        send(stream, {**response, "epoch": "old", "stroke_session": "old-session"})
+        send(stream, response)
+        wait_until(lambda: response in messages)
+        assert not any(m.get("stroke_session") == "old-session" for m in messages)
+        assert not server._state  # Lifecycle/commit replies cannot become voice context.
+    finally:
+        stream.close(); sock.close()

@@ -33,6 +33,9 @@ class GlobalGestureBindings:
 
     def __post_init__(self):
         values = list(self.as_dict().values())
+        if any(not isinstance(value, str) for value in values):
+            raise ValueError("请选择有效手势或无")
+        values = [value for value in values if value]
         if (any(value not in GESTURE_LABELS or value in VOICE_GESTURE_GROUP for value in values)
                 or len(set(values)) != len(values)):
             raise ValueError("每个全局功能需使用不同的有效手势")
@@ -42,10 +45,10 @@ class GlobalGestureBindings:
 
     @property
     def reserved(self):
-        return frozenset(self.as_dict().values())
+        return frozenset(value for value in self.as_dict().values() if value)
 
     def action_for(self, gesture):
-        return next((action for action, value in self.as_dict().items() if value == gesture), "")
+        return next((action for action, value in self.as_dict().items() if value and value == gesture), "")
 
     def to_json(self):
         return json.dumps(self.as_dict(), ensure_ascii=False)

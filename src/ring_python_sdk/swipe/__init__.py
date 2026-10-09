@@ -1,4 +1,5 @@
 from ring_python_sdk.swipe.events import SwipeResult
+from ring_python_sdk.swipe.double_pinch import DoublePinchDetector, DoublePinchEvent
 from ring_python_sdk.swipe.v2 import (
     SwipeEventV2,
     SwipeTriggerV2,
@@ -17,6 +18,8 @@ from ring_python_sdk.swipe.processor import (
 )
 
 __all__ = [
+    "DoublePinchDetector",
+    "DoublePinchEvent",
     "SwipeResult",
     "SwipeEventV2",
     "SwipeTriggerV2",

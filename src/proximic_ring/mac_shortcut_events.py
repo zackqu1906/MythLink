@@ -37,7 +37,14 @@ def prepare_chord(quartz, shortcut):
         event = quartz.CGEventCreateKeyboardEvent(None, code, down)
         if event is None:
             raise SceneActionError('key_allocation_failed')
-        quartz.CGEventSetFlags(event, flags)
+        # CoreGraphics adds key-identity flags: F5 has SecondaryFn, arrows
+        # also have NumericPad. Replacing them with just Shift/Cmd produces
+        # a different native key event even though the virtual key is correct.
+        # Preserve only these two bits; never inherit unrelated held modifiers.
+        key_flags = (quartz.CGEventGetFlags(event)
+                     & (quartz.kCGEventFlagMaskSecondaryFn | quartz.kCGEventFlagMaskNumericPad)
+                     if code == KEY_CODES[parts[-1]] else 0)
+        quartz.CGEventSetFlags(event, flags | key_flags)
         quartz.CGEventSetIntegerValueField(event, quartz.kCGEventSourceUserData, EVENT_TAG)
         events.append((code, down, event))
         if not down:

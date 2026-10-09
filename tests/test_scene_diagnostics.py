@@ -7,8 +7,8 @@ import threading
 from types import SimpleNamespace
 import pytest
 from proximic_ring.scene_diagnostics import SceneDiagnostics, SceneActionError, safe_data
-from proximic_ring.scene_recognition.engine import detect_scene
-from proximic_ring.scene_recognition.models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
+from proximic_ring.scenes.recognition.engine import detect_scene
+from proximic_ring.scenes.models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
 from proximic_ring.native_access import NativeAccessChannel
 from proximic_ring.diagnostic_log import RotatingDiagnosticLog
 from test_gesture_scenes import presentation, window_tree, metadata
@@ -19,14 +19,16 @@ from test_presentation_portability import native_backend
 
 
 def records(service):
-    return [json.loads(line) for line in service._diagnostics.path.read_text().splitlines()]
+    return [json.loads(line.partition('[SCENE] ')[2])
+            for line in service._diagnostics.path.read_text().splitlines() if '[SCENE] ' in line]
 
 
 def test_background_session_identifies_running_build_and_has_no_ui_controls(route):
     _, service, _, _, _, _, _ = route
     event = records(service)[0]
     assert event['stage'] == 'session' and event['host_pid'] > 0 and event['system_release']
-    assert event['code_fingerprints']['scene_recognition/engine.py']
+    for module in ['recognition/engine.py', 'registry.py', 'resolver.py', 'configuration.py', 'migrations.py']:
+        assert event['code_fingerprints']['scenes/' + module]
     assert not hasattr(service, 'copySceneDiagnostics') and not hasattr(service, 'diagnosticRevision')
 
 
@@ -172,10 +174,10 @@ def test_json_is_bounded_rotates_and_drops_private_values(tmp_path):
     log = SceneDiagnostics(path, writer=RotatingDiagnosticLog(path, max_bytes=400, backup_count=2))
     for i in range(100):
         log.record(str(i), 'capture', 'ready', app='test.app', title='private', AXValue='private', native={'url':'https://private.test', 'reason':'recognized'})
-    assert len(log.recent()) == 48 and len(list(tmp_path.iterdir())) == 3
-    for file in tmp_path.iterdir():
+    assert len(log.recent()) == 48 and len(list(tmp_path.glob('events.jsonl*'))) == 3
+    for file in tmp_path.glob('events.jsonl*'):
         assert 'private' not in file.read_text()
-        for line in file.read_text().splitlines(): assert json.loads(line)['schema'] == 1
+        for line in file.read_text().splitlines(): assert json.loads(line.partition('[SCENE] ')[2])['schema'] == 1
     class AXObject:
         def __repr__(self): raise AssertionError('must not stringify AX objects')
     assert safe_data({'node':AXObject()})['node'] is None and len(safe_data(list(range(100)))) == 24

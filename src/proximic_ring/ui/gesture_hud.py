@@ -43,6 +43,17 @@ def foreground_window_bounds() -> QRect | None:
                  round(bounds["Width"]), round(bounds["Height"]))
 
 
+def hud_screen(diagnostic):
+    bounds = None
+    if QGuiApplication.platformName() == "cocoa":
+        try:
+            bounds = foreground_window_bounds()
+        except Exception as exc:
+            diagnostic(f"[GESTURE HUD] 获取前台窗口屏幕失败：{exc}")
+    return (screen_for_window(QGuiApplication.screens(), bounds)
+            or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen())
+
+
 class GestureHud(QObject):
     def __init__(self, parent=None, *, diagnostic=None):
         super().__init__(parent)
@@ -68,14 +79,7 @@ class GestureHud(QObject):
         QGuiApplication.instance().aboutToQuit.connect(self.close)
 
     def _screen(self):
-        bounds = None
-        if QGuiApplication.platformName() == "cocoa":
-            try:
-                bounds = foreground_window_bounds()
-            except Exception as exc:
-                self._diagnostic(f"[GESTURE HUD] 获取前台窗口屏幕失败：{exc}")
-        return (screen_for_window(QGuiApplication.screens(), bounds)
-                or QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen())
+        return hud_screen(self._diagnostic)
 
     def show_mode(self, mode: str, *, preview: bool = False, input_fields_available: bool = True,
                   message: str = "", input_fields_hint: str = "", scene_actions=None, global_bindings=None):
@@ -86,7 +90,7 @@ class GestureHud(QObject):
         root.setProperty("preview", preview)
         from ..gesture_settings import GlobalGestureBindings, GESTURE_LABELS
         bindings = global_bindings or GlobalGestureBindings().as_dict()
-        root.setProperty("globalLabels", {key: GESTURE_LABELS[value].split("（")[0] for key, value in bindings.items()})
+        root.setProperty("globalLabels", {key: GESTURE_LABELS.get(value, "").split("（")[0] for key, value in bindings.items()})
         from .gesture_hud_model import hint_view
         for name, value in hint_view(mode, scene_actions, bindings).items():
             root.setProperty(name, value)

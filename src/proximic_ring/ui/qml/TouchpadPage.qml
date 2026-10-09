@@ -7,13 +7,15 @@ ScrollView {
     objectName: "touchpadPage"
     required property var controller
     readonly property var touchpad: controller.touchpad
+    readonly property bool windowActive: Window.window ? Window.window.active : false
+    property string section: "pointer"
     signal homeRequested()
     UiTheme { id: theme }
     clip: true
     contentWidth: availableWidth
     contentHeight: content.height
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
 
     Column {
         id: content
@@ -40,7 +42,8 @@ ScrollView {
                             objectName: "touchpadStatusTitle"
                             Layout.fillWidth: true
                             text: !page.touchpad.supported ? "触摸板支持 macOS"
-                                : !page.controller.connected ? "请先在首页连接 Ring" : page.touchpad.title
+                                : !page.controller.connected ? "请先在首页连接 Ring" : page.touchpad.strokePreparing ? "正在切换到笔画"
+                                : page.touchpad.active ? (page.touchpad.inputMode === "stroke" ? "触摸板 · 笔画模式" : "触摸板 · 鼠标模式") : page.touchpad.title
                             color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold; wrapMode: Text.Wrap
                         }
                         Label {
@@ -59,7 +62,7 @@ ScrollView {
                         enabled: page.touchpad.active || (page.touchpad.available && !page.touchpad.busy)
                         text: page.touchpad.state === "starting" ? "取消开启"
                             : page.touchpad.state === "stopping" ? "正在停止…"
-                            : page.touchpad.active ? "关闭触摸板" : "开启触摸板"
+                            : page.touchpad.active ? "停止触摸板" : "开启触摸板"
                         primary: !page.touchpad.active
                         onClicked: page.touchpad.toggle()
                     }
@@ -76,10 +79,10 @@ ScrollView {
                     Layout.fillWidth: true; spacing: 10
                     Rectangle { width: 7; height: 7; radius: 4; color: page.touchpad.state === "running" ? theme.success : "#9AA3B6" }
                     Label {
-                        objectName: "touchpadCountdown"
+                        objectName: "touchpadRunStatus"
                         Layout.fillWidth: true
-                        text: page.touchpad.state === "running" ? "正在控制鼠标 · " + page.touchpad.remaining + " 秒后自动停止"
-                            : "开启后按 Esc 随时停止，也可使用电脑鼠标点击关闭。"
+                        text: page.touchpad.state === "running" ? (page.touchpad.inputMode === "stroke" ? "笔画输入中 · 双击回到鼠标" : "正在控制鼠标 · 持续生效，直到手动停止")
+                            : "开启后持续生效，点击「停止触摸板」结束。"
                         color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
                     }
                 }
@@ -91,7 +94,45 @@ ScrollView {
                 }
             }
         }
+        Label {
+            width: parent.width; wrapMode: Text.Wrap; color: theme.muted; font.pixelSize: 12
+            text: "开启后默认鼠标模式；第一下点击立即生效，" + page.touchpad.doubleClickIntervalMs + " ms 内再次点击触发双击，在当前输入框进入笔画；再双击或离开输入框回到鼠标。候选字仍由固件轻点确认。"
+        }
         Rectangle {
+            width: parent.width; height: modeRow.implicitHeight + 36
+            radius: 16; color: theme.surface; border.color: theme.line
+            RowLayout {
+                id: modeRow
+                anchors.fill: parent; anchors.margins: 18; spacing: 12
+                Label { Layout.fillWidth: true; text: "触摸板工作区"; color: theme.text; font.pixelSize: 17; font.bold: true }
+                UiAction {
+                    objectName: "pointerModeButton"
+                    text: "鼠标设置"; primary: page.section === "pointer"
+                    enabled: !page.touchpad.busy
+                    onClicked: page.section = "pointer"
+                }
+                UiAction {
+                    objectName: "strokeModeButton"
+                    text: "笔画试写"; primary: page.section === "stroke"
+                    enabled: !page.touchpad.busy
+                    onClicked: page.section = "stroke"
+                }
+            }
+        }
+        Label {
+            width: parent.width; wrapMode: Text.Wrap
+            visible: page.touchpad.message.indexOf("请先") >= 0
+            text: page.touchpad.message; color: theme.muted; font.pixelSize: 12
+        }
+        StrokeInputBox {
+            width: parent.width; height: Math.max(380, page.availableHeight - 260)
+            visible: page.section === "stroke"
+            inputVisible: visible && page.visible && page.windowActive
+            controller: page.controller
+            onHomeRequested: page.homeRequested()
+        }
+        Rectangle {
+            visible: page.section === "pointer"
             width: parent.width
             height: settings.implicitHeight + 44
             radius: 16; color: theme.surface; border.color: theme.line
@@ -102,7 +143,7 @@ ScrollView {
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 5
                     Label { text: "触摸板设置"; color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold }
-                    Label { Layout.fillWidth: true; text: "关闭触摸板后调整，下次开启时生效。"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
+                    Label { Layout.fillWidth: true; text: "停止触摸板后调整，下次开启时生效。"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
                 }
                 SettingsFormRow {
                     title: "指针速度"
@@ -144,20 +185,6 @@ ScrollView {
                         enabled: !page.touchpad.active && !page.touchpad.busy
                         Accessible.name: "反转上下方向"
                         onToggled: page.touchpad.invertY = checked
-                    }
-                }
-                Rectangle { Layout.fillWidth: true; height: 1; color: theme.line }
-                SettingsFormRow {
-                    title: "自动停止"
-                    description: "每次开启后，到达设定时间自动关闭。"
-                    SettingsSelect {
-                        objectName: "touchpadDurationSelect"
-                        Layout.fillWidth: true; Layout.preferredHeight: 42
-                        model: ["30 秒", "1 分 30 秒", "3 分钟", "5 分钟", "10 分钟"]
-                        currentIndex: [30, 90, 180, 300, 600].indexOf(page.touchpad.seconds)
-                        enabled: !page.touchpad.active && !page.touchpad.busy
-                        Accessible.name: "自动停止时间"
-                        onActivated: page.touchpad.seconds = [30, 90, 180, 300, 600][currentIndex]
                     }
                 }
             }

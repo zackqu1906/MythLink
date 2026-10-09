@@ -40,6 +40,7 @@ Rectangle {
             }
         }
         ScrollView {
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             Layout.fillWidth: true; Layout.preferredHeight: Math.min(180, previewColumn.implicitHeight)
             visible: onboarding.preview.length > 0; clip: true
             contentWidth: availableWidth
@@ -53,7 +54,7 @@ Rectangle {
                         Layout.fillWidth: true; spacing: 8
                         Label { text: modelData.gesture; color: theme.muted; font.pixelSize: 12 }
                         Label { Layout.fillWidth: true; text: modelData.action; color: theme.text; font.pixelSize: 12; elide: Text.ElideRight }
-                        Label { text: modelData.occupied ? "全局占用" : modelData.shortcut; color: modelData.pending || modelData.occupied ? "#986A15" : theme.primary; font.pixelSize: 11 }
+                        Label { text: modelData.occupied ? "全局占用" : modelData.shortcut; color: modelData.pending || modelData.occupied ? theme.warning : theme.primary; font.pixelSize: 11 }
                     }
                 }
             }

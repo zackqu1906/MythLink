@@ -3,27 +3,29 @@ from dataclasses import replace
 import sys
 import pytest
 from proximic_ring.mac_shortcut_events import prepare_chord, MODIFIER_KEYS
+from proximic_ring.app_gestures import KEY_CODES
 from proximic_ring.scene_diagnostics import SceneActionError
 from test_app_shortcuts import desktop
 
 
 @pytest.mark.parametrize('bundle',['com.kingsoft.wpsoffice.mac','com.microsoft.Powerpoint','com.apple.Safari','other.app'])
-def test_shortcut_reaches_apps_that_track_modifier_transitions(desktop,bundle):
+@pytest.mark.parametrize('shortcut,keycode,modifier,modifier_name', [('Cmd+Return',36,55,'Cmd'), ('Shift+F5',96,56,'Shift')])
+def test_shortcut_reaches_apps_that_track_modifier_transitions(desktop,bundle,shortcut,keycode,modifier,modifier_name):
     backend,state,quartz=desktop
     state.target=replace(state.target,bundle=bundle)
     held=set();actions=[]
     def receive(pid,event):
         assert pid==42
         code=event['code']
-        if code==36 and event['down']:
-            actions.append('start-current' if 55 in held else 'new-slide')
+        if code==keycode and event['down']:
+            actions.append('modified-command' if modifier in held else 'bare-key')
         if event['down']:held.add(code)
         else:held.discard(code)
         state.sent.append((pid,event))
     quartz.CGEventPostToPid=receive
-    backend.post(state.target,'Cmd+Return')
-    assert actions==['start-current'] and not held
-    assert backend.last_diagnostic['modifier_keys']==['Cmd']
+    backend.post(state.target,shortcut)
+    assert actions==['modified-command'] and not held
+    assert backend.last_diagnostic['modifier_keys']==[modifier_name]
     assert backend.last_diagnostic['events_posted']==4
     assert backend.last_diagnostic['event_sequence']=='balanced_modifiers_v1'
 
@@ -91,6 +93,37 @@ def test_real_coregraphics_creates_flags_changed_events_without_posting():
     assert [Quartz.CGEventGetType(event) for _,_,event in events]==[12,12,10,11,12,12]
     assert [code for code,_,_ in events]==[55,56,36,36,56,55]
     assert Quartz.CGEventGetFlags(events[-1][2])==0
+
+
+@pytest.mark.skipif(sys.platform!='darwin',reason='macOS event construction without sending')
+@pytest.mark.parametrize('key', list(KEY_CODES))
+def test_real_key_identity_flags_survive_modifier_application_without_posting(key):
+    """Compare with macOS, not a fake that omits native F-key/navigation bits."""
+    import Quartz
+    identity_mask=Quartz.kCGEventFlagMaskSecondaryFn | Quartz.kCGEventFlagMaskNumericPad
+    reference=Quartz.CGEventCreateKeyboardEvent(None,KEY_CODES[key],True)
+    expected=Quartz.CGEventGetFlags(reference) & identity_mask
+    events,_,_=prepare_chord(Quartz,'Shift+'+key if len(key)>1 else 'Cmd+'+key)
+    for code,_,event in events:
+        if code==KEY_CODES[key]:
+            assert Quartz.CGEventGetFlags(event) & identity_mask == expected
+    assert Quartz.CGEventGetFlags(events[-1][2])==0
+
+
+def test_function_key_identity_preserved_without_inheriting_unrelated_modifiers(desktop):
+    backend,state,quartz=desktop
+    make=quartz.CGEventCreateKeyboardEvent
+    def allocate(source,code,down):
+        event=make(source,code,down)
+        event['flags']=quartz.kCGEventFlagMaskCommand
+        if code==96:event['flags'] |= quartz.kCGEventFlagMaskSecondaryFn
+        return event
+    quartz.CGEventCreateKeyboardEvent=allocate
+    backend.post(state.target,'Shift+F5')
+    expected=quartz.kCGEventFlagMaskShift | MODIFIER_KEYS['Shift'][1] | quartz.kCGEventFlagMaskSecondaryFn
+    assert [event['flags'] for _,event in state.sent if event['code']==96]==[expected,expected]
+    assert state.sent[-1][1]['flags']==0
+    assert backend.last_diagnostic['event_flags']==[event['flags'] for _,event in state.sent]
 
 
 def test_cleanup_failure_still_attempts_remaining_modifier_releases(desktop):

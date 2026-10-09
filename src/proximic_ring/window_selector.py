@@ -7,6 +7,7 @@ import time
 import uuid
 
 from .text_focus import MacAX, intersection
+from .scene_diagnostics import exception_details
 
 MESSAGES = {
     "permission": "窗口选择需要辅助功能权限",
@@ -58,6 +59,16 @@ class MacWindowAX(MacAX):
             result.append({"id": identifier, "frame": (bounds.origin.x, bounds.origin.y,
                                                         bounds.size.width, bounds.size.height)})
         return result
+
+    def pointer_position(self):
+        # Read location in the same global coordinates as CGDisplayBounds.
+        # This event is never posted and cannot move the pointer or change focus.
+        import Quartz as CG
+        event = CG.CGEventCreate(None)
+        if event is None:
+            return None
+        point = CG.CGEventGetLocation(event)
+        return (float(point.x), float(point.y))
 
     def apps(self):
         import AppKit
@@ -127,6 +138,29 @@ class WindowSelectorSession:
         self.ambiguous = False
         self.host_pid = 0
         self.host_window = {}
+        self.last_diagnostic = {}
+
+    def _choose_screen(self, screens, rows, front):
+        if front:
+            screen = max(screens, key=lambda s: area(intersection(s["frame"], front["frame"])))
+            if area(intersection(screen["frame"], front["frame"])):
+                return screen, "foreground_window"
+        # Closing/minimizing the front app's last window does not close other
+        # apps. Global window selection must not depend on an origin window.
+        try:
+            point = self.ax.pointer_position()
+        except Exception:
+            point = None
+        if point is not None:
+            for screen in screens:
+                x, y, width, height = screen["frame"]
+                if x <= point[0] < x + width and y <= point[1] < y + height:
+                    return screen, "pointer"
+        for row in rows:
+            screen = max(screens, key=lambda s: area(intersection(s["frame"], row["frame"])))
+            if area(intersection(screen["frame"], row["frame"])):
+                return screen, "visible_window"
+        return screens[0], "primary_display"
 
     def selectable_rows(self, rows):
         return [r for r in rows if r["pid"] != self.host_pid
@@ -172,7 +206,21 @@ class WindowSelectorSession:
         # Only fixed reason codes cross IPC/logging; no window titles/content.
         return {"status": "stale", "reason": reason}
 
-    def handle(self, operation, *, token="", target="", host_pid=0, host_window=None, expected=None):
+    def handle(self, operation, **params):
+        started = self.clock()
+        self.last_diagnostic = {"operation": operation, "stage": "start"}
+        try:
+            result = self._handle(operation, **params)
+            self.last_diagnostic.setdefault("reason", result.get("reason", result["status"]))
+            self.last_diagnostic["status"] = result["status"]
+            return result
+        except Exception as exc:
+            self.last_diagnostic.update(reason="native_exception", **exception_details(exc))
+            raise
+        finally:
+            self.last_diagnostic["elapsed_ms"] = round((self.clock() - started) * 1000, 2)
+
+    def _handle(self, operation, *, token="", target="", host_pid=0, host_window=None, expected=None):
         if operation == "selector_cancel":
             if token and token == self.token:
                 self.token, self.targets = "", {}
@@ -181,32 +229,45 @@ class WindowSelectorSession:
             self.token, self.targets = "", {}
             self.host_pid, self.host_window = host_pid, dict(host_window or {})
             self.ambiguous = False
-            self.origin = self.ax.front()
-            rows = self.ax.on_screen()
+            self.origin_window = self.screen = None
+            self.last_diagnostic["stage"] = "desktop_snapshot"
+            try:
+                self.origin = self.ax.front() or {"pid": 0}
+            except Exception as exc:
+                self.origin = {"pid": 0}
+                self.last_diagnostic["origin_error"] = exception_details(exc)
+            raw_rows = self.ax.on_screen()
+            rows = self.selectable_rows(raw_rows)
             front = next((r for r in rows if r["pid"] == self.origin["pid"]), None)
             screens = self.ax.screens()
-            if not front or not screens:
-                return {"status": "empty"}
+            self.last_diagnostic.update(origin_pid=self.origin["pid"], visible_rows=len(raw_rows),
+                                        selectable_rows=len(rows), screen_count=len(screens),
+                                        origin_visible=front is not None)
+            if not screens:
+                self.last_diagnostic["reason"] = "screens_unavailable"
+                return {"status": "unavailable"}
             try:
-                self.origin_window = self.ax.attr(self.ax.application(self.origin["pid"]), "AXFocusedWindow")
-            except Exception:
+                if front:
+                    self.origin_window = self.ax.attr(self.ax.application(self.origin["pid"]), "AXFocusedWindow")
+                if self.origin_window is not None:
+                    focused_frame = self.ax.rect(self.origin_window)
+                    focused_rows = [r for r in rows if r["pid"] == self.origin["pid"]
+                                    and same_rect(r["frame"], focused_frame)]
+                    if len(focused_rows) == 1:
+                        front = focused_rows[0]
+            except Exception as exc:
                 self.origin_window = None
-            if self.origin_window is not None:
-                focused_frame = self.ax.rect(self.origin_window)
-                focused_rows = [r for r in rows if r["pid"] == self.origin["pid"]
-                                and same_rect(r["frame"], focused_frame)]
-                if len(focused_rows) == 1:
-                    front = focused_rows[0]
-            self.screen = max(screens, key=lambda s: area(intersection(s["frame"], front["frame"])))
-            if not area(intersection(self.screen["frame"], front["frame"])):
-                return {"status": "empty"}
+                self.last_diagnostic["origin_error"] = exception_details(exc)
+            self.screen, source = self._choose_screen(screens, rows, front)
+            self.last_diagnostic.update(screen_source=source, screen_id=self.screen["id"],
+                                        stage="enumerate_windows")
             # A foreground app that does not expose AX focus must not stop a
             # global selector from showing other apps. CG geometry still
             # determines the initial display, without binding session validity.
             apps, cards, partial = self.ax.apps(), [], False
-            rows = self.selectable_rows(rows)
             deadline = self.clock() + 1.15
             pids = list(dict.fromkeys(r["pid"] for r in rows if r["pid"] in apps))
+            self.last_diagnostic.update(candidate_apps=len(pids), app_errors=[])
             for pid in pids[:48]:
                 try:
                     for node, frame, order in self.visible_windows(pid, rows, deadline):
@@ -234,12 +295,18 @@ class WindowSelectorSession:
                                       "number": preview["number"] if preview else 0, "frame": frame,
                                       **info,
                                       "focused": pid == self.origin["pid"] and node == self.origin_window})
-                except Exception:
+                except Exception as exc:
                     partial = True
+                    if len(self.last_diagnostic["app_errors"]) < 8:
+                        self.last_diagnostic["app_errors"].append({"pid": pid, **exception_details(exc)})
                 if self.clock() > deadline or len(cards) >= 128:
                     partial = True
                     break
+            self.last_diagnostic.update(card_count=len(cards), partial=partial,
+                                        ambiguous=self.ambiguous)
             if not cards:
+                self.last_diagnostic["reason"] = ("window_scan_incomplete" if partial or self.ambiguous
+                                                  else "no_visible_windows")
                 return {"status": "unavailable" if partial or self.ambiguous else "empty"}
             self.token = uuid.uuid4().hex
             cards.sort(key=lambda c: c.pop("order"))
@@ -258,6 +325,7 @@ class WindowSelectorSession:
         self.targets = {}
         if chosen is None:
             return self.stale("target_missing")
+        self.last_diagnostic.update(stage="validate_target", target_pid=chosen.pid)
         apps = self.ax.apps()
         if chosen.pid not in apps:
             return self.stale("target_app_closed")
@@ -265,4 +333,5 @@ class WindowSelectorSession:
         visible = self.visible_windows(chosen.pid, rows, self.clock() + .65)
         if not any(node == chosen.window for node, _, _ in visible):
             return self.stale("target_not_visible")
+        self.last_diagnostic["stage"] = "activate_target"
         return {"status": "activated" if self.ax.activate(chosen.app, chosen.window) else "not_activated"}

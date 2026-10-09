@@ -58,6 +58,7 @@ class PermissionApp:
 
     def requestPermission(self, permission, context, callback):
         assert self.callback is None, "must never overlap system prompts"
+        assert callback.__self__ is context and callback.__func__ is not None
         self.inflight = "bluetooth" if isinstance(permission, QBluetoothPermission) else "microphone"
         self.permissions.requests.append(self.inflight)
         self.callback = callback
@@ -411,3 +412,47 @@ def test_only_actual_unanswered_prompt_blocks_feedback(flow):
     assert permissions.requests==['accessibility']  # No new prompt in background.
     permissions.grant('screen');settle()
     assert not setup.active and not setup.blocksFeedback
+
+
+def test_late_callbacks_after_dispatch_error_cannot_skip_native_permissions(flow, monkeypatch):
+    setup, permissions, native, _, foreground = flow
+    callbacks, diagnostics = [], []
+    setup.diagnostic.connect(diagnostics.append)
+
+    def dispatch_then_raise(permission, context, callback):
+        callbacks.append(callback)
+        raise AttributeError("callback registration failed after native dispatch")
+
+    monkeypatch.setattr(native, "requestPermission", dispatch_then_raise)
+    setup.startIfNeeded()
+    settle()
+    assert setup.currentKind == "accessibility" and setup.busy
+    for callback in callbacks:
+        callback(SimpleNamespace(status=lambda: Qt.PermissionStatus.Granted))
+    settle()
+    assert setup.currentKind == "accessibility" and setup.busy
+    assert permissions.requests == ["accessibility"]
+    assert any(d.get("detail") == "callback registration failed after native dispatch" for d in diagnostics)
+    permissions.complete_native("accessibility")
+    return_to_app(setup, foreground)
+    assert permissions.requests == ["accessibility", "screen"]
+    permissions.complete_native("screen", granted=True)
+    settle()
+    assert not setup.active
+
+
+def test_duplicate_device_answer_cannot_complete_a_later_permission(flow):
+    setup, permissions, native, _, _ = flow
+    setup.startIfNeeded()
+    settle()
+    bluetooth_answer = native.callback
+    native.complete(True)
+    settle()
+    assert setup.currentKind == "microphone" and setup.busy
+    bluetooth_answer(SimpleNamespace(status=lambda: Qt.PermissionStatus.Granted))
+    settle()
+    assert setup.currentKind == "microphone" and setup.busy
+    assert permissions.requests == ["bluetooth", "microphone"]
+    native.complete(False)
+    settle()
+    assert permissions.requests == ["bluetooth", "microphone", "accessibility"]

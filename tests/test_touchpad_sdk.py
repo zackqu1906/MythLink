@@ -57,28 +57,34 @@ def test_processor_protocol_gap_reboot_and_no_calibration():
     assert p.stats.tokens==260 and p.stats.warmup_frames==200
     assert any(isinstance(e,TouchpadMove) and e.dx>0 for e in events)
     p.feed(packet(25),arrival=2.3,now=2.3);assert p.stats.duplicate_packets==1
-    p.feed(packet(29),arrival=2.4,now=2.4);assert p.stats.resets==1
-    p.poll(3);assert p.stats.warmup_frames==0 and p.stats.resets==2
-    p.feed(packet(30)[:-1],now=3.1);assert p.stats.invalid_packets==1
-    p.feed(packet(31),arrival=3.,now=4.);assert p.stats.stale_packets==1
+    p.feed(packet(29),arrival=2.4,now=2.4)
+    assert p.stats.resets==1 and p.stats.sequence_gaps==1 and p.stats.missing_packets==3
+    p.poll(4.5)
+    assert p.stats.warmup_frames==0 and p.stats.resets==2 and p.stats.idle_resets==1
+    p.feed(packet(30)[:-1],now=4.6);assert p.stats.invalid_packets==1
+    p.feed(packet(31),arrival=4.7,now=5.7);assert p.stats.stale_packets==1
 
 
 def test_real_events_on_loop_inference_off_loop_and_shared_routing(tmp_path,fake_inference):
     async def run():
-        session,commands=make_session(tmp_path);events=[];seen=asyncio.Event()
+        session,commands=make_session(tmp_path);events=[];pointer=[];seen=asyncio.Event()
         owner=threading.get_ident()
         def event(e):
             assert threading.get_ident()==owner
             events.append(e);seen.set()
-        await session.touchpad_on(on_event=event,duration_s=2)
+        def pointer_move(e):
+            assert threading.get_ident()==owner
+            pointer.append(e)
+        await session.touchpad_on(on_event=event,on_pointer_move=pointer_move,duration_s=2)
         for seq in range(25):session._demux(None,packet(seq))
         session._demux(None,bytes.fromhex('29 02 00 00 50'))
         assert session.battery_pct==80
         await asyncio.wait_for(seen.wait(),1)
         assert all(i!=owner for i in fake_inference[0].threads)
-        await session.touchpad_off();count=len(events)
+        assert pointer and all(isinstance(e,TouchpadMove) for e in pointer)
+        await session.touchpad_off();count=len(events);pointer_count=len(pointer)
         session._demux(None,packet(30));await asyncio.sleep(.02)
-        assert len(events)==count and not session.touchpad_active and session.touchpad is None
+        assert len(events)==count and len(pointer)==pointer_count and not session.touchpad_active and session.touchpad is None
         assert commands==[START,STOP]
     asyncio.run(run())
 
@@ -135,6 +141,30 @@ def test_timeout_stops_only_touchpad_and_notifies(tmp_path,fake_inference):
         await session.touchpad_on(on_event=lambda e:None,on_stopped=stopped,duration_s=.025)
         await asyncio.wait_for(ended.wait(),1)
         assert errors==[None] and commands==[START,STOP]
+        assert session.client.is_connected and session.touchpad is None
+    asyncio.run(run())
+
+
+def test_unlimited_stream_survives_old_duration_until_manual_stop(tmp_path, fake_inference):
+    async def run():
+        session, commands = make_session(tmp_path)
+        ended = []
+        await session.touchpad_on(on_event=lambda event: None, on_stopped=ended.append, duration_s=None)
+        worker = session.touchpad
+        try:
+            session._demux(None, packet(0))
+            for _ in range(100):
+                if worker.processor.last_valid is not None: break
+                await asyncio.sleep(.005)
+            assert worker.processor.last_valid is not None
+            worker.started -= 3600
+            session._demux(None, packet(1))
+            await asyncio.sleep(.03)
+            assert session.touchpad_active and not worker.closed and not ended
+            assert worker.stats.tokens >= 20 and commands == [START]
+        finally:
+            await session.touchpad_off()
+        assert ended == [None] and commands == [START, STOP]
         assert session.client.is_connected and session.touchpad is None
     asyncio.run(run())
 
@@ -240,3 +270,79 @@ def test_modes_remain_reserved_until_stop_completes(tmp_path,fake_inference):
         with pytest.raises(RuntimeError,match='stream'):await session.touchpad_on(on_event=lambda e:None)
         release.set();await stop
     asyncio.run(run())
+
+
+def test_contiguous_packet_after_windows_notification_pause_keeps_warmup():
+    p = TouchpadProcessor(backbone=Backbone())
+    for seq in range(22):
+        arrival = 1. + seq * .05
+        p.feed(packet(seq), arrival=arrival, now=arrival)
+    assert p.stats.warmup_frames == 0  # poll updates the public warmup snapshot
+    p.poll(2.06)
+    assert p.stats.warmup_frames == 200
+    p.poll(2.35)
+    p.feed(packet(22), arrival=2.4, now=2.4)
+    p.poll(2.41)
+    assert p.stats.arrival_gaps == 1
+    assert p.stats.resets == 0
+    assert p.stats.warmup_frames == 200
+    p.feed(packet(22), arrival=2.75, now=2.75)
+    assert p.stats.duplicate_packets == 1 and p.stats.resets == 0
+
+
+def test_windows_timer_cadence_preserves_touchpad_movement():
+    # asyncio.sleep(.001) resolves to about 15.6 ms on Windows. A single
+    # movement per wakeup would lose most of the 200 Hz model output.
+    p = TouchpadProcessor(backbone=Backbone())
+    moves = []
+    for seq in range(28):
+        arrival = 1. + seq * .05
+        p.feed(packet(seq), arrival=arrival, now=arrival)
+        for offset in (.0156, .0312, .0468):
+            moves.extend(e for e in p.poll(arrival + offset) if isinstance(e, TouchpadMove))
+    assert p.stats.resets == 0
+    assert len(moves) >= 55
+    assert all(e.dx > 0 for e in moves)
+
+
+@pytest.mark.parametrize('start,end,speed,is_click', [(225,240,.1,True), (225,240,.4,False), (225,275,.1,False)])
+def test_stroke_contact_tracks_each_frame_across_packet_boundaries(start, end, speed, is_click):
+    from proximic_ring.stroke_input import StrokeCollector
+    from ring_python_sdk.touchpad import TouchpadContact, TouchpadClickVerdict
+
+    class ContactBackbone(Backbone):
+        def __init__(self, constant=False):
+            self.n = 0
+            self.constant = constant
+        def step(self, token):
+            self.n += 1
+            return np.array([[speed, .1, np.log(99 if self.constant or start <= self.n+j-2 <= end else 1/99)]
+                             for j in range(5)])
+
+    processor = TouchpadProcessor(backbone=ContactBackbone())
+    baseline = TouchpadProcessor(backbone=ContactBackbone(constant=True))
+    collector = StrokeCollector()
+    paths, contacts, movement, original_movement, verdicts = [], [], [], [], []
+    for seq in range(34):
+        arrival = 1 + seq * .05
+        processor.feed(packet(seq), arrival=arrival, now=arrival)
+        baseline.feed(packet(seq), arrival=arrival, now=arrival)
+        original_movement.extend((e.step, e.dx, e.dy) for e in baseline.poll(arrival)
+                                 if isinstance(e, TouchpadMove))
+        for event in processor.poll(arrival):
+            if isinstance(event, TouchpadMove):
+                movement.append((event.step, event.dx, event.dy))
+                assert event.contact_probability == processor.post.contact
+            if isinstance(event, TouchpadContact): contacts.append((event.state, event.step))
+            if isinstance(event, TouchpadClickVerdict): verdicts.append(event)
+            points = collector.feed(event)
+            if points is not None:
+                paths.append(points)
+    assert contacts == [('down', start), ('up', end+1)]
+    assert len(verdicts) == 1
+    assert (verdicts[0].start_step, verdicts[0].step, verdicts[0].is_click) == (start, end+1, is_click)
+    assert len(paths) == 1 and len(paths[0]) == end - start + 1
+    expected = [(dx,dy) for step,dx,dy in movement if start < step <= end]
+    assert paths[0][-1] == pytest.approx((sum(x for x,y in expected), sum(y for x,y in expected)))
+    assert movement == original_movement  # No pointer gain, timing or distance change.
+    assert not collector.points

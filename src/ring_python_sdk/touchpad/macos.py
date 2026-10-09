@@ -1,6 +1,35 @@
 """macOS system pointer adapter; importing this module never posts events."""
 import math
+import threading
 import time
+
+
+PERMISSION_CHECK_INTERVAL = 1.0
+
+
+class _PermissionWatch:
+    """Recheck on a separate thread; event delivery only reads the result."""
+    def __init__(self, probe):
+        self.stopped = threading.Event()
+        self.error = None
+        self.thread = threading.Thread(target=self._run, args=(probe,),
+                                       name='TouchpadPermissions', daemon=True)
+        self.thread.start()
+
+    def _run(self, probe):
+        while not self.stopped.wait(PERMISSION_CHECK_INTERVAL):
+            try:
+                if not probe():
+                    raise PermissionError('鼠标控制权限已失效，请重新授权。')
+            except Exception as exc:
+                # An old check must not affect a disabled/re-enabled session.
+                if not self.stopped.is_set():
+                    self.error = exc
+                return
+
+    def close(self):
+        # Never wait for an in-flight system query on the stop/movement thread.
+        self.stopped.set()
 
 
 class MacSystemMouse:
@@ -11,11 +40,13 @@ class MacSystemMouse:
             import ApplicationServices as accessibility
         self.q = quartz
         self.ax = accessibility
+        self._permissions = None
         self.enabled = False
         self.deadline = None
         self.gain = 1.
         self.invert_y = False
         self.clicks_enabled = True
+        self.stop_on_escape = True
         self.moves = self.clicks = 0
 
     def permitted(self):
@@ -31,15 +62,25 @@ class MacSystemMouse:
         return bool(self.q.CGEventSourceKeyState(self.q.kCGEventSourceStateCombinedSessionState, 53))
 
     def enable(self):
+        self.disable()
         if self.deadline is not None and time.monotonic()>=self.deadline:
             raise TimeoutError('倒计时结束，鼠标控制已停止')
         if not self.permitted():
             raise PermissionError('请先在系统设置 → 隐私与安全性 → 辅助功能中授权当前终端 / Python 程序。')
         self.enabled = True
         self.moves = self.clicks = 0
+        self._permissions = _PermissionWatch(self.permitted)
 
     def disable(self):
         self.enabled = False
+        if self._permissions is not None:
+            self._permissions.close()
+
+    def check_health(self):
+        """Read the last background check without querying macOS or waiting."""
+        if self._permissions is not None and self._permissions.error is not None:
+            self.disable()
+            raise self._permissions.error
 
     def _position(self):
         event = self.q.CGEventCreate(None)
@@ -74,12 +115,12 @@ class MacSystemMouse:
         try:
             if self.deadline is not None and time.monotonic()>=self.deadline:
                 raise TimeoutError('倒计时结束，鼠标控制已停止')
-            if not self.permitted():
-                raise PermissionError('鼠标控制权限已失效，请重新授权。')
-            if self.escape_pressed():
+            self.check_health()
+            if self.stop_on_escape and self.escape_pressed():
                 raise InterruptedError('Esc 已停止鼠标控制')
             point = self._position()
             for event in events:
+                self.check_health()
                 if not self.enabled:
                     break
                 if event['kind'] == 'move':

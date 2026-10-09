@@ -8,10 +8,10 @@ import time
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot, Qt
 
 from ..application_catalog import application_metadata
-from ..application_scene_policy import primary_scene, scene_choices
-from ..scene_capabilities import SCENE_LABELS
+from ..scenes.policy import primary_scene, scene_choices
+from ..scenes.registry import SCENE_LABELS
 from ..gesture_settings import GESTURE_LABELS
-from ..scene_defaults import action_label
+from ..scenes.registry import action_label
 from ..scene_diagnostics import new_trace_id
 
 DECISIONS_KEY = 'onboarding/gestureSuggestionsV1'

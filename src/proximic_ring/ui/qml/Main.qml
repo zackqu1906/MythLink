@@ -58,34 +58,8 @@ ApplicationWindow {
     property color textMain: uiTheme.text
     property color textMuted: uiTheme.muted
 
-    component GestureBindingSelector: ComboBox {
-        id: gestureSelector
-        required property string actionName
-        required property int slotIndex
-        objectName: actionName + "Gesture" + slotIndex
-        property var options: {
-            // Register the settings dependency even though options come from a slot.
-            var bindings = appController.gestureBindings
-            return appController.gestureOptionsForSlot(actionName, slotIndex)
-        }
-        readonly property string selectedGesture: appController.gestureBindings[actionName][slotIndex]
-        readonly property int selectedIndex: {
-            for (var i = 0; i < options.length; ++i)
-                if (options[i].value === selectedGesture) return i
-            return 0
-        }
-        Layout.fillWidth: true
-        Layout.preferredHeight: 44
-        model: options
-        textRole: "label"
-        valueRole: "value"
-        currentIndex: selectedIndex
-        Accessible.name: ({confirm: "确认", undo: "撤销", switch_mode: "类型转换"})[actionName] + "，手势 " + (slotIndex + 1)
-        onActivated: {
-            appController.setGestureBinding(actionName, slotIndex, options[currentIndex].value)
-            // Restore the binding also when validation rejects a selection.
-            currentIndex = Qt.binding(function() { return gestureSelector.selectedIndex })
-        }
+    component GestureBindingSelector: VoiceGestureBindingSelector {
+        controller: appController
     }
 
     component GestureBindingRow: ColumnLayout {
@@ -247,6 +221,7 @@ ApplicationWindow {
         closePolicy: appController.inlineInput.installing ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: appController.inlineInput.permissions.refresh()
         contentItem: ScrollView {
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             id: inputMethodSetupScroll
             objectName: "inputMethodSetupScroll"
             clip: true
@@ -390,7 +365,7 @@ ApplicationWindow {
                     spacing: 6
                     clip: true
                     model: appController.availableDevices
-                    ScrollBar.vertical: ScrollBar { }
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
 
                     delegate: Rectangle {
                         required property var modelData
@@ -490,8 +465,9 @@ ApplicationWindow {
         modal: true
         popupType: Popup.Item
         title: "运行诊断日志"
+        background: Rectangle { color: root.panel; radius: 18; border.color: root.border }
         closePolicy: Popup.CloseOnEscape
-        onOpened: logArea.refreshLog()
+        onOpened: { logArea.refreshLog(); logArea.jumpToLatest() }
         onClosed: logRefreshTimer.stop()
 
         // Rebuilding a hidden TextArea still performs text layout on the UI
@@ -506,15 +482,24 @@ ApplicationWindow {
             }
         }
 
+        Timer {
+            interval: 500
+            running: runtimeLogDialog.visible
+            repeat: true
+            onTriggered: logArea.refreshLog()
+        }
+
         contentItem: ColumnLayout {
             spacing: 12
 
             ScrollView {
+                ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                 id: logScroll
                 objectName: "logScroll"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
+                background: Rectangle { color: root.panelAlt; radius: 10 }
 
                 TextArea {
                     id: logArea
@@ -522,13 +507,14 @@ ApplicationWindow {
                     width: logScroll.availableWidth
                     readOnly: true
                     textFormat: TextEdit.PlainText
-                    text: "尚未启动"
+                    text: "暂无日志"
                     color: root.textMuted
                     font.family: Qt.platform.os === "osx" ? "Menlo" : "Cascadia Mono"
                     font.pixelSize: 14
                     wrapMode: TextEdit.Wrap
                     selectByMouse: true
-                    background: Rectangle { color: root.panelAlt; radius: 10 }
+                    padding: 12
+                    background: null
 
                     function refreshLog() {
                         var viewport = logScroll.contentItem
@@ -536,8 +522,10 @@ ApplicationWindow {
                         var previousCursor = cursorPosition
                         var previousSelectionStart = selectionStart
                         var previousSelectionEnd = selectionEnd
-                        var nextText = appController.logText
-                        text = nextText.length > 0 ? nextText : "尚未启动"
+                        var nextText = appController.readDiagnosticLog()
+                        if (text === (nextText.length > 0 ? nextText : "暂无日志"))
+                            return
+                        text = nextText.length > 0 ? nextText : "暂无日志"
                         cursorPosition = Math.min(previousCursor, length)
                         if (previousSelectionStart !== previousSelectionEnd) {
                             select(
@@ -574,19 +562,27 @@ ApplicationWindow {
                 }
             }
 
+            Label {
+                Layout.fillWidth: true
+                text: "diagnostic.log · 窗口显示最近 1000 行；导出包含已保留的全部历史"
+                color: root.textMuted
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+
             RowLayout {
                 Layout.fillWidth: true
-                Label {
-                    Layout.fillWidth: true
-                    text: "窗口保留最近 1000 行；完整诊断日志会持久保存并自动轮转"
-                    color: root.textMuted
-                    font.pixelSize: 11
+                Button {
+                    objectName: "exportDiagnosticLogButton"
+                    text: "导出完整日志"
+                    onClicked: appController.exportDiagnosticLog()
                 }
                 Button {
                     objectName: "openDiagnosticLogDirectoryButton"
                     text: "打开日志目录"
                     onClicked: appController.openDiagnosticLogDirectory()
                 }
+                Item { Layout.fillWidth: true }
                 Button {
                     objectName: "jumpToLatestLogButton"
                     text: "跳到最新"
@@ -659,7 +655,7 @@ ApplicationWindow {
             Column {
                 anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: 5
                 Label { text: root.pageTitles[root.currentPage]; color: uiTheme.text; font.pixelSize: 32; font.weight: Font.Bold }
-                Label { text: root.currentPage === 0 ? (appController.deviceName || "连接你的 Ring，开始使用") : root.currentPage === 1 ? "说话完成输入与修改，回顾每一次语音记录" : root.currentPage === 3 ? "让 Ring 成为你的触摸板，直接控制系统指针" : "查看手势与应用操作的对应关系"; color: uiTheme.muted; font.pixelSize: 12 }
+                Label { text: root.currentPage === 0 ? (appController.deviceName || "连接你的 Ring，开始使用") : root.currentPage === 1 ? "说话完成输入与修改，回顾每一次语音记录" : root.currentPage === 3 ? (appController.touchpad.inputMode === "stroke" ? "用 Ring 书写笔画，选择候选字完成输入" : "让 Ring 成为你的触摸板，直接控制系统指针") : "查看手势与应用操作的对应关系"; color: uiTheme.muted; font.pixelSize: 12 }
             }
             RowLayout {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 8
@@ -889,7 +885,7 @@ ApplicationWindow {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     clip: true
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                     ColumnLayout {
                         width: runtimeSettingsScroll.availableWidth
                         spacing: 14
@@ -984,12 +980,12 @@ ApplicationWindow {
                                     color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                                 }
                             }
-                            Label {
+                            UiNotice {
                                 objectName: "gestureSettingsErrorLabel"
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                                 visible: appController.gestureSettingsError.length > 0
                                 text: appController.gestureSettingsError
-                                color: "#986A15"; font.pixelSize: 12; wrapMode: Text.Wrap
+                                font.pixelSize: 12; wrapMode: Text.Wrap
                             }
                             RowLayout {
                                 Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -1395,7 +1391,7 @@ ApplicationWindow {
                 spacing: 10
                 clip: true
                 model: appController.associationDetailEntries
-                ScrollBar.vertical: ScrollBar { }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                 delegate: Rectangle {
                     required property var modelData
                     width: associationDetailsList.width
@@ -1617,7 +1613,7 @@ ApplicationWindow {
                 spacing: 9
                 clip: true
                 model: appController.associationCenterEntries
-                ScrollBar.vertical: ScrollBar { }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                 delegate: Rectangle {
                     required property var modelData
                     readonly property string selectedRole: {
@@ -1755,7 +1751,7 @@ ApplicationWindow {
                 spacing: 10
                 clip: true
                 model: appController.associationCenterConfirmationEntries
-                ScrollBar.vertical: ScrollBar { }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                 delegate: Rectangle {
                     required property var modelData
                     width: associationConfirmationList.width

@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from ..pcm import decode_pcm16le
+from ..mac_activity import MacActivity
 from .base import AudioSource
 
 _STOP = object()
@@ -112,6 +113,8 @@ class RingAudioSource(AudioSource):
         self.touchpad_error = None
         self._touchpad_endpoint = None
         self._touchpad_requests = set()
+        self._touchpad_activities = set()
+        self._gesture_activity = MacActivity('Mythlink continuous Ring gesture input')
         self.gestures_active = False
         self.gesture_error = None
         self.battery_observer = battery_observer
@@ -748,6 +751,10 @@ class RingAudioSource(AudioSource):
 
     async def _shutdown_session(self, session) -> None:
         """Best-effort BLE shutdown that never hides the stream failure."""
+        # Release before any fallible observer or BLE cleanup, including a
+        # failed START/STOP. Each source/connection owns its own activities.
+        self._gesture_activity.close()
+        self._end_touchpad_activities()
         if bool(getattr(session, "touchpad_active", False)):
             try:await session.touchpad_off()
             except Exception as exc:print(f"Ring cleanup: touchpad STOP failed: {exc}")
@@ -1078,13 +1085,17 @@ class RingAudioSource(AudioSource):
         if self.gesture_observer is None:
             return
         try:
+            self._gesture_activity.start()
             await session.swipe_on(on_trigger=self.gesture_observer, print_events=False,
                                    print_triggers=False, print_profile=False)
             self.gestures_active = True
             if self.gesture_state_observer is not None:
                 self.gesture_state_observer(True)
             print("Ring firmware gestures enabled (26 06 / 26 07)")
-        except Exception as exc:
+        except BaseException as exc:
+            self._gesture_activity.close()
+            if not isinstance(exc, Exception):
+                raise
             self.gesture_error = exc
             self.gestures_active = False
             if self.gesture_state_observer is not None:
@@ -1114,12 +1125,16 @@ class RingAudioSource(AudioSource):
                         self.touchpad_error = error
                         if callback is not None:
                             callback(error)
-                    await session.touchpad_on(**options, on_stopped=stopped)
+                    await self._begin_touchpad(session, **options, on_stopped=stopped)
                     self.touchpad_active = bool(session.touchpad_active)
                     self.touchpad_error = None
                 else:
-                    await session.touchpad_off()
-                    self.touchpad_active = False
+                    try:
+                        await session.touchpad_off()
+                    finally:
+                        # The SDK stopped callback releases only that stream's
+                        # scope; a concurrently queued START owns a different one.
+                        self.touchpad_active = False
             finally:
                 self._touchpad_requests.discard(task)
 
@@ -1139,6 +1154,30 @@ class RingAudioSource(AudioSource):
     def stop_touchpad(self):
         return self._submit_touchpad(False, {})
 
+    def _end_touchpad_activities(self):
+        for activity in tuple(self._touchpad_activities):
+            activity.close()
+        self._touchpad_activities.clear()
+
+    async def _begin_touchpad(self, session, *, on_stopped, **options):
+        # Keep protection across mouse/stroke mode switches. Only the actual
+        # token stream's lifetime matters, never window visibility or focus.
+        activity = MacActivity('Mythlink touchpad trajectory input', latency_critical=True)
+        self._touchpad_activities.add(activity)
+        activity.start()
+        def release():
+            activity.close()
+            self._touchpad_activities.discard(activity)
+        def stopped(error):
+            release()
+            if on_stopped is not None:
+                on_stopped(error)
+        try:
+            await session.touchpad_on(**options, on_stopped=stopped)
+        except BaseException:
+            release()
+            raise
+
     async def _start_touchpad(self, session) -> None:
         """Opt-in typed events on the existing BLE loop; no OS mouse injection."""
         if self.touchpad_observer is None:
@@ -1149,8 +1188,8 @@ class RingAudioSource(AudioSource):
             if self.touchpad_state_observer is not None:
                 self.touchpad_state_observer(False)
         try:
-            await session.touchpad_on(on_event=self.touchpad_observer,
-                                      on_stopped=stopped, duration_s=self.touchpad_duration_s)
+            await self._begin_touchpad(session, on_event=self.touchpad_observer,
+                                       on_stopped=stopped, duration_s=self.touchpad_duration_s)
             self.touchpad_active = True
             self.touchpad_error = None
             if self.touchpad_state_observer is not None:

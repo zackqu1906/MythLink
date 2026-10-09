@@ -8,7 +8,7 @@ from scene_test_helpers import activity_context
 from proximic_ring.gesture_scenes import PRESENTATION
 from scene_test_helpers import presentation_context
 from proximic_ring.scene_capabilities import PDF, IMAGE, VIDEO, MUSIC
-from proximic_ring.scene_recognition.browser import detect_browser as browser_media_context
+from proximic_ring.scenes.recognition.browser import detect_browser as browser_media_context
 from test_activity_scenes import content, metadata
 from test_gesture_scenes import window_tree, wps_window_tree
 from test_presentation_portability import native_backend, POWERPOINT, WPS
@@ -33,7 +33,8 @@ def page():
 
 
 def read(node, key):
-    assert key not in {"AXValue", "AXSelectedText", "AXTitle"}
+    assert key not in {"AXValue", "AXSelectedText"}
+    assert key != 'AXTitle' or node.attrs['AXRole'] in {'AXButton', 'AXCheckBox', 'AXSlider', 'AXValueIndicator'}
     return node.attrs.get(key)
 
 
@@ -215,7 +216,7 @@ def test_native_scene_snapshot_blocks_invalid_focus_before_regular_fallback(monk
     if state == 'hidden_parent': focus['AXParent'] = dict(AXRole='AXGroup', AXHidden=True, AXParent=window)
     if state == 'dialog_parent': focus['AXParent'] = dict(AXRole='AXGroup', AXSubrole='AXDialog', AXParent=window)
     if state == 'foreign_window': focus['AXParent'] = dict(AXRole='AXWindow', AXTitle='other')
-    if state == 'stale_focus': focus['AXFocused'] = False
+    if state == 'stale_focus': focus.update(AXRole='AXButton', AXFocused=False)
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle='com.apple.Preview')
     assert backend.capture(menu_action=True, scene=True).blocked
 

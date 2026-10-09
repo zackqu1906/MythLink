@@ -1,7 +1,6 @@
 """Frozen application entry point with persistent startup diagnostics."""
 
 from datetime import datetime, timezone
-import faulthandler
 import multiprocessing
 import os
 from pathlib import Path
@@ -40,33 +39,19 @@ def _verify_bundled_qml_runtime(resource_root: Path) -> None:
         )
 
 
-def _open_startup_log() -> tuple[Path, object]:
-    """Open a useful log even if the normal application directory is broken."""
-
+def _open_diagnostic_log() -> tuple[Path, object]:
     try:
-        from proximic_ring.runtime_paths import app_data_root
-
-        log_path = app_data_root() / "logs" / "startup.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-    except BaseException:
-        log_path = Path(tempfile.gettempdir()) / "Mythlink-startup.log"
-    try:
-        from proximic_ring.diagnostic_log import (
-            STARTUP_LOG_BACKUP_COUNT,
-            STARTUP_LOG_MAX_BYTES,
-            rotate_existing_log,
-        )
-
-        rotate_existing_log(
-            log_path,
-            max_bytes=STARTUP_LOG_MAX_BYTES,
-            backup_count=STARTUP_LOG_BACKUP_COUNT,
-        )
-    except BaseException:
-        # A damaged/partially upgraded installation should still be able to
-        # create a startup traceback even when the rotation helper is absent.
-        pass
-    return log_path, log_path.open("a", encoding="utf-8", buffering=1)
+        from proximic_ring.runtime_diagnostics import configure_diagnostics
+        capture = configure_diagnostics()
+        return capture.writer.path, capture
+    except Exception:
+        # Keep early broken-package/import failures diagnosable using stdlib
+        # alone, even when the logging module itself cannot be loaded.
+        path = Path(tempfile.gettempdir()) / 'Mythlink-diagnostic.log'
+        handle = path.open('a', encoding='utf-8', buffering=1)
+        sys.stdout = sys.stderr = handle
+        traceback.print_exc(file=handle)
+        return path, handle
 
 
 def _show_fatal_startup_error(error: BaseException, log_path: Path) -> None:
@@ -101,13 +86,7 @@ def _show_fatal_startup_error(error: BaseException, log_path: Path) -> None:
 
 
 def run() -> int:
-    log_path, log_file = _open_startup_log()
-    sys.stdout = log_file
-    sys.stderr = log_file
-    try:
-        faulthandler.enable(log_file, all_threads=True)
-    except BaseException:
-        pass
+    log_path, log_capture = _open_diagnostic_log()
 
     print("\n=== Mythlink startup ===")
     print(f"time_utc={datetime.now(timezone.utc).isoformat()}")
@@ -179,13 +158,13 @@ def run() -> int:
         return 130
     except BaseException as exc:
         print("[startup] fatal error")
-        traceback.print_exc(file=log_file)
+        traceback.print_exc()
         if not _self_check_requested():
             _show_fatal_startup_error(exc, log_path)
         return 1
     finally:
         try:
-            log_file.flush()
+            log_capture.flush()
         except BaseException:
             pass
 

@@ -20,7 +20,7 @@ LLM_PROVIDERS = frozenset(
 )
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_ARK_MODEL = "doubao-seed-2-0-lite-260215"
-DEFAULT_ARK_DEEPSEEK_MODEL = "deepseek-v4-flash-260425"
+DEFAULT_ARK_DEEPSEEK_MODEL = "deepseek-v4-1-flash-260910"
 DEFAULT_ARK_API_KEY_ENV = "ARK_API_KEY"
 MAX_EDIT_TARGET_CHARS = 5000
 

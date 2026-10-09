@@ -5,7 +5,7 @@ import json
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.scene_recognition.browser import detect_browser as browser_media_context
+from proximic_ring.scenes.recognition.browser import detect_browser as browser_media_context
 from proximic_ring.app_shortcuts import ShortcutTarget, LocalMacAppShortcuts
 from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
@@ -36,7 +36,8 @@ def page():
 
 
 def read(node, key):
-    assert key not in {"AXValue", "AXSelectedText", "AXTitle"}
+    assert key not in {"AXValue", "AXSelectedText"}
+    assert key != 'AXTitle' or node.attrs['AXRole'] in {'AXButton', 'AXCheckBox', 'AXSlider', 'AXValueIndicator'}
     return node.attrs.get(key)
 
 

@@ -8,11 +8,12 @@ import time
 
 from .app_gestures import normalize_shortcut, profile_for_application
 from .mac_permissions import require_post_event_access
-from .gesture_scenes import PRESENTATION
-from .scene_capabilities import application_scene_profiles, installed_scene_profiles, installed_application_category
-from .scene_recognition.engine import detect_scene
-from .scene_recognition.models import SceneResult
-from .scene_recognition.focus import inspect_focus
+from .scenes.models import PRESENTATION
+from .scenes.capabilities import BROWSERS, application_scene_profiles, installed_scene_profiles, installed_application_category
+from .browser_accessibility import BrowserAccessibility, read_structure
+from .scenes.recognition.engine import detect_scene
+from .scenes.models import SceneResult
+from .scenes.recognition.focus import inspect_focus
 from .scene_diagnostics import new_trace_id, SceneActionError, safe_data
 
 
@@ -25,9 +26,10 @@ def verify_native_api() -> None:
     for module, names in (
         (AppKit, ("NSWorkspace",)),
         (ApplicationServices, ("AXUIElementCreateApplication", "AXUIElementCopyAttributeValue",
-                               "AXUIElementSetMessagingTimeout")),
+                               "AXUIElementSetMessagingTimeout", "AXUIElementSetAttributeValue",
+                               "AXUIElementCopyMultipleAttributeValues", "AXValueGetType", "AXValueGetValue")),
         (Quartz, ("CGPreflightPostEventAccess", "CGEventCreateKeyboardEvent",
-                  "CGEventSetFlags", "CGEventSetIntegerValueField", "CGEventPostToPid")),
+                  "CGEventGetFlags", "CGEventSetFlags", "CGEventSetIntegerValueField", "CGEventPostToPid")),
     ):
         for name in names:
             if not callable(getattr(module, name, None)):
@@ -58,6 +60,9 @@ class ShortcutTarget:
 
 
 class LocalMacAppShortcuts:
+    def __init__(self):
+        self._browser_accessibility = BrowserAccessibility()
+
     def capture(self, *, plain_enter: bool = False, menu_action: bool = False,
                 scene: bool = False, scene_observation: bool = False) -> ShortcutTarget | None:
         started = time.perf_counter()
@@ -97,22 +102,31 @@ class LocalMacAppShortcuts:
         except (AttributeError, TypeError):
             pass
         info["capabilities"] = list(scene_profiles)
+        browser_scene = scene and bundle.casefold() in BROWSERS
+        if browser_scene:
+            info['browser_accessibility'] = self._browser_accessibility.prepare(app, element, AX)
+        context_read_failed = False
+        def record_error(name, error):
+            if error and len(info['ax_errors']) < 24:
+                key = name + ':' + str(error)
+                info['ax_errors'][key] = info['ax_errors'].get(key, 0) + 1
+
         def native_attr(node, name):
+            nonlocal context_read_failed
             if node is None:
                 return None
             info["last_attribute"] = name
             if name == "AXValueSettable":
                 error, editable = AX.AXUIElementIsAttributeSettable(node, "AXValue", None)
                 info["ax_reads"] = info.get("ax_reads", 0) + 1
-                if error and len(info["ax_errors"]) < 24:
-                    key = name + ":" + str(error)
-                    info["ax_errors"][key] = info["ax_errors"].get(key, 0) + 1
+                record_error(name, error)
                 return bool(editable) if error == 0 else None
             error, value = AX.AXUIElementCopyAttributeValue(node, name, None)
+            if (node is element and name in {"AXFocusedWindow", "AXFocusedUIElement"}
+                    and error not in (0, -25212, -25205)):  # NoValue / AttributeUnsupported
+                context_read_failed = True
             info["ax_reads"] = info.get("ax_reads", 0) + 1
-            if error and len(info["ax_errors"]) < 24:
-                key = name + ":" + str(error)
-                info["ax_errors"][key] = info["ax_errors"].get(key, 0) + 1
+            record_error(name, error)
             if error == 0 and value is not None and name in {"AXPosition", "AXSize"}:
                 value_type = AX.kAXValueCGPointType if name == "AXPosition" else AX.kAXValueCGSizeType
                 valid, pair = AX.AXValueGetValue(value, value_type, None)
@@ -123,6 +137,15 @@ class LocalMacAppShortcuts:
         cache = {}
         def attr(node, name):
             key = (id(node), name)
+            if (browser_scene and node is not None and node is not element
+                    and name in {'AXRole', 'AXHidden'} and key not in cache):
+                values = read_structure(AX, node)
+                if values is not None:
+                    info['ax_batches'] = info.get('ax_batches', 0) + 1
+                    info['ax_reads'] = info.get('ax_reads', 0) + 1
+                    for attribute, (error, value) in values.items():
+                        record_error(attribute, error)
+                        cache.setdefault((id(node), attribute), (node, value))
             if key not in cache:
                 cache[key] = (node, native_attr(node, name))
             return cache[key][1]
@@ -162,16 +185,20 @@ class LocalMacAppShortcuts:
             application_category=application_category, observation=scene_observation)
             if scene else SceneResult())
         active_scene, input_context = recognized.scene, recognized.input_context
+        if (browser_scene and not active_scene and info['browser_accessibility'].get('warming')
+                and recognized.diagnostic.get('reason') in {'no_focused_webpage', 'no_web_player', 'page_url_unavailable'}):
+            recognized.diagnostic['reason'] = 'browser_accessibility_initializing'
         info.update(recognition=recognized.diagnostic, scene=active_scene, input_context=input_context,
                     focus_role=role, window_subrole=subrole,
                     focus_window_override=window != reported_window)
-        # Explicit application shortcuts don't require a chat input field.
+        # Application commands (e.g. New/Open) can create their first window.
+        # A window is optional for explicit mappings, not for legacy chat keys.
         # Preserve the stricter focus guard for legacy chat navigation, while
         # genuine dialogs/sheets and open menus still block all app shortcuts.
         scene_dialog = scene and active_scene == PRESENTATION and input_context == "nontext"
         chat_focus_blocked = (role in {"AXComboBox", "AXSearchField"}
                               or any(word in description for word in ("terminal", "终端", "search", "搜索")))
-        blocked = (window is None or bool(attr(window, "AXModal")) or bool(attr(window, "AXSheets"))
+        blocked = ((window is None and not menu_action) or bool(attr(window, "AXModal")) or bool(attr(window, "AXSheets"))
                    or bool(attr(window, "AXMinimized"))
                    or (subrole in {"AXDialog", "AXSystemDialog"} and not scene_dialog)
                    or role in {"AXMenu", "AXMenuItem"}
@@ -188,7 +215,8 @@ class LocalMacAppShortcuts:
             try:
                 if not blocked:
                     focus_snapshot = inspect_focus(window, focus, focus_attr, window_shortcut=menu_action)
-                    info["focus_policy"] = "window_shortcut" if menu_action else "focused_control"
+                    info["focus_policy"] = ("application_shortcut" if menu_action and window is None else
+                                            "window_shortcut" if menu_action else "focused_control")
                     info["disabled_containers"] = list(focus_snapshot.disabled_containers)
                     info["unfocused_containers"] = list(focus_snapshot.unfocused_containers)
                     blocked = focus_snapshot.blocked
@@ -201,6 +229,8 @@ class LocalMacAppShortcuts:
             if (native_attr(element, "AXFocusedWindow") != reported_window
                     or native_attr(element, "AXFocusedUIElement") != focus):
                 return finish("focus_changed")  # Do not mix windows in a snapshot.
+            if menu_action and window is None and context_read_failed:
+                return finish("target_unavailable")  # A failed AX read is not an absent window.
             if role != "AXWindow" and native_attr(focus, "AXWindow") != focus_window:
                 return finish("window_changed")
             if scene and native_attr(window, "AXDocument") != document:
@@ -213,7 +243,7 @@ class LocalMacAppShortcuts:
                     if cached is not None and native_attr(recognized.web_area, key) != cached[1]:
                         return finish("page_changed")
                 if scene_observation and recognized.diagnostic.get('inferred_page'):
-                    from .scene_recognition.browser import _window_page
+                    from .scenes.recognition.browser import _window_page
                     page_deadline = time.monotonic() + .15
                     def page_attr(node, key):
                         if time.monotonic() >= page_deadline:
@@ -231,13 +261,14 @@ class LocalMacAppShortcuts:
         flags = {key: cache.get((id(window), key), (None, None))[1]
                  for key in ("AXRole", "AXModal", "AXSheets", "AXMinimized", "AXFullScreen")}
         info["window_flags"] = {key: bool(value) if key == "AXSheets" else value for key, value in flags.items()}
-        blocked_reason = ("window_missing" if window is None else
+        blocked_reason = ("window_missing" if window is None and not menu_action else
             "modal_window" if flags["AXModal"] else "sheet_open" if flags["AXSheets"] else
             "minimized_window" if flags["AXMinimized"] else
             "dialog_window" if subrole in {"AXDialog", "AXSystemDialog"} and not scene_dialog else
             "menu_or_sheet_focus" if role in {"AXMenu", "AXMenuItem"} else
             info.get("focus_reason", "blocked_window"))
-        finish(blocked_reason if blocked else recognized.diagnostic.get("reason", "ready"))
+        finish(blocked_reason if blocked else "ready" if menu_action and window is None else
+               recognized.diagnostic.get("reason", "ready"))
         return ShortcutTarget(bundle, pid, profile or bundle, window, focus, role, blocked,
                               menu_action=menu_action, scene=active_scene, scene_checked=scene,
                               input_context=input_context, document_key=document_key, page_key=recognized.page_key,
@@ -262,7 +293,7 @@ class LocalMacAppShortcuts:
             return outcome("foreground_changed")
         if current.blocked:
             return outcome(current.diagnostic.get("reason", "blocked_window"))
-        if target.window is not None and current.window != target.window:
+        if (target.window is not None or target.menu_action) and current.window != target.window:
             return outcome("window_changed")
         if target.page_key or current.page_key:
             if (current.page_key != target.page_key
@@ -294,6 +325,8 @@ class LocalMacAppShortcuts:
         self.last_diagnostic = dict(trace_id=target.trace_id, reason="dispatch_started",
             delivery="unknown", events_posted=0, events_planned=len(events),
             event_sequence="balanced_modifiers_v1", modifier_keys=modifiers, validation=validation)
+        self.last_diagnostic["event_flags"] = [int(Quartz.CGEventGetFlags(event))
+                                                for _, _, event in events]
         post_chord(Quartz, target.pid, events, releases, self.last_diagnostic)
         self.last_diagnostic.update(reason="shortcut_posted", delivery="posted_unverified")
 

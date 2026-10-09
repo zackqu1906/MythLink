@@ -6,8 +6,8 @@ from pathlib import Path
 import plistlib
 import subprocess
 
-from .gesture_scenes import presentation_profile
-from .scene_capabilities import application_scene_profiles
+from .scenes.capabilities import presentation_profile
+from .scenes.capabilities import application_scene_profiles
 
 
 def application_roots():
@@ -71,7 +71,7 @@ def application_metadata(path):
         except (ImportError, AttributeError):
             pass
         aliases = ' '.join(str(info.get(key) or '') for key in ('CFBundleDisplayName', 'CFBundleName', 'CFBundleExecutable'))
-        from .application_scene_policy import primary_scene
+        from .scenes.policy import primary_scene
         profiles = application_scene_profiles(bundle, info)
         return dict(value=bundle, label=label, path=str(path), running=False,
                     search=f'{label} {path.stem} {aliases} {bundle}'.casefold(),

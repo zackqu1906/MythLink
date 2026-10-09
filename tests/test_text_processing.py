@@ -193,7 +193,7 @@ def test_deepseek_router_disables_reasoning(monkeypatch):
         LLMSettings(
             enabled=True,
             base_url="https://ark.cn-beijing.volces.com/api/v3",
-            model="deepseek-v4-flash-260425",
+            model="deepseek-v4-1-flash-260910",
             api_key_env="ARK_API_KEY",
             provider=LLM_PROVIDER_VOLCENGINE,
         ),
@@ -909,7 +909,7 @@ def test_deepseek_v4_flash_reuses_ark_edit_pipeline(monkeypatch):
         LLMSettings(
             enabled=True,
             base_url="https://ark.cn-beijing.volces.com/api/v3",
-            model="deepseek-v4-flash-260425",
+            model="deepseek-v4-1-flash-260910",
             api_key_env="ARK_API_KEY",
             provider=LLM_PROVIDER_VOLCENGINE,
         ),
@@ -919,7 +919,7 @@ def test_deepseek_v4_flash_reuses_ark_edit_pipeline(monkeypatch):
     assert result == "原文。"
     body = json.loads(captured[0].data.decode("utf-8"))
     assert captured[0].full_url.endswith("/api/v3/responses")
-    assert body["model"] == "deepseek-v4-flash-260425"
+    assert body["model"] == "deepseek-v4-1-flash-260910"
     assert body["tools"][0]["name"] == "submit_text_edit"
     assert body["thinking"] == {"type": "disabled"}
     assert "original_text：从待修改文本逐字复制" in (

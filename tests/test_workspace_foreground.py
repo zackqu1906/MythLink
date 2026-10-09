@@ -32,13 +32,13 @@ def desktop(monkeypatch):
         NSDate=SimpleNamespace(dateWithTimeIntervalSinceNow_=lambda interval: interval)))
     monkeypatch.setitem(sys.modules, "Quartz", SimpleNamespace(
         kCGWindowListOptionOnScreenOnly=1, kCGWindowListExcludeDesktopElements=2,
-        kCGNullWindowID=0, kCGWindowNumber="number", kCGWindowOwnerPID="pid",
-        kCGWindowLayer="layer", kCGWindowBounds="bounds",
+        kCGNullWindowID=0, kCGWindowNumber="kCGWindowNumber", kCGWindowOwnerPID="kCGWindowOwnerPID",
+        kCGWindowLayer="kCGWindowLayer", kCGWindowBounds="kCGWindowBounds",
         CGWindowListCopyWindowInfo=lambda *args: [
-            {"number": 101, "pid": 11, "layer": 0,
-             "bounds": {"X": 0, "Y": 0, "Width": 200, "Height": 100}},
-            {"number": 202, "pid": 22, "layer": 0,
-             "bounds": {"X": 300, "Y": 0, "Width": 400, "Height": 200}}]))
+            {"kCGWindowNumber": 101, "kCGWindowOwnerPID": 11, "kCGWindowLayer": 0,
+             "kCGWindowBounds": {"X": 0, "Y": 0, "Width": 200, "Height": 100}},
+            {"kCGWindowNumber": 202, "kCGWindowOwnerPID": 22, "kCGWindowLayer": 0,
+             "kCGWindowBounds": {"X": 300, "Y": 0, "Width": 400, "Height": 200}}]))
     return state
 
 

@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-from proximic_ring.scene_recognition.engine import detect_scene
-from proximic_ring.scene_recognition.models import SceneResult, PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
+from proximic_ring.scenes.recognition.engine import detect_scene
+from proximic_ring.scenes.models import SceneResult, PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
 from proximic_ring.scene_capabilities import application_scene_profiles
 from test_activity_scenes import content, metadata
 from test_gesture_scenes import window_tree, wps_window_tree
@@ -70,12 +70,15 @@ class Guard:
         forbidden = ('PySide6', 'AppKit', 'Quartz', 'ApplicationServices',
                      'proximic_ring.ui', 'proximic_ring.app_shortcuts',
                      'proximic_ring.scene_defaults', 'proximic_ring.application_defaults',
-                     'proximic_ring.browser_shortcuts')
+                     'proximic_ring.browser_shortcuts', 'proximic_ring.scenes.adapters',
+                     'proximic_ring.scenes.defaults', 'proximic_ring.scenes.configuration',
+                     'proximic_ring.scenes.migrations', 'proximic_ring.scenes.resolver',
+                     'proximic_ring.scenes.menus')
         if any(fullname == name or fullname.startswith(name + '.') for name in forbidden):
             raise AssertionError('Recognition imported an execution/configuration dependency: ' + fullname)
 sys.meta_path.insert(0, Guard())
-from proximic_ring.scene_recognition.engine import detect_scene
-from proximic_ring.scene_recognition.models import SceneResult
+from proximic_ring.scenes.recognition.engine import detect_scene
+from proximic_ring.scenes.models import SceneResult
 assert detect_scene('', {}, None, None, lambda *args: None) == SceneResult()
 '''
     result = subprocess.run([sys.executable, '-B', '-c', script], capture_output=True, text=True, timeout=10)
@@ -85,6 +88,6 @@ assert detect_scene('', {}, None, None, lambda *args: None) == SceneResult()
 @pytest.mark.parametrize('entry', ['scene_defaults', 'gesture_scenes', 'browser_shortcuts', 'app_shortcuts', 'scene_capabilities'])
 def test_configuration_and_runtime_import_order_has_no_cycle(entry):
     result = subprocess.run([sys.executable, '-B', '-c',
-        f'import proximic_ring.{entry}; from proximic_ring.scene_recognition.engine import detect_scene'],
+        f'import proximic_ring.{entry}; from proximic_ring.scenes.recognition.engine import detect_scene'],
         capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr

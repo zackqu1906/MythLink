@@ -10,6 +10,8 @@ final class IMEService {
     private(set) var epoch: String?
     var modeShortcut = "F8"
     var cancelShortcut = "Esc"
+    var gestureHints = VoiceHudBindings()
+    var hudAppearance = VoiceHudAppearance()
     var multiUndoEnabled = false
 
     private init() {
@@ -51,6 +53,12 @@ final class IMEService {
             return
         }
         guard let epoch, message["epoch"] as? String == epoch else { return }
+        if type == "configure_hud" {
+            gestureHints.apply(message["gesture_hints"])
+            hudAppearance.apply(message["scale_percent"])
+            activeController?.configureGestureHints()
+            return // Presentation only: never reconfigure shortcuts, undo or a sentence.
+        }
         if type == "configure" {
             if let value = message["mode_switch_shortcut"] as? String { modeShortcut = value }
             if let value = message["cancel_shortcut"] as? String { cancelShortcut = value }
@@ -96,6 +104,11 @@ final class ProxiMicInputController: IMKInputController {
     private var activationApplication = ""
     private var ownsActivation: Bool { IMEService.shared.activation.owns(self, activationLease) }
     private let panel = ActionPanel()
+    private var strokePanel: StrokeCandidatePanel?
+    private var strokeCode = ""
+    private var strokeCandidates: [String] = []
+    private var strokeActive = false
+    private var strokeSessionID = ""
     private var isWriting = false
     private var lastError = ""
     private var lastContext: EditorSnapshot?
@@ -109,6 +122,11 @@ final class ProxiMicInputController: IMKInputController {
     var isUnboundIdleClient: Bool {
         activated && !preparingActivation && session == nil
             && (lastContext == nil || lastContext?.startError != nil)
+    }
+
+    func configureGestureHints() {
+        panel.configureGestureHints(IMEService.shared.gestureHints)
+        panel.configureAppearance(IMEService.shared.hudAppearance)
     }
 
     func configureUndoHistory(_ enabled: Bool) {
@@ -149,6 +167,11 @@ final class ProxiMicInputController: IMKInputController {
         timer = nil
         panel.hide()
         undoHistory.clear()
+        strokePanel?.hide()
+        strokeCode = ""
+        strokeCandidates = []
+        strokeActive = false
+        strokeSessionID = ""
         undoHistory.configure(enabled: service.multiUndoEnabled)
         undoSourceUtteranceID = nil
         if let previous, previous !== self {
@@ -157,6 +180,11 @@ final class ProxiMicInputController: IMKInputController {
             previous.timer?.invalidate()
             previous.timer = nil
             previous.panel.hide()
+            previous.strokePanel?.hide()
+            previous.strokeCode = ""
+            previous.strokeCandidates = []
+            previous.strokeActive = false
+            previous.strokeSessionID = ""
             previous.invalidate("已切换输入框")
         }
         guard service.activation.owns(self, lease) else { return }
@@ -227,6 +255,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     private func retireActivation(_ event: String, reason: String) {
+        clearStroke()
         traceLifecycle(event)
         let lease = activationLease
         activated = false
@@ -261,7 +290,7 @@ final class ProxiMicInputController: IMKInputController {
         super.inputControllerWillClose()
     }
 
-    override func hidePalettes() { panel.hide() }
+    override func hidePalettes() { panel.hide(); strokePanel?.hide() }
 
     override func recognizedEvents(_ sender: Any!) -> Int {
         // Geometry-only ACKs normalize full-composition selections. Observe
@@ -273,12 +302,14 @@ final class ProxiMicInputController: IMKInputController {
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard activated, ownsActivation, let event else { return false }
         if event.type == .leftMouseDown {
+            clearStroke(ending: strokeSessionID.isEmpty)
             if session?.active == true || undoHistory.enabled || adapter?.clientOperationPending == true {
                 invalidate("鼠标操作已接管本句")
             }
             return false
         }
         guard event.type == .keyDown else { return false }
+        clearStroke(ending: strokeSessionID.isEmpty)
         if let compatibility = adapter?.pendingCompatibility,
            compatibility.acceptsKey(code: Int(event.keyCode), command: event.modifierFlags.contains(.command),
                                     shift: event.modifierFlags.contains(.shift),
@@ -311,6 +342,10 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     override func commitComposition(_ sender: Any!) {
+        if strokeActive {
+            if !isWriting { clearStroke() }
+            return
+        }
         guard activated, ownsActivation, !isWriting, let session else { return }
         lastLifecycleEvent = session.active && session.hasComposition ? "commit_composition" : "commit_composition_ignored"
         isWriting = true
@@ -339,6 +374,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostDisconnected() {
+        clearStroke()
         undoHistory.clear()
         rejectedBeginID = nil
         lastLifecycleEvent = "host_disconnected"
@@ -352,6 +388,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostConnected() {
+        clearStroke()
         undoHistory.clear()
         rejectedBeginID = nil
         lastLifecycleEvent = "host_connected"
@@ -389,15 +426,21 @@ final class ProxiMicInputController: IMKInputController {
     func receive(_ message: [String: Any]) {
         guard activated, ownsActivation, !preparingActivation, let adapter, let type = message["type"] as? String else { return }
         if type == "reset", message["all"] as? Bool == true {
+            clearStroke()
             lastLifecycleEvent = "reset"
             invalidate("主程序已结束本句")
             sendState(includeSnapshot: true)
+            return
+        }
+        if type.hasPrefix("stroke_"), message["client_id"] as? String == currentClientID {
+            receiveStroke(message, adapter: adapter, type: type)
             return
         }
         guard message["client_id"] as? String == currentClientID,
               let utteranceID = message["utterance_id"] as? String,
               let sequence = message["seq"] as? Int else { return }
         if type == "begin" {
+            if strokeActive { return }
             let requestedClientID = currentClientID
             if session?.utteranceID == utteranceID { return }
             if let session, session.phase == .error, session.hasComposition || session.awaitingReadback {
@@ -460,6 +503,7 @@ final class ProxiMicInputController: IMKInputController {
                 }
             case "convert": session.convert()
             case "finish": session.finish()
+            case "finish_dictation": session.finishAsDictation()
             case "edit_result":
                 if let revision = message["revision"] as? Int {
                     let result = message["text"] as? String ?? ""
@@ -472,6 +516,133 @@ final class ProxiMicInputController: IMKInputController {
                 session.interrupt("主程序已结束本句")
             default: break
             }
+        }
+    }
+
+    private func clearStroke(notify: Bool = true, ending: Bool = true) {
+        guard strokeActive || !strokeCode.isEmpty else { return }
+        let clientID = currentClientID
+        let request = strokeSessionID
+        let hadCode = !strokeCode.isEmpty
+        strokeCode = ""
+        strokeCandidates = []
+        if ending {
+            strokeActive = false
+            strokeSessionID = ""
+            strokePanel?.hide()
+        } else {
+            strokePanel?.update(code: "", candidates: [], selected: 0)
+            strokePanel?.trace(points: [], finished: false, style: [:])
+        }
+        if hadCode && activated && ownsActivation {
+            let wasWriting = isWriting
+            isWriting = true
+            adapter?.mark("")
+            isWriting = wasWriting
+        }
+        if notify {
+            IMEService.shared.send(["type": ending ? "stroke_cleared" : "stroke_ink_cleared",
+                                    "client_id": clientID, "stroke_session": request])
+        }
+    }
+
+    private func receiveStroke(_ message: [String: Any], adapter: NativeInputClient, type: String) {
+        let clientID = currentClientID
+        let token = message["stroke_session"] as? String ?? ""
+        if type != "stroke_begin", token != strokeSessionID { return }
+        if type == "stroke_end" { clearStroke(notify: false); return }
+        if type == "stroke_clear" { clearStroke(notify: false, ending: token.isEmpty); return }
+        guard !isWriting, !adapter.clientOperationPending,
+              session?.hasComposition != true, session?.awaitingReadback != true else { return }
+        if let session, [.listening, .finishing, .editing].contains(session.phase) { return }
+        switch type {
+        case "stroke_begin":
+            guard !token.isEmpty, !strokeActive || token == strokeSessionID else { return }
+            let context = try? adapter.snapshotForBeginning()
+            guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
+            guard let context, context.startError == nil else {
+                IMEService.shared.send(["type": "stroke_ready", "client_id": clientID, "stroke_session": token,
+                                        "success": false, "error": context?.startError ?? "请先点入可编辑的文本框"])
+                return
+            }
+            // Only completed voice bookkeeping is retired. No voice BEGIN,
+            // finish, cancellation, or input-source restoration happens here.
+            session = nil
+            undoHistory.clear()
+            lastContext = context
+            panel.hide()
+            strokeActive = true
+            strokeSessionID = token
+            if strokePanel == nil { strokePanel = StrokeCandidatePanel() }
+            strokePanel?.exitGestureLabel = String((message["gesture_label"] as? String ?? "Touchpad 双击").prefix(20))
+            strokePanel?.update(code: "", candidates: [], selected: 0)
+            tick()
+            guard activated, ownsActivation, currentClientID == clientID, strokeSessionID == token else { return }
+            guard strokePanel?.isVisible == true else {
+                clearStroke(notify: false)
+                IMEService.shared.send(["type": "stroke_ready", "client_id": clientID, "stroke_session": token,
+                                        "success": false, "panel_visible": false,
+                                        "error": "无法定位笔画浮窗，已回到鼠标模式"])
+                return
+            }
+            let prefix = adapter.strokeContext()
+            guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
+            IMEService.shared.send(["type": "stroke_ready", "client_id": clientID, "stroke_session": token,
+                                    "success": true, "panel_visible": true, "context": prefix ?? ""])
+            sendState()
+        case "stroke_trace":
+            guard strokeActive else { return }
+            strokePanel?.trace(points: message["points"] as? [[Double]] ?? [],
+                               finished: message["finished"] as? Bool ?? false,
+                               style: message["style"] as? [String: Any] ?? [:])
+        case "stroke_update":
+            let code = String((message["code"] as? String ?? "").prefix(64))
+            let candidates = Array((message["candidates"] as? [String] ?? []).prefix(5))
+            let prediction = code.isEmpty && message["prediction"] as? Bool == true
+                && strokeActive && !token.isEmpty && !candidates.isEmpty
+            if code.isEmpty && !prediction { clearStroke(notify: false, ending: token.isEmpty); return }
+            // A completed voice sentence can yield ownership without rewriting it.
+            if strokeCode.isEmpty, session?.active == true {
+                invalidate("笔画输入已接管")
+                guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
+            }
+            if code != strokeCode {
+                isWriting = true
+                strokeActive = true
+                strokeCode = code
+                adapter.mark(code)
+                isWriting = false
+                guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
+            }
+            strokeCandidates = candidates
+            if strokePanel == nil { strokePanel = StrokeCandidatePanel() }
+            strokePanel?.update(code: code, candidates: strokeCandidates, selected: message["selected"] as? Int ?? 0)
+            tick()
+        case "stroke_commit":
+            let request = message["request_id"] as? String ?? ""
+            let value = message["text"] as? String ?? ""
+            let accepted = !request.isEmpty && value.count == 1 && strokeCandidates.contains(value)
+                && (!strokeCode.isEmpty || (strokeActive && !token.isEmpty))
+            var prefix: String?
+            if accepted {
+                isWriting = true
+                adapter.commit(value)
+                isWriting = false
+                guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
+                strokeCode = ""
+                strokeCandidates = []
+                if strokeSessionID.isEmpty { strokeActive = false; strokePanel?.hide() }
+                else { strokePanel?.update(code: "", candidates: [], selected: 0) }
+                strokePanel?.trace(points: [], finished: false, style: [:])
+                prefix = adapter.strokeContext()
+                guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
+            }
+            var result: [String: Any] = ["type": "stroke_result", "client_id": clientID,
+                                    "request_id": request, "stroke_session": token, "success": accepted,
+                                    "error": accepted ? "" : "笔画组合已失效，请重新书写"]
+            if let prefix { result["context"] = prefix }
+            IMEService.shared.send(result)
+        default: break
         }
     }
 
@@ -553,7 +724,8 @@ final class ProxiMicInputController: IMKInputController {
         defer { stateReadInProgress = false }
         let stateClientID = currentClientID
         let context: EditorSnapshot?
-        if let session, session.active, requestID == nil || [.listening, .finishing].contains(session.phase) { context = session.original }
+        if strokeActive { context = lastContext }
+        else if let session, session.active, requestID == nil || [.listening, .finishing].contains(session.phase) { context = session.original }
         else if includeSnapshot { context = try? adapter.snapshotForBeginning() }
         else { context = lastContext }
         guard activated, ownsActivation, currentClientID == stateClientID, self.adapter === adapter else { return }
@@ -605,6 +777,7 @@ final class ProxiMicInputController: IMKInputController {
         if !preservingHistory, [.error, .interrupted].contains(session.phase) { undoHistory.clear() }
         sendState(includeSnapshot: includeSnapshot || session.phase == .error)
         guard activated, ownsActivation, self.session === session else { return }
+        configureGestureHints()
         panel.update(session, historyDepth: undoHistory.count)
         tick()
     }
@@ -621,6 +794,13 @@ final class ProxiMicInputController: IMKInputController {
         }
         guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
         selectionPolls += 1
+        if strokeActive {
+            if strokePanel?.needsPosition == true {
+                strokePanel?.position(caret: adapter.caret(compositionLength: (strokeCode as NSString).length, trace: false),
+                                      clientLevel: adapter.client.windowLevel())
+            }
+            return
+        }
         if !isWriting, needsIdleTargetRefresh, selectionPolls % 15 == 0,
            session?.hasComposition != true, session?.awaitingReadback != true {
             // Retry an unavailable selection without reading or modifying

@@ -106,6 +106,18 @@ final class NativeInputClient: HandoffClient {
     func snapshotForBeginning() throws -> EditorSnapshot { try readSnapshot(includeComposition: false) }
     func startingSelection() -> NSRange { client.selectedRange() }
 
+    /// Only a short, exact prefix is needed for local next-character suggestions.
+    /// An unreadable range is distinct from a caret at the start of the field.
+    func strokeContext() -> String? {
+        guard isCurrent() else { return nil }
+        let selected = client.selectedRange()
+        guard isCurrent(), isValidRange(selected) else { return nil }
+        let count = min(8, selected.location)
+        let value = readText(in: NSRange(location: selected.location - count, length: count))
+        guard isCurrent(), client.selectedRange() == selected, isCurrent() else { return nil }
+        return value.map { String($0.suffix(4)) }
+    }
+
     private func validateReadLease() throws {
         guard isCurrent() else { throw CompositionError.interrupted("输入连接已更新，已丢弃旧读取") }
     }

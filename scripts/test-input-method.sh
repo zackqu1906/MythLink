@@ -8,10 +8,19 @@ xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -fra
   "$TASK_ROOT/native/ProxiMicInput/Tests/ActionPanelAnchor/main.swift" -o "$BUILD_ROOT/panel-anchor-tests"
 "$BUILD_ROOT/panel-anchor-tests"
 xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -framework AppKit \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/ActionPanelAnchor.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/InputPaletteStyle.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/StrokeCandidatePanel.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Tests/StrokePanel/main.swift" -o "$BUILD_ROOT/stroke-panel-tests"
+"$BUILD_ROOT/stroke-panel-tests"
+xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -framework AppKit \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CompositionSession.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/ActionPanelAnchor.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CaretDiagnostics.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/ActionPanelPresentation.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/VoiceHudBindings.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/VoiceHudViews.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/InputPaletteStyle.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/ActionPanel.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Tests/ActionPanel/main.swift" -o "$BUILD_ROOT/panel-presentation-tests"
 "$BUILD_ROOT/panel-presentation-tests"
@@ -55,6 +64,7 @@ xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -fra
 ACTIVATION_SOURCES=("$TASK_ROOT"/native/ProxiMicInput/Sources/*.swift)
 ACTIVATION_SOURCES=("${(@)ACTIVATION_SOURCES:#*/main.swift}")
 ACTIVATION_SOURCES=("${(@)ACTIVATION_SOURCES:#*/ActionPanel.swift}")
+ACTIVATION_SOURCES=("${(@)ACTIVATION_SOURCES:#*/StrokeCandidatePanel.swift}")
 xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
   -framework AppKit -framework InputMethodKit -framework Carbon \
   "${ACTIVATION_SOURCES[@]}" "$TASK_ROOT/native/ProxiMicInput/Tests/Activation/main.swift" \

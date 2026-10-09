@@ -21,7 +21,25 @@ class TouchpadClick:
     kind: Literal['click'] = 'click'
 
 
-TouchpadEvent = TouchpadMove | TouchpadClick
+@dataclass(frozen=True)
+class TouchpadContact:
+    state: Literal['down', 'up', 'reset']
+    step: int
+    timestamp: float
+    confirmed_step: int | None = None
+    kind: Literal['contact'] = 'contact'
+
+
+@dataclass(frozen=True)
+class TouchpadClickVerdict:
+    start_step: int
+    step: int
+    is_click: bool
+    timestamp: float
+    kind: Literal['click_verdict'] = 'click_verdict'
+
+
+TouchpadEvent = TouchpadMove | TouchpadClick | TouchpadContact | TouchpadClickVerdict
 
 @dataclass(frozen=True)
 class TouchpadStats:
@@ -33,5 +51,14 @@ class TouchpadStats:
     duplicate_packets: int = 0
     stale_packets: int = 0
     queue_overflows: int = 0
+    sequence_gaps: int = 0
+    missing_packets: int = 0
+    arrival_gaps: int = 0
+    idle_resets: int = 0
+    reboots: int = 0
     contact_probability: float = 0.
     last_data_age_s: float | None = None
+    inference_batch_ms: float = 0.
+    packet_queue_age_ms: float = 0.
+    inference_thread_cpu_ms: float = 0.
+    inference_batch_packets: int = 0

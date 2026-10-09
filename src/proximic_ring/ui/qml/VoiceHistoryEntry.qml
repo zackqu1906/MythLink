@@ -192,13 +192,14 @@ Rectangle {
             text: row.textExpanded ? "收起全文  ⌃" : "展开全文  ⌄"
             onClicked: row.textExpanded = !row.textExpanded
         }
-        Label {
+        UiNotice {
             objectName: "voiceHistoryOutcomeStatus"
+            warning: !row.failedEntry
             Layout.fillWidth: true
             visible: row.outcomeText.length > 0
             text: row.outcomeText + (row.nativeUndoSent ? " · 结果由目标应用处理，未回读确认" : row.undoneEntry
                                     ? row.editEntry ? " · 文本已恢复到编辑前状态" : " · 本次听写已从原文本框移除" : "")
-            color: row.failedEntry ? "#B54756" : "#956721"; font.pixelSize: 12; wrapMode: Text.Wrap
+            color: row.failedEntry ? "#B54756" : theme.warning; font.pixelSize: 12; wrapMode: Text.Wrap
         }
         Label {
             objectName: "voiceHistoryTechnicalDetails"

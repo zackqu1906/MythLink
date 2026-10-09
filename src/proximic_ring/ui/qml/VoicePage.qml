@@ -17,7 +17,7 @@ ScrollView {
     contentWidth: availableWidth
     contentHeight: pageContent.height
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
     function resetHistoryFilters() {
         searchDebounce.stop()
         historySearch.clear()
@@ -36,6 +36,9 @@ ScrollView {
         id: searchDebounce
         interval: 160
         onTriggered: page.historyModel.searchText = historySearch.text
+    }
+    function scrollToGestures() {
+        page.contentItem.contentY = Math.min(voiceGestureCard.y, Math.max(0, page.contentHeight - page.availableHeight))
     }
     function scrollToHistory() {
         Qt.callLater(function() {
@@ -109,13 +112,15 @@ ScrollView {
                 RowLayout {
                     Layout.fillWidth: true
                     visible: page.controller.inlineInput.enabled
-                    Label {
+                    UiNotice {
                         objectName: "inputMethodConnectionStatus"
+                        warning: !page.controller.inlineInput.ready
                         Layout.fillWidth: true
                         text: page.controller.inlineInput.connectionStatus
-                        color: page.controller.inlineInput.ready ? theme.success : "#996516"
+                        color: warning ? theme.warning : theme.success
                         font.pixelSize: 12; wrapMode: Text.Wrap
                     }
+                    UiAction { objectName: "openVoiceGestureSettingsButton"; text: "语音手势"; quiet: true; onClicked: page.scrollToGestures() }
                     UiAction { objectName: "inputMethodSetupButton"; text: "输入法设置"; quiet: true; onClicked: page.inputSetupRequested() }
                 }
                 PermissionNotice {
@@ -153,11 +158,18 @@ ScrollView {
                 }
             }
         }
+        VoiceGestureSettingsCard {
+            id: voiceGestureCard
+            objectName: "voiceGestureSettingsCard"
+            width: parent.width
+            height: implicitHeight
+            controller: page.controller
+        }
         Rectangle {
             id: voiceHistoryCard
             objectName: "voiceHistoryCard"
             width: parent.width
-            height: Math.max(380, page.availableHeight - voiceInputCard.height - pageContent.spacing)
+            height: Math.max(380, page.availableHeight - voiceInputCard.height - voiceGestureCard.height - 2 * pageContent.spacing)
             radius: 16; color: theme.surface; border.color: theme.line
             ColumnLayout {
                 anchors.fill: parent; anchors.margins: 22; spacing: 14
@@ -239,7 +251,7 @@ ScrollView {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     clip: true; spacing: 10
                     model: page.historyModel
-                    ScrollBar.vertical: ScrollBar { }
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                     delegate: VoiceHistoryEntry {
                         width: voiceHistoryList.width
                         controller: page.controller

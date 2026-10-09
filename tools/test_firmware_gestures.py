@@ -26,7 +26,7 @@ from ring_python_sdk.core.constants import (  # noqa: E402
     INFO_COMP_SWIPE, INFO_SWIPE_MODEL_NONE,
     SWIPE_CLASS_LABELS_V2, SWIPE_GESTURE_IDS_V2,
 )
-from ring_python_sdk.swipe import SwipeProcessor, SwipeResult  # noqa: E402
+from ring_python_sdk.swipe import DoublePinchDetector, SwipeProcessor, SwipeResult  # noqa: E402
 
 
 GESTURE_LABELS = {
@@ -41,6 +41,7 @@ CSV_FIELDS = [
     "seq", "class_id", "name", "name_zh", "confidence", "uptime_ms",
     "center_uptime_ms", "event_mass", "trigger_index",
     "trigger_interval_host_ms", "trigger_interval_device_ms",
+    "double_pinch_index", "double_pinch_interval_ms", "double_pinch_first_seq",
     *(f"s{i}" for i in range(7)), *(f"p{i}" for i in SWIPE_GESTURE_IDS_V2),
 ]
 
@@ -76,11 +77,14 @@ def firmware_swipe_capability(info) -> dict:
 class GestureRecorder:
     """Write all classifications, but count/print triggers separately."""
 
-    def __init__(self, csv_path: Path, *, show_events: bool = False, demo: bool = False):
+    def __init__(self, csv_path: Path, *, show_events: bool = False, demo: bool = False,
+                 double_pinch: DoublePinchDetector | None = None):
         self.csv_path = csv_path
         self.summary_path = csv_path.with_suffix(".summary.json")
         self.source = "demo" if demo else "firmware"
         self.show_events = show_events
+        self.double_pinch = double_pinch
+        self.double_pinch_count = 0
         self.started = time.monotonic()
         self.received_count = 0
         self.event_count = 0
@@ -122,6 +126,14 @@ class GestureRecorder:
         row.update({f"s{i}": value for i, value in enumerate(result.scores)})
         row.update({f"p{i}": value for i, value in zip(SWIPE_GESTURE_IDS_V2, result.probabilities)})
         interval = None
+        double = self.double_pinch.feed(result) if self.double_pinch else None
+        if double is not None:
+            self.double_pinch_count += 1
+            row.update({
+                "double_pinch_index": self.double_pinch_count,
+                "double_pinch_interval_ms": double.interval_ms,
+                "double_pinch_first_seq": double.first.seq,
+            })
         if result.kind == "trigger":
             self.trigger_count += 1
             self.trigger_counts[result.name] += 1
@@ -151,7 +163,15 @@ class GestureRecorder:
                 f"{row['name_zh']} ({result.name})  V{result.protocol_version} "
                 f"id={result.class_id} seq={result.seq} confidence={confidence} "
                 f"uptime={result.uptime_ms}ms"
-                + (f"  距上次触发={gap}" if result.kind == "trigger" else ""),
+                + (f" center={result.center_uptime_ms}ms" if result.center_uptime_ms is not None else "")
+                + (f"  接收间隔={gap}" if result.kind == "trigger" else ""),
+                flush=True,
+            )
+        if double is not None:
+            print(
+                f"  >>> DOUBLE PINCH #{self.double_pinch_count:04d}："
+                f"连续两次{row['name_zh']}，动作间隔={double.interval_ms}ms "
+                f"(seq {double.first.seq} → {double.second.seq})",
                 flush=True,
             )
 
@@ -167,6 +187,8 @@ class GestureRecorder:
                if stats else ""),
             flush=True,
         )
+        if self.double_pinch is not None:
+            print(f"  DOUBLE PINCH={self.double_pinch_count}", flush=True)
         if self.received_count == 0:
             print("  START 已发送不等于固件已确认；请尝试手势，并核对固件是否支持 Swipe。", flush=True)
 
@@ -183,10 +205,19 @@ class GestureRecorder:
             "csv_path": str(self.csv_path),
             "note": "Raw firmware trigger packets, including repeats. Counts are not accuracy; intervals are not end-to-end recognition latency.",
         }
+        if self.double_pinch is not None:
+            summary["double_pinch"] = {
+                "count": self.double_pinch_count,
+                "pinch_name": self.double_pinch.pinch_name,
+                "min_interval_ms": self.double_pinch.min_interval_ms,
+                "max_interval_ms": self.double_pinch.max_interval_ms,
+            }
         with self.summary_path.open("x", encoding="utf-8") as output:
             json.dump(summary, output, ensure_ascii=False, indent=2)
             output.write("\n")
         print(f"\n测试结束：{reason}，共 {self.trigger_count} 个 TRIGGER", flush=True)
+        if self.double_pinch is not None:
+            print(f"连续两次 pinch：{self.double_pinch_count} 组", flush=True)
         for name, count in self.trigger_counts.items():
             print(f"  {GESTURE_LABELS.get(name, name)} ({name}): {count}")
         print(f"完整记录：{self.csv_path}\n统计摘要：{self.summary_path}", flush=True)
@@ -201,6 +232,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--status-interval", type=float, default=5.0, help="状态汇总间隔秒数")
     result.add_argument("--csv", type=Path, help="完整 EVENT/TRIGGER CSV；不会覆盖已有文件")
     result.add_argument("--show-events", action="store_true", help="终端同时打印逐次分类（含 empty，输出较多）")
+    result.add_argument("--double-pinch", action="store_true", help="启用连续两次 pinch 判断")
+    result.add_argument("--pinch-name", choices=("index-pinch", "middle-pinch", "tap"),
+                        default="index-pinch", help="双 pinch 类型（默认食指；旧版 click-pinch 可选 tap）")
+    result.add_argument("--min-interval-ms", type=float, default=120,
+                        help="两次 pinch 的最小间隔毫秒，抑制过快重复（默认 120）")
+    result.add_argument("--max-interval-ms", type=float, default=600,
+                        help="两次 pinch 的最大间隔毫秒（默认 600）")
     mode = result.add_mutually_exclusive_group()
     mode.add_argument("--scan", action="store_true", help="仅列出附近 BLE 设备，不连接")
     mode.add_argument("--demo", action="store_true", help="用合成协议包演示全部 11 个手势，不连接戒指")
@@ -208,16 +246,32 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
-def demo_packet(class_id: int, *, seq: int, trigger: bool) -> bytearray:
+def demo_packet(class_id: int, *, seq: int, trigger: bool,
+                uptime_ms: int | None = None) -> bytearray:
     probabilities = [0.0] * len(SWIPE_GESTURE_IDS_V2)
     probabilities[SWIPE_GESTURE_IDS_V2.index(class_id)] = 1.0
-    uptime = 2000 + seq * 500
+    uptime = 2000 + seq * 500 if uptime_ms is None else uptime_ms
     data = bytes([0x26, 6 if trigger else 5]) + struct.pack(
         "<HB12fI", seq, class_id, *probabilities, uptime
     )
     if trigger:
         data += struct.pack("<If", uptime - 150, 0.9)
     return bytearray(data)
+
+
+def double_pinch_demo_packets(pinch_name: str):
+    """Default settings yield two pairs, despite duplicates and interruptions."""
+    class_id = {"index-pinch": 8, "middle-pinch": 9, "tap": 5}[pinch_name]
+    for seq, gesture, uptime in (
+        (1, class_id, 1000), (1, class_id, 1000),  # Duplicate, not a second pinch.
+        (2, class_id, 1300), (2, class_id, 1300),  # First pair; duplicate ignored.
+        (3, class_id, 2200), (4, class_id, 2250),  # Too fast.
+        (5, class_id, 3100), (6, 6, 3250),       # Too late, then snap interrupts.
+        (7, class_id, 3400), (8, class_id, 3700), # Second pair.
+        (9, class_id, 4000),                    # Third pinch is a new first.
+    ):
+        yield demo_packet(gesture, seq=seq, trigger=False, uptime_ms=uptime)
+        yield demo_packet(gesture, seq=seq, trigger=True, uptime_ms=uptime)
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -235,6 +289,16 @@ async def run(args: argparse.Namespace) -> int:
     print("固件端手势测试 — 仅观察 EVENT / TRIGGER")
     print(f"设备：{args.selector or args.name} | 时长：{args.duration or '直到 Ctrl+C'} | CSV：{csv_path}")
     print("手势：" + "、".join(GESTURE_LABELS[name] for key, name in SWIPE_CLASS_LABELS_V2.items() if key))
+    detector = None
+    if args.double_pinch:
+        detector = DoublePinchDetector(
+            pinch_name=args.pinch_name, min_interval_ms=args.min_interval_ms,
+            max_interval_ms=args.max_interval_ms,
+        )
+        print(f"双 pinch：{GESTURE_LABELS[args.pinch_name]}，"
+              f"动作间隔 {args.min_interval_ms:g}–{args.max_interval_ms:g}ms；"
+              "中间其他手势会取消配对，成功后不重复使用前一次动作。")
+        print("请做：捏合 → 松开 → 再捏合；每组结束后停顿约 1 秒。")
     if args.dry_run:
         return 0
     if args.demo:
@@ -242,7 +306,8 @@ async def run(args: argparse.Namespace) -> int:
     else:
         print("请先在主程序及其他 BLE 工具中断开这枚戒指；Ctrl+C 停止并保存。", flush=True)
 
-    recorder = GestureRecorder(csv_path, show_events=args.show_events, demo=args.demo)
+    recorder = GestureRecorder(csv_path, show_events=args.show_events, demo=args.demo,
+                               double_pinch=detector)
     session = None
     processor = None
     metadata: dict = {}
@@ -254,11 +319,17 @@ async def run(args: argparse.Namespace) -> int:
                 print_events=False, print_triggers=False, print_profile=False,
                 on_event=recorder.observe, on_trigger=recorder.observe,
             )
-            for seq, class_id in enumerate(SWIPE_GESTURE_IDS_V2):
-                processor.handle_notification(None, demo_packet(class_id, seq=seq, trigger=False))
-                if class_id:
-                    processor.handle_notification(None, demo_packet(class_id, seq=seq, trigger=True))
-                await asyncio.sleep(0.05)
+            if args.double_pinch:
+                packets = double_pinch_demo_packets(args.pinch_name)
+            else:
+                packets = (
+                    demo_packet(class_id, seq=seq, trigger=trigger)
+                    for seq, class_id in enumerate(SWIPE_GESTURE_IDS_V2)
+                    for trigger in (False, True) if not trigger or class_id
+                )
+            for packet in packets:
+                processor.handle_notification(None, packet)
+                await asyncio.sleep(0.025)
             recorder.status(processor)
             return 0
 
@@ -348,6 +419,11 @@ def main(argv: list[str] | None = None) -> int:
             cli.error(f"--{name.replace('_', '-')} 必须为正数")
     if not math.isfinite(args.duration) or args.duration < 0:
         cli.error("--duration 必须为有限非负数")
+    try:
+        DoublePinchDetector(pinch_name=args.pinch_name, min_interval_ms=args.min_interval_ms,
+                            max_interval_ms=args.max_interval_ms)
+    except ValueError:
+        cli.error("pinch 间隔必须是有限数，且 0 < min-interval-ms <= max-interval-ms < 2**31")
     try:
         return asyncio.run(run(args))
     except KeyboardInterrupt:

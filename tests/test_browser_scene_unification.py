@@ -3,8 +3,8 @@ from dataclasses import replace
 import json
 import pytest
 from PySide6.QtCore import QCoreApplication
-from proximic_ring.scene_recognition.engine import detect_scene
-from proximic_ring.scene_recognition.browser import MAX_PAGE_NODES
+from proximic_ring.scenes.recognition.engine import detect_scene
+from proximic_ring.scenes.recognition.browser import MAX_PAGE_NODES
 from proximic_ring.scene_capabilities import application_scene_profiles, BROWSERS, PDF, VIDEO, MUSIC
 from proximic_ring.application_scene_policy import enabled_profiles
 from proximic_ring.scene_defaults import scene_defaults
@@ -23,7 +23,8 @@ class Node:
 
 
 def read(node,key):
-    assert key not in {'AXValue','AXSelectedText','AXSelectedTextRange','AXTitle'}
+    assert key not in {'AXValue','AXSelectedText','AXSelectedTextRange'}
+    assert key != 'AXTitle' or node.attrs['AXRole'] in {'AXButton', 'AXCheckBox', 'AXSlider', 'AXValueIndicator'}
     return node.attrs.get(key)
 
 

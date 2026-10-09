@@ -73,7 +73,7 @@ Ring 非主动断开时，会在当前使用的屏幕弹出独立置顶提示；
   至少保留一个手势；撤销在处理中用于取消。
   修改即时生效并自动保存，不改变按键功能，也可一键恢复默认。
 - 文本大模型来源可选“本地 GGUF”或“火山方舟（在线）”。本地模式配置 llama-server、
-  GGUF 路径；线上模式可选豆包 Seed 2.0 Lite 或 DeepSeek V4 Flash，并配置方舟 Base URL、
+  GGUF 路径；线上模式可选豆包 Seed 2.0 Lite 或 DeepSeek V4.1 Flash，并配置方舟 Base URL、
   模型 ID 和“线上大模型 API Key”。选择在线 `volcengine` ASR 时还会显示独立的
   “线上语音模型 API Key”；两者都可直接填写、显示/隐藏、修改或清除。
 - 听写／编辑类型判断最多输出 16 tokens；云端听写整理、编辑及编辑重试统一最多输出
@@ -130,7 +130,7 @@ input、edit、cancel、switch_mode、undo 等设备无关动作，无需修改 
 ASR final 始终进入独立文本处理线程。选择本地模式时，应用首帧显示后即在后台启动安装阶段
 准备的 `llama-server.exe`、加载 GGUF，并用极短请求分别预热输入和修改提示词；后续请求
 复用服务和 prompt cache，应用退出时释放由应用启动的进程，不需要 API Key。选择火山方舟
-时，应用使用方舟 `/responses` 接口，可选择豆包 Lite 或 DeepSeek V4 Flash，并优先使用
+时，应用使用方舟 `/responses` 接口，可选择豆包 Lite 或 DeepSeek V4.1 Flash，并优先使用
 设置页保存的线上大模型 Key。线上语音模型使用单独保存的豆包语音 App Key；两个密码框都
 保存到当前操作系统用户的 Qt 应用设置，环境变量只作旧版兼容兜底。听写提示词负责去除口语填充、纠错和
 断句，但不回答或执行口述内容。修改提示词接收“当前文本框全文 + 修改要求”，先区分整体

@@ -62,7 +62,7 @@ Dialog {
             anchors.fill: parent
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             ColumnLayout {
                 width: scroll.availableWidth
                 spacing: 36

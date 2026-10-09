@@ -30,6 +30,161 @@ def seed_history(controller):
     return rows
 
 
+@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_ui, size):
+    from PySide6.QtCore import QObject, QPointF
+    from PySide6.QtTest import QTest
+    controller, bridge, _, root, _ = inline_ui
+    root.resize(*size)
+    root.setProperty("currentPage", 1)
+    root.show()
+    QTest.qWait(80)
+    before = controller.gestureBindings
+    messages = list(bridge.messages)
+    button = root.findChild(QObject, "openVoiceGestureSettingsButton")
+    assert button.property("visible")
+    point = button.mapToScene(QPointF())
+    assert 0 <= point.x() and point.x() + button.width() <= root.width()
+    click(root, "openVoiceGestureSettingsButton")
+    QTest.qWait(100)
+    dialog = root.findChild(QObject, "runtimeSettingsDialog")
+    card = root.findChild(QObject, "voiceGestureSettingsCard")
+    assert not dialog.property("visible") and root.property("currentPage") == 1
+    position = card.mapToScene(QPointF())
+    assert position.y() >= 0 and position.y() < root.height()
+    assert controller.gestureBindings == before and bridge.messages == messages
+
+
+
+@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+def test_voice_page_edits_existing_bindings_and_only_sends_hud_metadata(inline_ui, tmp_path, size):
+    from PySide6.QtCore import QObject, QMetaObject, QPointF, Q_ARG
+    from PySide6.QtTest import QTest
+    controller, bridge, _, root, _ = inline_ui
+    root.resize(*size)
+    root.setProperty("currentPage", 1)
+    root.show()
+    QTest.qWait(100)
+    page = root.findChild(QObject, "voiceGestureSettingsCard")
+    def assert_selections():
+        for action in ("confirm", "undo", "switch_mode"):
+            for slot in (0, 1):
+                expected = controller.gestureBindings[action][slot]
+                # Both editors must retain their selection when another slot's
+                # change rebuilds their available-options model.
+                for control in (visual_child(page, f"voicePage_{action}Gesture{slot}"),
+                                root.findChild(QObject, f"{action}Gesture{slot}")):
+                    assert control.property("currentValue") == expected, control.objectName()
+                    label = next(item["label"] for item in control.property("options")
+                                 if item["value"] == expected)
+                    assert control.property("displayText") == label
+    assert_selections()
+    # Repeater delegates belong to the visual tree.
+    selector = visual_child(page, "voicePage_undoGesture0")
+    assert selector is not None
+    options = selector.property("options")
+    index = next(i for i, option in enumerate(options) if option["value"] == "snap")
+    before = (controller.inlineInput._view.copy(), controller.inlineInput._utterance_id,
+              controller.inlineInput._seq, controller.recognitionEnabled)
+    bridge.messages.clear()
+    selector.setProperty("currentIndex", index)
+    QMetaObject.invokeMethod(selector, "activated", Q_ARG(int, index))
+    QTest.qWait(30)
+    assert controller.gestureBindings["undo"] == ["snap", ""]
+    assert_selections()
+    assert (controller.inlineInput._view, controller.inlineInput._utterance_id,
+            controller.inlineInput._seq, controller.recognitionEnabled) == before
+    assert [m["type"] for m in bridge.messages] == ["configure_hud"]
+    assert bridge.messages[0]["gesture_hints"]["undo"] == ["snap", ""]
+    preview = visual_child(page, "voicePage_undoPreview")
+    assert preview.property("functionAsset") == "function-cancel"
+    icon = visual_child(preview, "voicePreviewGesture_snap")
+    assert icon.property("implicitWidth") > 0
+    assert icon.property("source").toString().endswith("gesture-snap.svg")
+    # The existing settings page shares the same model and conflict validation.
+    assert root.findChild(QObject, "undoGesture0").property("selectedGesture") == "snap"
+    assert not controller.setGestureBinding("undo", 0, "tap")
+    QTest.qWait(30)
+    assert_selections()
+    assert selector.property("selectedGesture") == "snap"
+    for action in ("confirm", "undo", "switch_mode"):
+        for slot in (0, 1):
+            control = visual_child(page, f"voicePage_{action}Gesture{slot}")
+            position = control.mapToItem(page, QPointF())
+            assert control.width() > 70
+            assert 0 <= position.x() and position.x() + control.width() <= page.width()
+    click(root, "voicePageResetGesturesButton")
+    QTest.qWait(30)
+    assert controller.gestureBindings["undo"] == ["swipe-left", ""]
+    assert_selections()
+    icon = visual_child(preview, "voicePreviewGesture_swipe-left")
+    assert icon.property("implicitWidth") > 0
+    assert icon.property("source").toString().endswith("gesture-swipe-left.svg")
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"voice-gestures-{size[0]}.png"))
+
+
+def test_voice_preview_assets_match_the_native_figma_originals():
+    import json, hashlib
+    root = Path(__file__).resolve().parents[1]
+    ui = root / "src/proximic_ring/ui/assets/figma/voice-hud"
+    native = root / "native/ProxiMicInput/Resources/VoiceHud"
+    manifest = json.loads((ui / "manifest.json").read_text())
+    for name, metadata in manifest.items():
+        data = (ui / (name + ".svg")).read_bytes()
+        assert data == (native / (name + ".svg")).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == metadata["sha256"]
+
+
+@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+def test_hud_size_setting_is_persistent_and_display_only(inline_ui, tmp_path, size):
+    from PySide6.QtCore import QObject, QMetaObject, QPointF, QSettings
+    from PySide6.QtTest import QTest
+    controller, bridge, _, root, _ = inline_ui
+    root.resize(*size)
+    root.show()
+    dialog = root.findChild(QObject, "runtimeSettingsDialog")
+    QMetaObject.invokeMethod(dialog, "open")
+    QTest.qWait(180)
+    slider = root.findChild(QObject, "voiceHudScaleSlider")
+    assert slider is not None and slider.property("visible")
+    assert slider.property("value") == controller.voiceHudScale == 80
+    before = (controller.gestureBindings, controller.inlineInput._view.copy(),
+              controller.inlineInput._seq, controller.inlineInput._utterance_id,
+              controller.recognitionEnabled)
+    bridge.messages.clear()
+    slider.setProperty("value", 120)
+    QMetaObject.invokeMethod(slider, "moved")
+    QTest.qWait(30)
+    assert controller.voiceHudScale == 120
+    controller._settings.sync()
+    saved = QSettings(controller._settings.fileName(), QSettings.IniFormat)
+    assert int(saved.value("ui/voiceHudScale")) == 120
+    assert bridge.messages[-1]["type"] == "configure_hud"
+    assert bridge.messages[-1]["scale_percent"] == 120
+    assert root.findChild(QObject, "voiceHudScaleLabel").property("text") == "120%"
+    assert (controller.gestureBindings, controller.inlineInput._view,
+            controller.inlineInput._seq, controller.inlineInput._utterance_id,
+            controller.recognitionEnabled) == before
+    click(root, "resetVoiceHudScaleButton")
+    QTest.qWait(30)
+    assert slider.property("value") == controller.voiceHudScale == 80
+    assert bridge.messages[-1]["scale_percent"] == 80
+    assert all(message["type"] == "configure_hud" for message in bridge.messages)
+    flick = root.findChild(QObject, "runtimeSettingsScroll").property("contentItem")
+    group = root.findChild(QObject, "settingsAppearanceGroup")
+    top = group.mapToItem(flick, QPointF()).y() + flick.property("contentY")
+    flick.setProperty("contentY", min(top, max(0, flick.property("contentHeight") - flick.height())))
+    QTest.qWait(60)
+    position = slider.mapToScene(QPointF())
+    assert 0 <= position.x() and position.x() + slider.width() <= root.width()
+    assert 0 <= position.y() and position.y() + slider.height() <= root.height()
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"hud-size-settings-{size[0]}.png"))
+
+
 def test_disconnected_voice_page_only_navigates_home_and_home_opens_bluetooth_picker(inline_ui, monkeypatch):
     from PySide6.QtCore import QObject
     from PySide6.QtTest import QTest

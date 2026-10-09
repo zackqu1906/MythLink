@@ -32,6 +32,9 @@ class InlineInputController(QObject):
     interrupted = Signal()
     settled = Signal(str, str)
     actionRequested = Signal(str)
+    strokeCommitted = Signal(str, bool, str)
+    strokeInvalidated = Signal()
+    strokeEvent = Signal(object)
 
     def __init__(self, parent=None, *, enabled=None, bridge_factory=None, source_switch_factory=None):
         super().__init__(parent)
@@ -39,6 +42,9 @@ class InlineInputController(QObject):
         self._permissions = MacPermissionsController(self, enabled=self._enabled)
         self._permissions.diagnostic.connect(self.diagnostic.emit)
         self._closed = False
+        self.stroke_mode = False
+        self.stroke_target = None  # (transport epoch, native client, stroke session)
+        self.stroke_context = None  # Verified text before the caret after the last stroke commit.
         self._view = {"phase": "idle", "ready": False}
         self._epoch = ""
         self._client_id = ""
@@ -52,11 +58,18 @@ class InlineInputController(QObject):
         self._settled = set()
         self._compatibility_requests = set()
         self._shortcut = "F8"
+        from ..gesture_settings import GestureBindings
+        self._gesture_hints = GestureBindings().as_dict()
+        self._hud_scale_percent = 80
         self._multi_undo_enabled = False
         self._utterance_sessions = {}
         self._edit_intents = {}
         self.settled_session_id = None
         self._bridge = None
+        self._stroke_request = None
+        self._stroke_timer = QTimer(self)
+        self._stroke_timer.setSingleShot(True)
+        self._stroke_timer.timeout.connect(self._stroke_timed_out)
         self._transport_error = ""
         self._installing = False
         self._installation_message = "安装后，点入文本框并 tap，即可自动切入语音输入法。"
@@ -74,9 +87,11 @@ class InlineInputController(QObject):
         self._activation_timer.setInterval(150)
         self._activation_timer.timeout.connect(self._refresh_activation)
         self._begin_origin = None
+        self._input_preparation = None
         self._startup_buffering = False
         self._pending_update = None
         self._pending_finish = False
+        self._finish_as_dictation = False
         self._action_pending = None
         self._action_timer = QTimer(self)
         self._action_timer.setSingleShot(True)
@@ -226,6 +241,25 @@ class InlineInputController(QObject):
             return {"status": "unavailable", "source": "input_method", "reason": "bridge_unavailable"}
         return self._bridge.asr_context()
 
+    def set_gesture_hints(self, bindings):
+        """Publish display metadata without touching shortcuts or voice state."""
+        snapshot = {action: list(names) for action, names in bindings.items()}
+        if snapshot == self._gesture_hints:
+            return
+        self._gesture_hints = snapshot
+        self._publish_gesture_hints()
+
+    def _publish_gesture_hints(self):
+        if self._bridge is not None and not self._closed:
+            self._bridge.send({"type": "configure_hud", "gesture_hints": self._gesture_hints,
+                               "scale_percent": self._hud_scale_percent})
+
+    def set_hud_scale(self, percent: int):
+        percent = max(80, min(140, int(percent)))
+        if percent != self._hud_scale_percent:
+            self._hud_scale_percent = percent
+            self._publish_gesture_hints()
+
     def configure(self, shortcut, *, multi_undo_enabled=None):
         self._shortcut = str(shortcut or "F8")
         if multi_undo_enabled is not None:
@@ -241,6 +275,63 @@ class InlineInputController(QObject):
         self._seq += 1
         return self._bridge.send({"type": operation, "client_id": self._client_id,
                                   "utterance_id": self._utterance_id, "seq": self._seq, **fields})
+
+    def stroke_update(self, code, candidates, selected, prediction=False):
+        if self.stroke_target is not None:
+            return self.send_stroke("stroke_update", code=str(code)[:64], candidates=list(candidates)[:5],
+                                    selected=int(selected), prediction=bool(prediction))
+        if (not self.ready or not self._bridge or self._begin_origin is not None
+                or self._view.get("phase") in {"starting", "listening", "finishing", "editing"}):
+            return False
+        return self._bridge.send({"type": "stroke_update", "client_id": self._client_id,
+                                  "code": str(code)[:64], "candidates": list(candidates)[:5],
+                                  "selected": int(selected)})
+
+    def stroke_clear(self):
+        if self.stroke_target is not None:
+            self.send_stroke("stroke_clear")
+        elif self._bridge and self._client_id:
+            self._bridge.send({"type": "stroke_clear", "client_id": self._client_id})
+        self._stroke_request = None
+        self._stroke_timer.stop()
+
+    def stroke_commit(self, char):
+        if ((self.stroke_target is None and not self.ready) or not self._bridge or self._stroke_request or self._begin_origin is not None
+                or self._view.get("phase") in {"starting", "listening", "finishing", "editing"}):
+            return False
+        request = uuid.uuid4().hex
+        client = self.stroke_target[1] if self.stroke_target else self._client_id
+        sent = (self.send_stroke("stroke_commit", request_id=request, text=str(char)) if self.stroke_target else
+                self._bridge.send({"type": "stroke_commit", "client_id": client,
+                                   "request_id": request, "text": str(char)}))
+        if sent:
+            self._stroke_request = (request, str(char), client)
+            self._stroke_timer.start(5000)
+        return sent
+
+    def send_stroke(self, kind, **fields):
+        target = self.stroke_target
+        if not target or target[0] != self._epoch or not self._bridge:
+            return False
+        return self._bridge.send({"type": kind, "client_id": target[1], "stroke_session": target[2], **fields})
+
+    def finish_for_stroke(self):
+        """Used only when a voice sentence is already in progress."""
+        if self._startup_buffering:
+            if not (self._pending_update and self._pending_update[0]):
+                self.reset()
+                self.interrupted.emit()
+            else:
+                self._finish_as_dictation = True
+                self._pending_finish = True
+            return
+        self._send("finish_dictation")
+
+    def _stroke_timed_out(self):
+        if self._stroke_request is not None:
+            _, char, _ = self._stroke_request
+            self._stroke_request = None
+            self.strokeCommitted.emit(char, False, "输入法未确认本次输入，请检查目标文本框")
 
     def _diagnose(self, kind, *, characters=None, error=None, reason=None):
         """Publish an explicit metadata allowlist, never editor or ASR text."""
@@ -445,11 +536,59 @@ class InlineInputController(QObject):
         self._startup_deadline = 0.0
         self._startup_clients.clear()
         self._begin_origin = None
+        self._input_preparation = None
         self._startup_buffering = False
         self._pending_update = None
         self._pending_finish = False
+        self._finish_as_dictation = False
+
+    def _start_input_activation(self, origin, *, auto_select, buffering):
+        """Shared source selection/readiness transaction for voice and strokes."""
+        self._begin_origin = origin
+        self._startup_buffering = buffering
+        self._startup_deadline = time.monotonic() + (4.0 if auto_select else 3.0)
+        self._activation_timer.start()
+        if auto_select:
+            if not self._epoch:
+                self._warm_input_method()
+            self._source_pending = True
+            source = self._source_switch_factory(self)
+            self._source_activation = source
+            source.event.connect(lambda message: self._source_event(source, message))
+            self._wait_for_reply("ready")
+            self._diagnose("begin", reason="checking_input_source")
+            self.changed.emit()
+            source.start(origin)
+
+    def prepare_input_method(self, token, origin, ready, failed):
+        """Use Tap's activation path without opening an audio/voice sentence."""
+        self._stop_reply_wait()
+        self._clear_startup()
+        if not self._enabled or self._closed or not origin or self._transport_error or not self._bridge:
+            failed(self.error or "输入法尚未连接")
+            return
+        self._input_preparation = (token, ready, failed)
+        try:
+            self._start_input_activation(origin, auto_select=True, buffering=False)
+        except Exception as exc:
+            self._transport_failed(str(exc))
+
+    def cancel_input_preparation(self, token):
+        if self._input_preparation and self._input_preparation[0] == token:
+            self._stop_reply_wait()
+            self._clear_startup()
+
+    def _input_client_ready(self, message):
+        if not message.get("ready"):
+            if self._reply_stage == "ready":
+                self._recover_selected_source()
+            return False
+        return bool(self._begin_origin and message.get("client_id")
+                    and message.get("application") == self._begin_origin[0])
 
     def begin(self, target=None, *, auto_select=False):
+        if self.stroke_mode or self._input_preparation:
+            return False
         if not self._enabled or self._closed:
             return False
         self.actionRequested.emit("begin")
@@ -477,21 +616,8 @@ class InlineInputController(QObject):
         if origin is not None:
             # Fence startup through BEGIN acknowledgment, including a cached
             # ready state. No text goes to a client before this handshake.
-            self._begin_origin = origin
-            self._startup_buffering = True
-            self._startup_deadline = time.monotonic() + (4.0 if auto_select else 3.0)
-            self._activation_timer.start()
+            self._start_input_activation(origin, auto_select=auto_select, buffering=True)
         if auto_select:
-            if not self._epoch:
-                self._warm_input_method()
-            self._source_pending = True
-            source = self._source_switch_factory(self)
-            self._source_activation = source
-            source.event.connect(lambda message: self._source_event(source, message))
-            self._wait_for_reply("ready")
-            self._diagnose("begin", reason="checking_input_source")
-            self.changed.emit()
-            source.start(origin)
             return True
         if needs_activation:
             # Source activation/IPC can trail the first tap. Keep this same
@@ -525,6 +651,12 @@ class InlineInputController(QObject):
         self._reply_stage = ""
 
     def _transport_failed(self, reason):
+        if self._input_preparation:
+            failed = self._input_preparation[2]
+            self._stop_reply_wait()
+            self._clear_startup()
+            failed(reason)
+            return
         if self._startup_buffering:
             self._send("reset")
         self._stop_reply_wait()
@@ -542,6 +674,9 @@ class InlineInputController(QObject):
     def _reply_timed_out(self):
         stage = self._reply_stage
         if not stage or self._closed:
+            return
+        if self._input_preparation:
+            self._transport_failed("输入法未连接到当前文本框，请重新点入文本框")
             return
         # Retire this exact transaction; never retry its text write.
         self._send("reset")
@@ -608,10 +743,13 @@ class InlineInputController(QObject):
             self._pending_finish = True
             return
         if self.active and self._view.get("phase") in {"starting", "listening"}:
-            self._send("finish")
+            self._send("finish_dictation" if self._finish_as_dictation else "finish")
+            self._finish_as_dictation = False
 
     @Slot()
     def convert(self):
+        if self.stroke_mode:
+            return
         if self.canRequestConversion:
             self._mark_action_pending("convert")
             self._send("convert")
@@ -652,7 +790,32 @@ class InlineInputController(QObject):
         if self._closed or not isinstance(message, dict):
             return
         kind = message.get("type")
+        if kind in {"state", "stroke_ready", "stroke_cleared", "stroke_ink_cleared", "disconnected", "connected"}:
+            if kind == "connected" or message.get("epoch") == self._epoch:
+                self.strokeEvent.emit(dict(message))
+        if kind == "stroke_cleared":
+            # Token-bound sessions are handled by StrokeSessionController.
+            # A delayed clear for the previous token must not end a new one
+            # in the same native client. Keep legacy unbound composition clears.
+            if (not message.get("stroke_session") and message.get("epoch") == self._epoch
+                    and message.get("client_id") == self._client_id):
+                self.strokeInvalidated.emit()
+            return
+        if kind == "stroke_result":
+            pending = self._stroke_request
+            if (pending and message.get("epoch") == self._epoch
+                    and message.get("client_id") == pending[2]
+                    and message.get("request_id") == pending[0]):
+                self._stroke_request = None
+                self._stroke_timer.stop()
+                context = message.get("context")
+                self.stroke_context = context[-4:] if isinstance(context, str) and message.get("success") else None
+                self.strokeCommitted.emit(pending[1], bool(message.get("success")),
+                                          str(message.get("error") or ""))
+            return
         if kind == "connected":
+            if self._stroke_request is not None:
+                self._stroke_timed_out()
             self._utterance_sessions.clear()
             self.settled_session_id = None
             self._compatibility_requests.clear()
@@ -662,6 +825,7 @@ class InlineInputController(QObject):
                 self._startup_clients.clear()
                 self._wait_for_reply("ready")
                 self._transport_error = ""
+                self._publish_gesture_hints()
                 self.configure(self._shortcut)
                 self._diagnose("connected")
                 self.changed.emit()
@@ -676,6 +840,7 @@ class InlineInputController(QObject):
                 self._view["error"] = "输入法连接已重新建立，请重新开始本句"
             self._transport_error = ""
             self._last_state_diagnostic = None
+            self._publish_gesture_hints()
             self.configure(self._shortcut)
             self._diagnose("connected")
             self.changed.emit()
@@ -692,12 +857,18 @@ class InlineInputController(QObject):
                                   if key in allowed and isinstance(value, (str, int, bool))})
             return
         if kind == "disconnected":
-            if self._begin_origin is not None and self._startup_buffering:
+            self.strokeInvalidated.emit()
+            if self._stroke_request is not None:
+                self._stroke_timer.stop()
+                _, char, _ = self._stroke_request
+                self._stroke_request = None
+                self.strokeCommitted.emit(char, False, "输入法连接已断开")
+            if self._begin_origin is not None and (self._startup_buffering or self._input_preparation):
                 # No ASR text has been released yet. Keep the same sentence
                 # through a cold IME reconnect, bounded by its existing deadline.
                 self._epoch = self._client_id = ""
                 self._startup_clients.clear()
-                self._view = {**self._view, "phase": "starting", "ready": False}
+                self._view = {**self._view, "phase": "idle" if self._input_preparation else "starting", "ready": False}
                 self._wait_for_reply("ready")
                 self._warm_input_method()
                 self._diagnose("disconnected", reason="startup_reconnecting")
@@ -722,6 +893,27 @@ class InlineInputController(QObject):
         if kind == "activation_recovery":
             return  # Ignore obsolete native replies from the removed cycling path.
         if kind == "state":
+            if self._input_preparation:
+                preparation = self._input_preparation
+                focus_matches = self._startup_focus_matches()
+                if focus_matches is None or preparation is not self._input_preparation:
+                    return
+                if not focus_matches:
+                    self._transport_failed("已切换应用，输入法唤起已取消")
+                    return
+                if self._source_pending:
+                    return
+                if utterance_id and message.get("phase") not in {"dictated", "edited", "undone", "interrupted"}:
+                    return
+                if not self._input_client_ready(message):
+                    return
+                ready = preparation[1]
+                self._stop_reply_wait()
+                self._clear_startup()
+                self._client_id = client_id
+                self._view = {**message, "phase": "idle", "raw": "", "error": ""}
+                ready(dict(message))
+                return
             if self._begin_origin is not None:
                 focus_matches = self._startup_focus_matches()
                 if focus_matches is None:
@@ -758,13 +950,9 @@ class InlineInputController(QObject):
                         self._transport_failed(str(message.get("error") or "输入法未能开始本句"))
                     return
                 else:
-                    if not message.get("ready"):
-                        if self._reply_stage == "ready":
-                            self._recover_selected_source()
-                        if not client_id or client_id == self._client_id:
+                    if not self._input_client_ready(message):
+                        if not message.get("ready") and (not client_id or client_id == self._client_id):
                             self._wait_for_reply("ready")
-                        return
-                    if message.get("application") != self._begin_origin[0] or not client_id:
                         return
                     if client_id in self._startup_clients:
                         return  # queued idle ping or retired activation
@@ -794,6 +982,11 @@ class InlineInputController(QObject):
             previous_active = self.active
             changed_client = client_id != self._client_id
             if changed_client:
+                if self._stroke_request is not None:
+                    self._stroke_timer.stop()
+                    _, char, _ = self._stroke_request
+                    self._stroke_request = None
+                    self.strokeCommitted.emit(char, False, "已切换输入框")
                 self._utterance_sessions.clear()
                 self._client_id = client_id
                 self._utterance_id = ""
@@ -820,16 +1013,19 @@ class InlineInputController(QObject):
             elif previous_active and changed_client:
                 self._view["error"] = str(message.get("error") or message.get("reason") or "已切换输入框")
             self._diagnose("state")
+            if changed_client or not self.ready:
+                self.strokeInvalidated.emit()
             self.changed.emit()
             if previous_active and (changed_client or not self.ready or self._view.get("phase") == "error"):
                 self._clear_startup()
                 self.interrupted.emit()
             elif self._startup_buffering and utterance_id and self._view.get("phase") == "listening":
-                pending, finish = self._pending_update, self._pending_finish
+                pending, finish, as_dictation = self._pending_update, self._pending_finish, self._finish_as_dictation
                 self._clear_startup()
                 if pending:
                     self.update(*pending)
                 if finish and not self._final_sent:
+                    self._finish_as_dictation = as_dictation
                     self.finish()
             if begin_acknowledged and self.ready and self._view.get("phase") == "listening":
                 self.began.emit()
@@ -911,6 +1107,7 @@ class InlineInputController(QObject):
         self._clear_action_pending()
         self._stop_reply_wait()
         self._clear_startup()
+        self._finish_as_dictation = False
         if self._utterance_id:
             self._send("reset")
         self._utterance_id = ""

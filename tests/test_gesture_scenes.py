@@ -259,8 +259,8 @@ def test_scene_survives_menu_read_failure_and_can_inherit_without_menu(presentat
 
 
 @pytest.mark.parametrize("bundle,profile,start", [
-    ("com.kingsoft.wpsoffice.mac", "wps", "Cmd+Return"),
-    ("com.kingsoft.wpsoffice.mac.global", "wps", "Cmd+Return"),
+    ("com.kingsoft.wpsoffice.mac", "wps", "Shift+F5"),
+    ("com.kingsoft.wpsoffice.mac.global", "wps", "Shift+F5"),
     ("com.apple.iWork.Keynote", "keynote", "Cmd+Alt+P"),
     ("org.libreoffice.script", "libreoffice", "F5"),
     ("org.openoffice.script", "openoffice", "F5"),
@@ -366,7 +366,8 @@ def test_last_observation_and_hud_use_the_actual_app_not_editor_selection(presen
     assert "已识别到放映" in catalog.sceneHint
     shown = []
     c.ringGestures.sceneHudRequested.connect(lambda mode, items: shown.extend(items))
-    c.ringGestures._show_scene_hud(c.ringGestures._generation, time.monotonic(), c._disconnect_event, target)
+    c.ringGestures._pending_hud = (c.ringGestures._generation, time.monotonic(), c._disconnect_event)
+    c.ringGestures._show_scene_hud(*c.ringGestures._pending_hud, target)
     assert shown and all(item["application"] == "WPS Office" for item in shown)
 
 
@@ -445,21 +446,37 @@ def test_native_wps_dialog_exception_is_scene_only_and_rechecks_focus_and_foregr
 
 @pytest.mark.parametrize("identity,old,expected", [
     ("wps:start-first", "F5", "Cmd+Shift+Return"),
-    ("wps:start-current", "Shift+F5", "Cmd+Return"),
+    ("wps:start-current", "Cmd+Return", "Shift+F5"),
+    ("wps:start-current", "Cmd+Enter", "Shift+F5"),
+    ("wps:start-current", "Shift+F5", "Shift+F5"),
+    ("wps:start-current", "Ctrl+F5", "Ctrl+F5"),
     ("custom:my-start", "F5", "F5"), ("discovered-menu", "F5", "F5"),
+    ("custom:my-start", "Cmd+Return", "Cmd+Return"),
+    ("discovered-menu", "Cmd+Return", "Cmd+Return"),
     ("wps:start-first", "Ctrl+F5", "Ctrl+F5"),
 ])
-def test_wps_only_obsolete_builtin_start_presets_are_repaired(route, monkeypatch, identity, old, expected):
+@pytest.mark.parametrize("bundle", ["com.kingsoft.wpsoffice.mac", "com.kingsoft.wpsoffice.mac.global"])
+@pytest.mark.parametrize("gesture", ["tap", "snap"])
+def test_wps_only_obsolete_builtin_start_presets_are_repaired(route, monkeypatch, identity, old, expected, bundle, gesture):
     c, s, _, _, _, _, _ = route
-    bundle = "com.kingsoft.wpsoffice.mac"
-    raw = json.dumps({bundle: dict(label="WPS Office", bindings={"snap": dict(
+    raw = json.dumps({bundle: dict(label="WPS Office", defaultsVersion=2, bindings={gesture: dict(
         id=identity, label="开始放映", path="WPS 演示 快捷键", shortcut=old)})})
     c._settings.setValue(SETTINGS_KEY, raw)
     restored = ApplicationMappingController(s)
     try:
-        assert restored.for_target(bundle)["menu:snap"].shortcut == expected
-        assert restored.regularBindings[bundle]["snap"]["shortcut"] == expected
+        assert restored.for_target(bundle)["menu:" + gesture].shortcut == expected
+        assert restored.regularBindings[bundle][gesture]["shortcut"] == expected
         assert c._settings.value(SETTINGS_KEY) == raw
+        restored._save()
+        saved = json.loads(c._settings.value(SETTINGS_KEY))[bundle]
+        assert saved["bindings"] == {gesture: dict(
+            id=identity, label="开始放映", path="WPS 演示 快捷键", shortcut=expected)}
+        restarted = ApplicationMappingController(s)
+        try:
+            assert restarted.regularBindings[bundle] == saved["bindings"]
+            assert restarted.for_target(bundle)["menu:" + gesture].shortcut == expected
+        finally:
+            restarted.close()
     finally:
         restored.close()
 
@@ -484,12 +501,14 @@ def test_scene_hud_reports_effective_bindings_and_respects_busy_state(presentati
     ring = c.ringGestures
     ring.sceneHudRequested.connect(lambda mode, items: scenes.append(items))
     ring.showRequested.connect(lambda mode, text: defaults.append((mode, text)))
-    ring._show_scene_hud(ring._generation, time.monotonic(), c._disconnect_event, backend.target)
+    ring._pending_hud = (ring._generation, time.monotonic(), c._disconnect_event)
+    ring._show_scene_hud(*ring._pending_hud, backend.target)
     assert {item["action"] for item in scenes[0]} == {"上一个动画 / 上一页", "下一个动画 / 下一页", "结束放映",
                                                     "未绑定", "手势提示", "切换交互模式", "窗口选择"}
     assert all(item["voiceDisabled"] for item in scenes[0])
     inline._view["phase"] = "listening"
-    ring._show_scene_hud(ring._generation, time.monotonic(), c._disconnect_event, backend.target)
+    ring._pending_hud = (ring._generation, time.monotonic(), c._disconnect_event)
+    ring._show_scene_hud(*ring._pending_hud, backend.target)
     assert defaults == [("input", "")] and not sent and not messages
 
 

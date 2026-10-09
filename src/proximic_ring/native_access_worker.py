@@ -6,6 +6,7 @@ from dataclasses import asdict, replace
 import json
 import os
 import sys
+import time
 import uuid
 
 from .mac_permissions import MacPermissionError, read_permission_state
@@ -20,6 +21,7 @@ class Dispatcher:
         self.text_focus = None
         self.page_scroll = None
         self.window_selector = None
+        self.touchpad_mouse = None
         self._observed_page = None
         self._observed_page_token = ''
 
@@ -45,6 +47,15 @@ class Dispatcher:
             result = (self.window_selector.handle(operation, token=message.get("token", ""))
                       if self.window_selector else {"status": "cancelled"})
             return {"result": result}
+        if operation in {"touchpad_enable", "touchpad_apply", "touchpad_double_click_target",
+                         "touchpad_health"}:
+            # Touchpad delivery uses its own background permission monitor.
+            # Do not put the generic synchronous probe back on this hot path.
+            try:
+                return self._touchpad(message)
+            except PermissionError:
+                raise MacPermissionError(replace(read_permission_state(),
+                    control_channel="worker", control_pid=os.getpid())) from None
         state = replace(read_permission_state(), control_channel="worker", control_pid=os.getpid())
         if operation == "status":
             return {"permissions": asdict(state)}
@@ -102,11 +113,15 @@ class Dispatcher:
                 self.window_selector = WindowSelectorSession()
             if operation == "selector_warmup":
                 return {"result": {"status": "ready"}}  # Imports only, no window enumeration.
-            return {"result": self.window_selector.handle(
+            result = self.window_selector.handle(
                 operation, token=message.get("token", ""), target=message.get("target", ""),
                 host_pid=int(message.get("host_pid", 0)), host_window=message.get("host_window"),
-                expected=message.get("expected"))}
-        if not state.ready:
+                expected=message.get("expected"))
+            return {"result": result, "diagnostic": safe_data(self.window_selector.last_diagnostic)}
+        # Metadata discovery does not send events. Check event-posting access
+        # only for delivery; an unavailable write permission must not hide hints.
+        read_only = operation in {"capture", "same_target", "scroll_plan", "stroke_capture"}
+        if state.accessibility is not True or (not read_only and not state.ready):
             raise MacPermissionError(state)
         if operation in {"scroll_plan", "scroll_apply"}:
             if self.page_scroll is None:
@@ -121,21 +136,27 @@ class Dispatcher:
             _send_key_direct(message["command"], message["count"], message["event_tag"],
                              message["bundle"], expected_pid=message["pid"])
             return {"result": None}
-        if operation == "capture":
-            options = dict(plain_enter=bool(message.get("plain_enter", False)),
+        if operation in {"capture", "stroke_capture"}:
+            options = dict(plain_enter=operation == "stroke_capture" or bool(message.get("plain_enter", False)),
                            menu_action=bool(message.get("menu_action", False)))
             if message.get("scene"):
                 options["scene"] = True
             target = self.shortcuts.capture(**options)
             if target is None:
                 return {"result": None, "diagnostic": getattr(self.shortcuts, "last_diagnostic", {})}
+            if operation == "stroke_capture":
+                from .stroke_focus import editable_target, point_matches_focus
+                point = message.get("point")
+                if not editable_target(target) or (point and not point_matches_focus(point, target)):
+                    return {"result": {"eligible": False, "bundle": target.bundle, "pid": target.pid}}
             handle = uuid.uuid4().hex
             self.targets[handle] = target
             while len(self.targets) > 64:
                 self.targets.popitem(last=False)
             # AX objects stay in this process. A worker restart invalidates all
             # captured targets; never silently recapture one for an old send.
-            return {"result": {"bundle": target.bundle, "pid": target.pid, "profile": target.profile,
+            return {"result": {**({"eligible": True} if operation == "stroke_capture" else {}),
+                               "bundle": target.bundle, "pid": target.pid, "profile": target.profile,
                                "role": target.role, "blocked": target.blocked, "remote_id": handle,
                                "plain_enter": target.plain_enter, "menu_action": target.menu_action,
                                "scene": target.scene, "scene_checked": target.scene_checked,
@@ -155,6 +176,37 @@ class Dispatcher:
             self.shortcuts.post(target, message["shortcut"], require_focus=message["require_focus"])
             return {"result": None, "diagnostic": getattr(self.shortcuts, "last_diagnostic", {})}
         raise ValueError("未知按键通道请求")
+
+    def _touchpad(self, message):
+        operation = message["operation"]
+        if operation == "touchpad_enable":
+            from .native_touchpad import WorkerTouchpadMouse
+            if self.touchpad_mouse is not None:
+                self.touchpad_mouse.disable()
+            self.touchpad_mouse = WorkerTouchpadMouse(int(message["cancel_fd"]))
+            self.touchpad_mouse.gain = float(message["gain"])
+            self.touchpad_mouse.clicks_enabled = bool(message["clicks"])
+            self.touchpad_mouse.invert_y = bool(message["invert_y"])
+            self.touchpad_mouse.enable()  # One initial check; no input events.
+            return {"result": {"pid": os.getpid(),
+                               "app_nap_protected": self.touchpad_mouse.app_nap_protected}}
+        mouse = self.touchpad_mouse
+        if mouse is None:
+            raise RuntimeError("鼠标控制通道已结束，请重新开启触摸板")
+        mouse.check_health()  # In-memory result only, including idle status reads.
+        if operation == "touchpad_health":
+            return {"result": None}
+        fresh = 0 <= time.monotonic() - float(message["created"]) <= .1
+        if operation == "touchpad_apply":
+            events = message["events"]
+            if not isinstance(events, list) or len(events) > 32:
+                raise ValueError("鼠标事件批次无效")
+            moves = mouse.moves
+            if fresh:
+                mouse.apply(events)
+            return {"result": {"moves": mouse.moves - moves}}
+        result = mouse.double_click_target() if fresh else None
+        return {"result": result}
 
 
 def main():
@@ -183,12 +235,17 @@ def main():
         except Exception as exc:
             details = (getattr(dispatcher.shortcuts, "last_diagnostic", {})
                        if message.get("operation") in {"capture", "shortcut", "same_target"} else {})
+            if message.get("operation", "").startswith("selector_"):
+                details = getattr(dispatcher.window_selector, "last_diagnostic", {})
             reply = {"error": str(exc), "diagnostic": {**details, "reason": "native_exception", **exception_details(exc)}}
-        if message.get("operation") in {"capture", "shortcut", "same_target"}:
+        if (message.get("operation") in {"capture", "shortcut", "same_target"}
+                or message.get("operation", "").startswith("selector_")):
             reply["diagnostic"] = safe_data({**reply.get("diagnostic", {}), "worker_pid": os.getpid(),
                                              "operation": message.get("operation")})
         sys.stdout.write(json.dumps({"id": message.get("id"), **reply}, ensure_ascii=False) + "\n")
         sys.stdout.flush()
+    if dispatcher.touchpad_mouse is not None:
+        dispatcher.touchpad_mouse.disable()
     return 0
 
 

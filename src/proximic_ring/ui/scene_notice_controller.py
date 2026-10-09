@@ -6,7 +6,7 @@ import time
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot, Qt
 
 from ..native_access import NativeAccessChannel
-from ..scene_capabilities import BROWSERS, SCENE_LABELS
+from ..scenes.capabilities import BROWSERS, SCENE_LABELS
 from ..scene_diagnostics import new_trace_id
 from .application_onboarding import foreground_candidate
 

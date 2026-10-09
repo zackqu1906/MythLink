@@ -5,12 +5,12 @@ from dataclasses import dataclass, replace
 import threading
 import time
 
-from PySide6.QtCore import QObject, Property, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Property, QTimer, Qt, Signal, Slot
 
 from ..app_gestures import QUIET_PHASES
 from ..gesture_settings import (GESTURE_LABELS, GLOBAL_ACTION_LABELS, GLOBAL_BINDINGS_KEY,
                                 VOICE_GESTURE_GROUP)
-from ..scene_capabilities import SCENE_LABELS
+from ..scenes.registry import SCENE_LABELS
 from .text_focus_controller import TextFocusController
 from .page_scroll_controller import PageScrollController
 from .window_selector_controller import WindowSelectorController
@@ -50,6 +50,17 @@ class RingGestureController(QObject):
         self._generation = 0
         self._session_was_blocked = False
         self._transition = None
+        self._pending_hud = None
+        self._hud_timer = QTimer(self)
+        self._hud_timer.setSingleShot(True)
+        self._hud_timer.setTimerType(Qt.PreciseTimer)
+        self._hud_timer.setInterval(1000)
+        self._hud_timer.timeout.connect(self._scene_hud_fallback)
+        # A newer notice or an explicit hide supersedes optional scene lookup.
+        self.showRequested.connect(self._cancel_scene_hud)
+        self.sceneHudRequested.connect(self._cancel_scene_hud)
+        self.hideRequested.connect(self._cancel_scene_hud)
+        self.changed.connect(self._cancel_scene_hud)
         self._selector = WindowSelectorController(self)
         self._fields = TextFocusController(self)
         self._scroll = PageScrollController(self)
@@ -94,7 +105,7 @@ class RingGestureController(QObject):
         used = {g for key, g in self.globalBindings.items() if key != action}
         used.update(self.owner._app_gestures.catalog.voice_group())
         used.add(self.owner._app_gestures.inputSourceGesture)
-        return [dict(value=g, label=label) for g, label in GESTURE_LABELS.items() if g not in used]
+        return [dict(value="", label="无")] + [dict(value=g, label=label) for g, label in GESTURE_LABELS.items() if g not in used]
 
     def _global_gesture_editable(self, gesture):
         return (gesture in GESTURE_LABELS
@@ -107,28 +118,33 @@ class RingGestureController(QObject):
             return []
         bindings = self.owner._global_gesture_bindings
         previous_action = bindings.action_for(gesture)
-        options = []
+        options = [dict(id="", label="无", path="解除此手势的全局绑定", shortcut="", available=True,
+                        effect="此手势不执行全局功能，可在应用中配置动作。")]
         for action, label in GLOBAL_ACTION_LABELS.items():
             previous_gesture = bindings.as_dict()[action]
             if previous_gesture == gesture:
                 effect = "此手势当前用于「" + label + "」。"
-            elif previous_action:
-                effect = (f"保存后，{GESTURE_LABELS[gesture]}用于「{label}」，"
+            elif previous_action and previous_gesture:
+                effect = (f"选择后，{GESTURE_LABELS[gesture]}用于「{label}」，"
                           f"{GESTURE_LABELS[previous_gesture]}用于「{GLOBAL_ACTION_LABELS[previous_action]}」。")
-            else:
-                effect = (f"保存后，{GESTURE_LABELS[gesture]}用于「{label}」，"
+            elif previous_gesture:
+                effect = (f"选择后，{GESTURE_LABELS[gesture]}用于「{label}」，"
                           f"释放{GESTURE_LABELS[previous_gesture]}的全局占用。")
-            options.append(dict(id=action, label=label, path="当前绑定：" + GESTURE_LABELS[previous_gesture],
+            else:
+                effect = f"选择后，{GESTURE_LABELS[gesture]}用于「{label}」。"
+            options.append(dict(id=action, label=label, path="当前绑定：" + GESTURE_LABELS.get(previous_gesture, "无"),
                                 shortcut="", available=True, effect=effect))
         return options
 
     @Slot(str, str, result=bool)
     def setGlobalGestureAction(self, gesture, action):
         """Gesture-first editor: move a function, or exchange two assignments atomically."""
-        if action not in GLOBAL_ACTION_LABELS or not self._global_gesture_editable(gesture):
+        if (action and action not in GLOBAL_ACTION_LABELS) or not self._global_gesture_editable(gesture):
             return False
         current = self.owner._global_gesture_bindings
         previous_action = current.action_for(gesture)
+        if not action:
+            return self._save_global_bindings(replace(current, **{previous_action: ""})) if previous_action else True
         updates = {action: gesture}
         if previous_action and previous_action != action:
             updates[previous_action] = current.as_dict()[action]
@@ -198,7 +214,7 @@ class RingGestureController(QObject):
             ))
         )
 
-    def filter(self, event, audio_busy: bool, connection) -> bool:
+    def filter(self, event, audio_busy: bool, connection, *, skip_stroke=False) -> bool:
         """Worker-thread gate. True preserves the existing voice/app route."""
         if connection is not self.owner._disconnect_event or connection.is_set():
             return False
@@ -207,6 +223,9 @@ class RingGestureController(QObject):
         canonical = {"show_menu": "index-pinch", "switch_mode": "middle-pinch", "window_selector": "clench"}
         proximity = getattr(self.owner, "_proximity", None)
         if proximity is not None and proximity.filter_gesture(name, connection):
+            return False
+        touchpad = getattr(self.owner, "_touchpad", None)
+        if not skip_stroke and touchpad is not None and touchpad.consume_gesture(event, connection):
             return False
         busy = bool(audio_busy or self.speech_busy())
         if self._selector.blocked.is_set():
@@ -281,6 +300,16 @@ class RingGestureController(QObject):
             generation = self._generation
         return ModeGestureEvent(self.owner._app_gestures.envelope(event), generation)
 
+    def input_owner_changed(self):
+        """Discard queued actions when stroke input takes/releases the gestures."""
+        with self._lock:
+            self._generation += 1
+            self._transition = None
+        self._fields.picker.stop()
+        self._selector.cancel()
+        self.owner._app_gestures.cancel_pending()
+        self.hideRequested.emit()
+
     def accepts(self, event):
         with self._lock:
             if (isinstance(event, ModeGestureEvent) and getattr(event.source, "exclusive", False)
@@ -315,11 +344,14 @@ class RingGestureController(QObject):
 
     @Slot()
     def showMenu(self):
+        self._cancel_scene_hud()
         if self.session_blocked():
             return
         self._fields.refresh()
         if self.owner._app_gestures.catalog.apps and not self.speech_busy():
             generation, created, connection = self._generation, time.monotonic(), self.owner._disconnect_event
+            self._pending_hud = (generation, created, connection)
+            self._hud_timer.start()
             def work():
                 try:
                     target = self.owner._app_gestures.backend.capture(menu_action=True, scene=True)
@@ -333,10 +365,34 @@ class RingGestureController(QObject):
             return
         self.showRequested.emit(self.mode, "")
 
+    @Slot()
+    def _cancel_scene_hud(self):
+        self._hud_timer.stop()
+        self._pending_hud = None
+
+    def _take_scene_hud(self, request):
+        if request is None or request != self._pending_hud:
+            return False
+        self._cancel_scene_hud()
+        generation, _, connection = request
+        # Hints can also be opened from the tray while the Ring is disconnected.
+        # A later connection change still invalidates this request's generation.
+        return (generation == self._generation and not self.session_blocked()
+                and connection is self.owner._disconnect_event)
+
+    @Slot()
+    def _scene_hud_fallback(self):
+        if self._take_scene_hud(self._pending_hud):
+            self.owner._event_log("RING_GESTURE", action="hint_fallback", reason="scene_lookup_timeout")
+            self.showRequested.emit(self.mode, "")
+
     @Slot(int, float, object, object)
     def _show_scene_hud(self, generation, created, connection, target):
-        if (generation != self._generation or time.monotonic() - created > 1.0 or self.session_blocked()
-                or connection is not self.owner._disconnect_event or connection.is_set()):
+        if not self._take_scene_hud((generation, created, connection)):
+            return
+        if time.monotonic() - created > 1.0:
+            self.owner._event_log("RING_GESTURE", action="hint_fallback", reason="scene_lookup_timeout")
+            self.showRequested.emit(self.mode, "")
             return
         catalog = self.owner._app_gestures.catalog
         catalog.observe_scene(target)
@@ -435,6 +491,7 @@ class RingGestureController(QObject):
         self._fields.sync()
 
     def close(self):
+        self._cancel_scene_hud()
         self._fields.close()
         self._scroll.close()
         self._selector.close()

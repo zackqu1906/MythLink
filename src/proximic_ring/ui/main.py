@@ -10,6 +10,9 @@ def main(argv: list[str] | None = None) -> int:
     from ..runtime_paths import configure_runtime_environment, resource_root
 
     configure_runtime_environment()
+    from ..runtime_diagnostics import configure_diagnostics
+    from ..runtime_paths import is_frozen
+    diagnostic_capture = configure_diagnostics(tee=not is_frozen())
     try:
         from PySide6.QtCore import QTimer, QUrl
         from PySide6.QtGui import QAction, QIcon
@@ -21,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
         ) from exc
 
     from .controller import AppController
+
+    diagnostic_capture.install_qt()
 
     startup_probe = os.environ.get("PROXIMIC_STARTUP_PROBE", "").strip() == "1"
     print("[startup] creating QApplication")
@@ -84,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     from .gesture_hud import GestureHud
 
     gesture_hud = GestureHud(app, diagnostic=controller._append_background_diagnostic)
+    from .gesture_trigger_overlay import GestureTriggerOverlay
+    gesture_trigger = GestureTriggerOverlay(controller.gestureTrigger, app,
+        diagnostic=controller._append_background_diagnostic)
     text_fields = controller.ringGestures.textFields
     from .focus_band import FocusBand
     focus_band = FocusBand(text_fields.picker, app, diagnostic=controller._append_background_diagnostic)
@@ -123,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
             if report["backend_errors"]:
                 raise RuntimeError("macOS permission backend unavailable: " + "; ".join(report["backend_errors"]))
             print("[startup] macOS permission backends ready (read-only)")
+            from ..app_shortcuts import verify_native_api
+            verify_native_api()
+            print("[startup] macOS browser scene backend ready (read-only)")
         # Packaging CI sets this flag to prove the frozen executable can import
         # the application, QML, and the dynamically loaded ASR modules.
         from ..asr.backends.funasr_nano import FunASRNanoStreamingASR

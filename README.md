@@ -100,15 +100,17 @@ Developer ID 签名并通过 Apple 公证；开发者本地未配置证书时生
 如果应用图标出现后立即退出，新版本会弹出启动错误并把完整诊断写到：
 
 ```text
-~/Library/Application Support/ProxiMic Voice/logs/startup.log
+~/Library/Application Support/ProxiMic Voice/logs/diagnostic.log
 ```
 
-应用正常启动后的交互诊断写入同目录的 `diagnostic.log`。它会关联 session、路由、
-LLM 请求、应用结果，以及连接、F8 类型转换、撤销和取消等关键用户动作；实时 ASR
-partial 和空闲状态下的普通 Stage2 reject 不逐条写入。`diagnostic.log` 每个文件最多
-2 MiB，保留 3 个备份；`startup.log` 每次启动前检查并保留 2 个备份，避免长期占用硬盘。
-排查交互问题时优先提供 `diagnostic.log` 和大致发生时间；如果问题发生后日志已经轮转，
-再附上同目录的 `.1` 备份。日志包含识别文本和模型返回，分享前请确认其中没有敏感内容。
+启动、交互、场景识别、后台事件、标准输出/错误、Python/Qt 日志及异常堆栈统一写入
+`diagnostic.log`。每条普通记录包含时间（含时区）、级别、来源、run、进程和线程；
+`[SCENE]` 后保留完整结构化诊断，可按 run/trace、session、应用和失败原因追踪。
+实时 ASR partial 和空闲状态下的普通 Stage2 reject 仍不逐条写入。
+每个文件按 8 MiB 轮转，保留 5 个备份。打开“故障排查 · 实时日志”，点击
+“导出完整日志”即可把当前日志及保留的历史合成一个 `.log` 文件，提供该文件和问题发生时间即可。
+“清空窗口”只清空显示，导出仍包含保留的历史。升级前的 `startup.log`、`scene-events.jsonl`
+保留作旧版历史，新版不再写入。日志包含识别文本和模型返回，分享前请确认其中没有敏感内容。
 
 也可以在“终端”直接启动以复现，并把上述日志发给开发者：
 
@@ -273,8 +275,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 修改结果；发送原生撤销后显示“已发送原生撤销”，不再把旧候选显示成有效 final 文本，也不宣称原文已恢复。记录保存
 在当前用户的应用数据目录，重新打开应用后仍可查看。录音写盘在后台完成。
 历史列表启动时读取一次，运行中只刷新发生变化的记录，避免每句语音都重新读取全部历史文件。
-完整运行日志默认不占用主界面空间，点击顶栏“实时日志”按钮即可打开并持续查看。
-该窗口保留本次运行最近 1000 行，点击“打开日志目录”可查看跨重启保留且自动轮转的
+完整运行日志默认不占用主界面空间，从帮助中的“故障排查 · 实时日志”打开。
+窗口直接显示统一日志最近 1000 行，包括启动、场景详情和后台错误；仅在窗口打开时刷新。
+“导出完整日志”将保留的轮转历史合并为一个文件，“打开日志目录”可查看原始
 `diagnostic.log`；日志只保存在本机应用数据目录。
 
 “暂停语音识别”只暂停 ProxiMic 和 ASR，Ring 仍保持连接；“断开设备”才会释放麦克风和 BLE。
@@ -335,7 +338,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 | --- | --- | --- | --- |
 | 本地 | `Qwen3-4B-Instruct-2507` Q4_K_M | llama.cpp `/chat/completions` | Instruct 模式、thinking 关闭、强制本地 tool calling |
 | 火山方舟 | `doubao-seed-2-0-lite-260215` | 方舟 `/responses` | 显式关闭 thinking，支持 function tools |
-| 火山方舟 | `deepseek-v4-flash-260425` | 方舟 `/responses` | 显式关闭 thinking，与豆包复用相同 prompt、schema 和校验器 |
+| 火山方舟 | `deepseek-v4-1-flash-260910` | 方舟 `/responses` | 显式关闭 thinking，与豆包复用相同 prompt、schema 和校验器 |
 
 本地模型在 UI 首帧出现后自动启动并预热固定 prompt。模型加载完成只表示权重已进入内存，
 实际生成速度仍取决于 CPU/GPU、输出 token 数和是否触发重试。

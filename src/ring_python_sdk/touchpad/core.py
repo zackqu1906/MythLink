@@ -8,12 +8,12 @@ import math
 import struct
 import numpy as np
 
+from .trajectory import CD_GAIN, CD_SPEED, TrajectoryBuffer, TrajectoryCursor
+
 START = bytes.fromhex('21 00 c8 00 c8 00 d0 07 10 0a 01')
 STOP = b'\x21\x01'
 WRITE = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'
 NOTIFY = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
-CD_SPEED = [0,.05,.1,.2,.325,.5,.75,1.1,1.55,2.15,3,4]
-CD_GAIN = [390,390,405,440,495,565,655,820,1025,1335,1750,2220]
 
 
 def parse_tokens(packet):
@@ -28,98 +28,143 @@ def parse_tokens(packet):
 
 
 class ClickDetector:
-    def __init__(self): self.reset()
+    """Original contact and single-click rules; used once per input stream."""
+    def __init__(self):
+        self.reset()
+
     def reset(self):
-        self.window=deque(maxlen=15); self.raw={}; self.pending=deque()
-        self.start=self.transition=self.last_prob=self.last_move=None
-    def probability(self,index,p):
-        if self.last_prob is not None and index!=self.last_prob+1: self.reset()
-        self.last_prob=index; self.window.append((index,p))
-        if len(self.window)<15:return []
-        sorted_p=sorted(v for _,v in self.window); low,high=sorted_p[2],sorted_p[12]
-        if high-low<=.5+1e-12:return []
-        hi=[i for i,v in self.window if v>=high][-3:]
-        lo=[i for i,v in self.window if v<=low][-3:]
-        previous,current=(lo,hi) if self.start is None else (hi,lo)
-        if previous[-1]>=current[0] or current[-1]!=index:return []
-        if self.transition is not None and current[0]<=self.transition:return []
-        self.transition=index
-        if self.start is None:self.start=current[0]
+        self.window = deque(maxlen=15)
+        self.raw = {}
+        self.pending = deque()
+        self.start = self.transition = self.last_prob = self.last_move = None
+        self.contact_edges = deque(maxlen=64)
+        self.contact_verdicts = deque(maxlen=64)
+
+    def probability(self, index, probability):
+        if self.last_prob is not None and index != self.last_prob + 1:
+            self.reset()
+        self.last_prob = index
+        self.window.append((index, probability))
+        if len(self.window) < 15:
+            return []
+        sorted_probabilities = sorted(value for _, value in self.window)
+        low, high = sorted_probabilities[2], sorted_probabilities[12]
+        if high - low <= .5 + 1e-12:
+            return []
+        hi = [i for i, value in self.window if value >= high][-3:]
+        lo = [i for i, value in self.window if value <= low][-3:]
+        previous, current = (lo, hi) if self.start is None else (hi, lo)
+        if previous[-1] >= current[0] or current[-1] != index:
+            return []
+        if self.transition is not None and current[0] <= self.transition:
+            return []
+        self.transition = index
+        # Contact metadata observes the original decision; it adds no threshold.
+        self.contact_edges.append((self.start is None, current[0], index))
+        if self.start is None:
+            self.start = current[0]
         else:
-            self.pending.append((self.start,current[0]));self.start=None
+            self.pending.append((self.start, current[0]))
+            self.start = None
         return self.ready()
-    def movement(self,index,velocity):
-        self.raw[index]=velocity;self.last_move=index
-        for k in list(self.raw):
-            if k<index-800:del self.raw[k]
+
+    def movement(self, index, velocity):
+        self.raw[index] = velocity
+        self.last_move = index
+        for step in list(self.raw):
+            if step < index - 800:
+                del self.raw[step]
         return self.ready()
+
     def ready(self):
-        result=[]
-        while self.pending and self.last_move is not None and self.last_move>=self.pending[0][1]-1:
-            start,end=self.pending.popleft()
-            if not 0<end-start<40 or any(k not in self.raw for k in range(start,end)):continue
-            dx=sum(self.raw[k][0] for k in range(start,end))*.005
-            dy=sum(self.raw[k][1] for k in range(start,end))*.005
-            if math.hypot(dx,dy)<=.02:result.append({'kind':'click','step':end})
+        result = []
+        while (self.pending and self.last_move is not None
+               and self.last_move >= self.pending[0][1] - 1):
+            start, end = self.pending.popleft()
+            self.contact_verdicts.append((start, end, False))
+            if not 0 < end - start < 40 or any(k not in self.raw for k in range(start, end)):
+                continue
+            dx = sum(self.raw[k][0] for k in range(start, end)) * .005
+            dy = sum(self.raw[k][1] for k in range(start, end)) * .005
+            if math.hypot(dx, dy) <= .02:
+                result.append(dict(kind='click', step=end))
+                self.contact_verdicts[-1] = (start, end, True)
         return result
 
 
 class Postprocessor:
-    def __init__(self):self.reset()
+    """One sample buffer and click detector; two optional read schedules."""
+    def __init__(self):
+        self.pointer = None
+        self.reset()
+
+    @property
+    def n(self):
+        return self.frames.n
+
     def reset(self):
-        self.n=0;self.vel={};self.prob={};self.times={};self.last=0
-        self.next_step=self.next_time=self.last_time=None;self.catchup=False
-        self.click=ClickDetector();self.events=[];self.contact=0.
-    def add(self,output,arrival,frame_time):
-        output=np.asarray(output)
-        if output.shape!=(5,3) or not np.isfinite(output).all():raise ValueError('模型输出无效')
-        self.n+=1; n=self.n;self.times[n]=(frame_time,arrival)
-        if n>200:
-            for j,(vx,vy,logit) in enumerate(output):
-                k=n+j-2
-                if k>200:
-                    if k>self.last:self.vel.setdefault(k,[]).append((float(vx),float(vy)))
-                    p=1/(1+math.exp(-max(-80,min(80,float(logit)))))
-                    self.prob.setdefault(k,[]).append(p)
-            for k in sorted(k for k in self.prob if k<=n-2):
-                samples=self.prob.pop(k);self.contact=sum(samples)/len(samples)
-                self.events.extend(self.click.probability(k,self.contact))
-        for k in list(self.times):
-            if k<n-66 and k not in self.vel:del self.times[k]
-    def drain(self,now):
-        available=sorted(self.vel.keys() & self.times.keys())
-        for k in available:
-            if now-self.times[k][0]<=.1:break
-            del self.vel[k];del self.times[k];self.last=max(self.last,k)
-            self.click.reset()  # Never allow a click to span discarded movement.
-            if self.next_step is not None and k>=self.next_step:self.next_step=k+1
-        available=sorted(self.vel.keys() & self.times.keys())
-        if self.next_time is None:
-            if not available:return self.take_events()
-            self.next_step=available[0];self.next_time=max(now,(self.last_time or now-.005)+.005)
-        if now<self.next_time:return self.take_events()
-        k=self.next_step
-        if k not in available:
-            self.next_time=self.next_step=None
-            return self.take_events()
-        v=np.mean(self.vel.pop(k),axis=0)
-        x=float(v[0])*1.595;y=float(v[1])
-        cd=float(np.interp(math.hypot(x,y),CD_SPEED,CD_GAIN));gain=cd*.7*.005
-        dx,dy=x*gain*.75,y*gain*1.10
-        if math.hypot(dx,dy)<.1:dx=dy=0.
-        self.events.append({'kind':'move','step':k,'dx':dx,'dy':dy,'contact':self.contact})
-        self.events.extend(self.click.movement(k,(float(v[0]),float(v[1]))))
-        del self.times[k];self.last=k;self.last_time=now;self.next_step=k+1
-        available=sorted(self.vel.keys() & self.times.keys())
-        if not available:self.next_step=self.next_time=None;self.catchup=False
-        else:
-            age=now-self.times[available[0]][1]
-            if self.catchup and age<.015:self.catchup=False
-            elif not self.catchup and age>.025:self.catchup=True
-            interval=.00475 if self.catchup else .005
-            self.next_time+=interval
-            if self.next_time<=now:self.next_time+=(int((now-self.next_time)/interval)+1)*interval
+        self.frames = TrajectoryBuffer()
+        self.trajectory = TrajectoryCursor(paced=False)
+        if self.pointer is not None:
+            self.pointer = TrajectoryCursor(paced=True)
+        self.prob = {}
+        self.click = ClickDetector()
+        self.events = []
+        self.contact = 0.
+
+    def enable_pointer_moves(self):
+        """Enable the original mouse schedule before the first model frame."""
+        self.pointer = TrajectoryCursor(paced=True)
+
+    def _oldest_consumed(self):
+        return (min(self.trajectory.last, self.pointer.last)
+                if self.pointer is not None else self.trajectory.last)
+
+    def add(self, output, arrival, frame_time):
+        output = np.asarray(output)
+        if output.shape != (5, 3) or not np.isfinite(output).all():
+            raise ValueError('模型输出无效')
+        self.frames.add(output, arrival, frame_time, self._oldest_consumed())
+        if self.n <= 200:
+            return
+        for j, (_, _, logit) in enumerate(output):
+            step = self.n + j - 2
+            if step > 200:
+                probability = 1 / (1 + math.exp(-max(-80, min(80, float(logit)))))
+                self.prob.setdefault(step, []).append(probability)
+        for step in sorted(k for k in self.prob if k <= self.n - 2):
+            samples = self.prob.pop(step)
+            self.contact = sum(samples) / len(samples)
+            clicks = self.click.probability(step, self.contact)
+            for down, edge_step, confirmed_step in self.click.contact_edges:
+                self.events.append(dict(kind='contact', state='down' if down else 'up',
+                                        step=edge_step, confirmed_step=confirmed_step))
+            self.click.contact_edges.clear()
+            self.events.extend(clicks)
+
+    def drain(self, now):
+        expired, movements = self.trajectory.drain(self.frames, now)
+        for step in expired:
+            self.click.reset()  # Never classify a click across lost recognition data.
+            self.events.append(dict(kind='contact', state='reset', step=step, confirmed_step=step))
+        for step, vx, vy, dx, dy in movements:
+            self.events.append(dict(kind='move', step=step, dx=dx, dy=dy, contact=self.contact))
+            self.events.extend(self.click.movement(step, (vx, vy)))
+        self.frames.release_through(self._oldest_consumed())
         return self.take_events()
+
+    def drain_pointer(self, now):
+        if self.pointer is None:
+            return []
+        # Mouse expiry must never reset or feed the shared click detector.
+        _, movements = self.pointer.drain(self.frames, now)
+        self.frames.release_through(self._oldest_consumed())
+        return [dict(kind='move', step=step, dx=dx, dy=dy, contact=self.contact)
+                for step, _, _, dx, dy in movements]
+
     def take_events(self):
-        events,self.events=self.events,[]
+        for start, end, is_click in self.click.contact_verdicts:
+            self.events.append(dict(kind='click_verdict', start_step=start, step=end, is_click=is_click))
+        self.click.contact_verdicts.clear()
+        events, self.events = self.events, []
         return events

@@ -23,10 +23,12 @@ class Desktop:
                          {"id": 2, "frame": (-1440, -200, 1440, 900)}]
         self.stamp = {"pid": 10, "window": 1}
         self.activated = []
+        self.pointer = (100, 100)
         self.session = WindowSelectorSession(self, clock=lambda: self.now)
     def front(self): return dict(self.stamp)
     def on_screen(self): return self.rows
     def screens(self): return self.displays
+    def pointer_position(self): return self.pointer
     def apps(self): return self.applications
     def application(self, pid): return self.app_nodes[pid]
     def windows(self, pid): return self.application_windows[pid]
@@ -177,6 +179,85 @@ def test_foreground_without_ax_focus_does_not_disable_the_global_selector():
     assert result["status"] == "ready"
     assert d.activate_card(result, 1)["status"] == "activated"
     assert d.activated == [(20, d.c)]
+
+
+@pytest.mark.parametrize("origin", ["closed", "minimized", "no_app", "own_overlay"])
+def test_windowless_foreground_still_lists_other_visible_apps(origin):
+    d = Desktop()
+    if origin == "no_app":
+        d.stamp = {"pid": 0, "window": 0}
+    else:
+        d.rows = [r for r in d.rows if r["pid"] != 10]
+        d.application_windows[10] = []
+        d.app_nodes[10].attrs["AXFocusedWindow"] = None
+        if origin == "minimized": d.a.attrs["AXMinimized"] = True
+        if origin == "own_overlay":
+            d.rows.insert(0, {"pid": 10, "number": 99, "frame": (0, 0, 1440, 900)})
+    result = d.session.handle("selector_list", host_pid=10 if origin == "own_overlay" else 0)
+    assert result["status"] == "ready"
+    assert any(c["pid"] == 20 for c in result["cards"])
+    assert d.session.last_diagnostic["screen_source"] == "pointer"
+    assert d.session.last_diagnostic["reason"] == "ready"
+    target = next(c for c in result["cards"] if c["pid"] == 20)
+    assert d.session.handle("selector_activate", token=result["token"], target=target["id"])["status"] == "activated"
+    assert d.activated == [(20, d.c)]
+
+
+def test_windowless_foreground_chooses_pointer_display_in_global_coordinates():
+    d = Desktop()
+    d.stamp = {"pid": 0, "window": 0}
+    d.pointer = (-900, -50)
+    d.c.frame = (-1200, -100, 600, 400)
+    d.rows[1]["frame"] = d.c.frame
+    result = d.listing()
+    assert result["screen"] == 2
+    assert [c["title"] for c in result["cards"]] == ["Gamma"]
+
+
+def test_missing_pointer_falls_back_to_visible_window_and_never_to_old_snapshot():
+    d = Desktop()
+    d.listing()
+    d.stamp = {"pid": 0, "window": 0}
+    d.pointer = None
+    d.rows = [r for r in d.rows if r["pid"] == 20]
+    result = d.listing()
+    assert [c["title"] for c in result["cards"]] == ["Gamma"]
+    assert d.session.last_diagnostic["screen_source"] == "visible_window"
+    d.rows.clear()
+    assert d.listing()["status"] == "empty"
+    assert d.session.last_diagnostic["reason"] == "no_visible_windows"
+    assert not d.session.targets and not d.session.token
+
+
+def test_unavailable_displays_are_not_reported_as_empty_desktop():
+    d = Desktop()
+    d.displays.clear()
+    assert d.listing()["status"] == "unavailable"
+    assert d.session.last_diagnostic["reason"] == "screens_unavailable"
+
+
+def test_transient_origin_read_failure_does_not_disable_global_selection():
+    d = Desktop()
+    def failed_front(): raise RuntimeError("private window name")
+    d.front = failed_front
+    result = d.listing()
+    assert result["status"] == "ready" and len(result["cards"]) == 3
+    assert d.session.last_diagnostic["screen_source"] == "pointer"
+    assert d.session.last_diagnostic["origin_error"]["error_type"] == "RuntimeError"
+    assert "private" not in str(d.session.last_diagnostic)
+
+
+def test_stale_origin_geometry_keeps_current_visible_window_listing():
+    d = Desktop()
+    stale = Node("AXWindow")
+    d.app_nodes[10].attrs["AXFocusedWindow"] = stale
+    original = d.rect
+    def rect(node):
+        if node is stale: raise RuntimeError("stale focus")
+        return original(node)
+    d.rect = rect
+    assert len(d.listing()["cards"]) == 3
+    assert d.session.last_diagnostic["screen_source"] == "foreground_window"
 
 
 def test_card_limit_bounds_ipc_size_and_unresponsive_app_budget_is_partial():

@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 import pytest
 
-from proximic_ring.scene_recognition.focus import inspect_focus
+from proximic_ring.scenes.recognition.focus import inspect_focus
 from proximic_ring.scene_diagnostics import SceneActionError
 from test_activity_scenes import metadata
 from test_presentation_portability import native_backend
@@ -74,7 +74,7 @@ def test_unfocused_web_root_never_bypasses_real_blockers_or_incomplete_ownership
 
 
 @pytest.mark.parametrize('role', ['AXTextField','AXTextArea','AXSearchField','AXComboBox',
-    'AXButton','AXGroup','AXLayoutArea','AXUnknown'])
+    'AXButton','AXCheckBox','AXSlider','AXList','AXWindow','AXUnknown'])
 def test_stale_controls_do_not_get_web_container_exception(role):
     window, focus = document_window(); focus['AXRole'] = role
     assert inspect_focus(window, focus, metadata, window_shortcut=True).blocked

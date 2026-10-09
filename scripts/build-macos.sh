@@ -86,13 +86,14 @@ trap 'rm -rf "$SMOKE_IME_DIR"' EXIT
 PROXIMIC_DATA_HOME="$SMOKE_DATA_ROOT" \
     PROXIMIC_IME_SOCKET="$SMOKE_IME_DIR/bridge.sock" \
     "$APP_EXECUTABLE" --self-check-package
-SMOKE_LOG="$SMOKE_DATA_ROOT/logs/startup.log"
+SMOKE_LOG="$SMOKE_DATA_ROOT/logs/diagnostic.log"
 if [[ ! -f "$SMOKE_LOG" ]] \
     || ! grep -q "bundled ADPCM decoder ready" "$SMOKE_LOG" \
     || ! grep -q "bundled QML files ready" "$SMOKE_LOG" \
     || ! grep -q "macOS input method transport ready" "$SMOKE_LOG" \
     || ! grep -q "bundled input method installer ready" "$SMOKE_LOG" \
     || ! grep -q "macOS permission backends ready (read-only)" "$SMOKE_LOG" \
+    || ! grep -q "macOS browser scene backend ready (read-only)" "$SMOKE_LOG" \
     || ! grep -q "QML root window ready" "$SMOKE_LOG" \
     || ! grep -q "packaged ASR imports ready" "$SMOKE_LOG"; then
     echo "macOS packaged application did not complete its startup probe." >&2

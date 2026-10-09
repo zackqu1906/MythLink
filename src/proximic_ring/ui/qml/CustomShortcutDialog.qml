@@ -79,13 +79,13 @@ Dialog {
         }
         Label {
             Layout.fillWidth: true
-            text: shortcut.activeFocus ? "请按下组合键，Esc 取消录入" : "支持单组组合键；录入后仍需在映射页保存更改。"
+            text: shortcut.activeFocus ? "请按下组合键，Esc 取消录入" : "支持单组组合键；点击使用后立即生效并自动保存。"
             wrapMode: Text.Wrap; color: theme.muted; font.pixelSize: 11
         }
-        Label {
+        UiNotice {
             Layout.fillWidth: true
             text: dialog.errorText || dialog.service.recordingError
-            visible: text.length > 0; wrapMode: Text.Wrap; color: "#A35527"; font.pixelSize: 12
+            visible: text.length > 0; wrapMode: Text.Wrap; font.pixelSize: 12
         }
     }
     footer: DialogButtonBox {
@@ -97,7 +97,7 @@ Dialog {
             DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
             onClicked: {
                 var action = dialog.service.catalog.customAction(actionName.text, dialog.shortcutValue)
-                if (action.id) { dialog.actionChosen(action); dialog.close() }
+                if (action.id) dialog.actionChosen(action)
                 else dialog.errorText = dialog.service.catalog.message
             }
         }

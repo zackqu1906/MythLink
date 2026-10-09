@@ -12,5 +12,8 @@ QtObject {
     readonly property color muted: "#687286"
     readonly property color placeholder: "#98A1B2"
     readonly property color success: "#16875C"
+    readonly property color warning: "#8A611C"
+    readonly property color warningSurface: "#FFFAEF"
+    readonly property color warningBorder: "#F0E2C2"
     readonly property string family: Qt.platform.os === "osx" ? ".AppleSystemUIFont" : "Microsoft YaHei UI"
 }

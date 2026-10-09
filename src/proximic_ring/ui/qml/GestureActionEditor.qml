@@ -27,13 +27,6 @@ Rectangle {
     readonly property string pendingDefault: applicationScope ? catalog.pendingBindings[gesture] || "" : ""
     readonly property string savedId: saved ? saved.id : ""
     readonly property string contextKey: applicationScope ? bundle + "/" + catalog.selectedScene + "/" + gesture : "global/" + gesture
-    readonly property string savedVersion: applicationScope ? savedId + (pendingDefault ? "/pending:" + pendingDefault : "") : JSON.stringify(globalController.globalBindings)
-    // Drafts survive a gesture/app/page switch, but never alter live bindings.
-    property var drafts: ({})
-    readonly property string draftId: drafts[contextKey] ? drafts[contextKey].id : savedId
-    readonly property var customDraft: drafts[contextKey] ? drafts[contextKey].custom || null : null
-    readonly property bool dirty: draftId !== savedId || Boolean(pendingDefault && drafts[contextKey])
-    readonly property bool stale: Boolean(drafts[contextKey] && drafts[contextKey].base !== savedVersion)
     readonly property bool voiceLocked: catalog.voiceGestures.indexOf(gesture) >= 0
     readonly property bool editable: {
         var bindings = service.profiles // Refresh when voice/source settings change.
@@ -46,20 +39,14 @@ Rectangle {
         return app ? app.label : "尚未添加应用"
     }
     readonly property var availableActions: applicationScope ? catalog.actions : globalOptions
-    readonly property var filteredActions: (customDraft && !availableActions.some(function(a) { return a.id === editor.draftId })
-        ? availableActions.concat([customDraft]) : availableActions).filter(function(a) {
+    readonly property var filteredActions: availableActions.filter(function(a) {
         var query = search.text.trim().toLowerCase()
         return (a.label + " " + a.path + " " + a.shortcut).toLowerCase().indexOf(query) >= 0
     })
-    readonly property bool selectedAvailable: (applicationScope && (!draftId || Boolean(customDraft))) || availableActions.some(function(a) { return a.id === editor.draftId })
-    readonly property bool selectedCustom: draftId.indexOf("custom:") === 0
-    readonly property bool selectedPreset: catalog.actions.some(function(a) { return a.id === editor.draftId && a.preset === true })
     readonly property var savedAction: saved ? availableActions.filter(function(a) { return a.id === editor.savedId })[0] || null : null
-    readonly property bool canSave: editable && dirty && !stale && selectedAvailable
-        && (!applicationScope || !catalog.busy || selectedCustom || selectedPreset || !draftId)
     readonly property string globalEffect: {
-        var action = globalOptions.filter(function(a) { return a.id === editor.draftId })[0]
-        return action ? action.effect : "选择要绑定的全局功能，保存后生效。"
+        var action = globalOptions.filter(function(a) { return a.id === editor.savedId })[0]
+        return action ? action.effect : "选择后自动保存并生效。"
     }
     readonly property string savedStatus: {
         if (!saved) return ""
@@ -78,62 +65,24 @@ Rectangle {
     objectName: "gestureActionEditor"
     radius: 14; color: theme.surface; border.color: theme.line
     implicitHeight: Math.max(664, body.implicitHeight + 40)
-    function choose(actionId) {
-        if (!editable || stale) return
-        if (actionId === draftId && !pendingDefault) return
-        if (actionId === savedId && !pendingDefault) { discard(); return }
-        var next = Object.assign({}, drafts)
-        next[contextKey] = {id: actionId, base: savedVersion}
-        drafts = next
-        feedback = ""
+    function report(success) {
+        feedbackError = !success
+        feedback = success ? "已自动保存" : (applicationScope ? catalog.message : service.notice || "此手势当前不可用，请重新选择")
+        return success
     }
-    function discard() {
-        var next = Object.assign({}, drafts)
-        delete next[contextKey]
-        drafts = next
-        feedback = ""
+    function choose(actionId) {
+        if (!editable) return
+        if (actionId === savedId && !pendingDefault) return
+        report(applicationScope ? catalog.setBinding(bundle, gesture, actionId)
+                                : globalController.setGlobalGestureAction(gesture, actionId))
     }
     function chooseCustom(action) {
-        if (!applicationScope || !editable || stale || !action.id) return
-        if (action.id === savedId) { discard(); return }
-        var next = Object.assign({}, drafts)
-        next[contextKey] = {id: action.id, base: savedVersion, custom: action}
-        drafts = next
-        feedback = ""
-    }
-    function draftCount(application) {
-        return Object.keys(drafts).filter(function(key) { return key.indexOf(application + "/") === 0 }).length
-    }
-    function discardApplication(application) {
-        var next = Object.assign({}, drafts)
-        Object.keys(next).forEach(function(key) {
-            if (key.indexOf(application + "/") === 0) delete next[key]
-        })
-        drafts = next
-        if (application === bundle) feedback = ""
+        if (!applicationScope || !editable || !action.id) return false
+        return report(catalog.setCustomBinding(bundle, gesture, action.label, action.shortcut))
     }
     Connections {
         target: editor.catalog
-        function onApplicationBindingsCleared(application) { editor.discardApplication(application) }
-        function onDiscoveryChanged() {
-            if (editor.applicationScope && (editor.catalog.busy || editor.catalog.menuState === "error" || editor.catalog.menuState === "partial"))
-                editor.feedback = ""
-        }
-    }
-    function save() {
-        if (!canSave) return
-        var success = !applicationScope ? globalController.setGlobalGestureAction(gesture, draftId)
-            : customDraft ? catalog.setCustomBinding(bundle, gesture, customDraft.label, customDraft.shortcut)
-            : catalog.setBinding(bundle, gesture, draftId)
-        if (success) {
-            discard()
-            feedbackError = false
-            feedback = !applicationScope ? "已保存，全局手势和应用占用状态已更新"
-                : sceneScope ? "已保存，识别到此应用前台处于「" + catalog.selectedScopeLabel + "」后生效" : "已保存，仅在此应用位于前台时生效"
-        } else {
-            feedbackError = true
-            feedback = applicationScope ? catalog.message : service.notice || "此手势当前不可用，请重新选择"
-        }
+        function onApplicationBindingsCleared(application) { if (application === editor.bundle) editor.feedback = "" }
     }
     onContextKeyChanged: { search.text = ""; feedback = ""; customDialog.close() }
     onApplicationScopeChanged: { feedback = ""; customDialog.close() }
@@ -145,7 +94,10 @@ Rectangle {
         width: Math.min(440, parent ? parent.width - 40 : 440)
         x: parent ? (parent.width - width) / 2 : 0
         y: parent ? Math.max(20, (parent.height - height) / 2) : 0
-        onActionChosen: function(action) { editor.chooseCustom(action) }
+        onActionChosen: function(action) {
+            if (editor.chooseCustom(action)) customDialog.close()
+            else customDialog.errorText = editor.feedback
+        }
     }
 
     ColumnLayout {
@@ -155,7 +107,7 @@ Rectangle {
             Layout.fillWidth: true
             Label { text: "编辑映射"; font.pixelSize: 21; font.weight: Font.DemiBold; color: theme.text }
             Item { Layout.fillWidth: true }
-            Label { visible: editor.dirty; text: "未保存"; font.pixelSize: 11; color: "#986A15" }
+            Label { text: "自动保存"; font.pixelSize: 11; color: theme.muted }
         }
         ColumnLayout {
             Layout.fillWidth: true; spacing: 4
@@ -189,7 +141,6 @@ Rectangle {
                 Item { Layout.fillWidth: true }
                 UiAction {
                     objectName: "customShortcutButton"; text: "自定义"; quiet: true; implicitHeight: 30
-                    enabled: !editor.stale
                     ToolTip.visible: hovered
                     ToolTip.delay: 600
                     ToolTip.text: "为未列出的动作录入快捷键"
@@ -206,15 +157,15 @@ Rectangle {
                     anchors.fill: parent; anchors.margins: 4
                     clip: true; spacing: 3
                     model: editor.applicationScope ? (editor.sharedNavigation ? [] : [{id: "", label: "无", path: editor.sceneScope ? "移除此场景的动作绑定" : "移除此手势的应用覆盖", shortcut: "", available: true}]).concat(editor.filteredActions) : editor.filteredActions
-                    ScrollBar.vertical: ScrollBar { }
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                     delegate: AbstractButton {
                         id: actionRow
                         required property var modelData
                         objectName: "menuAction_" + modelData.id
                         width: actions.width; height: 56
                         hoverEnabled: true
-                        enabled: !editor.stale && (!editor.applicationScope || !catalog.busy || modelData.custom === true || modelData.preset === true || !modelData.id)
-                        checked: editor.draftId === modelData.id
+                        enabled: !editor.applicationScope || !catalog.busy || modelData.custom === true || modelData.preset === true || !modelData.id
+                        checked: editor.savedId === modelData.id
                         Accessible.name: modelData.path + " " + modelData.shortcut
                         Accessible.role: Accessible.RadioButton
                         ToolTip.visible: hovered
@@ -246,11 +197,11 @@ Rectangle {
                 visible: (!editor.applicationScope || !catalog.busy) && editor.filteredActions.length === 0 && search.text.length > 0
                 text: editor.applicationScope ? "没有匹配的动作或快捷键" : "没有匹配的全局功能"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
             }
-            Label {
+            UiNotice {
                 objectName: "menuReadMessage"
                 visible: editor.applicationScope
                 Layout.fillWidth: true; text: catalog.message
-                color: catalog.menuState === "error" || catalog.menuState === "partial" ? "#A35527" : theme.muted
+                warning: catalog.menuState === "error" || catalog.menuState === "partial"
                 font.pixelSize: 11; wrapMode: Text.Wrap
             }
         }
@@ -310,31 +261,21 @@ Rectangle {
                 }
             }
         }
-        Label {
+        UiNotice {
             objectName: "menuMappingFeedback"
             Layout.fillWidth: true; visible: text.length > 0
-            text: editor.stale ? "绑定已在其他位置更改。请取消草稿后重新选择。"
-                : editor.dirty && !editor.selectedAvailable && (!editor.applicationScope || !catalog.busy) ? "所选功能不在当前列表中，请重新选择。" : editor.feedback
-            color: editor.stale || editor.feedbackError ? "#A35527" : theme.success
+            text: editor.feedback
+            warning: editor.feedbackError
+            color: warning ? theme.warning : theme.success
             font.pixelSize: 12; wrapMode: Text.Wrap
         }
         Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
         Label {
             objectName: "globalBindingEffect"
             Layout.fillWidth: true; visible: !editor.applicationScope && editor.editable
-            text: editor.globalEffect; color: editor.dirty ? "#986A15" : theme.muted
+            text: editor.globalEffect; color: theme.muted
             font.pixelSize: 12; wrapMode: Text.Wrap
         }
-        Label { Layout.fillWidth: true; visible: editor.editable; text: !editor.applicationScope ? "全局功能优先生效，应用内会自动禁用被占用的手势。Tap 和四向滑动保留为语音组。" : editor.sceneScope ? "仅在前台识别到「" + catalog.selectedSceneLabel + "」、焦点不在文本框且语音空闲时生效。" : editor.voiceLocked ? "保存此覆盖后，该应用常规状态下停用整个语音手势组。其他应用不受影响。" : "输入模式与操作模式均可用，仅在目标应用位于前台时生效"; color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap }
-        RowLayout {
-            Layout.alignment: Qt.AlignRight; visible: editor.editable; spacing: 10
-            UiAction {
-                objectName: "saveMenuMappingButton"
-                primary: true; symbol: "save"; text: "保存更改"
-                enabled: editor.canSave
-                onClicked: editor.save()
-            }
-            UiAction { objectName: "cancelMenuMappingButton"; text: "取消修改"; enabled: editor.dirty || editor.stale; onClicked: editor.discard() }
-        }
+        Label { Layout.fillWidth: true; visible: editor.editable; text: !editor.applicationScope ? "全局功能优先生效，应用内会自动禁用被占用的手势。Tap 和四向滑动保留为语音组。" : editor.sceneScope ? "仅在前台识别到「" + catalog.selectedSceneLabel + "」、焦点不在文本框且语音空闲时生效。" : editor.voiceLocked ? "设置此覆盖后，该应用常规状态下停用整个语音手势组。其他应用不受影响。" : "输入模式与操作模式均可用，仅在目标应用位于前台时生效"; color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap }
     }
 }

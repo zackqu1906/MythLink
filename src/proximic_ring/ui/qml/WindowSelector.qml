@@ -113,7 +113,7 @@ Item {
             onContentYChanged: updateVisible()
             onHeightChanged: updateVisible()
             onCountChanged: Qt.callLater(revealSelection)
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
             delegate: Item {
                 id: delegateRoot
                 required property var modelData
@@ -196,16 +196,31 @@ Item {
             anchors { left: parent.left; right: parent.right; bottom: footer.top; bottomMargin: 12; leftMargin: 12; rightMargin: 12 }
             visible: windowPreviews.status === "permission" && windowSelector.phase === "ready"
             spacing: 12
-            Text {
+            UiNotice {
                 objectName: "windowSelectorPermissionText"
+                noticeBackground: "#403521"
+                noticeBorder: "#665330"
                 Layout.fillWidth: true
                 text: "未开启屏幕录制权限，暂时无法显示窗口预览。仍可选择和切换窗口。"
                 color: "#F2C66D"; font.pixelSize: 13; wrapMode: Text.Wrap
             }
             Button {
+                id: permissionButton
                 objectName: "windowSelectorPermissionButton"
                 text: "去开启"; focusPolicy: Qt.NoFocus
-                palette.button: "#444444"; palette.buttonText: "#F2C66D"; palette.highlight: "#777777"
+                implicitWidth: 80; implicitHeight: 36
+                padding: 8; hoverEnabled: true
+                background: Rectangle {
+                    radius: 10
+                    color: permissionButton.down ? "#55472D" : permissionButton.hovered ? "#493D28" : "#403521"
+                    border.color: "#665330"
+                }
+                contentItem: Text {
+                    text: permissionButton.text
+                    color: "#F2C66D"; font.pixelSize: 13
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
                 onClicked: windowPreviews.requestPermission()
             }
         }
@@ -220,14 +235,14 @@ Item {
                 anchors { left: parent.left; leftMargin: 22; verticalCenter: parent.verticalCenter }
                 spacing: 18
                 Text { text: windowSelector.atApps ? "↑ ↓ ← →  选择应用" : "↑ ↓ ← →  选择窗口"; color: "#cccccc"; font.pixelSize: 13 }
-                Text { visible: !windowSelector.atApps; text: windowSelector.globalLabels.switch_mode + "  返回上级"; color: "#cccccc"; font.pixelSize: 13 }
+                Text { visible: !windowSelector.atApps && Boolean(windowSelector.globalLabels.switch_mode); text: windowSelector.globalLabels.switch_mode + "  返回上级"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { text: root.expandsSelection ? "Tap  展开" : "Tap  进入窗口"; color: "#f5f5f5"; font.pixelSize: 13 }
-                Text { text: windowSelector.globalLabels.window_selector + "  取消窗口选择"; color: "#cccccc"; font.pixelSize: 13 }
-                Text { text: windowSelector.globalLabels.show_menu + "  提示环"; color: "#cccccc"; font.pixelSize: 13 }
+                Text { visible: Boolean(windowSelector.globalLabels.window_selector); text: windowSelector.globalLabels.window_selector + "  取消窗口选择"; color: "#cccccc"; font.pixelSize: 13 }
+                Text { visible: Boolean(windowSelector.globalLabels.show_menu); text: windowSelector.globalLabels.show_menu + "  提示环"; color: "#cccccc"; font.pixelSize: 13 }
             }
             Text {
                 anchors { right: parent.right; rightMargin: 22; verticalCenter: parent.verticalCenter }
-                text: windowSelector.phase === "loading" ? windowSelector.globalLabels.window_selector + "可取消" : windowSelector.remaining + "s 后退出"
+                text: windowSelector.phase === "loading" ? (windowSelector.globalLabels.window_selector ? windowSelector.globalLabels.window_selector + "可取消" : "Esc 可取消") : windowSelector.remaining + "s 后退出"
                 color: windowSelector.remaining <= 3 ? "#eeeeee" : "#a0a0a0"; font.pixelSize: 13
             }
         }

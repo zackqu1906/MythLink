@@ -248,3 +248,49 @@ def test_bundle_identity_groups_multiple_processes_but_missing_bundle_uses_pid(s
     assert s.cards[0]["windowCount"] == 2 and s.cards[0]["id"] == "b"
     s._app_index = 0
     assert [c["id"] for c in s.cards] == ["a", "b"]
+
+
+def test_missing_gesture_origin_stamp_still_opens_global_selector(selector, monkeypatch):
+    c, _, s, _, _, calls, notices, _, _ = selector
+    monkeypatch.setattr(s, "_stamp_reader", lambda: None)
+    opened(c, s)
+    assert calls == ["selector_list"] and not notices
+
+
+def test_windowless_frontend_keeps_overlay_open_and_confirms_another_app(selector):
+    c, _, s, _, d, _, notices, _, _ = selector
+    d.rows = [r for r in d.rows if r["pid"] == 20]
+    d.app_nodes[10].attrs["AXFocusedWindow"] = None
+    opened(c, s)
+    assert len(s.cards) == 1 and s.cards[0]["pid"] == 20 and not notices
+    request(c, "tap")
+    until(lambda: s.phase == "closed")
+    assert d.activated == [(20, d.c)] and not notices
+
+
+def test_native_exception_keeps_reason_stage_location_and_never_retries_activation(selector, monkeypatch):
+    c, _, s, channel, _, calls, notices, _, _ = selector
+    log = []
+    monkeypatch.setattr(c, "_event_log", lambda event, **fields: log.append(fields))
+    opened(c, s)
+    original = channel.call
+    attempts = []
+    def fail(operation, **params):
+        if operation == "selector_activate":
+            attempts.append(operation)
+            channel.last_diagnostic = dict(reason="channel_timeout", stage="activate_target", target_pid=20,
+                error_type="TimeoutError", error_frames=[dict(module="window_selector.py", function="activate", line=100)],
+                title="private window title", url="https://private.example")
+            raise TimeoutError("private contents")
+        return original(operation, **params)
+    monkeypatch.setattr(channel, "call", fail)
+    request(c, "swipe-right")
+    request(c, "tap")
+    until(lambda: s.phase == "closed")
+    assert attempts == ["selector_activate"] and len(notices) == 1
+    outcome = next(row for row in log if row.get("action") == "selector_activate")
+    assert outcome["reason"] == "channel_timeout"
+    assert outcome["native_stage"] == "activate_target" and outcome["native_target_pid"] == 20
+    error = next(row for row in log if row.get("action") == "native_error")
+    assert error["error_type"] == "TimeoutError" and "window_selector.py:100:activate" in error["locations"]
+    assert "private" not in str(log)
