@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 import platform
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
 
 
 project_root = Path(SPECPATH).parent
@@ -33,6 +33,9 @@ if notices.is_file():
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
 if platform.system() == "Darwin":
     hiddenimports += ["MNN", "_mnncengine"]
+elif platform.system() == "Windows":
+    hiddenimports += ["MNN", "_mnncengine"]
+    binaries += collect_dynamic_libs("MNN")
 hiddenimports += [
     "funasr",
     "funasr.auto.auto_model",

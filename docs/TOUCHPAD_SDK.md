@@ -1,4 +1,36 @@
-# Mac 触摸板 SDK 开发接口
+# Windows / Mac 触摸板 SDK 开发接口
+
+## Windows 适配（2026-10-10）
+
+Windows x64 / Python 3.11 复用同一个 MNN 3.6.1 模型、SDK 后处理、200 帧预热和蓝牙连接。
+主程序已启用 Windows 触摸板；按系统选择 Win32 或 Mac 鼠标输出，不在 Windows 加载 Quartz。
+鼠标工作仍在独立线程中，BLE 回调及界面线程不发送鼠标事件；有界队列及过期事件丢弃保持不变。
+Windows 有积压数据时立即继续处理，新数据到达时唤醒等待，避免 Windows 的定时器精度给每批处理增加延迟。
+
+Windows 输出采用 `SetCursorPos` 和 `SendInput`，保留小数位移余量、速度设置及方向反转，
+按虚拟桌面范围处理负坐标和多屏边界。原生点击使用正确的 32／64 位 INPUT 布局。
+普通应用中的单击／双击正常发送；点入程序内试写框后双击进入笔画，再双击或离开试写框回到鼠标。
+程序内试写复用现有 DTW 及固件轻点选字。外部笔画输入仍需要单独适配 Windows 输入组件。
+鼠标模式按 Esc 可停止，即使没有新蓝牙数据；停用后不再发送排队事件。Mac 的输入会话保持原样。
+
+Windows 安装脚本已包含 `touchpad` 依赖，并在安装结束执行真实模型推理自检。
+打包配置收录 Windows MNN 扩展及动态库，安装包自检同样执行模型推理；本次没有重新生成完整安装包。
+已有环境无需重装语音模型，只补装触摸板依赖：
+
+```powershell
+.runtime\venv\Scripts\python.exe -m pip install -c requirements-windows.lock -e ".[touchpad]"
+```
+
+启动主程序、连接戒指，然后在触摸板页面开启。独立验证命令：
+
+```powershell
+.runtime\venv\Scripts\python.exe -m pytest tests/test_touchpad_windows.py tests/test_touchpad_backbone.py
+.runtime\venv\Scripts\python.exe examples/ring_touchpad.py --device Ringo6B72 --mouse --seconds 90
+```
+
+Windows 输入权限沿用系统规则，普通进程不能向权限更高的应用注入点击；发送失败会停止输出并显示错误。
+依据：[Microsoft SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)。
+已验证真实 MNN 推理及使用模拟 Win32／戒指接口的鼠标和会话回归；连续真实佩戴效果仍需实测。
 
 修正后的 Android AAR 触摸板适配已集成至 `src/ring_python_sdk/touchpad`，由现有 `RingSession` 收取 token 并运行原模型。模型无修改，不进行静止校准、偏置补偿或静止冻结；原 AAR 的预热、预测平均、增益映射和点击判定保留。电脑端触摸板模型与固件手势识别是两个独立功能。
 

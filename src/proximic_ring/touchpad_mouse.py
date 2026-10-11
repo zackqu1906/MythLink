@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 import threading
 import time
+import sys
 
 from .touchpad_clicks import TouchpadClicks
 from .touchpad_diagnostics import note
@@ -61,11 +62,17 @@ class TouchpadMouseOutput:
         try:
             factory = self.mouse_factory
             if factory is None:
-                from .native_touchpad import NativeTouchpadMouse
-                factory = NativeTouchpadMouse
+                if sys.platform == 'win32':
+                    from ring_python_sdk.touchpad.windows import WindowsSystemMouse
+                    factory = WindowsSystemMouse
+                elif sys.platform == 'darwin':
+                    from .native_touchpad import NativeTouchpadMouse
+                    factory = NativeTouchpadMouse
+                else:
+                    raise RuntimeError('触摸板鼠标控制支持 Windows 和 macOS')
             self.mouse = factory()
             self.mouse.gain, self.mouse.clicks_enabled, self.mouse.invert_y = self.options
-            self.mouse.stop_on_escape = False
+            self.mouse.stop_on_escape = sys.platform == 'win32'
             if self.stopped.is_set() or self.connection.is_set():
                 return
             self.mouse.enable()
@@ -154,3 +161,5 @@ class TouchpadMouseOutput:
                 if target:
                     self.paused = True
                     self.on_double_click(target)
+                elif sys.platform == 'win32' and hasattr(self.mouse, 'complete_double_click'):
+                    self.mouse.complete_double_click()

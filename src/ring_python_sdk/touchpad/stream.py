@@ -3,6 +3,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import time
+import sys
 from .events import TouchpadStats
 from .processor import TouchpadProcessor
 
@@ -14,6 +15,7 @@ class TouchpadStream:
         self.on_pointer_move = on_pointer_move
         self.model_path, self.duration_s = model_path, duration_s
         self.queue = asyncio.Queue(maxsize=64)
+        self.packet_ready = asyncio.Event() if sys.platform == 'win32' else None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='ring-touchpad')
         self.processor = None
         self.task = None
@@ -45,6 +47,8 @@ class TouchpadStream:
             self.overflow = True
             self.overflows += 1
         self.queue.put_nowait((bytes(packet), time.monotonic()))
+        if self.packet_ready is not None:
+            self.packet_ready.set()
 
     def stop_now(self):
         """Synchronous gate; no new event callbacks after this call."""
@@ -109,7 +113,19 @@ class TouchpadStream:
                 if now-stats_at >= .5 and not self.closed:
                     if self.on_stats:self.on_stats(self.stats)
                     stats_at = now
-                await asyncio.sleep(.001)
+                # Wake immediately for fresh/queued packets; Windows' timer
+                # resolution must not add a tick to every inference batch.
+                # Idle timeouts still drain pending trajectories/verdicts.
+                if self.packet_ready is None:
+                    await asyncio.sleep(.001)
+                elif self.queue.empty():
+                    self.packet_ready.clear()
+                    try:
+                        await asyncio.wait_for(self.packet_ready.wait(), .001)
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(0)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

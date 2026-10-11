@@ -2,6 +2,7 @@
 # Transitive pure-Python dependencies remain resolver-managed; native and
 # compatibility-sensitive packages are pinned to the verified combination.
 numpy==1.26.4
+MNN==3.6.1
 torch==2.11.0
 torchaudio==2.11.0
 funasr==1.4.2

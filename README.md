@@ -547,7 +547,7 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
 
 ## 触摸板 SDK 开发
 
-修正后的 Mac 触摸板接口已集成到 `ring_python_sdk.touchpad`，支持复用现有蓝牙连接、移动/点击回调及可选系统鼠标适配器。入口为 `RingSession.touchpad_on()` / `touchpad_off()`；主程序可通过 `RingAudioSource(touchpad_observer=...)` 订阅。
+Windows 和 Mac 触摸板接口已集成到 `ring_python_sdk.touchpad`，支持复用现有蓝牙连接、移动/点击回调及可选系统鼠标适配器。入口为 `RingSession.touchpad_on()` / `touchpad_off()`；主程序可通过 `RingAudioSource(touchpad_observer=...)` 订阅。Windows 已支持鼠标控制及程序内笔画试写，外部笔画输入目前仍使用 Mac 输入法组件。
 
 见 [触摸板 SDK 接口文档](docs/TOUCHPAD_SDK.md) 和 [可运行示例](examples/ring_touchpad.py)。默认不自动控制鼠标；手势继续使用固件识别，语音默认 ADPCM。
 

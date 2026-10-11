@@ -136,6 +136,8 @@ def test_worker_discards_stale_batches_and_rechecks_revocation(monkeypatch):
 def test_app_pointer_uses_fresh_channel_instead_of_main_process_quartz(monkeypatch):
     import proximic_ring.native_touchpad as native
     from proximic_ring.touchpad_mouse import TouchpadMouseOutput
+    import proximic_ring.touchpad_mouse as output_module
+    monkeypatch.setattr(output_module, 'sys', SimpleNamespace(platform='darwin'))
     ready, ended = threading.Event(), threading.Event()
     calls = []
     class Mouse:

@@ -80,7 +80,13 @@ class TouchpadController(QObject):
                                   foreground=state == Qt.ApplicationActive, mode=self._mode)
 
     @Property(bool, constant=True)
-    def supported(self): return sys.platform == "darwin"
+    def supported(self): return sys.platform in {"darwin", "win32"}
+
+    @Property(bool, constant=True)
+    def externalStrokeSupported(self): return sys.platform == "darwin"
+
+    @Property(bool, constant=True)
+    def macPermissionsRequired(self): return sys.platform == "darwin"
 
     @Property(bool, notify=changed)
     def available(self):
@@ -521,7 +527,12 @@ class TouchpadController(QObject):
                 on_double_click=double_click,
                 on_trace=lambda points, finished: self._post(run, "trace", (output, (points, finished))))
         else:
-            output = self.output_factory(**common, gain=self._gain, clicks=self._clicks,
+            pointer_options = {}
+            if sys.platform == 'win32':
+                from ring_python_sdk.touchpad.windows import WindowsSystemMouse
+                pointer_options['mouse_factory'] = lambda: WindowsSystemMouse(
+                    stroke_target=lambda: dict(local=True) if self._local_stroke_focus else None)
+            output = self.output_factory(**common, **pointer_options, gain=self._gain, clicks=self._clicks,
                                          invert_y=self._invert_y, on_double_click=double_click)
             output.pointer_after_step = pointer_after_step
         return output
@@ -591,8 +602,10 @@ class TouchpadController(QObject):
         self._run = None
         self._mode = "pointer"
         error = error or getattr(run, "output_error", None)
+        if sys.platform == 'win32' and isinstance(error, InterruptedError):
+            run.reason, error = str(error), None
         self._state = "error" if error else "idle"
-        if isinstance(error, (PermissionError, MacPermissionError)):
+        if sys.platform == 'darwin' and isinstance(error, (PermissionError, MacPermissionError)):
             if isinstance(error, MacPermissionError) and error.state.accessibility is True:
                 detail = "辅助功能已开启，但鼠标事件发送权限尚未生效。"
             else:

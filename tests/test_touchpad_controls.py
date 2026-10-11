@@ -101,6 +101,8 @@ def test_output_stops_even_without_token_traffic(reason):
 
 def test_output_keeps_running_past_old_limits_until_manual_stop(monkeypatch):
     import proximic_ring.touchpad_mouse as module
+    # macOS preserves Esc for applications; Windows has its own emergency-stop test.
+    monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='darwin'))
     clock = [time.monotonic()]
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
     ready, done = threading.Event(), threading.Event()

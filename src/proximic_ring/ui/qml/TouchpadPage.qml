@@ -41,7 +41,7 @@ ScrollView {
                         Label {
                             objectName: "touchpadStatusTitle"
                             Layout.fillWidth: true
-                            text: !page.touchpad.supported ? "触摸板支持 macOS"
+                            text: !page.touchpad.supported ? "触摸板支持 Windows 和 macOS"
                                 : !page.controller.connected ? "请先在首页连接 Ring" : page.touchpad.strokePreparing ? "正在切换到笔画"
                                 : page.touchpad.active ? (page.touchpad.inputMode === "stroke" ? "触摸板 · 笔画模式" : "触摸板 · 鼠标模式") : page.touchpad.title
                             color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold; wrapMode: Text.Wrap
@@ -89,14 +89,16 @@ ScrollView {
                 PermissionNotice {
                     objectName: "touchpadPermissionNotice"
                     Layout.fillWidth: true
-                    message: page.touchpad.supported ? page.controller.inlineInput.permissions.accessibilityWarningText : ""
+                    message: page.touchpad.macPermissionsRequired ? page.controller.inlineInput.permissions.accessibilityWarningText : ""
                     onActivated: page.controller.inlineInput.permissions.openSettings()
                 }
             }
         }
         Label {
             width: parent.width; wrapMode: Text.Wrap; color: theme.muted; font.pixelSize: 12
-            text: "开启后默认鼠标模式；第一下点击立即生效，" + page.touchpad.doubleClickIntervalMs + " ms 内再次点击触发双击，在当前输入框进入笔画；再双击或离开输入框回到鼠标。候选字仍由固件轻点确认。"
+            text: page.touchpad.externalStrokeSupported
+                ? "开启后默认鼠标模式；第一下点击立即生效，" + page.touchpad.doubleClickIntervalMs + " ms 内再次点击触发双击，在当前输入框进入笔画；再双击或离开输入框回到鼠标。候选字仍由固件轻点确认。"
+                : "开启后可用 Ring 移动鼠标、单击和双击，按 Esc 停止。点入程序内试写框后双击进入笔画模式，再双击或离开试写框回到鼠标；轻点确认候选字。"
         }
         Rectangle {
             width: parent.width; height: modeRow.implicitHeight + 36

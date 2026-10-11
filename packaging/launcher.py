@@ -115,6 +115,14 @@ def run() -> int:
         if package_self_check:
             if is_frozen():
                 _verify_bundled_qml_runtime(resource_root())
+                if sys.platform == "win32":
+                    from ring_python_sdk.touchpad import TouchpadBackbone
+
+                    touchpad_probe = TouchpadBackbone()
+                    if touchpad_probe.step([0.0]*6).shape != (5, 3):
+                        raise RuntimeError("内置触摸板模型自检失败")
+                    touchpad_probe.reset()
+                    print("[startup] bundled touchpad MNN model ready")
             if sys.platform == "darwin":
                 from proximic_ring.app_shortcuts import verify_native_api
                 from proximic_ring.ime_bridge import default_socket_path

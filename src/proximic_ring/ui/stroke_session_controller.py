@@ -85,8 +85,15 @@ class StrokeSessionController(QObject):
         self._generation += 1
         self._connection = connection
         self._token = uuid.uuid4().hex
-        self._origin = ((event["bundle"], event["pid"]) if event else self.inline._foreground_identity())
-        self.local = self.tp._local_stroke_focus
+        if self.tp.externalStrokeSupported:
+            self._origin = ((event["bundle"], event["pid"]) if event else self.inline._foreground_identity())
+            self.local = self.tp._local_stroke_focus
+        else:
+            self.local = self.tp._local_stroke_focus
+            if not self.local:
+                self.cancel('Windows 请在程序内试写框输入笔画')
+                return
+            self._origin = None
         if not self.local and self.inline._foreground_identity() != self._origin:
             self.cancel("已切换应用，笔画唤起已取消")
             return

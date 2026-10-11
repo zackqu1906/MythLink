@@ -194,9 +194,9 @@ if ($InstalledTorchFlavor -ne $ResolvedCompute) {
 
 Write-Host "[7/9] Installing Mythlink and ASR dependencies..."
 $Extras = if ($SkipFunASR) {
-    ".[ring,asr-streaming-sensevoice,asr-volcengine,ui]"
+    ".[ring,touchpad,asr-streaming-sensevoice,asr-volcengine,ui]"
 } else {
-    ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
+    ".[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
 }
 & $VenvPython -m pip install -c $ConstraintFile -e $Extras
 Assert-LastCommand "project dependency installation"
@@ -231,6 +231,7 @@ $SelfCheck = if ($SkipFunASR) {
 } else {
     "import sys, torch, torchaudio, PySide6, comtypes, cryptography, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; from ring_python_sdk.public_protocol import decode_adpcm; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); assert len(decode_adpcm(bytes.fromhex('000000000100'))) == 2; $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('TorchAudio:', torchaudio.__version__); print('PySide6:', PySide6.__version__); print('Ring SDK:', ring_python_sdk.__file__); print('Project:', proximic_ring.__file__); print('ADPCM decoder: ready'); print('Installation self-check passed.')"
 }
+$SelfCheck += "; from ring_python_sdk.touchpad import TouchpadBackbone; touchpad_probe = TouchpadBackbone(); assert touchpad_probe.step([0.0]*6).shape == (5,3); touchpad_probe.reset(); print('Touchpad MNN model: ready')"
 & $VenvPython -c $SelfCheck
 Assert-LastCommand "installation self-check"
 
