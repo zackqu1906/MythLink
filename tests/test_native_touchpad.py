@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.mac_permissions import MacPermissionError, PermissionState
-from proximic_ring.native_access import NativeAccessChannel
-from proximic_ring.native_touchpad import NativeTouchpadMouse, WorkerTouchpadMouse
+from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, PermissionState
+from proximic_ring.platforms.macos.native_access import NativeAccessChannel
+from proximic_ring.platforms.macos.native_touchpad import NativeTouchpadMouse, WorkerTouchpadMouse
 
 
 def test_pointer_recovers_cached_denial_in_new_child_without_restarting_host(tmp_path, monkeypatch):
@@ -89,8 +89,8 @@ def test_stop_gate_reaches_child_during_an_inflight_batch():
 
 
 def test_worker_discards_stale_batches_and_rechecks_revocation(monkeypatch):
-    import proximic_ring.native_access_worker as worker
-    import proximic_ring.native_touchpad as touchpad
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    import proximic_ring.platforms.macos.native_touchpad as touchpad
     import ring_python_sdk.touchpad.macos as macos
     monkeypatch.setattr(macos, 'PERMISSION_CHECK_INTERVAL', .02)
     posted, checks, allowed = [], [], [True]
@@ -118,7 +118,8 @@ def test_worker_discards_stale_batches_and_rechecks_revocation(monkeypatch):
         assert not posted
         checks.clear()
         result = dispatcher.handle(dict(operation='touchpad_apply', events=batch, created=time.monotonic()))
-        assert result == {'result': {'moves': 1}} and threading.get_ident() not in checks
+        assert result['result']['moves'] == 1 and threading.get_ident() not in checks
+        assert result['result']['clicks_posted'] == 0
         assert posted == [(1, (1.5, -3.))]
         allowed[0] = False
         mouse._permissions.thread.join(1)  # Monitor exits after observing denial.
@@ -134,8 +135,8 @@ def test_worker_discards_stale_batches_and_rechecks_revocation(monkeypatch):
 
 
 def test_app_pointer_uses_fresh_channel_instead_of_main_process_quartz(monkeypatch):
-    import proximic_ring.native_touchpad as native
-    from proximic_ring.touchpad_mouse import TouchpadMouseOutput
+    import proximic_ring.platforms.macos.native_touchpad as native
+    from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
     ready, ended = threading.Event(), threading.Event()
     calls = []
     class Mouse:

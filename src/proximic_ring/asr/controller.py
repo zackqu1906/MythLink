@@ -7,7 +7,7 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from ..events import DetectionEvent, Stage1Event, Stage2Event
+from ..voice.detection.events import DetectionEvent, Stage1Event, Stage2Event
 from .session_sink import ensure_session_sink
 
 
@@ -108,27 +108,35 @@ class ProximitySessionController:
         self._accept_tap = False
         self._tap_requested_ns: int | None = None
         self._gesture_start_requested = False
+        self._explicit_utterance = False
         self._gesture_preparation = None
 
-    def request_gesture_toggle(self, prepare_start=None) -> str | None:
+    def request_gesture_toggle(self, prepare_start=None, *, allow_start=True, allow_end=True, explicit=False) -> str | None:
         """Queue one transition; never mutate a session on the gesture thread."""
         token = None
         cancel_preparation = False
         with self._tap_lock:
-            if not self.start_on_gesture:
+            if not self.start_on_gesture and not explicit:
                 return None
             if self._gesture_preparation is not None:
+                if not allow_end:
+                    return None
                 self._gesture_preparation = None
                 cancel_preparation = True
             elif self._accept_tap:
+                if not allow_end:
+                    return None
                 if self._tap_requested_ns is not None:
                     return None
                 self._tap_requested_ns = time.monotonic_ns()
                 return "end"
             elif self._active or self._gesture_start_requested:
                 return None
+            elif not allow_start:
+                return None
             elif prepare_start is None:
                 self._gesture_start_requested = True
+                self._explicit_utterance = explicit
                 return "start"
             else:
                 token = object()
@@ -145,6 +153,7 @@ class ProximitySessionController:
                     return
                 self._gesture_preparation = None
                 self._gesture_start_requested = bool(accepted)
+                self._explicit_utterance = bool(accepted and explicit)
         try:
             prepare_start(complete)
         except Exception:
@@ -172,10 +181,11 @@ class ProximitySessionController:
         with self._tap_lock:
             self._tap_requested_ns = None
             self._gesture_start_requested = False
-            self._accept_tap = self.end_on_tap
+            self._accept_tap = self.end_on_tap or self._explicit_utterance
 
     def _clear_tap_endpoint(self) -> None:
         with self._tap_lock:
+            self._explicit_utterance = False
             self._gesture_preparation = None
             self._accept_tap = False
             self._tap_requested_ns = None
@@ -223,7 +233,7 @@ class ProximitySessionController:
         self._stream_samples += x.size
         self._append_history(x)
 
-        if self.start_on_gesture and not self._active:
+        if not self._active:
             with self._tap_lock:
                 start_requested = self._gesture_start_requested
                 # Keep the request busy until _begin_manual opens the tap
@@ -232,8 +242,9 @@ class ProximitySessionController:
                 self._begin_manual(x, reason="gesture")
                 return
 
-        if self.start_on_gesture:
-            # No model events or keyboard hold may start this mode.
+        if self.start_on_gesture or self._explicit_utterance:
+            # Explicit Hub dictation also waits for a user END, without changing
+            # the saved global microphone mode. No model events or keyboard hold may start this mode.
             if self._active:
                 self._append_active(x)
                 with self._tap_lock:
@@ -243,6 +254,8 @@ class ProximitySessionController:
                 else:
                     self._flush_pending_sink_audio()
             return
+
+        if self._gesture_preparation is not None:return
 
         if self._active:
             self._append_active(x)
@@ -317,7 +330,7 @@ class ProximitySessionController:
 
     def flush(self) -> None:
         """Flush automatic sessions; discard unconfirmed tap sessions at EOF/pause."""
-        if self.end_on_tap:
+        if self.end_on_tap or self._explicit_utterance:
             # Pause/EOF must not submit speech that the user never confirmed.
             self.discard_current()
             return

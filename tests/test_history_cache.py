@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from proximic_ring.modification_dataset import ModificationDatasetCollector
+from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
 
 
 def _add_record(collector, session_id, text):

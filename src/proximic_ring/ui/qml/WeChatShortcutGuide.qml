@@ -54,14 +54,14 @@ ColumnLayout {
                   + (settings.service.wechatInfo.message || "")
             color: "#687286"; font.pixelSize: 12
         }
-        ComboBox {
+        SettingsSelect {
             id: menuLanguagePicker
             objectName: "wechatMenuLanguagePicker"
             Layout.fillWidth: true
             model: ["自动识别菜单语言（推荐）", "手动：简体中文", "手动：繁體中文", "手动：English"]
             Accessible.name: "微信菜单语言"
         }
-        Button { text: "重新识别微信菜单"; onClicked: settings.service.refreshWeChatMenu() }
+        UiAction { text: "重新识别微信菜单"; onClicked: settings.service.refreshWeChatMenu() }
         Repeater {
             model: [
                 { action: "previous", heading: "第一项 · 上一个聊天", menu: settings.previousMenu, shortcut: settings.wechatShortcut("previous") },
@@ -71,11 +71,11 @@ ColumnLayout {
                 id: setupRow
                 required property var modelData
                 Layout.fillWidth: true
-                implicitHeight: setupFields.implicitHeight + 24
-                radius: 10; color: "#F5F7FD"
+                implicitHeight: setupFields.implicitHeight + 40
+                radius: 14; color: "#FFFFFF"; border.color: "#E1E5F0"
                 ColumnLayout {
                     id: setupFields
-                    anchors.fill: parent; anchors.margins: 12; spacing: 8
+                    anchors.fill: parent; anchors.margins: 20; spacing: 8
                     Label { text: setupRow.modelData.heading; color: "#171C28"; font.bold: true }
                     Label {
                         Layout.fillWidth: true; wrapMode: Text.Wrap
@@ -94,7 +94,7 @@ ColumnLayout {
                         text: "键盘快捷键：点击该输入框，再按下 " + settings.displayShortcut(setupRow.modelData.shortcut)
                         color: "#171C28"; font.pixelSize: 12
                     }
-                    Button {
+                    UiAction {
                         text: "复制菜单标题"
                         Accessible.name: "复制" + setupRow.modelData.heading + "菜单标题"
                         enabled: setupRow.modelData.menu.length > 0

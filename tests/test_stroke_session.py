@@ -8,7 +8,7 @@ from PySide6.QtTest import QTest
 from test_inline_ui import inline_ui
 from test_input_source_activation import FakeSource
 from test_stroke_integration import idle
-from proximic_ring.stroke_display import normalized_trace, standard_stroke, STANDARD_STROKES
+from proximic_ring.touchpad.stroke.stroke_display import normalized_trace, standard_stroke, STANDARD_STROKES
 
 
 def until(predicate):
@@ -478,7 +478,7 @@ def test_canonical_paths_and_display_normalization_leave_sensor_data_unchanged()
     ("AXGroup", True, True, "", True),
 ])
 def test_wake_eligibility_requires_an_editable_focused_control(role, editable, enabled, subrole, expected):
-    from proximic_ring.stroke_focus import editable_target
+    from proximic_ring.touchpad.stroke.stroke_focus import editable_target
     class AX:
         def metadata(self, node):
             return dict(AXRole=role, AXIsEditable=editable, AXEnabled=enabled, AXSubrole=subrole)
@@ -489,11 +489,11 @@ def test_wake_eligibility_requires_an_editable_focused_control(role, editable, e
 
 
 def test_stroke_focus_probe_requires_no_event_posting_permission(monkeypatch):
-    from proximic_ring.mac_permissions import PermissionState
-    from proximic_ring.app_shortcuts import ShortcutTarget
-    from proximic_ring.native_access_worker import Dispatcher
-    import proximic_ring.native_access_worker as worker
-    import proximic_ring.stroke_focus as focus
+    from proximic_ring.platforms.macos.mac_permissions import PermissionState
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
+    from proximic_ring.platforms.macos.native_access_worker import Dispatcher
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    import proximic_ring.touchpad.stroke.stroke_focus as focus
     monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, False))
     monkeypatch.setattr(focus, "editable_target", lambda target: True)
     target = ShortcutTarget("test.editor", 123, "", focus=object(), window=object(), plain_enter=True)
@@ -507,7 +507,7 @@ def test_stroke_focus_probe_requires_no_event_posting_permission(monkeypatch):
 
 
 def test_stroke_trace_queue_coalesces_only_live_points_in_the_same_session():
-    from proximic_ring.ime_bridge import IMEBridge
+    from proximic_ring.voice.ime.ime_bridge import IMEBridge
     bridge = IMEBridge(lambda _: None)
     bridge._connection = object()
     bridge._epoch = "e"

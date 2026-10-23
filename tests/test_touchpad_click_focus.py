@@ -4,16 +4,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.native_touchpad import WorkerTouchpadMouse
+from proximic_ring.platforms.macos.native_touchpad import WorkerTouchpadMouse
 
 
 @pytest.fixture
 def native_click(monkeypatch):
     import ring_python_sdk.touchpad.macos as macos
     monkeypatch.setattr(macos, "PERMISSION_CHECK_INTERVAL", .02)
-    import proximic_ring.text_focus as focus
-    import proximic_ring.stroke_focus as stroke
-    import proximic_ring.mac_workspace as workspace
+    import proximic_ring.desktop.text_focus as focus
+    import proximic_ring.touchpad.stroke.stroke_focus as stroke
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     posted = []
     origin = {"pid": 123, "window": 42}
     state = dict(origin=origin, editable=True, node="editor", focused=None, permitted=True)

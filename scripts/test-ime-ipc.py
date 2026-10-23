@@ -10,7 +10,7 @@ import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from proximic_ring.ime_bridge import IMEBridge
+from proximic_ring.voice.ime.ime_bridge import IMEBridge
 
 
 def main() -> int:
@@ -19,15 +19,24 @@ def main() -> int:
         ready = threading.Event()
         pong = threading.Event()
         compatibility = threading.Event()
+        polish_requested = threading.Event()
+        polish_settled = threading.Event()
+        hotwords_learned = threading.Event()
 
         def receive(message):
             events.append(message)
             if message.get("type") == "state" and message.get("ready"):
                 ready.set()
-            if message.get("type") == "pong":
+            if message.get("type") == "pong" and message.get("echo") == "hotwords_learned":
+                hotwords_learned.set()
+            elif message.get("type") == "pong":
                 pong.set()
             if message.get("type") == "wechat_key" and message.get("request_id") == "key-test":
                 compatibility.set()  # Transport only: never execute a key here.
+            if message.get("type") == "polish_requested":
+                polish_requested.set()
+            if message.get("type") == "settled" and message.get("utterance_id") == "polish-test":
+                polish_settled.set()
 
         bridge = IMEBridge(receive, path=Path(directory) / "bridge.sock")
         bridge.start()
@@ -41,13 +50,25 @@ def main() -> int:
             assert result["text"] == "中文😀\n上下文", result
             assert result["source"] == "input_method", result
             assert result["context_complete"], result
+            assert bridge.send({"type": "polish", "client_id": "ipc-test", "utterance_id": "polish-test",
+                                "restore_raw_on_undo": False})
+            assert polish_requested.wait(2), "Swift polish request was dropped by transport"
+            request = next(message for message in events if message.get("type") == "polish_requested")
+            assert request["text"] == "本句中文😀" and request["revision"] == 7, request
+            assert bridge.send({"type": "polish_result", "client_id": request["client_id"],
+                                "utterance_id": request["utterance_id"], "revision": request["revision"],
+                                "text": "润色后的本句😀", "error": ""})
+            assert polish_settled.wait(2), "Swift did not receive the polish result"
+            assert bridge.send({"type": "hotwords_learned", "client_id": "ipc-test", "utterance_id": "edit-test",
+                                "seq": 10, "revision": 2, "words": ["张玮", "Kubernetes"]})
+            assert hotwords_learned.wait(2), "Swift did not receive the hotword notice"
             assert bridge.send({"type": "reset"})
             assert pong.wait(2), "Swift did not receive the Python command"
-            assert next(message for message in events if message.get("type") == "pong")["echo"] == "中文😀\n上下文"
+            assert any(message.get("type") == "pong" and message.get("echo") == "中文😀\n上下文" for message in events)
             output, _ = process.communicate(timeout=3)
             assert process.returncode == 0, output
             print(output.strip())
-            print("PASS actual Swift IPCClient ↔ Python IMEBridge: handshake, epoch, UTF-8 context, request/reply, command")
+            print("PASS actual Swift IPCClient ↔ Python IMEBridge: handshake, epoch, UTF-8 context, polish request/result, hotword notice, command")
         finally:
             bridge.close()
             if process is not None and process.poll() is None:

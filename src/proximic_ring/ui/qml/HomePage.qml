@@ -2,24 +2,43 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-ScrollView {
+UiScrollView {
     id: page
     required property var controller
     signal voiceRequested(bool history)
     signal gesturesRequested()
+    signal touchpadRequested()
     signal helpRequested()
+    signal tutorialRequested()
     signal connectionRequested()
+    signal deleteHistoryRequested(var record)
     signal devicePickerRequested()
-    UiTheme { id: theme }
+    FigmaTheme { id: theme }
     objectName: "homePage"
     clip: true
     contentWidth: availableWidth
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
     ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+    Component.onCompleted: page.controller.inlineInput.refreshInputMethodVersion()
+    onVisibleChanged: {
+        if (visible && controller) controller.inlineInput.refreshInputMethodVersion()
+    }
 
     ColumnLayout {
         width: page.availableWidth
         spacing: 24
+        PermissionNotice {
+            objectName: "homeInputMethodNotice"
+            Layout.fillWidth: true
+            readonly property string versionState: page.controller.inlineInput.inputMethodVersion.state
+            visible: page.controller.inlineInput.enabled
+                     && (versionState === "outdated" || versionState === "not_installed")
+            message: page.controller.inlineInput.installing ? "正在更新语音输入法…"
+                     : versionState === "not_installed" ? "语音输入法尚未安装，请在设置的“系统与权限”中安装。"
+                     : "语音输入法待更新，请在设置的“系统与权限”中更新。"
+            actionText: ""
+            enabled: !page.controller.inlineInput.installing
+        }
         ColumnLayout {
             objectName: "homePermissionNotices"
             Layout.fillWidth: true; spacing: 8
@@ -32,31 +51,31 @@ ScrollView {
                     required property var modelData
                     objectName: "homePermission_" + modelData.kind
                     Layout.fillWidth: true
-                    message: modelData.text
-                    onActivated: page.controller.inlineInput.permissions.openPermissionSettings(modelData.kind)
+                    message: modelData.text + " 请在设置的“系统与权限”中管理。"
+                    actionText: ""
                 }
             }
         }
         GridLayout {
             Layout.fillWidth: true
-            columns: width >= 900 ? 2 : 1
+            columns: width >= 850 ? 2 : 1
             columnSpacing: 16; rowSpacing: 16
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredWidth: 420
-                Layout.preferredHeight: 252
-                radius: 18; color: theme.surface
+                Layout.preferredWidth: 418
+                Layout.preferredHeight: 234
+                radius: 16; color: theme.surface; border.color: theme.line
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 20; spacing: 6
                     RowLayout {
                         Layout.fillWidth: true
-                        UiIcon { symbol: "bluetooth"; Layout.preferredWidth: 21; Layout.preferredHeight: 21 }
+                        FigmaIcon { symbol: "ring"; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
                         Label {
                             Layout.fillWidth: true
                             text: page.controller.deviceName || "我的 Ring"
-                            color: theme.muted; font.pixelSize: 13; elide: Text.ElideRight
+                            color: theme.text; font.pixelSize: 22; font.weight: Font.Bold; elide: Text.ElideRight
                         }
-                        UiAction {
+                        FigmaAction {
                             objectName: "homeConnectionButton"
                             text: page.controller.connected
                                   ? (page.controller.statusKind === "stopping" ? "正在断开…" : "断开设备")
@@ -66,9 +85,9 @@ ScrollView {
                             enabled: page.controller.connected ? page.controller.statusKind !== "stopping" : !page.controller.busy && !page.controller.scanBusy
                             onClicked: page.connectionRequested()
                         }
-                        UiAction {
+                        FigmaAction {
                             objectName: "homeDevicePickerButton"
-                            text: "更换设备"
+                            text: "切换设备"
                             quiet: true
                             visible: page.controller.canReconnect || page.controller.connected
                             enabled: !page.controller.connected && !page.controller.busy && !page.controller.scanBusy
@@ -77,7 +96,7 @@ ScrollView {
                             onClicked: page.devicePickerRequested()
                         }
                     }
-                    RingIllustration { Layout.alignment: Qt.AlignHCenter; Layout.fillHeight: true; Layout.preferredWidth: 210 }
+                    Image { Layout.alignment: Qt.AlignHCenter; Layout.fillHeight: true; Layout.preferredWidth: 128; Layout.preferredHeight: 143; source: "../assets/figma/redesign-383-9247-ring-product-artwork.png"; fillMode: Image.PreserveAspectFit }
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter; spacing: 7
                         Rectangle { width: 6; height: 6; radius: 3; color: page.controller.connected ? theme.success : "#A0A8BA" }
@@ -94,7 +113,7 @@ ScrollView {
             }
             HomeStatistics {
                 objectName: "homeStatisticsPanel"
-                Layout.fillWidth: true; Layout.preferredWidth: 520
+                Layout.fillWidth: true; Layout.preferredWidth: 498
                 statistics: page.controller.homeStatistics
             }
         }
@@ -115,33 +134,33 @@ ScrollView {
             Layout.fillWidth: true; spacing: 12
             RowLayout {
                 Layout.fillWidth: true
-                Label { text: "快速开始"; color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold }
+                Label { text: "快速开始"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
                 Item { Layout.fillWidth: true }
-                UiAction { text: "了解如何使用"; quiet: true; onClicked: page.helpRequested() }
+
             }
             GridLayout {
-                Layout.fillWidth: true; columns: 3; columnSpacing: 12
+                Layout.fillWidth: true; columns: width >= 760 ? 3 : 1; columnSpacing: 16; rowSpacing: 12
                 Repeater {
-                    model: [{title: "语音输入", detail: "说话完成输入与修改", icon: "edit", link: "开始使用", target: "voice"},
-                            {title: "场景与手势", detail: "查看不同场景中的手势", icon: "coffee", link: "查看场景规则", target: "gestures"},
-                            {title: "手势控制", detail: "了解轻点、滑动与捏合", icon: "book", link: "查看使用说明", target: "help"}]
+                    model: [{title: "语音输入", detail: "学会听写、润色和修改", icon: "mic", link: "新手教学", target: "voice"},
+                            {title: "手势控制", detail: "调整不同场景的手势映射", icon: "gesture", link: "配置手势", target: "gestures"},
+                            {title: "触摸板与笔画输入", detail: "控制鼠标，使用笔画输入", icon: "pointer", link: "新手教学", target: "touchpad"}]
                     delegate: AbstractButton {
                         required property var modelData
-                        Layout.fillWidth: true; Layout.preferredWidth: 280; implicitHeight: 130
+                        Layout.fillWidth: true; Layout.preferredWidth: 280; implicitHeight: 144
                         hoverEnabled: true
                         Accessible.name: modelData.title
-                        onClicked: modelData.target === "voice" ? page.voiceRequested(false) : modelData.target === "gestures" ? page.gesturesRequested() : page.helpRequested()
-                        background: Rectangle { radius: 14; color: parent.hovered ? "#F0F3FF" : theme.surface; border.color: parent.activeFocus ? theme.primary : "transparent" }
+                        onClicked: { if (modelData.target === "gestures") page.gesturesRequested(); else if (modelData.target === "voice") page.tutorialRequested() }
+                        background: Rectangle { radius: 12; color: theme.surface; border.color: theme.line }
                         contentItem: ColumnLayout {
-                            anchors.fill: parent; anchors.margins: 18; spacing: 6
+                            anchors.fill: parent; anchors.margins: 16; spacing: 6
                             RowLayout {
                                 Layout.fillWidth: true
-                                Label { text: modelData.title; color: theme.text; font.pixelSize: 16; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                                UiIcon { symbol: modelData.icon; ink: theme.text; Layout.preferredWidth: 22; Layout.preferredHeight: 22 }
+                                Label { text: modelData.title; color: theme.text; font.pixelSize: 18; font.weight: Font.Medium; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Rectangle { Layout.preferredWidth: 40; Layout.preferredHeight: 40; color: theme.subtle; radius: 10; FigmaIcon { anchors.centerIn: parent; symbol: modelData.icon } }
                             }
-                            Label { Layout.fillWidth: true; text: modelData.detail; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
+                            Label { Layout.fillWidth: true; text: modelData.detail; color: theme.muted; font.pixelSize: 16; wrapMode: Text.Wrap }
                             Item { Layout.fillHeight: true }
-                            Label { text: modelData.link + " ↗"; color: theme.primary; font.pixelSize: 12 }
+                            FigmaAction { Layout.fillWidth: true; implicitHeight: 32; navigation: true; text: modelData.link; enabled: modelData.target !== "touchpad"; onClicked: { if (modelData.target === "voice") page.tutorialRequested(); else page.gesturesRequested() } ToolTip.visible: hovered && !enabled; ToolTip.text: "教学功能暂未开放" }
                         }
                     }
                 }
@@ -151,37 +170,75 @@ ScrollView {
             Layout.fillWidth: true; spacing: 12
             RowLayout {
                 Layout.fillWidth: true
-                Label { text: "语音输入历史"; color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold }
+                Label { text: "最近语音记录"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
                 Item { Layout.fillWidth: true }
-                UiAction { objectName: "homeAllHistoryButton"; text: "查看全部 →"; quiet: true; onClicked: page.voiceRequested(true) }
+                FigmaAction { objectName: "homeAllHistoryButton"; text: "查看全部记录"; navigation: true; implicitHeight: 32; onClicked: page.voiceRequested(true) }
             }
             Rectangle {
                 Layout.fillWidth: true
-                implicitHeight: Math.max(158, recentContent.implicitHeight + 36)
-                color: theme.surface; radius: 16
-                ColumnLayout {
-                    id: recentContent
-                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                    anchors.margins: 18; spacing: 16
-                    Repeater {
-                        model: page.controller.voiceHistoryEntries.slice(0, 3)
-                        delegate: VoiceHistoryEntry {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            entry: modelData
-                            controller: page.controller
-                            compact: true
+                implicitHeight: recentHistory.count > 0 ? recentHistory.implicitHeight : 158
+                color: recentHistory.count > 0 ? "transparent" : theme.surface
+                radius: 12; border.color: theme.line; border.width: recentHistory.count > 0 ? 0 : 1
+                ListView {
+                    id: recentHistory
+                    objectName: "homeVoiceHistoryList"
+                    anchors.fill: parent
+                    spacing: 12
+                    model: page.controller.voiceHistoryEntries.slice(0, 10)
+                    clip: true; boundsBehavior: Flickable.StopAtBounds
+                    flickableDirection: Flickable.VerticalFlick
+                    // Fit three complete rows, including variable-length text, while
+                    // keeping the ten most recent records scrollable.
+                    property var previewHeights: ({})
+                    implicitHeight: {
+                        let total = 0
+                        for (let i = 0; i < Math.min(3, count); ++i)
+                            total += previewHeights[i] || 144
+                        return total + Math.max(0, Math.min(3, count) - 1) * spacing
+                    }
+                    function rememberHeight(index, rowHeight) {
+                        if (index < 0 || index >= 3 || rowHeight <= 0 || previewHeights[index] === rowHeight) return
+                        let updated = Object.assign({}, previewHeights)
+                        updated[index] = rowHeight
+                        previewHeights = updated
+                    }
+                    ScrollBar.vertical: PreferenceScrollBar { }
+                    footer: Item {
+                        width: recentHistory.width
+                        height: recentHistory.count > 0 ? historyLimitHint.implicitHeight + 32 : 0
+                        visible: recentHistory.count > 0
+                        Label {
+                            id: historyLimitHint
+                            objectName: "homeHistoryLimitHint"
+                            anchors.centerIn: parent
+                            width: parent.width - 24
+                            text: "仅显示最新 10 条记录，完整记录请在“历史记录”中查看。"
+                            color: theme.muted; font.pixelSize: 14
+                            wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
                         }
                     }
-                    Item {
-                        visible: page.controller.voiceHistoryEntries.length === 0
-                        Layout.fillWidth: true; implicitHeight: 108
-                        ColumnLayout {
-                            anchors.centerIn: parent; spacing: 8
-                            UiIcon { Layout.alignment: Qt.AlignHCenter; symbol: "history"; ink: "#9AA5BD"; width: 28; height: 28 }
-                            Label { Layout.alignment: Qt.AlignHCenter; text: "还没有语音记录"; color: theme.text; font.pixelSize: 14 }
-                            Label { Layout.alignment: Qt.AlignHCenter; text: "完成一次语音输入后，记录会出现在这里"; color: theme.muted; font.pixelSize: 12 }
-                        }
+                    delegate: VoiceHistoryEntry {
+                        required property int index
+                        required property var modelData
+                        entry: modelData
+                        objectName: "homeVoiceHistoryEntry" + index
+                        width: recentHistory.width
+                        controller: page.controller
+                        compact: false
+                        Component.onCompleted: recentHistory.rememberHeight(index, implicitHeight)
+                        onImplicitHeightChanged: recentHistory.rememberHeight(index, implicitHeight)
+                        onIndexChanged: recentHistory.rememberHeight(index, implicitHeight)
+                        onDeleteRequested: function(record) { page.deleteHistoryRequested(record) }
+                    }
+                }
+                Item {
+                    visible: recentHistory.count === 0
+                    anchors.fill: parent
+                    ColumnLayout {
+                        anchors.centerIn: parent; spacing: 8
+                        UiIcon { Layout.alignment: Qt.AlignHCenter; symbol: "history"; ink: "#9AA5BD"; width: 28; height: 28 }
+                        Label { Layout.alignment: Qt.AlignHCenter; text: "还没有语音记录"; color: theme.text; font.pixelSize: 14 }
+                        Label { Layout.alignment: Qt.AlignHCenter; text: "完成一次语音输入后，记录会出现在这里"; color: theme.muted; font.pixelSize: 12 }
                     }
                 }
             }

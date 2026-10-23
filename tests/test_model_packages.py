@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import zipfile
 
-from proximic_ring import model_packages
+from proximic_ring.text_processing import model_packages
 from proximic_ring.text_processing import local_server
 
 

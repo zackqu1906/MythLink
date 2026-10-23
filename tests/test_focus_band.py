@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, Signal, Qt, qInstallMessageHandler
 from PySide6.QtGui import QImage, QPainter, QColor, QPen
 from PySide6.QtWidgets import QApplication, QLineEdit
 from PySide6.QtTest import QTest
-from proximic_ring.ui.focus_band import FocusBand
+from proximic_ring.ui.desktop.focus_band import FocusBand
 import os
 
 class Picker(QObject):

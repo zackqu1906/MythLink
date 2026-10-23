@@ -1,4 +1,4 @@
-from proximic_ring.stroke_context import StrokeContext
+from proximic_ring.touchpad.stroke.stroke_context import StrokeContext
 
 
 def test_longer_context_overrides_generic_followers():

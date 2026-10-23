@@ -1,5 +1,7 @@
 #define MyAppName "Mythlink"
-#define MyAppVersion "0.6.0"
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by the build script
+#endif
 #define MyAppPublisher "Mythlink"
 #define MyAppExeName "Mythlink.exe"
 

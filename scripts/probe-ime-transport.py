@@ -8,7 +8,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from proximic_ring.ime_bridge import IMEBridge
+from proximic_ring.voice.ime.ime_bridge import IMEBridge
 
 events = queue.Queue()
 bridge = IMEBridge(events.put)

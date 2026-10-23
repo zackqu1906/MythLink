@@ -4,9 +4,9 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtTest import QTest
 
-from proximic_ring.mac_permissions import MacPermissionError, PermissionState
-from proximic_ring.page_scroll import SCROLL_FRAMES
-from proximic_ring.ui.page_scroll_controller import PageScrollController
+from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, PermissionState
+from proximic_ring.desktop.page_scroll import SCROLL_FRAMES
+from proximic_ring.ui.desktop.page_scroll_controller import PageScrollController
 from test_app_gestures import route
 from test_page_scroll import ScrollDesktop
 from test_ring_gestures import request
@@ -89,7 +89,7 @@ def test_pending_discovery_is_not_executed_after_context_change(scroll, change):
 
 
 def test_recognition_stamp_busy_and_expiry_survive_gui_queue(scroll, monkeypatch):
-    from proximic_ring.ui import ring_gesture_controller as module
+    from proximic_ring.ui.gestures import ring_gesture_controller as module
     c, _, service, _, d, calls, _, _ = scroll
     request(c, "middle-pinch")
     request(c, "swipe-down", deliver=False)

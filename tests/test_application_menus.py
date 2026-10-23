@@ -5,12 +5,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.application_menus import menu_shortcut, read_menu_tree
-from proximic_ring.app_gestures import AppBinding
-from proximic_ring.gesture_settings import BoundGestureEvent, RING_RESERVED_GESTURES
-from proximic_ring.ui.application_mapping_controller import SETTINGS_KEY
-from test_app_gestures import route
+from proximic_ring.desktop.application_menus import menu_shortcut, read_menu_tree
+from proximic_ring.gestures.app_gestures import AppBinding
+from proximic_ring.gestures.gesture_settings import BoundGestureEvent, RING_RESERVED_GESTURES
+from proximic_ring.ui.desktop.application_mapping_controller import SETTINGS_KEY
+from test_app_gestures import route as input_route
 from test_interaction_controls import _controller, _close
+
+@pytest.fixture
+def route(input_route):
+    backend = input_route[3]
+    backend.target = replace(backend.target, input_context="nontext", focus="page", role="AXGroup")
+    return input_route
+
 
 BUNDLE = "com.example.Editor"
 ACTION = dict(id="next-tab", label="下一个标签页", path="窗口 › 下一个标签页", shortcut="Ctrl+Tab")
@@ -92,8 +99,8 @@ def test_large_menu_is_not_cut_at_one_thousand_nodes_and_reports_unsupported_key
 
 def test_native_menu_element_invalidated_during_read_is_reported_as_partial(monkeypatch):
     import sys
-    from proximic_ring.application_menus import read_application_menu
-    import proximic_ring.mac_workspace as workspace
+    from proximic_ring.desktop.application_menus import read_application_menu
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     app = SimpleNamespace(bundleIdentifier=lambda: BUNDLE, processIdentifier=lambda: 42)
     monkeypatch.setattr(workspace, "running_applications", lambda: [app])
     def read(node, name, _):
@@ -119,9 +126,9 @@ def test_new_install_has_no_implicit_applications_or_navigation(tmp_path, monkey
     try:
         s = c.appGestures
         assert s.catalog.apps == [] and not s._legacy_configured
-        monkeypatch.setattr(s.backend, "capture", lambda **kw: pytest.fail("No target reads without a mapping"))
+        monkeypatch.setattr(s.backend, "capture", lambda **kw: None)
         event = BoundGestureEvent(SimpleNamespace(name="circle-clockwise"), c._gesture_bindings)
-        assert s.envelope(event) is event
+        assert s.envelope(event).route == "blocked"
         assert not c._settings.contains(SETTINGS_KEY)
     finally:
         c.appGestures.close()
@@ -135,13 +142,14 @@ def test_explicit_add_and_binding_validation_preserve_voice_and_persist(route, m
     assert not catalog.addApplication("unlisted.app")
     assert catalog.bindings[BUNDLE] == {}
     for gesture in c._global_gesture_bindings.reserved:
-        assert not catalog.setBinding(BUNDLE, gesture, ACTION["id"])
+        assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
+        assert catalog.setBinding(BUNDLE, gesture, "")
     assert not catalog.setBinding(BUNDLE, "circle-clockwise", "invented")
     assert catalog.setBinding(BUNDLE, "circle-clockwise", ACTION["id"])
     assert catalog.for_target(BUNDLE) == {"menu:circle-clockwise": AppBinding("circle-clockwise", "Ctrl+Tab")}
     saved = json.loads(c._settings.value(SETTINGS_KEY))
     assert saved[BUNDLE]["bindings"]["circle-clockwise"]["path"] == ACTION["path"]
-    from proximic_ring.ui.application_mapping_controller import ApplicationMappingController
+    from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController
     restored = ApplicationMappingController(s)
     assert restored.bindings == catalog.bindings
     restored.close()
@@ -150,7 +158,7 @@ def test_explicit_add_and_binding_validation_preserve_voice_and_persist(route, m
 
 
 def test_custom_shortcut_survives_discovery_failure_restart_and_uses_guarded_dispatch(route, monkeypatch):
-    from proximic_ring.ui.application_mapping_controller import ApplicationMappingController
+    from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController
     c, service, inline, backend, sent, _, _ = route
     catalog = configure(service, monkeypatch)
     before = (c.gestureBindings, service.profiles, dict(inline._view))
@@ -184,7 +192,8 @@ def test_custom_binding_rejects_locked_gestures_invalid_keys_and_changed_applica
         assert not catalog.customAction(name, shortcut)
         assert not catalog.setCustomBinding(BUNDLE, "circle-clockwise", name, shortcut)
     for gesture in catalog.globalOccupancy:
-        assert not catalog.setCustomBinding(BUNDLE, gesture, "New", "Cmd+N")
+        assert catalog.setCustomBinding(BUNDLE, gesture, "New", "Cmd+N")
+        assert catalog.setBinding(BUNDLE, gesture, "")
     catalog.selectApplication("")
     assert not catalog.setCustomBinding(BUNDLE, "circle-clockwise", "New", "Cmd+N")
     assert catalog.bindings[BUNDLE] == {}
@@ -238,7 +247,7 @@ def test_clear_one_application_preserves_other_bindings_and_live_voice(route, mo
 
 
 def test_remove_and_readd_use_fresh_defaults_not_legacy_shortcuts_or_old_menu_reply(route, monkeypatch):
-    from proximic_ring.ui.application_mapping_controller import ApplicationMappingController
+    from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController
     c, service, inline, backend, sent, _, emit = route
     bundle = "com.openai.codex"
     catalog = configure(service, monkeypatch, bundle)
@@ -316,66 +325,43 @@ def test_explicit_app_only_dispatches_its_own_saved_mapping(route, monkeypatch):
     assert sent == [(BUNDLE, "Ctrl+Tab")]
 
 
-@pytest.mark.parametrize("mode", ["input", "operation"])
 @pytest.mark.parametrize("gesture", ["circle-clockwise", "circle-counterclockwise", "snap"])
-def test_saved_mapping_passes_both_runtime_and_gui_mode_gates(route, monkeypatch, mode, gesture):
+def test_saved_mapping_passes_focus_route_without_voice_ime(route, monkeypatch, gesture):
     from test_ring_gestures import request
-    import proximic_ring.ui.controller as controller_module
-
     c, service, inline, backend, sent, messages, _ = route
-    catalog = configure(service, monkeypatch)
-    assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
+    configure(service, monkeypatch).setBinding(BUNDLE, gesture, ACTION["id"])
     backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
-    inline._view = {"ready": False, "phase": "idle"}  # No speech session or voice IME required.
-    if mode == "operation":
-        request(c, "middle-pinch")
-        monkeypatch.setattr(controller_module, "voice_action_for_gesture",
-                            lambda *a, **kw: pytest.fail("operation-mode shortcuts must not enter voice routing"))
-    assert c.ringGestures.mode == mode
-    before = c.gestureBindings
-    event = SimpleNamespace(name=gesture)
-    assert c.ringGestures.filter(event, False, c._disconnect_event)
-    queued = c.ringGestures.envelope(BoundGestureEvent(event, c._gesture_bindings))
-    c._apply_gesture(queued, c._disconnect_event)
-    assert sent == [(BUNDLE, "Ctrl+Tab")]
-    assert not messages and c.gestureBindings == before
+    inline._view = {"ready": False, "phase": "idle"}
+    assert not request(c, gesture)
+    assert sent == [(BUNDLE, "Ctrl+Tab")] and not messages
 
 
-def test_operation_mode_only_accepts_explicit_mapping_for_captured_app(route, monkeypatch):
+@pytest.mark.parametrize("gesture", ["swipe-left", "circle-clockwise"])
+def test_text_focus_only_blocks_shared_input_gestures(route, monkeypatch, gesture):
     from test_ring_gestures import request
     c, service, _, backend, sent, messages, _ = route
-    catalog = configure(service, monkeypatch)
-    assert catalog.setBinding(BUNDLE, "circle-clockwise", ACTION["id"])
-    request(c, "middle-pinch")
-    source = BoundGestureEvent(SimpleNamespace(name="circle-clockwise"), c._gesture_bindings)
-    # Codex has a saved legacy shortcut, but no new mapping for this gesture.
-    queued = c.ringGestures.envelope(source)
-    c._apply_gesture(queued, c._disconnect_event)
-    assert not sent
-    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
-    # Bypassing the mode envelope is not a valid operation-mode dispatch.
-    c._apply_gesture(service.envelope(source), c._disconnect_event)
-    for name in ("tap", "swipe-left", "swipe-right", "snap", "circle-counterclockwise"):
-        assert not request(c, name)
-    assert not sent and not messages
+    configure(service, monkeypatch).setBinding(BUNDLE, gesture, ACTION["id"])
+    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE, input_context="text", focus="composer")
+    assert not request(c, gesture)
+    assert sent == ([] if gesture == "swipe-left" else [(BUNDLE, "Ctrl+Tab")])
+    assert not messages
 
 
 @pytest.mark.parametrize("change", [
     "app", "pid", "window", "expired", "mapping", "bindings", "mode", "roundtrip",
-    "disconnect", "lock_roundtrip", "overview", "picker", "scroll_applying", "fields_pending",
+    "disconnect", "lock_roundtrip", "overview", "scroll_applying",
     "speech", "preparing",
 ])
 def test_operation_mapping_discards_stale_events_without_replay(route, monkeypatch, change):
     from PySide6.QtCore import QCoreApplication
     from test_ring_gestures import request
-    from proximic_ring.gesture_settings import GestureBindings
+    from proximic_ring.gestures.gesture_settings import GestureBindings
     c, service, inline, backend, sent, _, _ = route
     catalog = configure(service, monkeypatch)
     assert catalog.setBinding(BUNDLE, "circle-clockwise", ACTION["id"])
     backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
     request(c, "middle-pinch")
     source = SimpleNamespace(name="circle-clockwise")
-    assert c.ringGestures.filter(source, False, c._disconnect_event)
     queued = c.ringGestures.envelope(BoundGestureEvent(source, c._gesture_bindings))
     flag = None
     if change in {"app", "pid", "window"}:
@@ -388,19 +374,16 @@ def test_operation_mapping_discards_stale_events_without_replay(route, monkeypat
     elif change == "bindings":
         c._gesture_bindings = GestureBindings(undo=("swipe-left", "snap"))
     elif change in {"mode", "roundtrip"}:
-        request(c, "middle-pinch")
-        if change == "roundtrip":
-            request(c, "middle-pinch")
+        c.ringGestures.input_owner_changed()
     elif change == "disconnect":
         c._disconnect_event.set()
     elif change == "lock_roundtrip":
         for blocked in (True, False):
             c._proximity._gesture_state = (blocked, "")
             c._proximity.changed.emit()
-    elif change in {"overview", "picker", "scroll_applying", "fields_pending"}:
+    elif change in {"overview", "scroll_applying"}:
         ring = c.ringGestures
-        flag = {"overview": ring._selector.blocked, "picker": ring._fields.picker.active,
-                "scroll_applying": ring._scroll.applying, "fields_pending": ring._fields.pending}[change]
+        flag = {"overview": ring._selector.blocked, "scroll_applying": ring._scroll.applying}[change]
         flag.set()
     elif change == "preparing":
         c._pending_inline_audio_start = True
@@ -469,12 +452,12 @@ def test_queued_menu_mapping_never_uses_a_stale_target_or_state(route, monkeypat
 
 
 def test_worker_menu_read_needs_ax_only_and_preserves_capture_mode(monkeypatch):
-    from proximic_ring.mac_permissions import PermissionState, MacPermissionError
-    from proximic_ring.app_shortcuts import ShortcutTarget
-    import proximic_ring.native_access_worker as worker
-    import proximic_ring.application_menus as menus
+    from proximic_ring.platforms.macos.mac_permissions import PermissionState, MacPermissionError
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    import proximic_ring.desktop.application_menus as menus
     monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, False))
-    monkeypatch.setattr(menus, "read_application_menu", lambda bundle: dict(bundle=bundle, actions=[ACTION]))
+    monkeypatch.setattr(menus, "read_application_menu", lambda bundle, **kw: dict(bundle=bundle, actions=[ACTION]))
     dispatcher = worker.Dispatcher()
     assert dispatcher.handle(dict(operation="application_menu", bundle=BUNDLE))["result"]["actions"] == [ACTION]
     monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(False, False))

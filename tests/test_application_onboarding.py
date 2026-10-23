@@ -9,8 +9,8 @@ from PySide6.QtCore import QCoreApplication
 
 from proximic_ring.application_scene_policy import primary_scene, enabled_profiles
 from proximic_ring.scene_capabilities import application_scene_profiles
-from proximic_ring.ui.application_onboarding import ApplicationOnboarding, DECISIONS_KEY
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.ui.desktop.application_onboarding import ApplicationOnboarding, DECISIONS_KEY
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
 from test_scene_defaults import add
 from test_gesture_scenes import presentation

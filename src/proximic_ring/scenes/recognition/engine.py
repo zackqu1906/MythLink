@@ -1,7 +1,7 @@
 """Single runtime entry point for all scene recognition.
 
-Application capabilities select applicable evidence. A fresh caller-owned AX
-snapshot and read cache flow through every detector. Recognition returns data;
+Application capabilities select applicable evidence. Browsers request a fresh
+extension snapshot; native apps use a caller-owned AX snapshot. Recognition returns data;
 configuration, voice routing and shortcut execution remain outside this package.
 """
 from dataclasses import replace
@@ -35,8 +35,7 @@ def detect_scene(bundle, profiles, window, focus, attr, *, budget=.48,
     is_browser = bundle.casefold() in BROWSERS
     web = SceneResult()
     if is_browser:
-        web = browser.detect_browser(window, focus, attr, profiles=profiles,
-            budget=max(0, min(.30, deadline - time.monotonic())), observation=observation)
+        web = browser.detect_browser(bundle, profiles=profiles)
         attempts.append(web.diagnostic)
         return finish(web)  # Web content stays inside the verified current page.
     native_deadline = min(deadline, time.monotonic() + .30)

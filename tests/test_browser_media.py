@@ -6,8 +6,8 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 from proximic_ring.scenes.recognition.browser import detect_browser as browser_media_context
-from proximic_ring.app_shortcuts import ShortcutTarget, LocalMacAppShortcuts
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.desktop.app_shortcuts import ShortcutTarget, LocalMacAppShortcuts
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
 from test_application_menus import configure
 from test_gesture_scenes import presentation
@@ -39,56 +39,6 @@ def read(node, key):
     assert key not in {"AXValue", "AXSelectedText"}
     assert key != 'AXTitle' or node.attrs['AXRole'] in {'AXButton', 'AXCheckBox', 'AXSlider', 'AXValueIndicator'}
     return node.attrs.get(key)
-
-
-@pytest.mark.parametrize("change,scene,context", [
-    ("ready", "video", "nontext"), ("paused", "video", "nontext"),
-    ("comment", "video", "text"), ("editable_web", "video", "text"),
-    ("address", "", "unknown"), ("missing_focus", "", "unknown"),
-    ("foreign_window", "", "unknown"), ("modal", "", "unknown"),
-    ("no_player", "", "nontext"), ("hidden", "", "nontext"),
-    ("disabled", "", "nontext"), ("thumbnail", "", "nontext"),
-    ("another_domain", "video", "nontext"), ("loading", "", "unknown"),
-    ("editable_unknown", "video", "unknown"), ("timeout", "", "unknown"),
-    ("outside_button", "video", "unknown"), ("player_button", "video", "nontext"),
-])
-def test_any_site_requires_real_player_current_page_and_nontext_focus(change, scene, context):
-    window, web, wrapper, video = page()
-    focus = web
-    if change == "paused": video.attrs["AXDescription"] = "Paused video"
-    if change == "comment": focus = Node("AXTextArea", web)
-    if change == "editable_web": web.attrs["AXEditable"] = True
-    if change == "address": focus = Node("AXTextField", window)
-    if change == "missing_focus": focus = None
-    if change == "foreign_window": web.attrs["AXParent"] = Node("AXWindow")
-    if change == "modal": window.attrs["AXModal"] = True
-    if change == "no_player": wrapper.attrs["AXChildren"] = []
-    if change == "hidden": wrapper.attrs["AXHidden"] = True
-    if change == "disabled": video.attrs["AXEnabled"] = False
-    if change == "thumbnail": video.attrs["AXSubrole"] = "AXImage"
-    if change == "another_domain": web.attrs["AXURL"] = "https://bilibili.com.evil.test/video"
-    if change == "loading": web.attrs["AXElementBusy"] = True
-    if change == "editable_unknown": web.attrs.pop("AXValueSettable")
-    if change == "outside_button": focus = Node("AXButton", web)
-    if change == "player_button": focus = Node("AXButton", wrapper)
-    result = browser_media_context(window, focus, read, budget=0 if change == "timeout" else .18)
-    assert (result.scene, result.input_context) == (scene, context)
-    assert "BVtest" not in repr(result) and "?p=1" not in repr(result)
-
-
-def test_generic_video_requires_focus_in_player_and_rejects_iframe_and_ambiguous_players():
-    window, web, wrapper, video = page()
-    web.attrs["AXURL"] = "https://example.test/watch"
-    wrapper.attrs["AXChildren"] = [video]  # Focus required when controls are not exposed.
-    assert not browser_media_context(window, web, read).scene
-    button = Node("AXButton", video)
-    assert browser_media_context(window, button, read).scene == "video"
-    window, web, wrapper, video = page()
-    Node("AXGroup", wrapper, AXSubrole="AXVideo", AXEnabled=True)
-    assert not browser_media_context(window, web, read).scene
-    window, web, wrapper, video = page()
-    wrapper.attrs["AXRole"] = "AXWebArea"  # Do not use an embedded frame's player as the parent page's.
-    assert not browser_media_context(window, web, read).scene
 
 
 @pytest.mark.parametrize("change", ["page", "tab", "player", "input"])

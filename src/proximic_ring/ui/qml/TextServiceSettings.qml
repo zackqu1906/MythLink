@@ -7,17 +7,17 @@ ColumnLayout {
     required property var controller
     readonly property bool local: controller.llmProvider === "local"
     readonly property var presetModels: ["doubao-seed-2-0-lite-260215", "deepseek-v4-1-flash-260910"]
-    spacing: 30
-    UiTheme { id: theme }
+    spacing: 18
+    FigmaTheme { id: theme }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         title: "文本处理"
         description: "用于编辑指令和听写整理，修改在下一次文本处理时生效。"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "运行方式"
             description: pane.local ? "文本模型在电脑上运行，语音识别服务单独设置。"
                 : "使用已配置的在线文本服务，需要网络连接。"
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "llmProviderCombo"
                 Layout.fillWidth: true
                 Accessible.name: "文本处理运行方式"
@@ -31,14 +31,14 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         objectName: "localTextModelGroup"
         visible: pane.local
         title: "本地模型"
-        SettingsFormRow {
+        FigmaFormRow {
             title: pane.controller.localModelInstalled ? "模型已就绪" : "准备本地模型"
             description: pane.controller.localModelInstallStatus
-            UiAction {
+            FigmaAction {
                 objectName: "installLocalModelButton"
                 Layout.alignment: Qt.AlignRight
                 text: pane.controller.localModelInstalled ? "已安装"
@@ -55,15 +55,15 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         objectName: "onlineTextModelGroup"
         visible: !pane.local
         title: pane.controller.llmProvider === "volcengine" ? "火山方舟" : "当前在线服务"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "在线模型"
             description: "沿用已保存的模型，也可在下方填写自定义模型标识。"
             controlWidth: 340
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "llmModelCombo"
                 Layout.fillWidth: true
                 Accessible.name: "在线文本模型"
@@ -80,7 +80,7 @@ ColumnLayout {
                 color: theme.text; font.pixelSize: 13; wrapMode: Text.Wrap
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
             title: "服务密钥"
             description: pane.controller.llmApiKeyEnv.length
                 ? "未填写时沿用已配置的环境变量。"
@@ -88,7 +88,7 @@ ColumnLayout {
             controlWidth: 340
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
-                UiTextField {
+                FigmaTextField {
                     objectName: "llmApiKeyField"
                     Layout.fillWidth: true; Layout.minimumWidth: 0
                     text: pane.controller.llmApiKey
@@ -96,7 +96,7 @@ ColumnLayout {
                     echoMode: revealLlmKey.checked ? TextInput.Normal : TextInput.Password
                     onEditingFinished: pane.controller.llmApiKey = text
                 }
-                UiAction {
+                FigmaAction {
                     id: revealLlmKey
                     objectName: "showLlmApiKeyButton"
                     checkable: true; quiet: true
@@ -108,14 +108,14 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         objectName: "llmAdvancedGroup"
         visible: !pane.local
         title: "在线服务参数"
         description: "仅在使用自定义在线服务时调整，需与服务提供方的配置一致。"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "服务地址"; controlWidth: 340
-            UiTextField {
+            FigmaTextField {
                 objectName: "llmBaseUrlField"
                 Layout.fillWidth: true
                 text: pane.controller.llmBaseUrl
@@ -123,9 +123,9 @@ ColumnLayout {
                 onEditingFinished: pane.controller.llmBaseUrl = text
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
             title: "模型标识"; controlWidth: 340
-            UiTextField {
+            FigmaTextField {
                 objectName: "llmModelField"
                 Layout.fillWidth: true
                 text: pane.controller.llmModel

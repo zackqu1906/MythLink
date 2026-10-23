@@ -16,8 +16,8 @@ from test_ui_shell import visual_child
 def test_opt_in_card_layout_and_confirm_preserves_voice(inline_ui,monkeypatch,tmp_path,bundle,profiles):
     from PySide6.QtCore import QMetaObject, QPointF, Qt
     from PySide6.QtTest import QTest
-    from proximic_ring.ui.application_onboarding import ApplicationOnboarding
-    import proximic_ring.ui.application_onboarding_overlay as module
+    from proximic_ring.ui.desktop.application_onboarding import ApplicationOnboarding
+    import proximic_ring.ui.desktop.application_onboarding_overlay as module
     c,bridge,*_=inline_ui
     catalog=c.appGestures.catalog
     monkeypatch.setattr(catalog,'_request',lambda *args:None)

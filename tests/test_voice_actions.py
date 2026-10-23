@@ -1,4 +1,4 @@
-from proximic_ring.voice_actions import (
+from proximic_ring.voice.voice_actions import (
     ACTION_CANCEL,
     ACTION_SWITCH_MODE,
     ACTION_UNDO,
@@ -6,7 +6,7 @@ from proximic_ring.voice_actions import (
     normalize_mode_switch_shortcut,
     windows_mode_switch_key_code,
 )
-import proximic_ring.voice_actions as voice_actions_module
+import proximic_ring.voice.voice_actions as voice_actions_module
 import itertools
 import pytest
 

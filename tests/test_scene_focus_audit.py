@@ -105,19 +105,6 @@ def test_generic_close_preview_is_not_a_slideshow_signal(label):
     assert presentation_context(WPS, window, focus, metadata)[0] == ''
 
 
-@pytest.mark.parametrize('state', ['hidden_parent', 'disabled_parent', 'menu_parent', 'stale_focus', 'dialog_parent'])
-def test_browser_player_focus_rejects_inactive_ancestors(state):
-    window, web, wrapper, video = page()
-    focus = Node('AXButton', video)
-    if state == 'hidden_parent': wrapper.attrs['AXHidden'] = True
-    if state == 'disabled_parent': wrapper.attrs['AXEnabled'] = False
-    if state == 'menu_parent': video.attrs['AXRole'] = 'AXMenu'
-    if state == 'stale_focus': focus.attrs['AXFocused'] = False
-    if state == 'dialog_parent': wrapper.attrs['AXSubrole'] = 'AXDialog'
-    result = browser_media_context(window, focus, read)
-    assert not result.scene or result.input_context != 'nontext'
-
-
 @pytest.mark.parametrize('scene', [PDF, IMAGE, VIDEO, MUSIC])
 def test_switching_document_in_same_window_rejects_old_target(monkeypatch, scene):
     window, focus = content(scene)
@@ -165,9 +152,9 @@ def test_scene_shortcut_does_not_follow_focus_to_another_button(desktop):
 @pytest.mark.parametrize('context', ['nontext', 'text', 'unknown'])
 def test_presenter_notes_allow_voice_but_unknown_slideshow_never_autofocuses(monkeypatch, context):
     from types import SimpleNamespace
-    from proximic_ring import native_access_worker as worker
-    from proximic_ring.app_shortcuts import ShortcutTarget
-    from proximic_ring.mac_permissions import PermissionState
+    from proximic_ring.platforms.macos import native_access_worker as worker
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
+    from proximic_ring.platforms.macos.mac_permissions import PermissionState
     monkeypatch.setattr(worker, 'read_permission_state', lambda: PermissionState(True, False))
     dispatcher = worker.Dispatcher()
     dispatcher.shortcuts = SimpleNamespace(capture=lambda **kw: ShortcutTarget(
@@ -192,15 +179,6 @@ def test_preview_title_only_file_change_invalidates_old_image_target(monkeypatch
     assert not backend.same_target(target)
 
 
-def test_browser_readonly_web_area_uses_editability_metadata_and_not_value():
-    window = dict(AXRole='AXWindow')
-    focus = dict(AXRole='AXWebArea', AXParent=window, AXValueSettable=False, AXURL='https://example.test/one.pdf')
-    window['AXChildren'] = [focus]
-    assert activity_context('com.apple.Safari', {PDF: 'generic'}, window, focus, metadata) == (PDF, 'nontext')
-    focus['AXValueSettable'] = True
-    assert activity_context('com.apple.Safari', {PDF: 'generic'}, window, focus, metadata)[1] != 'nontext'
-
-
 @pytest.mark.parametrize('change', ['loading', 'hidden', 'disabled'])
 def test_browser_documents_with_inactive_page_do_not_claim_keys(change):
     window = dict(AXRole='AXWindow')
@@ -219,23 +197,3 @@ def test_native_scene_snapshot_blocks_invalid_focus_before_regular_fallback(monk
     if state == 'stale_focus': focus.update(AXRole='AXButton', AXFocused=False)
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle='com.apple.Preview')
     assert backend.capture(menu_action=True, scene=True).blocked
-
-
-@pytest.mark.parametrize('change', ['page', 'during_capture'])
-def test_browser_pdf_identity_is_checked_before_dispatch(monkeypatch, change):
-    window, focus = content(PDF); window.pop('AXDocument')
-    focus.update(AXRole='AXWebArea', AXEditable=False, AXURL='https://example.test/one.pdf')
-    backend, _, _ = native_backend(monkeypatch, window, focus, bundle='com.apple.Safari')
-    if change == 'page':
-        target = backend.capture(menu_action=True, scene=True)
-        assert target.scene == PDF and backend.same_target(target)
-        focus['AXURL'] = 'https://example.test/two.pdf'
-        assert not backend.same_target(target)
-    else:
-        ax = sys.modules['ApplicationServices']; original = ax.AXUIElementCopyAttributeValue
-        def switch(node, key, unused):
-            result = original(node, key, unused)
-            if node is focus and key == 'AXURL': focus['AXURL'] = 'https://example.test/two.pdf'
-            return result
-        ax.AXUIElementCopyAttributeValue = switch
-        assert backend.capture(menu_action=True, scene=True) is None

@@ -117,6 +117,10 @@ final class TextViewClient: CompositionClient {
                                        insertText: { view.insertText($0, replacementRange: unspecifiedRange) })
     }
     func replace(_ range: NSRange, with text: String) { view.insertText(text, replacementRange: range) }
+    func replaceEditing(_ range: NSRange, with text: String, restoringCaret: Int?) {
+        replace(range, with: text)
+        if let restoringCaret { view.setSelectedRange(NSRange(location: restoringCaret, length: 0)) }
+    }
 }
 
 test("Real NSTextView retains instruction until model result and restores dictation on cancellation") {
@@ -126,7 +130,7 @@ test("Real NSTextView retains instruction until model result and restores dictat
         let session = try! CompositionSession(client: client, utteranceID: "native-edit", sequence: 1)
         var requests = 0
         session.onEdit = { original, instruction, _ in
-            check(original == "前旧😀尾巴" && instruction == "修改指令", "wrong model inputs")
+            check(original == "前" && instruction == "修改指令", "model must receive only the existing text before the caret")
             check(view.string == "前修改指令尾巴" && view.hasMarkedText(), "instruction disappeared while waiting for model")
             requests += 1
         }
@@ -152,6 +156,26 @@ test("Real NSTextView exact committed-range undo works without whole-document co
     check(session.canCancel && session.committedRangeVerified, "native range read did not enable undo")
     session.cancel()
     check(view.string == "前😀后" && session.phase == .undone && !view.hasMarkedText(), "local native undo failed")
+}
+
+for complete in [true, false] {
+    for restore in [true, false] {
+        test("Real NSTextView polishes only one sentence and honors undo: full=\(complete), restore=\(restore)") {
+            let view = editor("前😀旧字后缀", selection: NSRange(location: 3, length: 2))
+            let client = TextViewClient(view, complete: complete)
+            let session = try! CompositionSession(client: client, utteranceID: "native-polish", sequence: 1)
+            session.update("嗯明天见", final: true)
+            session.polish(restoringRawOnUndo: restore)
+            session.applyPolish(text: "明天见。", revision: session.revision, error: nil)
+            check(view.string == "前😀明天见。后缀" && session.polished && !view.hasMarkedText(), "native polish failed: \(session.error)")
+            session.cancel()
+            if restore {
+                check(view.string == "前😀嗯明天见后缀" && session.phase == .dictated, "native raw restoration failed")
+                session.cancel()
+            }
+            check(view.string == "前😀旧字后缀" && session.phase == .undone, "native sentence undo failed")
+        }
+    }
 }
 
 print("\(passed) native commit tests passed")

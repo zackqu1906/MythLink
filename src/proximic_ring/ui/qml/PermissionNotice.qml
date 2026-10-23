@@ -5,7 +5,7 @@ import QtQuick.Layouts
 Control {
     id: notice
     property string message: ""
-    property string actionText: "去开启"
+    property string actionText: "请求权限"
     property color ink: theme.warning
     property color noticeBackground: theme.warningSurface
     property color noticeBorder: theme.warningBorder

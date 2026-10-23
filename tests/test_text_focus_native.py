@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from proximic_ring.native_access import NativeAccessChannel
+from proximic_ring.platforms.macos.native_access import NativeAccessChannel
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or os.environ.get("PROXIMIC_TEST_AX_FOCUS") != "1",

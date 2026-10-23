@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "parameters": {
+    "note_title": "Workflow 对比测试",
+    "note_body": "1. 记录用户操作经验；\n2. 提取可复用流程；\n3. 通过手势触发 Agent 执行。"
+  },
+  "initial_state": "备忘录已运行，在 All on My Mac 列表选中 15:59 创建的学习样本“Workflow 对比测试”，焦点在笔记列表，没有弹窗。每轮重新选中该学习样本；所有测试新建笔记均保留，列表数量会增加。",
+  "name": "苹果备忘录新建并填写指定笔记"
+}

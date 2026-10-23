@@ -49,6 +49,11 @@ class DoublePinchDetector:
         self._first: SwipeResult | None = None
         self._last: SwipeResult | None = None
 
+    @property
+    def pending_first(self) -> SwipeResult | None:
+        """The trigger currently eligible to start a pair, if any."""
+        return self._first
+
     @staticmethod
     def _time(event: SwipeResult) -> int:
         return (event.center_uptime_ms if event.center_uptime_ms is not None

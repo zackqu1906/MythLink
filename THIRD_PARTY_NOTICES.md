@@ -44,6 +44,43 @@ Mythlink integrates the following third-party components. Most downloaded ASR/LL
 
 Third-party names and trademarks belong to their respective owners.
 
+## Wails macOS window focus policy
+
+- Source: https://github.com/wailsapp/wails/blob/5b8e87bd45c1b87d6f2cfb7c0e5c3176eda85a2a/v3/pkg/application/webview_window_darwin.go
+- The `windowFocus` policy is adapted to PyObjC/Qt in
+  `src/proximic_ring/platforms/macos/mac_window_focus.py`: nonactivating panels
+  are ordered and keyed independently; explicit normal-window focus activates
+  the application before making that window key.
+- Copyright (c) 2018-Present Lea Anthony, MIT. The full license is retained in
+  the adapted module and included in the packaged Python code.
+
+## Agent message rendering
+
+The Agent completion icon in `src/proximic_ring/ui/assets/agent-completed.svg`
+uses [Lucide circle-check](https://lucide.dev/icons/circle-check), recolored for
+the interface. It is licensed under ISC; the copyright and full license text
+are embedded in the SVG.
+
+Local static assets in `src/proximic_ring/agent_workflow/ui/rich_text/vendor`:
+
+- Marked 18.1.1 — https://github.com/markedjs/marked — MIT (`marked-LICENSE`).
+- DOMPurify 3.4.17 — https://github.com/cure53/DOMPurify — MPL-2.0 OR Apache-2.0 (`dompurify-LICENSE`).
+- KaTeX 0.19.0 — https://github.com/KaTeX/KaTeX — MIT (`katex-LICENSE`); WOFF2 fonts distributed with that release.
+- Mermaid 12.2.0 — https://github.com/mermaid-js/mermaid — MIT (`mermaid-LICENSE`).
+- highlight.js CDN assets 11.12.0 — https://github.com/highlightjs/cdn-release — BSD-3-Clause (`cdn-assets-LICENSE`).
+
+`vendor/manifest.json` records the official npm tarball URLs, versions,
+integrity checks and the SHA-256 of each copied file. Library files are unmodified.
+Rendering does not fetch CDN scripts at runtime. Qt WebEngine / Qt WebChannel
+are supplied by the existing PySide6 distribution and retain its Qt/Chromium licenses.
+
+## Source Han Sans SC
+
+- Source: https://github.com/adobe-fonts/source-han-sans/tree/2.005R
+- Files: `src/proximic_ring/ui/assets/fonts/SourceHanSansSC-Regular.otf` and `SourceHanSansSC-Medium.otf`
+- Copyright 2014–2025 Adobe. Unmodified release 2.005R fonts, used by the Figma history design.
+- License: SIL Open Font License 1.1, bundled as `src/proximic_ring/ui/assets/fonts/LICENSE.txt`.
+
 ## Stroke input data
 
 - The offline stroke dictionary in `src/proximic_ring/assets/strokes.json.gz` is imported
@@ -76,3 +113,14 @@ branch as `tools/build_stroke_context.py`; this integration includes the generat
 - The MNN license does not grant a license to the ring provider's model. No separate
   model redistribution license was found in the supplied SDK; the existing provider
   permission requirement above also applies to this asset.
+
+## BGE-M3 (optional Workflow retrieval model)
+
+BAAI/bge-m3, MIT license, https://huggingface.co/BAAI/bge-m3 . Model weights are downloaded only on explicit request, pinned to revision `5617a9f61b028005a4858fdac845db406aefb181`. The app bundles the download manifest, not the 2.3 GB weights. Dense encoding follows the model's CLS pooling and L2 normalization configuration.
+
+## Remodex desktop IPC adapter
+
+The desktop owner adapter in `src/proximic_ring/agent_workflow/agent/desktop_owner/`
+is derived from [Emanuele-web04/remodex](https://github.com/Emanuele-web04/remodex),
+commit `f67b1499dbd8ace7a23902fad3242cc88f7e9a9e`, licensed under Apache-2.0.
+The license and a description of Mythlink modifications are included alongside the files.

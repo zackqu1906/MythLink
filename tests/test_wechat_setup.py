@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.wechat_setup import KeyboardShortcutsNavigator, MENU_TITLES, menu_details
+from proximic_ring.platforms.macos.wechat_setup import KeyboardShortcutsNavigator, MENU_TITLES, menu_details
 
 
 @pytest.mark.parametrize("language,pair", MENU_TITLES.items())

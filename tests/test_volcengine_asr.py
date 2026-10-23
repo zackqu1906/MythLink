@@ -73,6 +73,125 @@ def _client_request(frame: bytes) -> dict:
     return json.loads(payload)
 
 
+def test_hotwords_are_sent_without_editor_context_and_next_session_refreshes():
+    from proximic_ring.voice.app_runtime import _with_hotwords
+    sockets = []
+    def factory(*args, **kwargs):
+        socket = FakeWebSocket()
+        sockets.append(socket)
+        return socket
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=factory)
+    words = ["张玮", "Java"]
+    provider = _with_hotwords(lambda: {"status": "unavailable"}, lambda: words)
+    backend.set_session_context(provider())
+    backend.start()
+    words[:] = ["Kubernetes"]
+    corpus = json.loads(_client_request(sockets[0].sent[0])["request"]["corpus"]["context"])
+    assert corpus == {"hotwords": [{"word": "张玮"}, {"word": "Java"}]}
+    backend.finish(np.empty(0, dtype=np.float32))
+    backend.set_session_context(provider())
+    backend.start()
+    corpus = json.loads(_client_request(sockets[1].sent[0])["request"]["corpus"]["context"])
+    assert corpus == {"hotwords": [{"word": "Kubernetes"}]}
+    backend.finish(np.empty(0, dtype=np.float32))
+    backend.set_session_context({"status": "captured", "text": "上下文", "hotwords": ["张玮"]})
+    backend.start()
+    corpus = json.loads(_client_request(sockets[2].sent[0])["request"]["corpus"]["context"])
+    assert corpus["hotwords"] == [{"word": "张玮"}] and corpus["context_data"] == [{"text": "上下文"}]
+    backend.finish(np.empty(0, dtype=np.float32))
+    backend.start()  # Consumed context/words must not leak into a later sentence.
+    assert "corpus" not in _client_request(sockets[3].sent[0])["request"]
+    backend.finish(np.empty(0, dtype=np.float32))
+
+
+def test_context_and_hotword_failures_are_independent():
+    from proximic_ring.voice.app_runtime import _with_hotwords
+    def fail():
+        raise RuntimeError("unavailable")
+    assert _with_hotwords(fail, lambda: ["张玮"])()["hotwords"] == ["张玮"]
+    assert _with_hotwords(lambda: {"status": "captured", "text": "原文"}, fail)() == {
+        "status": "captured", "text": "原文", "hotwords": []}
+
+
+@pytest.mark.parametrize("context_case", ["captured", "unavailable", "error", "bad_count", "list_count", "infinite_count"])
+def test_worker_sends_live_dictionary_on_every_utterance(tmp_path, context_case):
+    from proximic_ring.asr.streaming import StreamingASRWorker
+    from proximic_ring.voice.app_runtime import _with_hotwords
+    from proximic_ring.voice.hotwords import HotwordStore
+
+    store = HotwordStore(tmp_path / "hotwords.json")
+    store.add("Java")
+    store.add("张玮")
+    sockets, updates, contexts, states, errors = [], [], [], [], []
+    finished = threading.Event()
+
+    def factory(*_args, **_kwargs):
+        socket = FakeWebSocket()
+        sockets.append(socket)
+        return socket
+
+    def editor_context():
+        if context_case == "error":
+            raise RuntimeError("editor unavailable")
+        if context_case == "unavailable":
+            return {"status": "unavailable"}
+        context = {"status": "captured", "text": "输入框上文。"}
+        invalid_counts = {"bad_count": "unknown", "list_count": [1], "infinite_count": float("inf")}
+        if context_case in invalid_counts:
+            context["source_char_count"] = invalid_counts[context_case]
+        return context
+
+    def on_update(update):
+        updates.append(update)
+        if update.is_final:
+            finished.set()
+
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=factory)
+    worker = StreamingASRWorker(
+        backend, context_provider=_with_hotwords(editor_context, store.snapshot),
+        on_update=on_update, on_error=errors.append, on_state=states.append,
+        on_context=lambda session_id, context: contexts.append((session_id, context)),
+    )
+
+    def recognize(expected):
+        finished.clear()
+        audio = np.ones(160, dtype=np.float32) * 0.1
+        worker.start(audio)
+        worker.end(audio)
+        assert finished.wait(2), "utterance did not finish"
+        assert updates[-1].error is None
+        request = _client_request(sockets[-1].sent[0])["request"]
+        corpus = json.loads(request.get("corpus", {}).get("context", "{}"))
+        assert corpus.get("hotwords", []) == [{"word": word} for word in expected]
+        if context_case not in {"unavailable", "error"}:
+            assert corpus["context_data"] == [{"text": "输入框上文。"}]
+        assert contexts[-1][0] == len(sockets)
+        assert contexts[-1][1].get("hotwords", []) == expected
+        context_log = next(state for state in reversed(states) if state.startswith("[ASR CONTEXT]"))
+        assert f"hotwords={len(expected)} " in context_log
+        if expected:
+            assert contexts[-1][1]["status"] == "sent"
+            assert "status=sent " in context_log
+        assert all(word not in context_log for word in expected)
+
+    try:
+        recognize(["张玮", "Java"])
+        store.learn("correction", ["Kubernetes"])
+        recognize(["Kubernetes", "张玮", "Java"])
+        entries = {entry["word"]: entry["id"] for entry in store.entries()}
+        store.update(entries["张玮"], enabled=False)
+        recognize(["Kubernetes", "Java"])
+        store.remove(entries["Kubernetes"])
+        recognize(["Java"])
+        store.remove(entries["Java"])
+        recognize([])
+        assert len(sockets) == 5
+        assert not errors
+    finally:
+        worker.abort()
+        worker.close()
+
+
 def test_pcm16_quantization_matches_saved_voice_history_wav_samples():
     audio = np.array([-1.0, -0.25, 0.0, 0.25, 1.0], dtype=np.float32)
     saved_pcm = np.rint(np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
@@ -516,6 +635,37 @@ def test_receiver_callback_is_captured_for_its_own_session():
     backend.abort()
     assert previous and previous[0][0] == "本句"
     assert later == []
+
+
+@pytest.mark.parametrize("final_text, expected", [
+    ("好，明天见。", "好，明天见"),
+    ("字" * 20 + "！", "字" * 20),
+    ("字" * 21 + "。", "字" * 21 + "。"),
+    ("", "好，明天见"),  # Empty final frame keeps the last accumulated text.
+])
+def test_only_complete_utterance_uses_short_sentence_punctuation(final_text, expected):
+    socket = ControlledWebSocket()
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=lambda *a, **k: socket)
+    partials, received = [], threading.Event()
+
+    def partial(text, *_):
+        partials.append(text)
+        received.set()
+
+    backend.set_partial_callback(partial)
+    backend.start()
+    try:
+        backend.feed(np.ones(3201, dtype=np.float32) * 0.1)
+        socket.incoming.put(_response("好，明天见。", final=False, sequence=2))
+        assert received.wait(0.5)
+        assert partials == ["好，明天见。"]
+        assert _client_request(socket.sent[0])["request"]["enable_punc"] is True
+
+        socket.incoming.put(_response(final_text, final=True))
+        assert backend.finish(np.empty(0, dtype=np.float32)) == expected
+        assert backend._last_text == (final_text or "好，明天见。")
+    finally:
+        backend.abort()
 
 
 def test_abort_does_not_wait_for_a_slow_custom_close_handshake():

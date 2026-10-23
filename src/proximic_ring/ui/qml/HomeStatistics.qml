@@ -8,7 +8,7 @@ ColumnLayout {
     property bool todaySelected: true
     readonly property var summary: statistics.summary
     readonly property var totals: todaySelected ? summary.today : summary.total
-    UiTheme { id: theme }
+    FigmaTheme { id: theme }
     spacing: 8
     Component.onCompleted: statistics.active = visible
     onVisibleChanged: if (statistics) statistics.active = visible
@@ -45,14 +45,6 @@ ColumnLayout {
     }
 
     RowLayout {
-        Layout.fillWidth: true; spacing: 4
-        Label { text: "使用统计"; color: theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
-        Item { Layout.fillWidth: true }
-        UiAction { objectName: "homeStatsToday"; text: "今日"; primary: panel.todaySelected; quiet: !primary; implicitHeight: 28; topPadding: 0; bottomPadding: 0; onClicked: panel.todaySelected = true }
-        UiAction { objectName: "homeStatsAll"; text: "全部记录"; primary: !panel.todaySelected; quiet: !primary; implicitHeight: 28; topPadding: 0; bottomPadding: 0; onClicked: panel.todaySelected = false }
-        UiAction { objectName: "homeStatsInfo"; text: "说明"; quiet: true; implicitHeight: 28; topPadding: 0; bottomPadding: 0; onClicked: explanation.open() }
-    }
-    RowLayout {
         Layout.fillWidth: true; spacing: 12
         Repeater {
             model: [{key: "inputCharacters", label: "输入字数", unit: "字", icon: "history", tint: "#F2F3FC"},
@@ -65,8 +57,8 @@ ColumnLayout {
                 readonly property var formatted: modelData.key === "voiceSeconds" ? panel.duration(panel.totals.voiceSeconds)
                     : {value: panel.countText(panel.totals[modelData.key]), unit: modelData.unit}
                 objectName: "homeStat_" + modelData.key
-                Layout.fillWidth: true; Layout.preferredWidth: 160; Layout.minimumWidth: 0; Layout.preferredHeight: 216
-                radius: 16; color: modelData.tint
+                Layout.fillWidth: true; Layout.preferredWidth: 160; Layout.minimumWidth: 0; Layout.preferredHeight: 234
+                radius: 12; color: theme.surface; border.color: theme.line
                 Accessible.role: Accessible.StaticText
                 Accessible.name: modelData.label + "：" + (available ? panel.totals[modelData.key] + " " + modelData.unit : "数据不完整")
                 HoverHandler { id: hover }
@@ -75,9 +67,14 @@ ColumnLayout {
                 ToolTip.text: card.Accessible.name
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 16; spacing: 8
+                    RowLayout {
+                        Layout.fillWidth: true
                     Rectangle {
-                        width: 34; height: 34; radius: 10; color: "#E3E9FC"
-                        UiIcon { anchors.centerIn: parent; width: 19; height: 19; symbol: card.modelData.icon }
+                        width: 32; height: 32; radius: 8; color: theme.selection
+                        FigmaIcon { anchors.centerIn: parent; width: 24; height: 24; symbol: card.modelData.icon }
+                    }
+                    Item { Layout.fillWidth: true }
+                    FigmaAction { objectName: card.modelData.key === "inputCharacters" ? "homeStatsInfo" : ""; visible: card.modelData.key === "inputCharacters"; symbol: "more"; quiet: true; implicitWidth: 24; implicitHeight: 24; Accessible.name: "统计范围与说明"; onClicked: explanation.open() }
                     }
                     Item {
                         Layout.fillWidth: true
@@ -97,13 +94,14 @@ ColumnLayout {
                             text: card.formatted.unit; color: theme.muted; font.pixelSize: 12
                         }
                     }
-                    Label { Layout.fillWidth: true; text: card.modelData.label; color: theme.muted; font.pixelSize: 13 }
+                    Label { Layout.fillWidth: true; text: card.modelData.label; color: theme.text; font.pixelSize: 16; elide: Text.ElideRight }
                     Item { Layout.fillHeight: true }
+                    Rectangle { Layout.fillWidth: true; height: 1; color: theme.line }
                     Label {
                         objectName: "homeStatHint_" + card.modelData.key
                         Layout.fillWidth: true; Layout.preferredHeight: 28
                         text: panel.footer(card.modelData.key, card.modelData.unit)
-                        color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap
+                        color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
                     }
                 }
             }
@@ -129,6 +127,15 @@ ColumnLayout {
         exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
         contentItem: ColumnLayout {
             spacing: 16
+            RowLayout {
+        Layout.fillWidth: true; spacing: 4
+
+        Item { Layout.fillWidth: true }
+        FigmaAction { objectName: "homeStatsToday"; text: "今日"; primary: panel.todaySelected; quiet: !primary; implicitHeight: 28; topPadding: 0; bottomPadding: 0; onClicked: panel.todaySelected = true }
+        FigmaAction { objectName: "homeStatsAll"; text: "全部记录"; primary: !panel.todaySelected; quiet: !primary; implicitHeight: 28; topPadding: 0; bottomPadding: 0; onClicked: panel.todaySelected = false }
+
+    }
+
             Label { Layout.fillWidth: true; text: "基于当前保留的语音记录。删除或清空历史后，统计同步调整。"; color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap }
             Repeater {
                 model: [
@@ -152,7 +159,7 @@ ColumnLayout {
         }
         footer: DialogButtonBox {
             leftPadding: 24; rightPadding: 24; topPadding: 0; bottomPadding: 20
-            UiAction { objectName: "closeHomeStatisticsExplanation"; text: "知道了"; primary: true; onClicked: explanation.close() }
+            FigmaAction { objectName: "closeHomeStatisticsExplanation"; text: "知道了"; primary: true; onClicked: explanation.close() }
         }
     }
 }

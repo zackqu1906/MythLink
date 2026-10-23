@@ -70,7 +70,7 @@ final class VoiceHudHint: NSButton {
         let total = symbolsWidth + (gestures.isEmpty ? 0 : 1 * uiScale) + 24 * uiScale
         var x = (bounds.width - total) / 2
         for gesture in gestures {
-            drawAsset("gesture-" + gesture, cell: NSRect(x: x, y: 0, width: gestureCell, height: bounds.height),
+            drawAsset(VoiceHudBindings.assetName(gesture), cell: NSRect(x: x, y: 0, width: gestureCell, height: bounds.height),
                       maximum: (gestures.count > 1 ? 16 : 20) * uiScale, opacity: opacity)
             x += gestureCell
         }

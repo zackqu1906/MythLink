@@ -48,6 +48,7 @@ class MacSystemMouse:
         self.clicks_enabled = True
         self.stop_on_escape = True
         self.moves = self.clicks = 0
+        self.click_down_posts = self.click_up_posts = 0
 
     def permitted(self):
         return bool(self.ax.AXIsProcessTrusted() and self.q.CGPreflightPostEventAccess())
@@ -69,6 +70,7 @@ class MacSystemMouse:
             raise PermissionError('请先在系统设置 → 隐私与安全性 → 辅助功能中授权当前终端 / Python 程序。')
         self.enabled = True
         self.moves = self.clicks = 0
+        self.click_down_posts = self.click_up_posts = 0
         self._permissions = _PermissionWatch(self.permitted)
 
     def disable(self):
@@ -139,8 +141,10 @@ class MacSystemMouse:
                         self.q.CGEventSetIntegerValueField(e, self.q.kCGMouseEventClickState, 1)
                     try:
                         self.q.CGEventPost(self.q.kCGHIDEventTap, down)
+                        self.click_down_posts += 1
                     finally:
                         self.q.CGEventPost(self.q.kCGHIDEventTap, up)
+                        self.click_up_posts += 1
                     self.clicks += 1
         except Exception:
             self.disable()

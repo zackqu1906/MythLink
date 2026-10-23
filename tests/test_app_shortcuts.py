@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from proximic_ring.app_shortcuts import LocalMacAppShortcuts as MacAppShortcuts, ShortcutTarget, verify_native_api
+from proximic_ring.desktop.app_shortcuts import LocalMacAppShortcuts as MacAppShortcuts, ShortcutTarget, verify_native_api
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="real macOS bridge exports")
@@ -40,7 +40,7 @@ def desktop(monkeypatch):
 def test_posts_one_balanced_chord_to_pinned_pid(desktop, shortcut, code, flags):
     backend, state, _ = desktop
     backend.post(state.target, shortcut)
-    from proximic_ring.mac_shortcut_events import MODIFIER_KEYS
+    from proximic_ring.platforms.macos.mac_shortcut_events import MODIFIER_KEYS
     names=shortcut.split('+')[:-1]
     device_flags=0
     for name in names: device_flags |= MODIFIER_KEYS[name][1]

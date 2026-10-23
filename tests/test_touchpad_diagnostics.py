@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from proximic_ring.touchpad_diagnostics import TouchpadDiagnostics, note
+from proximic_ring.touchpad.touchpad_diagnostics import TouchpadDiagnostics, note
 from ring_python_sdk.touchpad import TouchpadContact, TouchpadMove, TouchpadStats
 
 
@@ -36,7 +36,7 @@ def test_diagnostic_failure_cannot_change_stroke_or_click_delivery():
     def failing(reason):
         raise RuntimeError('log unavailable')
     note(failing, 'stroke_delivered')
-    from proximic_ring.touchpad_clicks import TouchpadClicks
+    from proximic_ring.touchpad.touchpad_clicks import TouchpadClicks
     from ring_python_sdk.touchpad import TouchpadClick
     clicks = TouchpadClicks(on_diagnostic=failing)
     clicks.feed(TouchpadClick(1, 10.), now=10.)

@@ -39,7 +39,7 @@ Rectangle {
                 }
             }
         }
-        ScrollView {
+        UiScrollView {
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             Layout.fillWidth: true; Layout.preferredHeight: Math.min(180, previewColumn.implicitHeight)
             visible: onboarding.preview.length > 0; clip: true

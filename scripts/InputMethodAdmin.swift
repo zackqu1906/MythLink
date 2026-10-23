@@ -2,7 +2,8 @@ import Foundation
 import Carbon
 import AppKit
 
-// Installation never selects a source. Gestures may explicitly select it.
+// Fresh installation preserves the input source. Updating a selected IME can
+// temporarily release it and conditionally restore the same selection.
 let productID = "com.proximic.inputmethod.ProxiMicVoice"
 let installation = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Input Methods/ProxiMicInput.app")
@@ -12,11 +13,52 @@ func property(_ source: TISInputSource, _ key: CFString) -> AnyObject? {
     return Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
 }
 
-func sources() -> [TISInputSource] {
+func allSources() -> [TISInputSource] {
     guard let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() else { return [] }
     return (0..<CFArrayGetCount(list)).map {
         unsafeBitCast(CFArrayGetValueAtIndex(list, $0), to: TISInputSource.self)
-    }.filter { property($0, kTISPropertyBundleID) as? String == productID }
+    }
+}
+
+func sources() -> [TISInputSource] {
+    allSources().filter { property($0, kTISPropertyBundleID) as? String == productID }
+}
+
+func currentSourceID() -> String {
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return "" }
+    return property(source, kTISPropertyInputSourceID) as? String ?? ""
+}
+
+func currentApplication() -> (Int32, String) {
+    let front = NSWorkspace.shared.frontmostApplication
+    return (front?.processIdentifier ?? 0, front?.bundleIdentifier ?? "")
+}
+
+func selectUpdateSource(_ identifier: String) throws {
+    guard let source = allSources().first(where: { property($0, kTISPropertyInputSourceID) as? String == identifier }),
+          property(source, kTISPropertyInputSourceIsEnabled) as? Bool == true,
+          property(source, kTISPropertyInputSourceIsSelectCapable) as? Bool == true else {
+        throw SourceSelectionFailure("未找到可用的目标输入法，原选择保持不变")
+    }
+    guard TISSelectInputSource(source) == noErr else {
+        throw SourceSelectionFailure("系统未能切换输入法，请稍后重试")
+    }
+}
+
+func fallbackKeyboardID() throws -> String {
+    let candidates = allSources().filter {
+        let identifier = property($0, kTISPropertyInputSourceID) as? String ?? ""
+        return identifier.hasPrefix("com.apple.keylayout.")
+            && property($0, kTISPropertyInputSourceType) as? String == kTISTypeKeyboardLayout as String
+            && property($0, kTISPropertyInputSourceIsASCIICapable) as? Bool == true
+            && property($0, kTISPropertyInputSourceIsEnabled) as? Bool == true
+            && property($0, kTISPropertyInputSourceIsSelectCapable) as? Bool == true
+    }.compactMap { property($0, kTISPropertyInputSourceID) as? String }
+    guard let chosen = ["com.apple.keylayout.ABC", "com.apple.keylayout.US"].first(where: candidates.contains)
+            ?? candidates.sorted().first else {
+        throw SourceSelectionFailure("未找到已启用的系统键盘，请先在系统设置中添加 ABC 后重试")
+    }
+    return chosen
 }
 
 func snapshot() -> [String: Any] {
@@ -40,15 +82,35 @@ func fail(_ message: String) -> Never {
 struct InputMethodAdmin {
     static func main() throws {
         let command = CommandLine.arguments.dropFirst().first ?? "status"
+        var extra: [String: Any] = [:]
+        let voiceIDs: Set<String> = [productID, productID + ".dictation"]
         switch command {
         case "status": break
+        case "prepare-update":
+            do {
+                if let handoff = try prepareUpdateSource(voiceIDs: voiceIDs,
+                    currentSource: currentSourceID, foreground: currentApplication,
+                    fallback: fallbackKeyboardID, select: selectUpdateSource) {
+                    extra["update_handoff"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(handoff))
+                } else { extra["update_handoff"] = NSNull() }
+            } catch { fail(error.localizedDescription) }
+        case "restore-after-update":
+            guard CommandLine.arguments.count == 3 else { fail("缺少输入法更新交接信息") }
+            do {
+                let handoff = try JSONDecoder().decode(UpdateSourceHandoff.self, from: Data(CommandLine.arguments[2].utf8))
+                extra["input_source_restored"] = try restoreUpdateSource(handoff, voiceIDs: voiceIDs,
+                    currentSource: currentSourceID, foreground: currentApplication, select: selectUpdateSource)
+            } catch { fail(error.localizedDescription) }
         case "ensure-selected", "refresh-selected":
-            guard CommandLine.arguments.count == 4, let pid = Int32(CommandLine.arguments[2]), pid > 0 else {
+            let args = CommandLine.arguments
+            let hostRestoresFocus = args.count == 5 && args[4] == "--host-restores-focus"
+            guard (args.count == 4 || hostRestoresFocus), let pid = Int32(args[2]), pid > 0 else {
                 fail("ensure-selected requires a foreground PID and bundle ID")
             }
             let modeID = productID + ".dictation"
             selectSourceSession(pid: pid, bundle: CommandLine.arguments[3], modeID: modeID,
                 refreshOnly: command == "refresh-selected",
+                hostRestoresFocus: hostRestoresFocus,
                 currentSource: {
                     guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return "" }
                     return property(source, kTISPropertyInputSourceID) as? String ?? ""
@@ -115,9 +177,9 @@ struct InputMethodAdmin {
                 }
             }
         default:
-            fail("用法：InputMethodAdmin [status|register|enable|disable|select [前台进程 ID]]")
+            fail("用法：InputMethodAdmin [status|register|enable|disable|prepare-update|restore-after-update 交接信息|select [前台进程 ID]]")
         }
-        let json = try JSONSerialization.data(withJSONObject: snapshot(), options: [.prettyPrinted, .sortedKeys])
+        let json = try JSONSerialization.data(withJSONObject: snapshot().merging(extra) { _, new in new }, options: [.prettyPrinted, .sortedKeys])
         FileHandle.standardOutput.write(json)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

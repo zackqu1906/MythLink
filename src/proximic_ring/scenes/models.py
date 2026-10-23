@@ -12,3 +12,4 @@ class SceneResult:
     web_area: object = field(default=None, repr=False)
     player: object = field(default=None, repr=False)
     diagnostic: dict = field(default_factory=dict, compare=False, repr=False)
+    browser_target: dict = field(default_factory=dict, repr=False)

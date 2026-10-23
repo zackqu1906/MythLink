@@ -1,0 +1,69 @@
+{
+  "schema_version": 3,
+  "goal": "打开 Apple Music（苹果音乐），从当前可播放的音乐中随机播放一首歌曲，确认已开始播放，并简短报告歌名。",
+  "parameters": {},
+  "initial_state": "Music 已运行且显示 Songs 页面；Controls → Stop 已停止播放，LCD 没有当前曲目，previous/next 禁用，随机播放关闭（shuffle 按钮）。每轮用相同方法复位。当前库为本地音频素材，播放次数会累计、随机序列无法完全复原。",
+  "workflow": {
+    "name": "Apple Music 随机播放并确认播放曲目",
+    "goal": "在 Apple Music 中从当前可播放的歌曲中启动随机播放，确认已开始播放，并读取当前播放曲名用于报告。",
+    "parameters": [],
+    "steps": [
+      {
+        "action": "打开并绑定 Apple Music 应用窗口",
+        "method": "在 cua_repl 中调用 cua.getApp(“Music”)，按应用名打开并绑定；绑定结果会自动附带最新 AX 状态，可直接读取窗口标题、侧边栏与播放控制元素。",
+        "check": "绑定成功后可读取标题为 Music 的窗口，AX 中包含侧边栏（搜索、Apple Music、Library 下的 Albums/Songs 等）与播放控制（play、shuffle 等）元素。"
+      },
+      {
+        "action": "在 Apple Music 侧边栏选择歌曲（Songs）入口，展示可播放歌曲",
+        "method": "先读取最新 AX 状态，按当前树中的侧边栏歌曲行（记录中为 Value: Songs 的可选行）点击，再调用 getAXState 查看内容区；每次重新读取、重新定位，不复用上次的元素索引。",
+        "check": "内容区标题为歌曲（Songs），列表中出现可选中的歌曲行。"
+      },
+      {
+        "action": "在播放控制区开启随机播放",
+        "method": "读取最新 AX 状态，定位播放控制栏中的 shuffle 按钮并点击，随后在同一次调用内 getAXState，检查该按钮描述是否已变为 do not shuffle（表示随机已开启）。",
+        "check": "AX 中 shuffle 按钮描述显示为 do not shuffle，即随机播放处于开启状态。"
+      },
+      {
+        "action": "点击播放按钮开始播放，并从最新界面状态读取当前曲名与播放状态",
+        "method": "读取最新 AX 状态后点击播放控制栏的 play 按钮，并在同一次调用内 getAXState；从返回的差异中读取 LCD 区的曲名文本、播放/暂停按钮描述与进度信息。",
+        "check": "AX 状态显示播放中（按钮为 pause、出现当前曲名与播放进度），并据此读取到本次播放的曲名。"
+      }
+    ],
+    "conditions": [
+      "运行环境为 macOS，Apple Music（com.apple.Music）已安装且可被 cua_repl 的 cua.getApp 绑定",
+      "Apple Music 音乐库中存在可播放的歌曲内容",
+      "用户已授权对该应用执行 computer use 操作（记录中的控制事件显示按已有应用授权执行）"
+    ],
+    "fallbacks": [
+      {
+        "when": "cua.getApp 按显示名无法解析或绑定音乐应用失败",
+        "action": "建议改用应用的 bundle ID（com.apple.Music）或 cua.listApps() 返回的条目重新绑定；这是记录中 API 文档给出的回退方式，本次未实际执行"
+      },
+      {
+        "when": "点击后界面没有变化，或上一次读取的元素索引已失效",
+        "action": "建议重新调用 getAXState（必要时使用完整树）获取最新状态后重新定位目标元素，不要复用旧索引；记录中的 API 文档明确要求动作后重新读取状态"
+      },
+      {
+        "when": "播放控制区 shuffle 按钮描述仍为 shuffle，随机播放实际未开启",
+        "action": "建议再次点击该 shuffle 按钮并重新读取 AX 状态，确认描述变为 do not shuffle 后再继续点击播放"
+      }
+    ]
+  },
+  "source": {
+    "job_id": "659cd985939a42afb9f79ebe6ed7d310",
+    "workflow_index": 0,
+    "session_id": "23e72aceb07549ba8ed9ac390b4b9d27",
+    "episode_id": "ec2b8ab29202429d9ff2bd7a94bcb0ea",
+    "prompt_version": "desktop-awm-4",
+    "source_directory": "/Users/admin/.codex/worktrees/3584/ProximicVoice-main/agent-experience/workflows",
+    "json_file": "659cd985939a42afb9f79ebe6ed7d310.flow.json",
+    "text_file": "659cd985939a42afb9f79ebe6ed7d310.flow.txt",
+    "text_sha256": "98adcff5db74f41cd522ea0185e5a7eb81c87ca16eb06080e48e067bd36678fc",
+    "json_sha256": "98bd8d349816c6d245472434a104b1d76823382b09a0542028f275c912ca3486"
+  },
+  "execution_guidance": "以下流程是本次任务的操作指南。沿用其中有用的具体路径，避免从头探索替代方案。\n结合当前界面重新定位目标；不得复用历史控件编号、坐标或临时变量。\n目标状态已满足的步骤可跳过。检查必要的到位条件；条件不符时局部恢复，再回到主路径。\n当前工具返回已包含所需观察时，直接用该返回验证，不为相同检查额外重复读取界面。\n若流程与本次任务或当前界面冲突，以本次任务和实际观察为准。缺少必要信息时询问用户。\n继续遵守现有 computer use、暂停、权限和结果验证规则。流程不是已经执行或已经成功的证明。",
+  "natural_language_workflow": "Apple Music 随机播放并确认播放曲目\n目标：在 Apple Music 中从当前可播放的歌曲中启动随机播放，确认已开始播放，并读取当前播放曲名用于报告。\n操作步骤：\n1. 动作：打开并绑定 Apple Music 应用窗口\n   执行方法：在 cua_repl 中调用 cua.getApp(“Music”)，按应用名打开并绑定；绑定结果会自动附带最新 AX 状态，可直接读取窗口标题、侧边栏与播放控制元素。\n   完成条件：绑定成功后可读取标题为 Music 的窗口，AX 中包含侧边栏（搜索、Apple Music、Library 下的 Albums/Songs 等）与播放控制（play、shuffle 等）元素。\n2. 动作：在 Apple Music 侧边栏选择歌曲（Songs）入口，展示可播放歌曲\n   执行方法：先读取最新 AX 状态，按当前树中的侧边栏歌曲行（记录中为 Value: Songs 的可选行）点击，再调用 getAXState 查看内容区；每次重新读取、重新定位，不复用上次的元素索引。\n   完成条件：内容区标题为歌曲（Songs），列表中出现可选中的歌曲行。\n3. 动作：在播放控制区开启随机播放\n   执行方法：读取最新 AX 状态，定位播放控制栏中的 shuffle 按钮并点击，随后在同一次调用内 getAXState，检查该按钮描述是否已变为 do not shuffle（表示随机已开启）。\n   完成条件：AX 中 shuffle 按钮描述显示为 do not shuffle，即随机播放处于开启状态。\n4. 动作：点击播放按钮开始播放，并从最新界面状态读取当前曲名与播放状态\n   执行方法：读取最新 AX 状态后点击播放控制栏的 play 按钮，并在同一次调用内 getAXState；从返回的差异中读取 LCD 区的曲名文本、播放/暂停按钮描述与进度信息。\n   完成条件：AX 状态显示播放中（按钮为 pause、出现当前曲名与播放进度），并据此读取到本次播放的曲名。\n使用条件：\n- 运行环境为 macOS，Apple Music（com.apple.Music）已安装且可被 cua_repl 的 cua.getApp 绑定\n- Apple Music 音乐库中存在可播放的歌曲内容\n- 用户已授权对该应用执行 computer use 操作（记录中的控制事件显示按已有应用授权执行）\n异常处理：\n- 当 cua.getApp 按显示名无法解析或绑定音乐应用失败：建议改用应用的 bundle ID（com.apple.Music）或 cua.listApps() 返回的条目重新绑定；这是记录中 API 文档给出的回退方式，本次未实际执行\n- 当 点击后界面没有变化，或上一次读取的元素索引已失效：建议重新调用 getAXState（必要时使用完整树）获取最新状态后重新定位目标元素，不要复用旧索引；记录中的 API 文档明确要求动作后重新读取状态\n- 当 播放控制区 shuffle 按钮描述仍为 shuffle，随机播放实际未开启：建议再次点击该 shuffle 按钮并重新读取 AX 状态，确认描述变为 do not shuffle 后再继续点击播放",
+  "renderer_version": "desktop-awm-4-source-text",
+  "parameter_binding": "reference",
+  "id": "77f9525c0c0a0d14db79428b2229b399"
+}

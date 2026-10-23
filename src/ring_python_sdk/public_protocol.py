@@ -227,6 +227,8 @@ class MicBlockAssembler:
         self.reset()
 
     def reset(self) -> None:
+        # Diagnostic evidence for this accept() only; never retain a session.
+        self.last_decoded_block: bytes | None = None
         self.sequence: int | None = None
         self.uptime = 0
         self.started_at = 0.0
@@ -239,6 +241,7 @@ class MicBlockAssembler:
         self.parts = []
 
     def accept(self, packet: bytes, now_ms: float | None = None) -> AudioFrame | None:
+        self.last_decoded_block = None
         if len(packet) <= 12 or packet[:2] != b"\x20\x03":
             return None
         seq, fragment, count, uptime = struct.unpack_from("<HHHI", packet, 2)
@@ -270,4 +273,6 @@ class MicBlockAssembler:
         block = b"".join(self.parts)
         self._retire()
         pcm = decode_adpcm(block)
+        if pcm is not None:
+            self.last_decoded_block = block
         return AudioFrame(seq, uptime, pcm) if pcm is not None else None

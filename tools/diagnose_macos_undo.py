@@ -15,7 +15,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from proximic_ring.desktop_target import _MacOSAccessibilityTextBridge
+from proximic_ring.desktop.desktop_target import _MacOSAccessibilityTextBridge
 
 
 class MetadataObserver:

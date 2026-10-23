@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from .base import AudioSource
-from ..pcm import decode_pcm16le
+from .pcm import decode_pcm16le
 
 
 class WavSource(AudioSource):

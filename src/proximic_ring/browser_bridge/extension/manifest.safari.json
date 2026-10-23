@@ -1,0 +1,44 @@
+{
+  "name": "Mythlink 浏览器助手",
+  "version": "0.1.0",
+  "description": "将网页播放器状态连接到 Mythlink，用戒指控制视频和音频。",
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "manifest_version": 2,
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "webNavigation",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "scripts": [
+      "config.js",
+      "core.js",
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon48.png"
+  }
+}

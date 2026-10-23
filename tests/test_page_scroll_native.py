@@ -8,9 +8,9 @@ import time
 
 import pytest
 
-from proximic_ring.native_access import NativeAccessChannel
-from proximic_ring.page_scroll import animate_scroll
-from proximic_ring.text_focus import window_stamp
+from proximic_ring.platforms.macos.native_access import NativeAccessChannel
+from proximic_ring.desktop.page_scroll import animate_scroll
+from proximic_ring.desktop.text_focus import window_stamp
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or os.environ.get("PROXIMIC_TEST_PAGE_SCROLL") != "1",

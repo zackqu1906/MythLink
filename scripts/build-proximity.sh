@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 TASK_ROOT="${0:A:h:h}"
+source "$TASK_ROOT/scripts/macos-signing-env.sh"
 BUILD_ROOT="$TASK_ROOT/.build/proximity"
 APP="$BUILD_ROOT/ProxiMicPresence.app"
 STAMP="$BUILD_ROOT/build-inputs.sha256"
@@ -8,7 +9,7 @@ mkdir -p "$BUILD_ROOT"
 # Ad-hoc Keychain authorization is tied to the actual code identity. Do not
 # rebuild or re-sign an unchanged helper during unrelated UI/package work.
 INPUT_HASH=$({
-  shasum -a 256 "$TASK_ROOT/scripts/build-proximity.sh" "$TASK_ROOT"/native/ProxiMicPresence/*.swift "$TASK_ROOT/native/ProxiMicPresence/Info.plist"
+  shasum -a 256 "$TASK_ROOT/scripts/build-proximity.sh" "$TASK_ROOT/scripts/macos-signing-env.sh" "$TASK_ROOT"/native/ProxiMicPresence/*.swift "$TASK_ROOT/native/ProxiMicPresence/Info.plist"
   xcrun swiftc --version
   xcrun --show-sdk-path
   uname -m
@@ -32,7 +33,7 @@ xcrun swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx15.0" \
   "$TASK_ROOT/native/ProxiMicPresence/main.swift" \
   -o "$APP/Contents/MacOS/ProxiMicPresence"
 cp "$TASK_ROOT/native/ProxiMicPresence/Info.plist" "$APP/Contents/Info.plist"
-codesign --force --sign "${PROXIMIC_SIGN_IDENTITY:--}" "$APP"
+codesign "${MYTHLINK_CODESIGN_FLAGS[@]}" "$APP"
 codesign --verify --strict "$APP"
 print -r -- "$INPUT_HASH" > "$STAMP"
 print -r -- "已构建距离锁屏组件；尚未启用或锁屏：$APP"

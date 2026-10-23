@@ -1,0 +1,25 @@
+{
+  "description": "六条已有 Workflow 的人工类别标注，以及手写同义改写/近义反例。仅用于离线测试，不进入真实操作库和推荐反馈。",
+  "labels": {
+    "0105e22ceba25c2e3ce61cf23975e0a2": "notes_create",
+    "0912ed58724cc5a62bc382972b6ca89b": "notes_create",
+    "160ac0f836795e5bdc04b70c74a2995e": "safari_open",
+    "2395805f7963b38c26947ecaf3ae996f": "safari_open",
+    "c6a66782f588c506e99cce476792b22d": "music_shuffle",
+    "d48e3eea15b4aed663c1844b282aecbc": "music_shuffle"
+  },
+  "queries": [
+    {"id":"notes-paraphrase-1","label":"notes_create","name":"把授课重点留成一份便笺","goal":"在苹果备忘录中新建条目，以指定名称保存给定的课堂重点。","method":"唤起备忘录，另建一条记录，把名称和重点写进去，检查显示的文字。"},
+    {"id":"notes-paraphrase-2","label":"notes_create","name":"整理一份新的文字记录","goal":"将给出的标题与内容存入一篇全新的 macOS Notes 笔记。","method":"进入 Notes，使用新建功能，在编辑区域填好题目和内容，核对写入结果。"},
+    {"id":"music-paraphrase-1","label":"music_shuffle","name":"随便放首歌并告诉我曲名","goal":"让 Apple Music 从现有列表任意选一首开始演奏，并报告正在播的曲目。","method":"唤起苹果音乐，使用打乱顺序播放功能，查看正在播放的信息并读出曲名。"},
+    {"id":"music-paraphrase-2","label":"music_shuffle","name":"从现成曲库随选一曲欣赏","goal":"在 macOS Music 里启动随机播放，并确认当前歌曲名称。","method":"进入音乐应用的现有内容列表，启动 Shuffle，核验播放状态及歌名。"},
+    {"id":"safari-paraphrase-1","label":"safari_open","name":"进入给定站点的首页","goal":"用 Safari 访问提供的网址，并核实所需首页已经加载。","method":"唤起浏览器，把链接填入地址栏并前往，等待加载后检查页面标题与地址。"},
+    {"id":"safari-paraphrase-2","label":"safari_open","name":"在苹果浏览器访问指定网站","goal":"让 Safari 展示用户指定 URL 的首页并确认到达目标。","method":"切到 Safari，用地址输入框跳转到目标链接，确认加载结果。"},
+    {"id":"notes-delete","label":null,"name":"删除指定课堂笔记","goal":"在苹果备忘录中找到已有课堂记录并移到最近删除。","method":"打开备忘录，搜索标题，选中旧笔记并删除，确认该笔记不再位于原文件夹。"},
+    {"id":"notes-find","label":null,"name":"查看已有课堂笔记","goal":"在 macOS Notes 中定位并展示指定名称的已有笔记，不新建或修改内容。","method":"进入备忘录，搜索标题，点击匹配的记录并确认正文。"},
+    {"id":"music-pause","label":null,"name":"暂停当前音乐","goal":"停止 Apple Music 当前曲目的播放，保留播放位置。","method":"唤起苹果音乐，点击暂停，确认播放状态为暂停。"},
+    {"id":"music-playlist","label":null,"name":"把歌曲加入播放列表","goal":"在 Apple Music 中将指定歌曲收藏到目标播放列表。","method":"找到歌曲，打开上下文菜单，选择添加到播放列表并核对结果。"},
+    {"id":"safari-download","label":null,"name":"下载页面中的文件","goal":"使用 Safari 打开目标网页后，将其中指定文件下载到本地。","method":"导航到网页，找到目标文件链接，点击下载并确认本地文件存在。"},
+    {"id":"safari-close","label":null,"name":"关闭指定网页标签","goal":"在 Safari 中找出指定站点的已有标签并关闭。","method":"查看标签页，定位目标站点，关闭对应标签并确认消失。"}
+  ]
+}

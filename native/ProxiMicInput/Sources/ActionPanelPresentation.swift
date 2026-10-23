@@ -7,7 +7,7 @@ struct ActionPanelPresentation {
     let isError: Bool
 
     init(phase: CompositionSession.Phase, error: String, empty: Bool = false,
-         editRequested: Bool = false, readableRange: Bool = false) {
+         editRequested: Bool = false, readableRange: Bool = false, polished: Bool = false) {
         let reason = error.trimmingCharacters(in: .whitespacesAndNewlines)
         if !reason.isEmpty {
             title = Self.summary(reason)
@@ -20,8 +20,9 @@ struct ActionPanelPresentation {
         switch phase {
         case .listening: title = empty ? "听写 · 可以说话" : "听写中"
         case .finishing: title = editRequested ? "编辑 · 正在收尾" : "听写 · 正在收尾"
-        case .dictated: title = empty ? "未识别到语音" : "已听写"
+        case .dictated: title = empty ? "未识别到语音" : polished ? "已润色" : "已听写"
         case .editing: title = "正在编辑…"
+        case .polishing: title = "正在润色…"
         case .edited: title = readableRange ? "已编辑可读原文" : "已编辑"
         case .undone: title = "已撤销"
         case .interrupted: title = "本句已结束"
@@ -32,7 +33,7 @@ struct ActionPanelPresentation {
     private static let normalInterruptions: Set<String> = [
         "鼠标操作已接管本句", "键盘输入已接管本句", "已切换输入框",
         "输入法已重新激活", "已切换输入法或输入框", "输入会话已关闭",
-        "应用结束了当前输入组合", "主程序已结束本句", "开始了新一句"
+        "应用结束了当前输入组合", "主程序已结束本句", "开始了新一句", "已发送"
     ]
 
     static func summary(_ reason: String) -> String {

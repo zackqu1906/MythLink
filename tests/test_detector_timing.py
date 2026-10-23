@@ -1,9 +1,9 @@
 import numpy as np
 
-from proximic_ring.config import DetectorConfig
-from proximic_ring.detector import ProxiMicDetector
-from proximic_ring.events import Stage1Event, Stage2Event
-from proximic_ring.pipeline import InferenceResult
+from proximic_ring.voice.detection.config import DetectorConfig
+from proximic_ring.voice.detection.detector import ProxiMicDetector
+from proximic_ring.voice.detection.events import Stage1Event, Stage2Event
+from proximic_ring.voice.detection.pipeline import InferenceResult
 
 
 class FakePipeline:

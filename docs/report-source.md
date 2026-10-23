@@ -27,7 +27,7 @@ Mythlink 已有不少适合构建数据闭环的基础：
 - ASR worker 已记录“开始接收音频”“最终推理开始”“模型结束”等阶段性时序（`src/proximic_ring/asr/streaming.py:245,291,307`）。
 - 文本处理层保留每次尝试和重试输出，编辑模式支持 fragment/full race（`src/proximic_ring/text_processing/llm.py:112,279`）。
 - 编辑界面明确产生 preview、confirm、cancel、retry 事件（`src/proximic_ring/ui/controller.py:1753-1869`）。
-- 输入注入和编辑覆盖集中在 desktop target 边界，未来可以加入结果观察（`src/proximic_ring/desktop_target.py:132,178,185`）。
+- 输入注入和编辑覆盖集中在 desktop target 边界，未来可以加入结果观察（`src/proximic_ring/desktop/desktop_target.py:132,178,185`）。
 - UI 日志已有真实时间戳，但历史仅保存在内存中的可读字符串，最多 80 条，不适合分析或训练（`src/proximic_ring/ui/controller.py:1924-1942,2026-2038`）。
 
 ### 1.2 当前最关键的数据缺口

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from proximic_ring.asr import ASRBackendCache
 from proximic_ring.asr.factory import ASRBackendSettings
-from proximic_ring.app_runtime import RuntimeSettings
+from proximic_ring.voice.app_runtime import RuntimeSettings
 from proximic_ring import asr
 from proximic_ring.cli import _build_session_controller
 

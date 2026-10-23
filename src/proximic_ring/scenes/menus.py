@@ -1,6 +1,6 @@
 """Semantic matching of the app's exposed menu shortcuts, without execution."""
 import re
-from ..app_gestures import normalize_shortcut
+from ..gestures.app_gestures import normalize_shortcut
 from .models import PDF, IMAGE, VIDEO, MUSIC
 from .registry import PENDING_TEMPLATES as TEMPLATES
 

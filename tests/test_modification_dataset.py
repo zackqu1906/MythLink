@@ -12,7 +12,7 @@ import wave
 import numpy as np
 import pytest
 
-from proximic_ring.modification_dataset import ModificationDatasetCollector
+from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
 from proximic_ring.asr.session_sink import RawAudioObserverSessionSink
 from proximic_ring.text_processing import (
     EDIT_MODE_RACE,

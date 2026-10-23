@@ -8,6 +8,7 @@ import types
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from proximic_ring.asr.backends.streaming_sensevoice import (
     StreamingSenseVoiceASR,
@@ -150,6 +151,48 @@ def test_streaming_worker_emits_partial_then_final_without_blocking_caller():
     assert any("session=1 ASR模型结束" in state for state in states)
     assert any("queue=" in state for state in states)
     assert any("final_inference=" in state for state in states)
+
+
+@pytest.mark.parametrize("samples,level,final_text,expected_error", [
+    (160320, 0.0, "", True),  # Same duration and digital silence as the incident.
+    (32000, 0.0, "  ", True),
+    (31999, 0.0, "", False),
+    (32000, 1 / 32768, "", False),  # Quiet, but valid nonzero PCM.
+    (32000, 0.0, "识别文字", False),  # Never replace an actual transcript.
+    (0, 0.0, "", False),
+])
+def test_empty_final_identifies_silent_capture_and_next_sentence_still_works(
+    samples, level, final_text, expected_error,
+):
+    class EmptyBackend(FakeStreamingBackend):
+        def feed(self, audio):
+            return None
+
+        def finish(self, audio):
+            return final_text if self.started == 1 else "下一句正常"
+
+    updates, states, errors = [], [], []
+    worker = StreamingASRWorker(EmptyBackend(), on_update=updates.append,
+                                on_state=states.append, on_error=errors.append)
+    audio = np.full(samples, level, dtype=np.float32)
+    worker.start(audio[:1600])
+    worker.feed(audio[1600:])
+    worker.end(audio)
+    worker.start(np.ones(1600, dtype=np.float32))
+    worker.end(np.ones(1600, dtype=np.float32))
+    worker.close()
+    assert len(updates) == 2
+    assert updates[0].is_final and updates[0].session_id == 1
+    assert bool(updates[0].error) is expected_error
+    if expected_error:
+        assert updates[0].error == "本句录音全为静音，请检查麦克风或重新连接"
+        assert len(errors) == 1
+    else:
+        assert updates[0].text == final_text
+        assert not errors
+    assert updates[1].is_final and updates[1].session_id == 2
+    assert updates[1].text == "下一句正常" and updates[1].error is None
+    assert any(f"[ASR AUDIO] session=1 samples={samples} " in state for state in states)
 
 
 def test_streaming_worker_captures_and_publishes_context_for_same_session():

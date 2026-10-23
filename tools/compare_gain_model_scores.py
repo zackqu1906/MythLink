@@ -17,9 +17,9 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from proximic_ring.dataset import read_pcm16_wav  # noqa: E402
-from proximic_ring.model import ProxiMicModel  # noqa: E402
-from proximic_ring.pipeline import LegacyInferencePipeline  # noqa: E402
+from proximic_ring.voice.training.dataset import read_pcm16_wav  # noqa: E402
+from proximic_ring.voice.detection.model import ProxiMicModel  # noqa: E402
+from proximic_ring.voice.detection.pipeline import LegacyInferencePipeline  # noqa: E402
 
 
 def _rows(root: Path) -> list[dict[str, str]]:

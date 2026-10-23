@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from proximic_ring.interaction_associations import (
+from proximic_ring.voice.interaction_associations import (
     AssociationActionRouter,
     AssociationMember,
     RecentFailureCoordinator,

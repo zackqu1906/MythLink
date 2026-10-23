@@ -143,6 +143,7 @@ def test_new_connection_resets_notice_and_ignores_old_stop(controller, monkeypat
             callbacks["on_disconnected"]()
 
     monkeypatch.setattr(module, "RecognitionRuntime", Runtime)
+    monkeypatch.setattr(controller, "_runtime_settings", lambda: module.RuntimeSettings())
     controller._disconnect_requested_by_user = True
     worker = None
     try:
@@ -173,7 +174,7 @@ def test_pausing_recognition_does_not_show_disconnect_notice(controller):
 
 def test_macos_notice_is_visible_on_other_spaces_without_taking_keyboard_focus(monkeypatch):
     import sys
-    from proximic_ring.ui.notifications import _show_on_macos_spaces
+    from proximic_ring.ui.shared.notifications import _show_on_macos_spaces
 
     events = []
     native = SimpleNamespace(
@@ -196,7 +197,7 @@ def test_macos_notice_is_visible_on_other_spaces_without_taking_keyboard_focus(m
         NSWindowCollectionBehaviorFullScreenAuxiliary=256,
         NSWindowCollectionBehaviorMoveToActiveSpace=2,
     ))
-    from proximic_ring.ui import overlay_stacking
+    from proximic_ring.ui.shared import overlay_stacking
     monkeypatch.setattr(overlay_stacking, "foreground_content_window", lambda: None)
     _show_on_macos_spaces(SimpleNamespace(winId=lambda: 123))
     assert events == [("style", 128), ("spaces", 1 | 64 | 256), ("level", 102), ("hides", False), "front"]

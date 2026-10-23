@@ -10,8 +10,8 @@ from test_inline_ui import inline_ui
 def test_notice_is_upper_right_click_through_and_expires(inline_ui,monkeypatch,tmp_path,scene,label):
     from PySide6.QtCore import QObject,Qt
     from PySide6.QtTest import QTest
-    from proximic_ring.ui.scene_notice_controller import SceneNoticeController
-    import proximic_ring.ui.scene_notice_overlay as module
+    from proximic_ring.ui.scenes.scene_notice_controller import SceneNoticeController
+    import proximic_ring.ui.scenes.scene_notice_overlay as module
     c,*_=inline_ui
     catalog=c.appGestures.catalog
     monkeypatch.setattr(catalog,'configured_scenes',lambda:{'test.app':[scene]})

@@ -9,11 +9,11 @@ import pytest
 OVERLAY_SCRIPT = r'''
 import os
 from types import SimpleNamespace
-from PySide6.QtCore import QObject, Signal, Qt, qInstallMessageHandler
+from PySide6.QtCore import QObject, QPoint, QPointF, Signal, Qt, qInstallMessageHandler
 from PySide6.QtWidgets import QApplication, QLineEdit
 from PySide6.QtTest import QTest
-from proximic_ring.ui.window_selector_controller import WindowSelectorController
-from proximic_ring.ui.window_selector_overlay import WindowSelectorOverlay
+from proximic_ring.ui.desktop.window_selector_controller import WindowSelectorController
+from proximic_ring.ui.desktop.window_selector_overlay import WindowSelectorOverlay
 
 messages = []
 qInstallMessageHandler(lambda kind, ctx, message: messages.append(message))
@@ -21,11 +21,19 @@ app = QApplication([])
 app.setQuitOnLastWindowClosed(False)
 class Ring(QObject):
     changed = Signal()
+    hideRequested = Signal()
+    owner = SimpleNamespace(_event_log=lambda *args, **kwargs: None)
     globalBindings = dict(show_menu='index-pinch', switch_mode='middle-pinch', window_selector='clench')
     def speech_busy(self): return False
 ring = Ring()
+activations = []
 class Channel:
     def close(self): pass
+    def call(self, operation, **params):
+        if operation == 'selector_activate':
+            activations.append(params['target'])
+            return dict(status='activated')
+        return dict(status='cancelled')
 s = WindowSelectorController(ring, enabled=False, channel=Channel())
 s._valid = lambda epoch: True
 names = [('Safari', 'ChatGPT · 项目讨论'), ('Codex', 'Ring 全局手势菜单'),
@@ -34,8 +42,9 @@ names = [('Safari', 'ChatGPT · 项目讨论'), ('Codex', 'Ring 全局手势菜�
 fixture_cards = [dict(id=str(i), pid=0, bundle='fixture.'+str(i), app=n, title=t, focused=i==0)
                  for i,(n,t) in enumerate(names)]
 fixture_cards.append(dict(id='8', pid=0, bundle='fixture.1', app='Codex', title='第二个窗口', focused=False))
-s._set_snapshot(dict(bounds=[0,0,800,800], cards=fixture_cards))
+s._set_snapshot(dict(token='fixture', bounds=[0,0,800,800], cards=fixture_cards))
 s._phase = 'ready'
+s._started = __import__('time').monotonic()
 s._selected = 1
 editor = QLineEdit('unchanged')
 editor.show(); editor.activateWindow(); editor.setFocus()
@@ -43,9 +52,11 @@ QTest.qWait(100)
 native = os.environ.get('RING_NATIVE_OVERLAY') == '1'
 if native:
     import AppKit
-    from proximic_ring.text_focus import MacAX
+    import Quartz
+    from proximic_ring.desktop.text_focus import MacAX
     ax = MacAX()
     original = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    original_pointer = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
     external = next(a for a in AppKit.NSWorkspace.sharedWorkspace().runningApplications()
                     if a.bundleIdentifier() == 'com.apple.finder')
     external.activateWithOptions_(0)
@@ -70,7 +81,7 @@ assert not overlay.window.grabWindow().isNull()
 assert first_frames and first_frames[0] < .5, first_frames
 print('selector_initial_frame_ms',round(first_frames[0]*1000),flush=True)
 if native:
-    assert ax.front() == before
+    assert ax.front() == before, (before, ax.front())
     assert overlay._material is not None
     effect = overlay._material.effect
     assert effect.superview() == overlay._material.content.superview()
@@ -150,11 +161,79 @@ if not native:
 overlay.previews._set_status(overlay.previews._epoch, 'live')
 QTest.qWait(30)
 assert not notice.isVisible()
-s.cancel()
+# Real pointer events select cards; animated layout and page changes under a
+# stationary pointer must not override subsequent gesture navigation.
+def card_point(index):
+    card = next(item for item in items(overlay.window.rootObject())
+                if item.objectName() == 'windowPreviewCard' and item.parentItem().property('index') == index)
+    return card.mapToScene(QPointF(card.width()/2, card.height()/2)).toPoint()
+def move_pointer(point):
+    if native:
+        position = overlay.window.mapToGlobal(point)
+        event = Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved,
+            (position.x(), position.y()), Quartz.kCGMouseButtonLeft)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+        QTest.qWait(40)
+    else:
+        QTest.mouseMove(overlay.window, point)
+def click_pointer(point, count=1):
+    if native:
+        position = overlay.window.mapToGlobal(point)
+        for kind in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+            event = Quartz.CGEventCreateMouseEvent(None, kind,
+                (position.x(), position.y()), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventClickState, count)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            QTest.qWait(10)
+    elif count == 2:
+        QTest.mouseDClick(overlay.window, Qt.LeftButton, pos=point)
+        QTest.mouseRelease(overlay.window, Qt.LeftButton, pos=point)
+    else:
+        QTest.mouseClick(overlay.window, Qt.LeftButton, pos=point)
+point = card_point(0)
+move_pointer(QPoint(10, 10))
+move_pointer(point)
+QTest.qWait(40)
+assert s.selected == 0
+s.pick(1)
+QTest.qWait(200)
+assert s.selected == 1, 'Stationary mouse must not reclaim gesture selection'
+move_pointer(point + QPoint(3, 0))
+QTest.qWait(30)
+assert s.selected == 0
+s.back()
+QTest.qWait(180)
+assert s.atApps and s.selected == 1
+click_pointer(card_point(1))
+QTest.qWait(180)
+assert not s.atApps and not activations
+if native:
+    assert ax.front() == before, (before, ax.front())
+click_pointer(card_point(1), count=2)
+QTest.qWait(80)
+assert activations == ['8']
 QTest.qWait(50)
 assert not overlay.window.isVisible()
 if native:
+    assert ax.front() == before, (before, ax.front())
+    panel = overlay._panel
+    assert not panel.isVisible() and overlay._mouse_monitor is None
+    # A second session reuses the panel without losing focus, geometry or
+    # creating extra native listeners; closing blank space still cancels.
+    s._set_snapshot(dict(token='fixture2', bounds=[0,0,800,800], cards=fixture_cards))
+    s._phase = 'ready'
+    s._selected = 1
+    overlay.show()
+    QTest.qWait(200)
+    assert overlay._panel is panel and panel.isVisible()
+    assert overlay._mouse_monitor is not None and ax.front() == before
+    assert panel.frame().size.width == overlay.window.width()
+    assert panel.frame().size.height == overlay.window.height()
+    click_pointer(QPoint(10, 10))
+    QTest.qWait(60)
+    assert not panel.isVisible() and overlay._mouse_monitor is None
     assert ax.front() == before
+    Quartz.CGWarpMouseCursorPosition(original_pointer)
     if original: original.activateWithOptions_(0)
 else:
     assert app.focusWidget() is before

@@ -11,7 +11,9 @@ Button {
     implicitHeight: 42
     implicitWidth: text.length === 0 ? 42 : Math.max(42, content.implicitWidth + 28)
     topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
-    leftPadding: 14; rightPadding: 14
+    leftPadding: text.length === 0 ? 0 : 14
+    rightPadding: text.length === 0 ? 0 : 14
+    topPadding: 0; bottomPadding: 0
     font.family: theme.family
     font.pixelSize: 13
     hoverEnabled: true
@@ -30,7 +32,7 @@ Button {
             visible: control.symbol.length > 0
             Layout.preferredWidth: control.text.length > 0 ? 18 : 20
             Layout.preferredHeight: Layout.preferredWidth
-            Layout.alignment: Qt.AlignHCenter
+            Layout.alignment: Qt.AlignCenter
             symbol: control.symbol
             tint: control.primary || !control.enabled
             ink: !control.enabled ? "#A0A8BA" : control.primary ? "white" : theme.primary
@@ -38,10 +40,12 @@ Button {
         Label {
             visible: control.text.length > 0
             Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
             text: control.text
             color: !control.enabled ? "#929AAD" : control.primary ? "white" : theme.text
             font: control.font
             horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
     }

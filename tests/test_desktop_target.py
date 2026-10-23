@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import pytest
 
-from proximic_ring.desktop_target import (
+from proximic_ring.desktop.desktop_target import (
     DesktopTargetRef,
     DesktopTextSnapshot,
     WindowsDesktopTextTarget,
     macos_texts_equivalent,
 )
-from proximic_ring.windows_uia import UIATextControlRef, WindowsUIATextBridge
+from proximic_ring.platforms.windows.windows_uia import UIATextControlRef, WindowsUIATextBridge
 
 
 def test_macos_edit_text_comparison_ignores_transport_normalization() -> None:
@@ -22,7 +22,7 @@ def test_native_shortcuts_do_not_activate_copy_or_wait(monkeypatch) -> None:
     def forbidden(*_args, **_kwargs):
         raise AssertionError("native dispatch must not activate or wait")
 
-    monkeypatch.setattr("proximic_ring.desktop_target.time.sleep", forbidden)
+    monkeypatch.setattr("proximic_ring.desktop.desktop_target.time.sleep", forbidden)
     target = DesktopTargetRef(1, 2, "测试窗口", process_id=30)
     calls = []
     windows = object.__new__(WindowsDesktopTextTarget)

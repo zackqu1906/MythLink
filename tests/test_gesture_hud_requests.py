@@ -10,7 +10,7 @@ from test_gesture_scenes import presentation
 
 @pytest.fixture
 def pending_hints(presentation, monkeypatch):
-    import proximic_ring.ui.ring_gesture_controller as module
+    import proximic_ring.ui.gestures.ring_gesture_controller as module
     c, _, _, backend, _, _, _ = presentation
     ring = c.ringGestures
     tasks, defaults, scenes = [], [], []

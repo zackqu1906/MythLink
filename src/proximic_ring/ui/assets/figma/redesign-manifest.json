@@ -1,0 +1,426 @@
+{
+  "figma_file": "lTJ3fi0mMULAjIsnF8ybwH",
+  "assets": [
+    {
+      "file": "redesign-246-3060-navigation-active.svg",
+      "context": "246-3060",
+      "sha256": "acc7375dec9c668d77c35ed8d8d802749054108f76bb96ff326e3416309eba43"
+    },
+    {
+      "file": "redesign-257-3465-checked-false-state-default.svg",
+      "context": "257-3465",
+      "sha256": "5a94d9397f40b7a710d024e2899751c22518212a9981f608a8545e4fb24732b8"
+    },
+    {
+      "file": "redesign-257-3465-checked-false-state-disabled.svg",
+      "context": "257-3465",
+      "sha256": "faa6fac5deef862bb604ab4effd5038e3559c357c7d5e529fb47936865232544"
+    },
+    {
+      "file": "redesign-257-3465-checked-false-state-focus.svg",
+      "context": "257-3465",
+      "sha256": "77bb1852be16876202f8224825fa585ef3c6156b1cd3837f9a348e2f6eec30aa"
+    },
+    {
+      "file": "redesign-257-3465-checked-false-state-hover.svg",
+      "context": "257-3465",
+      "sha256": "2192727fd610a91392a233788793cbbef7364e99a7e531eb4f96a096a6c87007"
+    },
+    {
+      "file": "redesign-257-3465-checked-true-state-default.svg",
+      "context": "257-3465",
+      "sha256": "0479073feb518b5789451ddc5a3fda29069eba07f8ed16ca7d8cde86ab404446"
+    },
+    {
+      "file": "redesign-257-3465-checked-true-state-disabled.svg",
+      "context": "257-3465",
+      "sha256": "2d20e791e09944480dbf72ac353d8c4e1dcc6e5bcb1e3345f67b80289b57931f"
+    },
+    {
+      "file": "redesign-257-3465-checked-true-state-focus.svg",
+      "context": "257-3465",
+      "sha256": "eac2ea1ee39a25c647326499121da41db66be3df38764a2f16a20b2584f8af04"
+    },
+    {
+      "file": "redesign-259-7570-icon-phosphor-close20.svg",
+      "context": "259-7570",
+      "sha256": "6e3d56e7ba93d5a167eef190c69e5e17c5a00585d8eb1d517a6186d88597594b"
+    },
+    {
+      "file": "redesign-259-7570-icon-phosphor-gear-six20.svg",
+      "context": "259-7570",
+      "sha256": "31e9339dc6c2e5d7130ec4048efc90f72883713e662ba2da0402887c875b0427"
+    },
+    {
+      "file": "redesign-259-7570-icon-phosphor-question20.svg",
+      "context": "259-7570",
+      "sha256": "054aeffa429ea192a8d9fc7532dc0894317be3c4f229867b15a60c515828004b"
+    },
+    {
+      "file": "redesign-259-7570-icon-phosphor-user20.svg",
+      "context": "259-7570",
+      "sha256": "7a9429b56c84d4f09421a98a253d8dbc4a726c7a5660c24e13d7e0501368dad5"
+    },
+    {
+      "file": "redesign-381-4535-state-disabled.svg",
+      "context": "381-4535",
+      "sha256": "db72aece01e08f56621cd94b89e4e29da1c620a8c76f18e4ee51cf199a017051"
+    },
+    {
+      "file": "redesign-381-4535-state-off-focus.svg",
+      "context": "381-4535",
+      "sha256": "cb6a3fba7ea8a6549a39b1c504e382990764de4838d31fc69d8223fa7cbefa70"
+    },
+    {
+      "file": "redesign-381-4535-state-off-hover.svg",
+      "context": "381-4535",
+      "sha256": "13319645baf89307edc4b42d1eca576f3bf6a724b46a55d379fcdfc3850e5950"
+    },
+    {
+      "file": "redesign-381-4535-state-off-pressed.svg",
+      "context": "381-4535",
+      "sha256": "bb57fa96e5eb7abd2e5f9f444cd638716352cb3c84a0df9415f7e9d9959adb0b"
+    },
+    {
+      "file": "redesign-381-4535-state-off.svg",
+      "context": "381-4535",
+      "sha256": "3f81bb1dea0ce62e2702d43d372aed906c5a65d95564f14df04b71770d347a90"
+    },
+    {
+      "file": "redesign-381-4535-state-on-focus.svg",
+      "context": "381-4535",
+      "sha256": "1b14e0d38d9ff3f9b21b56b00859cca355899346f3b52d57a145e75992eab035"
+    },
+    {
+      "file": "redesign-381-4535-state-on-hover.svg",
+      "context": "381-4535",
+      "sha256": "8313564752474aec0733caa65ede7f38b0a8215c21ade4ea91429b12ee6225d5"
+    },
+    {
+      "file": "redesign-381-4535-state-on-pressed.svg",
+      "context": "381-4535",
+      "sha256": "87022f611053a75f33bacb53f6c832a13542b2b5d8271845571a3d3f79949eb1"
+    },
+    {
+      "file": "redesign-381-4535-state-on.svg",
+      "context": "381-4535",
+      "sha256": "7a0d60deaf4c921ea4c7ecb77dfadbfd33f4f1f5c6d1d6b268e66d093b99abad"
+    },
+    {
+      "file": "redesign-383-10748-icon.svg",
+      "context": "383-10748",
+      "sha256": "d7b3221428b26369817a1f06350dc5e62b8bde083b9d8ec9ce49bbe46ad18c12"
+    },
+    {
+      "file": "redesign-383-9247-brand.svg",
+      "context": "383-9247",
+      "sha256": "8ee0465ae476fe30fa8679197728052108f43ba86c235f1b24d48aaa133d5b0d"
+    },
+    {
+      "file": "redesign-383-9247-frame.svg",
+      "context": "383-9247",
+      "sha256": "19c1a997d87e61d13aa3bcd97ee1f99493f1467b345b5bdfb481608799ab620d"
+    },
+    {
+      "file": "redesign-383-9247-frame1.svg",
+      "context": "383-9247",
+      "sha256": "27c7c3212d27c3289412da3edc7c1a34f94c915765f4ff3ef79a4dcdb51260eb"
+    },
+    {
+      "file": "redesign-383-9247-frame2.svg",
+      "context": "383-9247",
+      "sha256": "02822b035515131e1824622902315cc455b55812f0543c164feac2c04c270ee0"
+    },
+    {
+      "file": "redesign-383-9247-frame3.svg",
+      "context": "383-9247",
+      "sha256": "c4f9d0834be3c203335506535415d04dc12afb10f74f21468a161e234abbda97"
+    },
+    {
+      "file": "redesign-383-9247-generic-avatar.svg",
+      "context": "383-9247",
+      "sha256": "4c4dec5712c1ff5188afd95d40ea980140cade5f3beed9c1512494b61fd73f76"
+    },
+    {
+      "file": "redesign-383-9247-icon-phosphor-clock-regular24.svg",
+      "context": "383-9247",
+      "sha256": "6ac25f2ee6a1977dc72a998fa5c432a2828c431e97aa1cfc6c632a11adf5bc06"
+    },
+    {
+      "file": "redesign-383-9247-icon-phosphor-confetti-regular24.svg",
+      "context": "383-9247",
+      "sha256": "067d6de8ea3a7af13bbec57189ada2dcc5e5057fb6e60878d5ab54ea05dc81b2"
+    },
+    {
+      "file": "redesign-383-9247-icon-phosphor-copy16.svg",
+      "context": "383-9247",
+      "sha256": "f7997f7775a868147d686f94ed4fcad67ee753b491ef41dc3b6b8b14af74b1ac"
+    },
+    {
+      "file": "redesign-383-9247-icon-phosphor-envelope-simple20.svg",
+      "context": "383-9247",
+      "sha256": "2cca3b693b6f2bb4d99e8eee9b3012586d5bb0731e0ca20bc834a2f49544dc73"
+    },
+    {
+      "file": "redesign-383-9247-icon-phosphor-file-text-regular24.svg",
+      "context": "383-9247",
+      "sha256": "f9acd433d5dac91cc0cd6c5279412cd36681784de7e01dba23f88b76dab48fc1"
+    },
+    {
+      "file": "redesign-383-9247-icon-phosphor-home20.svg",
+      "context": "383-9247",
+      "sha256": "5462bf0fa553eb7de887b58d5932fc86444bdecd9352a261555027a139061089"
+    },
+    {
+      "file": "redesign-383-9247-icon1.svg",
+      "context": "383-9247",
+      "sha256": "caf1816a484fbb498ce0928961904bbd53eb6e82fd641c8d4cb0de9411ec960d"
+    },
+    {
+      "file": "redesign-383-9247-icon2.svg",
+      "context": "383-9247",
+      "sha256": "d3cdb29908a4f59c0c916304474c0660dc3977029efa9ddbf8c51c411a9f1759"
+    },
+    {
+      "file": "redesign-383-9247-more-horizontal.svg",
+      "context": "383-9247",
+      "sha256": "8e69f6cfe7377a8ae852407a87650e560cacdfd9a5aabd508fe4b2351f18f1c7"
+    },
+    {
+      "file": "redesign-383-9247-ring-product-artwork.png",
+      "context": "383-9247",
+      "sha256": "8cba297676866f6a3c2e3f25de68a30ba15e07b00a9b4eb372dcdefce8c87c3c"
+    },
+    {
+      "file": "redesign-383-9247-trash.svg",
+      "context": "383-9247",
+      "sha256": "7d30b50c22ff25e85db4e52a9e02b603c62043898f734a35808fb87e785d3080"
+    },
+    {
+      "file": "redesign-383-9247-tree-ends-at-last-voice-child.svg",
+      "context": "383-9247",
+      "sha256": "ba20f6a8ed92c7967877aa97be2f39f96a13ec3c2bc4cd8659867e82e7b14dcc"
+    },
+    {
+      "file": "redesign-383-9247-wifi.svg",
+      "context": "383-9247",
+      "sha256": "0b6836be716d2632953d4ac9243d60c22385b3cb594b67fdc01651e7aca8d67d"
+    },
+    {
+      "file": "redesign-383-9672-group6.svg",
+      "context": "383-9672",
+      "sha256": "17266a4d92fe648a71266fc096eb3384a993b15706c338987412e7c143776b59"
+    },
+    {
+      "file": "redesign-425-5128-frame.svg",
+      "context": "425-5128",
+      "sha256": "0e12109a53b3a55c53ccb6be6a64c748811d2d3d59b24550997d8112fa4a288c"
+    },
+    {
+      "file": "redesign-425-5134-frame.svg",
+      "context": "425-5134",
+      "sha256": "b1eded0a2a9ee1d0244552d0737b0311cfb42636874e9f99434dbf1086b0f4b9"
+    },
+    {
+      "file": "redesign-555-14138-icon-phosphor-close20.svg",
+      "context": "555-14138",
+      "sha256": "6e3d56e7ba93d5a167eef190c69e5e17c5a00585d8eb1d517a6186d88597594b"
+    },
+    {
+      "file": "redesign-567-32820-down.svg",
+      "context": "567-32820",
+      "sha256": "99c9f5ace7c87db7c72ebe92616c2fcad81d6c116f560e031abc65b05ab35af7"
+    },
+    {
+      "file": "redesign-567-32820-frame2.svg",
+      "context": "567-32820",
+      "sha256": "3f96cd03f26340e7595a98ee4e8691e89ab3627b170fabdfda35ad31e0090b45"
+    },
+    {
+      "file": "redesign-567-32820-icon-phosphor-home20.svg",
+      "context": "567-32820",
+      "sha256": "a54709a4d8cbcb4fddbc7a74f43438f144f4e473ef7afb4335093b56e16c8504"
+    },
+    {
+      "file": "redesign-567-32820-icon3.svg",
+      "context": "567-32820",
+      "sha256": "38024d856109dbda67e3ebd6fa4ce3e3b572271103f1579d54d72b55bc9b8370"
+    },
+    {
+      "file": "redesign-567-32820-left.svg",
+      "context": "567-32820",
+      "sha256": "37abd0dd314dff1a934e6f069b6fbf81a24b876eb8d627f2cafc558fc8c62137"
+    },
+    {
+      "file": "redesign-567-32820-right.svg",
+      "context": "567-32820",
+      "sha256": "7e12243c15f20ff2eb725880e07408a6cb516716d75e52b750dafa1803f2c5bc"
+    },
+    {
+      "file": "redesign-567-32820-up.svg",
+      "context": "567-32820",
+      "sha256": "f46cfd9d0d943ad34d1d2e15d1db7a845c014cb402175b6e72621c9f77fd82ba"
+    },
+    {
+      "file": "redesign-567-32842-usage-indicator.svg",
+      "context": "567-32842",
+      "sha256": "8c0b4d423748b4b0865aba2b8f0e2c9432cfa2ac8cccceb88ba1893006e1e6cc"
+    },
+    {
+      "file": "redesign-567-32842-usage-indicator1.svg",
+      "context": "567-32842",
+      "sha256": "cc2783eef1adace942d79d4c10f747e4d8e67d61c76ebbff447bb29dad32abab"
+    },
+    {
+      "file": "redesign-567-32897-microphone.svg",
+      "context": "567-32897",
+      "sha256": "5f6afb63f2eedb3b11f3ec1c3c1879759ec172944180c967d5bf69558161cde5"
+    },
+    {
+      "file": "redesign-lock-selected-frame.svg",
+      "context": "lock-selected",
+      "sha256": "acc36842f96d165f1fb494bafcd8659ed86664c19fe50bd82127db11f2f58b5d"
+    },
+    {
+      "file": "redesign-speed-hare.svg",
+      "context": "I546:31293;5441:5242",
+      "sha256": "ebd49ac4c925c454128a9dfdb5e5ad74ed67633faf158b4cf2c39f7b8a19558a"
+    },
+    {
+      "file": "redesign-speed-tortoise.svg",
+      "context": "I546:31293;5441:5236",
+      "sha256": "b70ce113b24c74550854ed6c0d06ef74a1ed9ef68f8057e7527cde1fe8cb39b6"
+    },
+    {
+      "file": "redesign-touch-selected-frame.svg",
+      "context": "touch-selected",
+      "sha256": "4f59521af9ba57a5316adf3bf559acf0b5fddc02a6378acff479bfb8b1932cdd"
+    },
+    {
+      "file": "redesign-567-33097-caret-down.svg",
+      "url": "https://www.figma.com/api/mcp/asset/87cc6b01-b1e9-42c4-98da-4d7cf9c1f713.svg",
+      "slot": "caret-down",
+      "sha256": "02822b035515131e1824622902315cc455b55812f0543c164feac2c04c270ee0",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-hand.png",
+      "url": "https://www.figma.com/api/mcp/asset/7ec72c76-915c-4772-b108-3f42a940cf00.png",
+      "slot": "hand",
+      "sha256": "911fbcedcd351a2c88db9d762692d1dc7ee0f4288640cd0f1399fe5d516fbead",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-snap.svg",
+      "url": "https://www.figma.com/api/mcp/asset/f2462ae5-ac91-48c2-866c-a3ee8d8e167b.svg",
+      "slot": "snap",
+      "sha256": "66253ceb1db59a92e16c7e88e59cd0ea36ed77d3aaa43ad8a547553bf7bd7923",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-clockwise.svg",
+      "url": "https://www.figma.com/api/mcp/asset/93968001-8dc5-4bc3-8a5e-36e7978a9708.svg",
+      "slot": "clockwise",
+      "sha256": "294ddf776378ca43cb8bc7a11b3f4f12768af2fdfa2ee68773a06201e4c7e313",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-tap.svg",
+      "url": "https://www.figma.com/api/mcp/asset/dee66626-76ca-4665-8dc4-9d3469e2cb2a.svg",
+      "slot": "tap",
+      "sha256": "300bd3031cff30c7a5a7eddb5fe45fa31e0cb8ba90ac2bdfc6e13269427fee76",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-up.svg",
+      "url": "https://www.figma.com/api/mcp/asset/f9dbb954-3286-4649-8bca-0010be2d2d99.svg",
+      "slot": "up",
+      "sha256": "88019fa6a0bd62ec3d7f2b6e36728e215e16678a400eaf98dd627f0ad129905e",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-down.svg",
+      "url": "https://www.figma.com/api/mcp/asset/3cf5a0d1-5759-457e-b7ce-e46490d8929c.svg",
+      "slot": "down",
+      "sha256": "0b1aee94caf349bc6672bf92359dea490bfbfd60358215555895f93fc68aeb90",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-left.svg",
+      "url": "https://www.figma.com/api/mcp/asset/f4ddd968-dd34-4052-b6cc-fa002b6878cf.svg",
+      "slot": "left",
+      "sha256": "2e76aa75060f1c59aeacc2fb29ad07f9d9a807b4f27942da8f442e82116a177c",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-right.svg",
+      "url": "https://www.figma.com/api/mcp/asset/01186d83-39ed-44ae-98ec-a763e8762a3f.svg",
+      "slot": "right",
+      "sha256": "a27ac359b193ac2dbf53e578887ea0786db5a61c4597a78ac93121f41d5be20d",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-counterclockwise.svg",
+      "url": "https://www.figma.com/api/mcp/asset/e737142b-29e9-4186-afcf-efa9fe534b86.svg",
+      "slot": "counterclockwise",
+      "sha256": "ed6bcb153c4a2d399ed81749d7161995121250492496a28d117415da0cfb05e0",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-fist.svg",
+      "url": "https://www.figma.com/api/mcp/asset/2e426460-9138-4e0b-9932-0810df654a91.svg",
+      "slot": "fist",
+      "sha256": "118e7bd0b290c54d1d686a328aad19d2e26867f09a7429ec36e8449eebc703d2",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-index-pinch.svg",
+      "url": "https://www.figma.com/api/mcp/asset/d0122109-dcb5-4071-aa76-d9754243a1ff.svg",
+      "slot": "index-pinch",
+      "sha256": "b219b21c7f3e077351bcf60ed9c0eb029bc83201a5d7ee3a6ea5f5e735a6d5bd",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-middle-pinch.svg",
+      "url": "https://www.figma.com/api/mcp/asset/69276ea8-1d2e-4607-bb08-77003702a047.svg",
+      "slot": "middle-pinch",
+      "sha256": "a6bebfb5d9c07a09c200fe6eb20f46429770f03142aa1ac7470cb3d0a9034b81",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-marker-touch.svg",
+      "url": "https://www.figma.com/api/mcp/asset/7688ec3a-410c-4be4-b5a9-862722781151.svg",
+      "slot": "marker-touch",
+      "sha256": "50cc3bac5aa83e74a85f2e81de79539b2d21e83f0e86a832ee26730783862f9d",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-marker-rotate.svg",
+      "url": "https://www.figma.com/api/mcp/asset/32635674-8021-428a-bf86-c69ab9a2e2a0.svg",
+      "slot": "marker-rotate",
+      "sha256": "4957a16b6d480b22fb950ece512d6d71f574263656717626112aa58b287b9414",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-marker-middle.svg",
+      "url": "https://www.figma.com/api/mcp/asset/0f9f81d6-a32c-4213-9e85-346cc0bd44aa.svg",
+      "slot": "marker-middle",
+      "sha256": "6473eb96f5a6f9d8e21ef5251df95f377a7e768b3c6043ad7983ace142b49ff7",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-marker-index.svg",
+      "url": "https://www.figma.com/api/mcp/asset/adc82dc3-9fbd-4fa5-ad5b-57df6d4184d4.svg",
+      "slot": "marker-index",
+      "sha256": "b20dd87b1851c01abc00e14704f9d44ec36a6dc924f0121a50e3896eeac7816f",
+      "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-567-33097-marker-fist.svg",
+      "url": "https://www.figma.com/api/mcp/asset/13921e3c-4c82-4ffd-99d9-b52287ff74fc.svg",
+      "slot": "marker-fist",
+      "sha256": "c225f6eaf1d74bc322344e3a2de6e38c2cab762a06591b76414f53efec5596f9",
+      "sourceNode": "567:33097"
+    }
+  ]
+}

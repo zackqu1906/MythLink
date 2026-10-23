@@ -4,7 +4,7 @@ import json
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.ui.inline_controller import InlineInputController
+from proximic_ring.ui.voice.inline_controller import InlineInputController
 
 
 class FakeBridge:
@@ -121,9 +121,44 @@ def test_history_settlement_records_original_audio_session_and_deduplicates(comp
     assert c._session_id == 12
 
 
+def test_begin_failure_before_audio_has_no_previous_history_identity(component):
+    c, _ = component
+    c.begin(); c.bind_session(11)
+    receive(c, "settled", phase="dictated", text="上一句已完成")
+    assert c.settled_session_id == 11
+    settled = []
+    c.settled.connect(lambda phase, text: settled.append((phase, c.settled_session_id)))
+    c._transport_error = "activation unavailable"
+    assert not c.begin(auto_select=True)
+    assert settled == [("error", 0)]
+    assert c._session_id == 0
+
+
+def test_transport_failure_keeps_its_bound_session_before_retiring_client(component):
+    c, _ = component
+    c.begin(); c.bind_session(12)
+    settled = []
+    c.settled.connect(lambda phase, text: settled.append((phase, c.settled_session_id)))
+    c._transport_failed("定稿未确认")
+    assert c._session_id == 0 and not c._utterance_id
+    assert settled == [("error", 12)]
+
+
+@pytest.mark.parametrize("kind", ["connected", "disconnected"])
+@pytest.mark.parametrize("phase", ["dictated", "edited", "listening", "editing", "polishing"])
+def test_client_loss_only_fails_an_unfinished_operation(component, kind, phase):
+    c, _ = component
+    c.begin(); c.bind_session(15)
+    receive(c, phase=phase, ready=True, awaiting_readback=False)
+    settled = []
+    c.settled.connect(lambda phase, text: settled.append((phase, c.settled_session_id)))
+    receive(c, kind)
+    assert settled == ([] if phase in {"dictated", "edited"} else [("error", 15)])
+
+
 @pytest.mark.parametrize("application", ["com.openai.codex", "com.microsoft.VSCode", "com.apple.TextEdit", "org.example.Editor"])
 def test_default_undo_command_is_fenced_by_current_app_and_transaction(component, monkeypatch, application):
-    from proximic_ring import wechat_native_keys
+    from proximic_ring.platforms.macos import wechat_native_keys
     c, _ = component
     calls = []
     monkeypatch.setattr(wechat_native_keys, "send_input_method_key", lambda *a: calls.append(a))
@@ -139,24 +174,47 @@ def test_default_undo_command_is_fenced_by_current_app_and_transaction(component
     assert calls == [(application, "delete", 0, 123)]
 
 
+def test_unbundled_undo_pins_startup_pid_and_rejects_changed_process(component, monkeypatch):
+    from proximic_ring.platforms.macos import wechat_native_keys
+    c, _ = component
+    calls = []
+    monkeypatch.setattr(wechat_native_keys, "send_input_method_key",
+                        lambda *a, **kw: calls.append((a, kw)))
+    monkeypatch.setattr(c, "_foreground_identity", lambda: ("", 42))
+    receive(c, phase="idle", ready=True, application="")
+    assert c.begin()
+    receive(c, phase="listening", ready=True, application="")
+    receive(c, phase="dictated", ready=True, application="")
+    fields = dict(request_id="select", command="select_previous", count=3, event_tag=123, application="")
+    receive(c, "wechat_key", **fields)
+    receive(c, "wechat_key", **fields)
+    assert calls == [(("", "select_previous", 3, 123), {"expected_pid": 42})]
+    monkeypatch.setattr(c, "_foreground_identity", lambda: ("", 43))
+    receive(c, "wechat_key", **{**fields, "request_id": "delete", "command": "delete", "count": 0})
+    assert len(calls) == 1
+    reply = c._bridge.messages[-1]
+    assert reply["type"] == "wechat_key_result" and "已切换" in reply["error"]
+
+
 @pytest.mark.parametrize("application", ["com.microsoft.VSCode", "com.apple.TextEdit", "org.example.Editor", None])
 def test_startup_foreground_identity_is_not_limited_to_codex_or_wechat(component, monkeypatch, application):
     import sys
     from types import SimpleNamespace
-    import proximic_ring.ui.inline_controller as module
+    import proximic_ring.ui.voice.inline_controller as module
     c, _ = component
     app = SimpleNamespace(bundleIdentifier=lambda: application, processIdentifier=lambda: 42)
     workspace = SimpleNamespace(frontmostApplication=lambda: app)
     monkeypatch.setattr(module.sys, "platform", "darwin")
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: workspace)))
     actual = InlineInputController._foreground_identity(c)
-    assert actual == ((application, 42) if application else None)
+    # Source-launched Mythlink has no bundle ID but remains an exact PID target.
+    assert actual == (application or "", 42)
 
 
 @pytest.mark.parametrize("command,count", [("caret_to_end", 0), ("caret_backward", 2), ("caret_forward", 2), ("select_all", 0), ("select_to_start", 0), ("caret_from_end", 2)])
 @pytest.mark.parametrize("application", ["com.openai.codex", "com.microsoft.VSCode", "org.example.Editor"])
 def test_default_caret_command_requires_current_edit_and_is_not_replayed(component, monkeypatch, command, count, application):
-    from proximic_ring import wechat_native_keys
+    from proximic_ring.platforms.macos import wechat_native_keys
     c, _ = component
     calls = []
     monkeypatch.setattr(wechat_native_keys, "send_input_method_key", lambda *a: calls.append(a))
@@ -241,7 +299,7 @@ def test_first_tap_ignores_previous_window_state_and_keeps_same_audio(component,
 
 
 def test_wechat_keys_require_current_transaction_and_are_not_replayed(component, monkeypatch):
-    from proximic_ring import wechat_native_keys
+    from proximic_ring.platforms.macos import wechat_native_keys
     controller, _ = component
     calls = []
     monkeypatch.setattr(wechat_native_keys, "send_wechat_key", lambda *args: calls.append(args))
@@ -259,7 +317,7 @@ def test_wechat_keys_require_current_transaction_and_are_not_replayed(component,
 
 
 def test_native_key_request_cannot_activate_compatibility_in_other_apps(component, monkeypatch):
-    from proximic_ring import wechat_native_keys
+    from proximic_ring.platforms.macos import wechat_native_keys
     controller, _ = component
     calls = []
     monkeypatch.setattr(wechat_native_keys, "send_wechat_key", lambda *args: calls.append(args))
@@ -642,8 +700,17 @@ def test_activation_trace_does_not_change_input_state_or_log_text(component):
     receive(c, 'activation_trace', event='ignored_retired_sender', lease=3,
             sender='old', bound_sender='new', original='private text', extra=['private'])
     assert c._view == before
-    assert events[-1]['event'] == 'ignored_retired_sender'
+    assert events[-1]['lifecycle_event'] == 'ignored_retired_sender'
     assert 'original' not in events[-1] and 'extra' not in events[-1]
+    # The full UI logger's first argument is named event. Native metadata
+    # must not collide with it when the diagnostic fields are unpacked.
+    from types import SimpleNamespace
+    from proximic_ring.ui.controller import AppController
+    logged = []
+    logger = SimpleNamespace(_event_log=lambda event, **fields: logged.append((event, fields)))
+    AppController._log_inline_diagnostic(logger, events[-1])
+    assert logged[0][0] == 'INPUT_METHOD'
+    assert logged[0][1]['lifecycle_event'] == 'ignored_retired_sender'
     count = len(events)
     c._accept({'type': 'activation_trace', 'epoch': 'obsolete', 'event': 'deactivate'})
     assert len(events) == count

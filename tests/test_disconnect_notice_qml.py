@@ -11,7 +11,7 @@ def test_notice_is_topmost_when_main_window_is_hidden_and_requires_acknowledgeme
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
     import proximic_ring.ui.controller as module
-    from proximic_ring.ui.notifications import install_ring_disconnect_notice
+    from proximic_ring.ui.shared.notifications import install_ring_disconnect_notice
 
     app = QCoreApplication.instance()
     if app is not None and not isinstance(app, QApplication):

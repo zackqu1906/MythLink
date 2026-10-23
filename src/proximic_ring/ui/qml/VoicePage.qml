@@ -1,17 +1,26 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Basic as Basic
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 
-ScrollView {
+UiScrollView {
     id: page
     required property var controller
+    property bool associationUiVisible: false
+    property bool historyOnly: false
+    property bool hotwordsExpanded: false
     readonly property var historyModel: controller.filteredVoiceHistoryModel
     readonly property bool historyFiltered: historySearch.text.trim().length > 0
         || historyModel.modeFilter !== "all" || historyModel.outcomeFilter !== "all"
+        || historyModel.applicationFilter !== "all" || historyModel.timeFilter !== "all"
+    onVisibleChanged: if (!visible && controller) controller.voicePractice.cancel()
+    onHistoryOnlyChanged: if (historyOnly && controller) controller.voicePractice.cancel()
     signal homeRequested()
-    signal inputSetupRequested()
-    UiTheme { id: theme }
+    signal historyRequested()
+    signal tutorialRequested()
+    FigmaTheme { id: theme }
+    VoiceHistoryTheme { id: historyTheme }
     objectName: "mainPageScroll"
     clip: true
     contentWidth: availableWidth
@@ -24,6 +33,8 @@ ScrollView {
         historyModel.searchText = ""
         historyModel.modeFilter = "all"
         historyModel.outcomeFilter = "all"
+        historyModel.applicationFilter = "all"
+        historyModel.timeFilter = "all"
     }
     function requestHistoryDelete(record) {
         page.controller.clearHistoryActionMessage()
@@ -37,13 +48,16 @@ ScrollView {
         interval: 160
         onTriggered: page.historyModel.searchText = historySearch.text
     }
-    function scrollToGestures() {
-        page.contentItem.contentY = Math.min(voiceGestureCard.y, Math.max(0, page.contentHeight - page.availableHeight))
+    function scrollToGestures() { bindingDialog.open() }
+    function scrollToHistory() { historyRequested() }
+    function toggleHotwords() {
+        hotwordsExpanded = !hotwordsExpanded
+        if (hotwordsExpanded) hotwordDialog.open()
+        else { hotwordLibrary.cancelDrag(); hotwordDialog.close() }
     }
-    function scrollToHistory() {
-        Qt.callLater(function() {
-            page.contentItem.contentY = Math.min(voiceHistoryCard.y, Math.max(0, page.contentHeight - page.availableHeight))
-        })
+    function bindingLabel(action) {
+        var labels = {"tap":"点击", "double-tap":"双击", "swipe-up":"上滑", "swipe-down":"下滑", "swipe-left":"左滑", "swipe-right":"右滑", "snap":"响指", "pinch-index-thumb":"食拇捏合"}
+        return (controller.gestureBindings[action] || []).filter(function(v) { return v.length > 0 }).map(function(v) { return labels[v] || v }).join(" / ") || "未配置"
     }
     function statusColor(): color {
         if (!controller.connected) return "#919BB0"
@@ -51,191 +65,287 @@ ScrollView {
         if (controller.statusKind === "starting" || controller.statusKind === "stopping") return "#AC781B"
         return controller.recognitionEnabled ? theme.success : theme.primary
     }
+    component WorkbenchNavigation: FigmaAction {
+        navigation: true
+        contentColor: enabled && (hovered || down) ? theme.primary : theme.muted
+        trailingAsset: enabled && (hovered || down) ? "../assets/figma/redesign-246-3060-navigation-active.svg" : ""
+    }
     Column {
         id: pageContent
         width: page.availableWidth
-        spacing: 18
+        spacing: 16
         Rectangle {
             id: voiceInputCard
             objectName: "voiceInputCard"
-            width: parent.width
-            height: content.implicitHeight + 44
-            radius: 16; color: theme.surface; border.color: theme.line
+            visible: !page.historyOnly
+            width: parent.width; height: voiceStatus.implicitHeight + 40
+            radius: 12; color: theme.surface; border.color: theme.line
             ColumnLayout {
-                id: content
-                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                anchors.margins: 22; spacing: 16
+                id: voiceStatus
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
+                spacing: 12
                 RowLayout {
-                    Layout.fillWidth: true; spacing: 16
-                    Rectangle {
-                        width: 58; height: 58; radius: 16
-                        color: page.controller.connected ? "#EDF2FF" : theme.subtle
-                        UiIcon { anchors.centerIn: parent; width: 29; height: 29; symbol: "mic"; ink: page.statusColor() }
-                    }
-                    ColumnLayout {
-                        Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 6
-                        Label {
-                            objectName: "voiceStatusTitle"
-                            Layout.fillWidth: true
-                            text: page.controller.connected ? page.controller.statusTitle : "请先在首页连接 Ring"
-                            color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold; wrapMode: Text.Wrap
-                        }
-                        Label {
-                            objectName: "voiceStatusDetail"
-                            Layout.fillWidth: true
-                            text: page.controller.connected
-                                  ? page.controller.statusDetail
-                                    + (page.controller.textProcessing && page.controller.interactionState === "processing"
-                                       && page.controller.transcriptText.indexOf("正在处理文本") === 0 ? " · 大模型处理中" : "")
-                                  : "设备连接在首页管理，连接后即可使用语音输入与编辑。"
-                            color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
-                        }
-                    }
-                    UiAction {
+                    Layout.fillWidth: true; Layout.preferredHeight: 40; spacing: 12
+                    Label { Layout.preferredHeight: 36; Layout.alignment: Qt.AlignTop; verticalAlignment: Text.AlignVCenter; text: "语音输入"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
+                    FigmaEnableControl {
                         objectName: "voiceRecognitionButton"
-                        Layout.preferredWidth: 142; Layout.preferredHeight: 44
-                        visible: page.controller.connected
+                        Layout.alignment: Qt.AlignTop; Layout.topMargin: 3
+                        checked: page.controller.recognitionEnabled
                         enabled: page.controller.connected && !page.controller.busy && !page.controller.scanBusy
-                        text: page.controller.recognitionEnabled ? "暂停语音识别" : "开启语音识别"
-                        primary: !page.controller.recognitionEnabled
-                        onClicked: { if (enabled) page.controller.toggleRecognition() }
-                    }
-                    UiAction {
-                        objectName: "voiceHomeButton"
-                        Layout.preferredWidth: 118; Layout.preferredHeight: 44
-                        visible: !page.controller.connected
-                        text: "返回首页"; primary: true
-                        onClicked: page.homeRequested()
-                    }
-                }
-                Rectangle { Layout.fillWidth: true; height: 1; color: theme.line }
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: page.controller.inlineInput.enabled
-                    UiNotice {
-                        objectName: "inputMethodConnectionStatus"
-                        warning: !page.controller.inlineInput.ready
-                        Layout.fillWidth: true
-                        text: page.controller.inlineInput.connectionStatus
-                        color: warning ? theme.warning : theme.success
-                        font.pixelSize: 12; wrapMode: Text.Wrap
-                    }
-                    UiAction { objectName: "openVoiceGestureSettingsButton"; text: "语音手势"; quiet: true; onClicked: page.scrollToGestures() }
-                    UiAction { objectName: "inputMethodSetupButton"; text: "输入法设置"; quiet: true; onClicked: page.inputSetupRequested() }
-                }
-                PermissionNotice {
-                    objectName: "accessibilityPermissionWarning"
-                    Layout.fillWidth: true
-                    message: page.controller.inlineInput.permissions.accessibilityWarningText
-                    onActivated: page.controller.inlineInput.permissions.openSettings()
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: !page.controller.inlineInput.enabled && page.controller.inputRoutingMode === "manual"
-                    Button {
-                        objectName: "dictationModeButton"
-                        text: "输入到光标"; checkable: true; autoExclusive: true
-                        checked: page.controller.inputMode === "dictation"
-                        onClicked: page.controller.inputMode = "dictation"
-                    }
-                    Button {
-                        objectName: "editModeButton"
-                        text: "修改当前文本"; checkable: true; autoExclusive: true
-                        checked: page.controller.inputMode === "edit"
-                        onClicked: page.controller.inputMode = "edit"
+                        Accessible.name: checked ? "暂停语音识别" : "开启语音识别"
+                        onClicked: page.controller.toggleRecognition()
                     }
                     Item { Layout.fillWidth: true }
+                    WorkbenchNavigation { objectName: "voiceHotwordLibraryButton"; Layout.alignment: Qt.AlignTop; text: "热词库"; onClicked: page.toggleHotwords() }
+                    WorkbenchNavigation { objectName: "openVoiceGestureSettingsButton"; Layout.alignment: Qt.AlignTop; text: "映射调节"; onClicked: page.scrollToGestures() }
                 }
-                Label {
+                Grid {
+                    id: gestureBindings
+                    objectName: "voiceCurrentBindings"
                     Layout.fillWidth: true
-                    text: page.controller.inlineInput.enabled
-                          ? "点入文本框后，使用语音手势开始输入。默认实时听写，转换为编辑会结束本句并修改原文。"
-                          : page.controller.inputRoutingMode === "auto"
-                          ? "自动判断听写或编辑指令；处理期间可取消，应用后可在文本框旁撤销。"
-                          : page.controller.inputMode === "edit" ? "把光标留在目标文本框；修改会直接应用，随后可在文本框旁撤销。"
-                          : "语音会输入到目标文本框；应用后可在文本框旁撤销。"
-                    color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
+                    columns: width >= 880 ? 5 : 3
+                    columnSpacing: 12; rowSpacing: 8
+                    Repeater {
+                        model: [
+                            { icon: "tap", title: page.bindingLabel("confirm") === page.bindingLabel("end") ? page.bindingLabel("confirm") : page.bindingLabel("confirm") + "\n" + page.bindingLabel("end"), detail: page.bindingLabel("confirm") === page.bindingLabel("end") ? "开始 / 定稿" : "开始\n定稿" },
+                            { icon: "swipe-up", title: "上滑", detail: "发送文本" },
+                            { icon: "swipe-down", title: "下滑", detail: "润色当前句" },
+                            { icon: "swipe-left", title: page.bindingLabel("undo"), detail: "取消 / 撤回" },
+                            { icon: "swipe-right", title: page.bindingLabel("switch_mode"), detail: "语音修改" }
+                        ]
+                        Item {
+                            required property var modelData
+                            required property int index
+                            objectName: "voiceCurrentBinding" + index
+                            width: (gestureBindings.width - (gestureBindings.columns - 1) * gestureBindings.columnSpacing) / gestureBindings.columns
+                            height: 44
+                            RowLayout {
+                                anchors.left: parent.left; anchors.leftMargin: 8
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 12
+                                FigmaIcon { Layout.preferredWidth: 20; Layout.preferredHeight: 20; symbol: modelData.icon; intrinsicSize: modelData.icon === "tap" ? Qt.size(13.5, 13.5) : Qt.size(-1, -1) }
+                                Label { id: bindingTitle; Layout.maximumWidth: 64; text: modelData.title; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text; lineHeight: 22; lineHeightMode: Text.FixedHeight; elide: Text.ElideRight }
+                                Label { id: bindingDetail; Layout.fillWidth: true; text: modelData.detail; font.pixelSize: 16; color: theme.muted; lineHeight: 22; lineHeightMode: Text.FixedHeight; elide: Text.ElideRight }
+                            }
+                            HoverHandler { id: bindingHover }
+                            ToolTip.visible: bindingHover.hovered && (bindingTitle.truncated || bindingDetail.truncated)
+                            ToolTip.delay: 500
+                            ToolTip.text: modelData.title.replace(/\n/g, " / ") + "：" + modelData.detail.replace(/\n/g, " / ")
+                        }
+                    }
                 }
+                RowLayout {
+                    visible: !page.controller.connected || page.controller.statusKind === "error" || !page.controller.inlineInput.ready
+                    Layout.fillWidth: true
+                    Label { objectName: "voiceStatusTitle"; text: page.controller.connected ? page.controller.statusTitle : "请先在首页连接 Ring"; color: theme.muted; font.pixelSize: 14; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    FigmaAction { objectName: "voiceHomeButton"; visible: !page.controller.connected; text: "返回首页"; onClicked: page.homeRequested() }
+                }
+                Label { objectName: "voiceStatusDetail"; Layout.fillWidth: true; visible: page.controller.statusKind === "error"; text: page.controller.statusDetail; font.pixelSize: 14; color: theme.warning; wrapMode: Text.Wrap }
+                PermissionNotice { objectName: "accessibilityPermissionWarning"; Layout.fillWidth: true; actionText: ""; message: page.controller.inlineInput.permissions.accessibilityWarningText ? page.controller.inlineInput.permissions.accessibilityWarningText + " 请在设置的“系统与权限”中管理。" : "" }
             }
         }
-        VoiceGestureSettingsCard {
-            id: voiceGestureCard
-            objectName: "voiceGestureSettingsCard"
-            width: parent.width
-            height: implicitHeight
-            controller: page.controller
+        Rectangle {
+            objectName: "voiceTrialCard"
+            visible: !page.historyOnly
+            width: parent.width; height: Math.max(voiceTrialContent.implicitHeight + 40, page.availableHeight - voiceInputCard.height - pageContent.spacing)
+            radius: 12; color: theme.surface; border.color: theme.line
+            ColumnLayout {
+                id: voiceTrialContent
+                anchors.fill: parent; anchors.margins: 20; spacing: 12
+                RowLayout {
+                    Layout.fillWidth: true; Layout.preferredHeight: 36
+                    Label { Layout.fillWidth: true; Layout.preferredHeight: 32; Layout.alignment: Qt.AlignTop; verticalAlignment: Text.AlignVCenter; text: "输入模拟"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
+                    WorkbenchNavigation { objectName: "voiceTutorialButton"; text: "功能教学"; onClicked: page.tutorialRequested() }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 4
+                    Label { Layout.preferredHeight: 24; verticalAlignment: Text.AlignVCenter; text: "输入源"; color: theme.text; font.pixelSize: 16 }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 8
+                        FigmaSelect {
+                            id: voiceAudioSource
+                            objectName: "voiceAudioSourceCombo"
+                            Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 1
+                            leftPadding: 16; font.pixelSize: 16; font.weight: Font.Medium
+                            model: page.controller.audioInputs; textRole: "label"; valueRole: "value"
+                            enabled: !page.controller.busy
+                            currentIndex: page.controller.audioInputs.map(function(item) { return item.value }).indexOf(page.controller.audioInputSelection)
+                            displayText: currentIndex >= 0 ? currentText : page.controller.audioInputLabel
+                            onActivated: page.controller.selectAudioInput(currentValue)
+                            Connections { target: voiceAudioSource.popup; function onAboutToShow() { page.controller.refreshMicrophones() } }
+                        }
+                        VoiceAudioTest {
+                            id: voiceSoundCheck
+                            objectName: "voiceCompactAudioTest"
+                            Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 1
+                            compact: true
+                            practice: page.controller.voicePractice
+                        }
+                    }
+                    Label {
+                        objectName: "voiceCompactAudioStatus"
+                        Layout.fillWidth: true
+                        visible: voiceSoundCheck.attempted
+                        text: voiceSoundCheck.statusText
+                        color: voiceSoundCheck.statusColor
+                        font.pixelSize: 12; wrapMode: Text.Wrap
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; Layout.fillHeight: true; spacing: 8
+                    Label { Layout.preferredHeight: 24; verticalAlignment: Text.AlignVCenter; text: "虚拟文本框"; color: theme.text; font.pixelSize: 16 }
+                    VoicePracticeEditor {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        practice: page.controller.voicePractice
+                    }
+                }
+            }
         }
         Rectangle {
             id: voiceHistoryCard
             objectName: "voiceHistoryCard"
+            visible: page.historyOnly
             width: parent.width
-            height: Math.max(380, page.availableHeight - voiceInputCard.height - voiceGestureCard.height - 2 * pageContent.spacing)
-            radius: 16; color: theme.surface; border.color: theme.line
+            height: Math.max(560, page.availableHeight)
+            color: "transparent"; radius: 12
+            Rectangle { x: 0; y: filterPanel.height + 20; width: parent.width; height: parent.height - y; radius: 12; color: theme.surface; border.color: theme.line }
             ColumnLayout {
-                anchors.fill: parent; anchors.margins: 22; spacing: 14
-                RowLayout {
+                anchors.fill: parent; anchors.margins: 0; spacing: 16
+                Rectangle {
                     Layout.fillWidth: true
-                    ColumnLayout {
-                        Layout.fillWidth: true; spacing: 4
-                        Label { Layout.fillWidth: true; text: "语音输入历史"; color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold }
-                        Label {
-                            objectName: "voiceHistoryCount"
-                            Layout.fillWidth: true
-                            text: page.historyFiltered ? "找到 " + voiceHistoryList.count + " 条 · 共 " + page.controller.voiceHistoryEntries.length + " 条"
-                                : "听写与编辑记录 · 共 " + page.controller.voiceHistoryEntries.length + " 条"
-                            color: theme.muted; font.pixelSize: 12
+                    id: filterPanel
+                    objectName: "voiceHistoryFilterPanel"
+                    implicitHeight: historyFilters.implicitHeight + 28
+                    radius: 12; color: theme.surface; border.color: historyTheme.line
+                    GridLayout {
+                        id: historyFilters
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 14
+                        columns: width >= 776 ? 5 : 3
+                        columnSpacing: 8; rowSpacing: 12
+                        component FilterField: ColumnLayout {
+                            property string title: ""
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
+                            Layout.preferredWidth: 112
+                            Layout.alignment: Qt.AlignBottom
+                            spacing: 6
+                            Label {
+                                Layout.fillWidth: true
+                                visible: false; text: parent.title; color: historyTheme.muted
+                                font.family: historyTheme.family; font.pixelSize: historyTheme.detailSize
+                                lineHeight: historyTheme.detailLineHeight; lineHeightMode: Text.FixedHeight
+                            }
                         }
-                    }
-                    UiAction {
-                        id: historyOptionsButton
-                        objectName: "voiceHistoryOptionsButton"
-                        text: "更多 ···"; quiet: true
-                        onClicked: historyOptions.popup()
-                        Menu {
-                            id: historyOptions
-                            MenuItem { objectName: "openDataDirectoryButton"; text: "打开数据文件夹"; onTriggered: page.controller.openDataDirectory() }
-                            MenuItem { objectName: "clearVoiceHistoryButton"; text: "清空全部语音记录"; enabled: page.controller.voiceHistoryEntries.length > 0; onTriggered: clearHistoryDialog.open() }
+                        FilterField {
+                            title: "搜索记录"; Layout.preferredWidth: 310
+                            FigmaTextField {
+                                id: historySearch
+                                objectName: "voiceHistorySearch"
+                                Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredHeight: historyTheme.fieldHeight + 2
+                                leftPadding: 12; rightPadding: 12; topPadding: 0; bottomPadding: 0
+                                hintText: "输入关键词检索"
+                                Accessible.name: "搜索语音历史"
+                                selectByMouse: true
+                                font.family: historyTheme.family; font.pixelSize: historyTheme.detailSize
+                                color: historyTheme.text
+                                placeholderTextColor: historyTheme.text
+                                background: Rectangle { color: historyTheme.surface; radius: 8; border.color: historySearch.activeFocus ? historyTheme.primary : historyTheme.line }
+                                onTextEdited: searchDebounce.restart()
+                                onAccepted: { searchDebounce.stop(); page.historyModel.searchText = text }
+                            }
+                        }
+                        FilterField {
+                            title: "记录类型"
+                            VoiceHistorySelect {
+                                objectName: "voiceHistoryModeFilter"
+                                Layout.fillWidth: true; Layout.minimumWidth: 0
+                                Accessible.name: "记录类型"
+                                model: ["全部类型", "听写", "润色（下滑）", "指令"]
+                                currentIndex: ["all", "dictation", "polish", "edit"].indexOf(page.historyModel.modeFilter)
+                                onActivated: page.historyModel.modeFilter = ["all", "dictation", "polish", "edit"][currentIndex]
+                            }
+                        }
+                        FilterField {
+                            title: "应用"
+                            VoiceHistorySelect {
+                                objectName: "voiceHistoryApplicationFilter"
+                                Layout.fillWidth: true; Layout.minimumWidth: 0
+                                Accessible.name: "应用"
+                                model: page.historyModel.applicationOptions
+                                textRole: "label"; valueRole: "value"
+                                currentIndex: page.historyModel.applicationOptions.map(function(item) { return item.value }).indexOf(page.historyModel.applicationFilter)
+                                onActivated: page.historyModel.applicationFilter = currentValue
+                            }
+                        }
+                        FilterField {
+                            title: "时间"
+                            VoiceHistorySelect {
+                                objectName: "voiceHistoryTimeFilter"
+                                Layout.fillWidth: true; Layout.minimumWidth: 0
+                                Accessible.name: "时间"
+                                model: ["全部时间", "今天", "近 7 天", "近 30 天"]
+                                currentIndex: ["all", "today", "week", "month"].indexOf(page.historyModel.timeFilter)
+                                onActivated: page.historyModel.timeFilter = ["all", "today", "week", "month"][currentIndex]
+                            }
+                        }
+                        FilterField {
+                            title: "结果"
+                            VoiceHistorySelect {
+                                objectName: "voiceHistoryOutcomeFilter"
+                                Layout.fillWidth: true; Layout.minimumWidth: 0
+                                Accessible.name: "记录结果"
+                                model: ["全部结果", "已完成", "已撤回", "未完成", "已取消", "未识别", "已中断"]
+                                currentIndex: ["all", "completed", "undone", "failed", "cancelled", "unrecognized", "interrupted"].indexOf(page.historyModel.outcomeFilter)
+                                onActivated: page.historyModel.outcomeFilter = ["all", "completed", "undone", "failed", "cancelled", "unrecognized", "interrupted"][currentIndex]
+                            }
                         }
                     }
                 }
                 RowLayout {
-                    Layout.fillWidth: true; spacing: 8
-                    UiTextField {
-                        id: historySearch
-                        objectName: "voiceHistorySearch"
-                        Layout.fillWidth: true; Layout.minimumWidth: 100
-                        Layout.preferredHeight: 42
-                        leftPadding: 36; rightPadding: 10
-                        hintText: "搜索文字或应用"
-                        Accessible.name: "搜索语音历史"
-                        selectByMouse: true
-                        font.pixelSize: 13
-                        background: Rectangle { color: theme.subtle; radius: 8; border.color: historySearch.activeFocus ? theme.primary : theme.line }
-                        UiIcon { x: 11; anchors.verticalCenter: parent.verticalCenter; width: 17; height: 17; symbol: "search" }
-                        onTextEdited: searchDebounce.restart()
-                        onAccepted: { searchDebounce.stop(); page.historyModel.searchText = text }
+                    Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.topMargin: 24; spacing: 12
+                    Label {
+                        Layout.fillWidth: true; text: "最近记录"
+                        color: historyTheme.text; font.family: historyTheme.family
+                        font.pixelSize: historyTheme.titleSize; font.weight: Font.Medium
+                        lineHeight: 26; lineHeightMode: Text.FixedHeight
                     }
-                    SettingsSelect {
-                        objectName: "voiceHistoryModeFilter"
-                        Layout.preferredWidth: 122; Layout.preferredHeight: 42
-                        Accessible.name: "记录类型"
-                        model: ["全部类型", "语音输入", "编辑指令"]
-                        currentIndex: ["all", "dictation", "edit"].indexOf(page.historyModel.modeFilter)
-                        onActivated: page.historyModel.modeFilter = ["all", "dictation", "edit"][currentIndex]
-                    }
-                    SettingsSelect {
-                        objectName: "voiceHistoryOutcomeFilter"
-                        Layout.preferredWidth: 118; Layout.preferredHeight: 42
-                        Accessible.name: "记录状态"
-                        model: ["全部状态", "已完成", "已撤回", "未完成", "已取消"]
-                        currentIndex: ["all", "completed", "undone", "failed", "cancelled"].indexOf(page.historyModel.outcomeFilter)
-                        onActivated: page.historyModel.outcomeFilter = ["all", "completed", "undone", "failed", "cancelled"][currentIndex]
-                    }
-                    UiAction {
+                    FigmaAction {
                         objectName: "voiceHistoryResetFilters"
-                        text: "重置"; quiet: true
+                        text: "重置筛选"; quiet: true
+                        visible: page.historyFiltered
                         enabled: page.historyFiltered
+                        font.family: historyTheme.family
+                        font.pixelSize: historyTheme.detailSize
+                        implicitHeight: 26
                         onClicked: page.resetHistoryFilters()
+                    }
+                    VoiceHistoryAction {
+                        id: historyOptionsButton
+                        objectName: "voiceHistoryOptionsButton"
+                        asset: "more"; filled: true; hint: "更多历史操作"
+                        menuOpen: historyOptions.visible
+                        onClicked: historyOptions.open()
+                        UiMenu {
+                            id: historyOptions
+                            objectName: "voiceHistoryOptionsMenu"
+                            UiMenuItem { objectName: "openDataDirectoryButton"; text: "打开数据文件夹"; onTriggered: page.controller.openDataDirectory() }
+                            UiMenuItem { objectName: "clearVoiceHistoryButton"; destructive: true; text: "清空全部语音记录"; enabled: page.controller.voiceHistoryEntries.length > 0; onTriggered: clearHistoryDialog.open() }
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; visible: page.historyFiltered; spacing: 12
+                    Label {
+                        text: "最近记录"; color: historyTheme.text
+                        font.family: historyTheme.family; font.pixelSize: historyTheme.sectionSize; font.weight: Font.Medium
+                        lineHeight: 22; lineHeightMode: Text.FixedHeight
+                    }
+                    Label {
+                        objectName: "voiceHistoryCount"
+                        Layout.fillWidth: true
+                        text: page.historyFiltered ? "找到 " + voiceHistoryList.count + " 条 · 共 " + page.controller.voiceHistoryEntries.length + " 条" : ""
+                        color: historyTheme.muted; font.family: historyTheme.family; font.pixelSize: historyTheme.detailSize
                     }
                 }
                 Label {
@@ -248,8 +358,8 @@ ScrollView {
                 ListView {
                     id: voiceHistoryList
                     objectName: "voiceHistoryList"
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    clip: true; spacing: 10
+                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.bottomMargin: 20
+                    clip: true; spacing: 12
                     model: page.historyModel
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
                     delegate: VoiceHistoryEntry {
@@ -260,7 +370,7 @@ ScrollView {
                     ColumnLayout {
                         anchors.centerIn: parent; width: parent.width - 24; spacing: 9
                         visible: voiceHistoryList.count === 0
-                        UiIcon { Layout.alignment: Qt.AlignHCenter; symbol: "history"; ink: "#9AA5BD"; width: 30; height: 30 }
+                        FigmaIcon { Layout.alignment: Qt.AlignHCenter; symbol: "history"; width: 30; height: 30 }
                         Label {
                             objectName: "voiceHistoryEmptyTitle"
                             Layout.alignment: Qt.AlignHCenter
@@ -275,6 +385,7 @@ ScrollView {
                     }
                 }
                 RowLayout {
+                    visible: page.associationUiVisible
                     Layout.fillWidth: true; spacing: 8
                     Switch {
                         objectName: "smartAssociationSwitch"
@@ -283,12 +394,37 @@ ScrollView {
                         checked: page.controller.smartAssociationEnabled
                         onToggled: page.controller.smartAssociationEnabled = checked
                     }
-                    UiAction { objectName: "openAssociationCenterButton"; text: "数据关联中心"; quiet: true; onClicked: page.controller.performAssociationAction("center.open", "") }
+                    FigmaAction { objectName: "openAssociationCenterButton"; text: "数据关联中心"; quiet: true; onClicked: page.controller.performAssociationAction("center.open", "") }
                 }
             }
         }
     }
-    Dialog {
+    FigmaDialog {
+        id: hotwordDialog
+        objectName: "hotwordDialog"
+        parent: Overlay.overlay; popupType: Popup.Item
+        x: Math.max(16, parent.width - width - 24); y: 104
+        width: Math.min(600, parent.width - 48); height: Math.min(hotwordLibrary.implicitHeight, parent.height - 128)
+        padding: 0; topInset: 0; bottomInset: 0; modal: true; header: null; footer: null
+        onClosed: { page.hotwordsExpanded = false; hotwordLibrary.cancelDrag() }
+        background: Rectangle { color: theme.surface; radius: 12; border.color: theme.line }
+        contentItem: UiScrollView {
+            clip: true; contentWidth: availableWidth
+            HotwordSettings { id: hotwordLibrary; objectName: "personalHotwordSettings"; width: parent.width; height: implicitHeight; service: page.controller.hotwords; onCloseRequested: hotwordDialog.close() }
+        }
+    }
+    FigmaDialog {
+        id: bindingDialog
+        objectName: "voiceGestureBindingDialog"
+        parent: Overlay.overlay; popupType: Popup.Item; anchors.centerIn: parent
+        width: Math.min(900, parent.width - 48); height: Math.min(660, parent.height - 48)
+        title: "语音映射调节"; modal: true; standardButtons: Dialog.Close
+        contentItem: UiScrollView {
+            clip: true; contentWidth: availableWidth
+            VoiceGestureSettingsCard { id: voiceGestureCard; objectName: "voiceGestureSettingsCard"; width: parent.width; height: implicitHeight; controller: page.controller }
+        }
+    }
+    FigmaDialog {
         id: deleteHistoryDialog
         objectName: "deleteHistoryDialog"
         property string interactionId: ""
@@ -336,12 +472,12 @@ ScrollView {
         footer: DialogButtonBox {
             leftPadding: 24; rightPadding: 24; topPadding: 0; bottomPadding: 20
             spacing: 10
-            UiAction {
+            FigmaAction {
                 objectName: "cancelDeleteHistoryButton"
                 text: "取消"
                 onClicked: deleteHistoryDialog.reject()
             }
-            UiAction {
+            FigmaAction {
                 objectName: "confirmDeleteHistoryButton"
                 text: "删除记录"; primary: true
                 onClicked: {
@@ -350,7 +486,7 @@ ScrollView {
             }
         }
     }
-    Dialog {
+    FigmaDialog {
         id: clearHistoryDialog
         objectName: "clearHistoryDialog"
         parent: Overlay.overlay

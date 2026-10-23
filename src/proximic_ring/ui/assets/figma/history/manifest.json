@@ -1,0 +1,38 @@
+{
+  "cancel": {
+    "node": "I995:7944;311:3926",
+    "width": 16,
+    "height": 16,
+    "sha256": "37b6616dc5554a725f1ba19c41d44bb0ef485172be965fbf4bbccdb6b413a721"
+  },
+  "caret-down": {
+    "node": "862:6860",
+    "width": 16,
+    "height": 16,
+    "sha256": "02822b035515131e1824622902315cc455b55812f0543c164feac2c04c270ee0"
+  },
+  "copy": {
+    "node": "I995:7941;269:3692",
+    "width": 16,
+    "height": 16,
+    "sha256": "f7997f7775a868147d686f94ed4fcad67ee753b491ef41dc3b6b8b14af74b1ac"
+  },
+  "more": {
+    "node": "I995:7941;269:3696",
+    "width": 16,
+    "height": 16,
+    "sha256": "8e69f6cfe7377a8ae852407a87650e560cacdfd9a5aabd508fe4b2351f18f1c7"
+  },
+  "trash": {
+    "node": "I995:7941;269:3694",
+    "width": 16,
+    "height": 16,
+    "sha256": "7d30b50c22ff25e85db4e52a9e02b603c62043898f734a35808fb87e785d3080"
+  },
+  "warning": {
+    "node": "I995:7943;311:3893",
+    "width": 16,
+    "height": 16,
+    "sha256": "d65d73a87ca8596c70a41263c6910f6bdea03170bcd4ba3943cf91179fa6567e"
+  }
+}

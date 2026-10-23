@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
 from test_interaction_controls import _controller, _close
 
 

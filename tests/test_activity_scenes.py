@@ -8,7 +8,7 @@ from PySide6.QtCore import QCoreApplication
 from scene_test_helpers import activity_context
 from proximic_ring.scene_capabilities import (PDF, VIDEO, IMAGE, MUSIC, SCENE_LABELS,
     application_scene_profiles, installed_scene_profiles, activity_actions)
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController
 from test_app_gestures import route  # Required by the imported presentation fixture.
 from test_gesture_scenes import presentation
 from test_application_menus import configure
@@ -80,18 +80,6 @@ def test_music_player_controls_need_loaded_content_and_yield_to_search():
     # Detection may lose positive evidence when focus becomes a text container;
     # it must never advertise nontext eligibility.
     assert activity_context("com.apple.Music", {MUSIC: "music"}, window, focus, metadata)[1] != "nontext"
-
-
-def test_browser_document_url_and_media_controls_are_required_not_the_tab_title():
-    window = dict(AXRole="AXWindow", AXTitle="paper.pdf")
-    focus = dict(AXRole="AXWebArea", AXParent=window, AXEditable=False)
-    window["AXChildren"] = [focus]
-    profiles = application_scene_profiles("com.apple.Safari")
-    assert not activity_context("com.apple.Safari", profiles, window, focus, metadata)[0]
-    focus["AXURL"] = "https://example.test/paper.pdf?token=not-read-or-logged"
-    assert activity_context("com.apple.Safari", profiles, window, focus, metadata) == (PDF, "nontext")
-    focus["AXEditable"] = True
-    assert activity_context("com.apple.Safari", profiles, window, focus, metadata) == (PDF, "text")
 
 
 def test_unknown_apps_gain_all_declared_modes_and_custom_uti_conformance(tmp_path):
@@ -181,9 +169,9 @@ def test_quicktime_native_toggle_is_a_playback_control_and_nontext_focus(scene):
 @pytest.mark.parametrize('scene', [PDF, VIDEO, IMAGE, MUSIC])
 @pytest.mark.parametrize('state', ['nontext', 'text', 'unknown', 'blocked', 'unconfigured'])
 def test_autofocus_only_yields_to_configured_nontext_scene(monkeypatch, scene, state):
-    from proximic_ring import native_access_worker as worker
-    from proximic_ring.app_shortcuts import ShortcutTarget
-    from proximic_ring.mac_permissions import PermissionState
+    from proximic_ring.platforms.macos import native_access_worker as worker
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
+    from proximic_ring.platforms.macos.mac_permissions import PermissionState
     monkeypatch.setattr(worker, 'read_permission_state', lambda: PermissionState(True, False))
     dispatcher = worker.Dispatcher()
     dispatcher.shortcuts = SimpleNamespace(capture=lambda **kw: ShortcutTarget('test.viewer', 42, 'test.viewer',

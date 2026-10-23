@@ -1,4 +1,4 @@
-"""Lock ownership, runtime recovery and gesture readiness without real BLE/locks."""
+"""All lock sources, runtime recovery and gesture readiness without real BLE/locks."""
 import threading
 from types import SimpleNamespace
 
@@ -11,7 +11,7 @@ from test_proximity import Process, prepare
 @pytest.fixture
 def controller(tmp_path, monkeypatch):
     monkeypatch.setenv("PROXIMIC_STARTUP_PROBE", "1")
-    from proximic_ring.ui import proximity_controller
+    from proximic_ring.ui.proximity import proximity_controller
     from proximic_ring.ui import controller as controller_module
     from PySide6.QtCore import QSettings
     monkeypatch.setattr(controller_module, "QSettings", lambda *_args:
@@ -33,6 +33,29 @@ def returned(c, **overrides):
                                      locked=True, connected=True, reconnect_allowed=True, return_confirmed=True), **overrides})
 
 
+def test_current_voice_updates_feed_selected_baseline_source(controller):
+    from PySide6.QtCore import QCoreApplication
+    c = controller
+    c._connected = c._runtime_active = True
+    c._runtimeUpdate.disconnect()  # Exercise evidence routing without dictating into a target.
+    p = c._proximity
+    p.setBaselineOption("enabled", True); p.setBaselineOption("voice", True)
+    connection = c._disconnect_event
+    def publish(text, **overrides):
+        c._publish_update(SimpleNamespace(**(dict(text=text, session_id=1, is_final=False, error="") | overrides)),
+                          connection=connection)
+    publish(""); publish("错误", error="recognition failed")
+    c._publish_update(SimpleNamespace(text="旧连接", session_id=1, is_final=False, error=""),
+                      connection=threading.Event())
+    publish("新语音"); publish("新语音")
+    QCoreApplication.processEvents()
+    assert p._process.writes.count(b"baseline-activity 2 voice\n") == 1
+    c._cancelled_asr_session_ids.add(1)
+    publish("已取消的语音")
+    QCoreApplication.processEvents()
+    assert p._process.writes.count(b"baseline-activity 2 voice\n") == 1
+
+
 def test_return_after_disconnect_starts_once_after_cleanup_and_keeps_lock(controller, monkeypatch):
     c = controller; starts = []
     c._runtime_active = True
@@ -51,13 +74,13 @@ def test_return_after_disconnect_starts_once_after_cleanup_and_keeps_lock(contro
     assert len(starts) == 2
 
 
-def test_connected_helper_waits_for_shared_return_before_gesture_recovery(controller, monkeypatch):
+def test_stationary_manual_lock_recovers_gestures_without_departure(controller, monkeypatch):
     c = controller; starts = []
     monkeypatch.setattr(c, "_start_selected_device", lambda: starts.append(True))
-    returned(c, return_confirmed=False)
+    returned(c, owned=False, return_confirmed=False, reconnect_allowed=False)
     assert not starts and not c._proximity.reconnect_target
     assert c._proximity.gestures_blocked
-    returned(c)
+    returned(c, owned=False, return_confirmed=False)
     assert starts == [True]
     c._proximity.enabled = False
     c._reconnect_for_proximity(c._selector)
@@ -110,7 +133,8 @@ def test_gesture_ready_requires_current_connection_and_fresh_imu_health(controll
     assert not c.proximity_gesture_ready
 
 
-def test_display_ack_is_sent_only_after_snap_route_is_installed(controller, monkeypatch):
+@pytest.mark.parametrize("owned", [False, True])
+def test_display_ack_is_sent_only_after_snap_route_is_installed(controller, monkeypatch, owned):
     from PySide6.QtCore import QCoreApplication
     c = controller
     c._connected = c._runtime_active = True
@@ -126,7 +150,7 @@ def test_display_ack_is_sent_only_after_snap_route_is_installed(controller, monk
             # The user snaps immediately when the native side receives the ack/wakes.
             c._proximity.filter_gesture("snap", c._disconnect_event)
     monkeypatch.setattr(helper, "write", installed_then_snap)
-    returned(c, unlock_token=token)
+    returned(c, owned=owned, return_confirmed=owned, unlock_token=token)
     QCoreApplication.processEvents()
     acknowledgement = ("gesture-installed " + token + "\n").encode()
     unlock = ("gesture-unlock " + token + "\n").encode()
@@ -140,9 +164,75 @@ def test_display_ack_is_sent_only_after_snap_route_is_installed(controller, monk
 def test_explicit_disconnect_cancels_waiting_recovery_even_without_worker(controller, monkeypatch):
     c = controller; starts = []
     monkeypatch.setattr(c, "_start_selected_device", lambda: starts.append(True))
+    helper = c._proximity._process
     c.disconnectDevice()
-    returned(c)
-    assert not starts
+    helper.send(dict(event="monitor", permission=True, locked=True, connected=True, reconnect_allowed=True))
+    assert not starts and helper.killed and c._proximity._process is None
+
+
+def test_manual_disconnect_stops_both_clients_until_confirmed_reconnect(controller):
+    c = controller; p = c._proximity
+    saved = p.savedCalibration
+    c._runtime_active = True
+    c._apply_runtime_connected()
+    c._worker = SimpleNamespace(is_alive=lambda: True)
+    old = p._process
+    assert b"host-connected 1\n" in old.writes
+    c.disconnectDevice()
+    assert not c._connected and old.killed and p._process is None
+    assert p.enabled and p.savedCalibration == saved
+    assert p._settings.value("proximity/enabled", type=bool)
+    before = list(old.writes)
+    old.send(dict(event="prepare_lock"))
+    old.finished.emit(0, 0)
+    p._start_monitor()
+    p.startCalibration()
+    assert p._process is None and old.writes == before
+    # Late callbacks cannot undo the explicit pause.
+    c._apply_runtime_connected(); c._apply_runtime_started()
+    assert p._process is None and not c._connected
+    # The next real connection resumes the saved preference with the same baseline.
+    c._disconnect_event = threading.Event()
+    c._proximity_reconnect_cancelled = False
+    c._apply_runtime_connected()
+    assert p._process is not None and p._process is not old
+    assert b"host-connected 1\n" in p._process.writes
+    assert p.savedCalibration == saved
+
+
+def test_unexpected_disconnect_keeps_monitor_but_rejects_late_lock(controller):
+    c = controller; p = c._proximity; helper = p._process
+    c._runtime_active = True
+    c._apply_runtime_connected()
+    pauses = []
+    p.lockPreparing.connect(lambda: pauses.append(True))
+    c._apply_runtime_disconnected()
+    assert p._process is helper and not helper.killed
+    assert helper.writes[-1] == b"host-connected 0\n"
+    helper.send(dict(event="prepare_lock"))
+    assert not pauses and helper.writes[-1] == b"lock-cancel\n"
+    assert b"lock-ready\n" not in helper.writes and not p.gestures_blocked
+
+
+@pytest.mark.parametrize("disconnect_during_pause", [False, True])
+def test_lock_handshake_rechecks_live_connection(controller, disconnect_during_pause):
+    c = controller; p = c._proximity; helper = p._process
+    c._runtime_active = True
+    c._apply_runtime_connected()
+    if disconnect_during_pause:
+        p.lockPreparing.connect(c._apply_runtime_disconnected)
+    helper.send(dict(event="prepare_lock"))
+    assert helper.writes[-1] == (b"lock-cancel\n" if disconnect_during_pause else b"lock-ready\n")
+
+
+def test_runtime_stop_event_vetoes_lock_before_ui_disconnect_callback(controller):
+    c = controller; p = c._proximity; helper = p._process
+    c._runtime_active = True
+    c._apply_runtime_connected()
+    c._disconnect_event.set()
+    assert c._connected and not c.proximity_lock_connected
+    helper.send(dict(event="prepare_lock"))
+    assert helper.writes[-1] == b"lock-cancel\n" and b"lock-ready\n" not in helper.writes
 
 
 def test_return_restarts_runtime_preserves_monitor_and_accepts_new_snap_once(controller, monkeypatch):

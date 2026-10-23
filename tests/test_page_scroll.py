@@ -1,7 +1,7 @@
 import pytest
 
-from proximic_ring.page_scroll import MacScrollAX, PageScrollSession, animate_scroll, SCROLL_DURATION
-from proximic_ring.text_focus import FocusError, Scope
+from proximic_ring.desktop.page_scroll import MacScrollAX, PageScrollSession, animate_scroll, SCROLL_DURATION
+from proximic_ring.desktop.text_focus import FocusError, Scope
 from test_text_focus import Desktop, Node
 
 

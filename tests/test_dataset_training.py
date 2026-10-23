@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from proximic_ring.dataset import (
+from proximic_ring.voice.training.dataset import (
     LABEL_TO_TARGET,
     METADATA_FIELDS,
     ProximityFeatureDataset,
@@ -16,7 +16,7 @@ from proximic_ring.dataset import (
     segment_records,
     write_pcm16_wav,
 )
-from proximic_ring.train import calibrate_threshold
+from proximic_ring.voice.training.train import calibrate_threshold
 
 
 def _add_clip(root: Path, *, label: str, idx: int, speaker: str = "p01") -> None:
@@ -93,7 +93,7 @@ def test_threshold_calibration_uses_near_as_score_positive():
 
 
 def test_long_take_creates_multiple_windows_without_cross_split_leakage(tmp_path: Path):
-    from proximic_ring.dataset import WindowedProximityFeatureDataset, make_window_specs
+    from proximic_ring.voice.training.dataset import WindowedProximityFeatureDataset, make_window_specs
 
     # Build 3 long takes per class so file split can create train/val/test takes.
     for i in range(3):
@@ -164,7 +164,7 @@ def test_artifact_maps_to_binary_non_target(tmp_path: Path):
 
 
 def test_noise_files_are_split_disjointly(tmp_path: Path):
-    from proximic_ring.dataset import split_auxiliary_files
+    from proximic_ring.voice.training.dataset import split_auxiliary_files
 
     paths = [tmp_path / f"noise_{i}.wav" for i in range(9)]
     split = split_auxiliary_files(paths, val_fraction=0.2, test_fraction=0.2, seed=7)

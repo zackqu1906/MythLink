@@ -68,11 +68,12 @@ func capture(_ name: String) throws {
     layer.render(in: context.cgContext)
     try bitmap.representation(using: .png, properties: [:])!.write(to: screenshotDirectory.appendingPathComponent(name + ".png"))
 }
-for name in VoiceHudBindings.names.keys.map({ "gesture-" + $0 }) + ["listening-waveform", "processing-spinner", "processing-dots", "status-done", "status-error", "function-cancel", "function-edit"] {
-    check(VoiceHudAssets.image(name)?.isValid == true, "missing/unreadable Figma asset: \(name)")
+for name in VoiceHudBindings.names.keys.map({ VoiceHudBindings.assetName($0) }) + ["listening-waveform", "processing-spinner", "processing-dots", "status-done", "status-error", "function-cancel", "function-edit", "function-polish"] {
+    check(VoiceHudAssets.image(name)?.isValid == true, "missing/unreadable HUD asset: \(name)")
 }
 guard let cancelHint = find(content, "voiceHint_undo") as? VoiceHudHint,
       let editHint = find(content, "voiceHint_switch_mode") as? VoiceHudHint,
+      let polishHint = find(content, "voiceHint_polish") as? VoiceHudHint,
       let dots = find(content, "voiceProcessingDots") as? VoiceHudProgress,
       let spinner = find(content, "voiceProcessingSpinner") as? VoiceHudSpinner,
       let hudContent = find(content, "voiceHudContent") else { fatalError("missing separate hint controls") }
@@ -81,11 +82,13 @@ check(!window.hasShadow && content.layer?.backgroundColor?.alpha == 0.68,
       "voice palette does not share the translucent stroke surface")
 check(cancelHint.gestures == ["swipe-left"] && editHint.gestures == ["swipe-right"], "wrong default mapping")
 check(find(content, "voiceHint_confirm") == nil, "introduced a Tap/confirmation hint that was not in the existing panel")
-check(cancelHint.title.isEmpty && editHint.title.isEmpty, "function captions are still visible")
+check(cancelHint.title.isEmpty && editHint.title.isEmpty && polishHint.title.isEmpty, "function captions are still visible")
+check(polishHint.gestures == ["swipe-down"] && polishHint.functionAsset == "function-polish" && polishHint.action == nil,
+      "polish must remain a down-swipe hint routed by the host")
 
 func checkActionFit(_ count: Int, scale: CGFloat = 0.8) {
     content.layoutSubtreeIfNeeded()
-    let visible = [cancelHint, editHint].filter { !$0.isHidden }
+    let visible = [cancelHint, editHint, polishHint].filter { !$0.isHidden }
     check(visible.count == count, "fixture has the wrong visible action count")
     check(abs(content.bounds.height - 40 * scale) < 0.01, "action count changed the configured height")
     if let last = visible.last {
@@ -126,14 +129,16 @@ let oldCaret = NSRect(x: screen.midX - 150, y: screen.midY, width: 1, height: 20
 let newCaret = NSRect(x: screen.midX + 40, y: screen.midY - 70, width: 1, height: 20)
 session.update("扩写", final: false)
 palette.update(session)
-checkActionFit(2)
+checkActionFit(3)
 try capture("listening")
 check(cancelHint.toolTip?.contains("取消") == true && !cancelHint.isHidden && !editHint.isHidden, "listening hints do not follow existing availability")
+check(!polishHint.isHidden && polishHint.toolTip == "下滑 · 结束听写并润色本句", "listening is missing its polish hint")
 let snapshot = (session.phase, session.revision, session.raw)
 var reordered = VoiceHudBindings()
 reordered.apply(["undo": ["swipe-right", "snap"], "confirm": ["swipe-left"], "switch_mode": ["tap"]])
 palette.configureGestureHints(reordered)
 check(cancelHint.gestures == ["swipe-right", "snap"] && cancelHint.functionAsset == "function-cancel" && editHint.functionAsset == "function-edit" && editHint.gestures == ["tap"], "gesture and function cannot be recombined")
+check(polishHint.gestures == ["swipe-down"], "display remapping changed the reserved down-swipe hint")
 check(session.phase == snapshot.0 && session.revision == snapshot.1 && session.raw == snapshot.2, "display configuration changed the transaction")
 try capture("custom-bindings")
 var noUndoGesture = reordered
@@ -193,6 +198,17 @@ check(window.frame.size == processingSize, "unchanged action count resized the w
 checkActionFit(1)
 check(cancelHint.toolTip?.contains("还原听写") == true && editHint.isHidden, "settled hints imply unavailable editing")
 try capture("edited")
+let learnedState = (session.phase, session.revision, session.raw, client.text.string)
+palette.showLearnedHotwords(["张玮"])
+check(label.stringValue == "已收录 · 张玮" && label.toolTip?.contains("从下一句") == true, "missing automatic vocabulary notice")
+check(!cancelHint.isHidden && spinner.isHidden && !window.canBecomeKey, "vocabulary notice took focus or removed undo")
+check(session.phase == learnedState.0 && session.revision == learnedState.1 && session.raw == learnedState.2 && client.text.string == learnedState.3,
+      "vocabulary notice changed text or transaction")
+try capture("hotwords-learned")
+palette.showLearnedHotwords(["张玮", "Kubernetes"])
+check(label.stringValue == "已收录 2 个热词" && label.toolTip?.contains("Kubernetes") == true, "multiple words overflowed notice or lost detail")
+palette.update(session)
+check(!label.stringValue.contains("收录"), "new presentation retained old vocabulary notice")
 check(palette.needsPosition, "completed edit flag still blocks position refresh")
 palette.position(caret: newCaret, clientLevel: 0)
 check(window.frame.origin.x == newCaret.minX && window.frame.origin != oldOrigin,
@@ -235,8 +251,51 @@ check(!window.isKeyWindow && !window.isMainWindow, "palette took keyboard focus"
 check(NSWorkspace.shared.frontmostApplication?.processIdentifier == front, "unhiding activated the IME")
 readySession.update("下一句", final: false)
 palette.update(readySession)
-checkActionFit(2)
+checkActionFit(3)
 check(window.frame.size == listeningSize, "new available action did not restore panel width")
+palette.configureAppearance(large)
+checkActionFit(3, scale: 1.4)
+try capture("listening-large")
+palette.configureAppearance(VoiceHudAppearance())
+readySession.finish()
+palette.update(readySession)
+check(!polishHint.isHidden && polishHint.toolTip == "下滑 · 结束听写并润色本句", "final recognition wait lost the polish hint")
+readySession.update("下一句", final: true)
+palette.update(readySession)
+checkActionFit(2)
+check(!polishHint.isHidden && editHint.isHidden && polishHint.toolTip == "下滑 · 润色本句", "dictated text is missing its polish hint")
+try capture("dictated")
+readySession.polish(restoringRawOnUndo: true)
+palette.update(readySession)
+checkActionFit(1)
+check(polishHint.isHidden && !spinner.isHidden, "polishing still advertises another polish request")
+try capture("polishing")
+readySession.applyPolish(text: "下一句", revision: readySession.revision, error: nil)
+palette.update(readySession)
+checkActionFit(1)
+check(polishHint.isHidden && spinner.isHidden && label.stringValue == "已润色", "polished completion kept an unavailable hint")
+try capture("polished")
+palette.showSent()
+checkActionFit(0)
+check(label.stringValue == "已发送" && spinner.isHidden && !errorSymbol.isHidden,
+      "sent feedback retained an operation or error state")
+check(cancelHint.isHidden && editHint.isHidden && polishHint.isHidden, "sent feedback advertised stale actions")
+try capture("sent")
+let nextSession = try CompositionSession(client: PanelTextClient(), utteranceID: "after-sent", sequence: 1)
+palette.update(nextSession)
+check(label.stringValue == "听写 · 可以说话", "new session kept sent feedback")
 palette.hide()
 print("PASS hidden background process shows listening palette without taking focus")
-print("PASS zero, one and two actions fit without reserved space at every configured scale")
+let noticeFront = NSWorkspace.shared.frontmostApplication?.processIdentifier
+palette.showNotice("当前没有可以润色的文本")
+palette.position(caret: oldCaret, clientLevel: 0)
+check(label.stringValue == "当前没有可以润色的文本", "input notice was not displayed")
+checkActionFit(0)
+check(window.isVisible && !window.isKeyWindow && !window.isMainWindow, "notice took keyboard focus")
+check(NSWorkspace.shared.frontmostApplication?.processIdentifier == noticeFront, "notice activated the IME")
+palette.update(nextSession)
+check(label.stringValue == "听写 · 可以说话", "notice replaced the next input state")
+palette.hide()
+print("PASS input notices are passive and leave composition state intact")
+print("PASS listening and dictated palettes show the down-swipe polish hint until polishing")
+print("PASS zero through three actions fit without reserved space at every configured scale")

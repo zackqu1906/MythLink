@@ -1,6 +1,10 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Controls.Basic as Basic
+import QtQuick.Window
+import QtQuick.Effects
+import "GestureActionPresentation.js" as ActionPresentation
 
 Rectangle {
     id: editor
@@ -10,7 +14,7 @@ Rectangle {
     required property string gestureTitle
     required property string currentDescription
     required property bool applicationScope
-    UiTheme { id: theme }
+    FigmaTheme { id: theme }
     readonly property var catalog: service.catalog
     readonly property string bundle: catalog.selectedApp
     readonly property bool sceneScope: applicationScope && catalog.selectedScene !== "regular"
@@ -32,65 +36,133 @@ Rectangle {
         var bindings = service.profiles // Refresh when voice/source settings change.
         var scene = catalog.selectedScene
         var occupied = catalog.globalOccupancy
-        return applicationScope ? bundle.length > 0 && service.supported && catalog.canBind(gesture) : globalOptions.length > 0
+        return gesture.length > 0 && (applicationScope ? bundle.length > 0 && service.supported && catalog.canBind(gesture) : globalOptions.length > 0)
     }
     readonly property string applicationName: {
         var app = catalog.apps.filter(function(a) { return a.value === editor.bundle })[0]
         return app ? app.label : "尚未添加应用"
     }
-    readonly property var availableActions: applicationScope ? catalog.actions : globalOptions
+    readonly property var bindingActions: applicationScope ? catalog.actions : globalOptions
+    readonly property var availableActions: bindingActions.concat(ActionPresentation.systemShortcuts(Qt.platform.os).filter(function(preset) {
+        return !editor.bindingActions.some(function(action) { return ActionPresentation.presetFor(action, Qt.platform.os)?.id === preset.id })
+    }))
+    readonly property string scopeDescription: applicationScope
+        ? "生效范围：" + applicationName + " · " + catalog.selectedScopeLabel + "。选择系统组合键也不会改成全局绑定。"
+        : "生效范围：全局默认。应用或场景中的独立配置优先；共用手势在输入框内优先执行输入功能。"
+    function actionDescription(action) { return ActionPresentation.description(action, applicationScope, applicationName, Qt.platform.os) }
+    function isChosen(action) {
+        if (action.category) return false
+        if (selectedActionId === action.id) return true
+        var selection = draft || saved
+        return Boolean(action.keyboardPreset && selection && ActionPresentation.presetFor(selection, Qt.platform.os)?.id === action.id)
+    }
     readonly property var filteredActions: availableActions.filter(function(a) {
         var query = search.text.trim().toLowerCase()
-        return (a.label + " " + a.path + " " + a.shortcut).toLowerCase().indexOf(query) >= 0
+        var inCategory = category === "all" || (category === "shortcut" ? ActionPresentation.isKeyboard(a) : !ActionPresentation.isKeyboard(a))
+        return inCategory && (a.label + " " + a.path + " " + a.shortcut + " " + editor.actionDescription(a)).toLowerCase().indexOf(query) >= 0
     })
     readonly property var savedAction: saved ? availableActions.filter(function(a) { return a.id === editor.savedId })[0] || null : null
     readonly property string globalEffect: {
         var action = globalOptions.filter(function(a) { return a.id === editor.savedId })[0]
-        return action ? action.effect : "选择后自动保存并生效。"
+        return action ? action.effect : "选择功能后，点击保存更改。"
     }
     readonly property string savedStatus: {
         if (!saved) return ""
         if (sharedNavigation) return "浏览器所有场景共用 · 在默认配置中修改"
-        if (!applicationScope) return "全局生效 · 应用内不可覆盖此手势"
+        if (!applicationScope) return "应用映射优先 · 输入焦点仅影响冲突手势"
         if (savedAction && savedAction.preset === true) return savedAction.path + " · 可按应用设置自定义"
-        if (savedId.indexOf("custom:") === 0) return "自定义快捷键 · 请与目标应用中的设置保持一致"
+        if (ActionPresentation.presetFor(saved, Qt.platform.os)) return "macOS 系统组合键 · 如已改键，请录入实际组合键"
+        if (savedId.indexOf("custom:") === 0) return "自定义快捷键 · 按当前应用与场景范围生效"
         if (catalog.busy) return "正在核对快捷键…"
         if (catalog.menuState === "error" || catalog.menuState === "idle") return "尚未确认可用性 · 原绑定已保留"
         if (savedAction) return savedAction.available === true ? "上次读取时菜单可用"
             : savedAction.available === false ? "上次读取时菜单不可用" : "上次读取未能确认菜单状态"
         return catalog.menuState === "partial" ? "菜单未读全，暂未找到此快捷键" : "本次未找到此快捷键"
     }
+    signal voiceSettingsRequested()
     property string feedback: ""
     property bool feedbackError: false
+    // Drafts belong to an application/scene/gesture, so browsing never applies them.
+    property var drafts: ({})
+    readonly property var draft: drafts[contextKey] || null
+    readonly property string selectedActionId: draft ? draft.id : savedId
+    readonly property bool dirty: Boolean(draft) && (draft.id !== savedId || Boolean(pendingDefault) || draft.newCustom === true)
+    property string category: "all"
+    readonly property bool searching: search.text.trim().length > 0
+    readonly property var menuRows: {
+        if (searching) return filteredActions
+        if (category !== "all") return availableActions.filter(function(a) {
+            return a.id && (editor.category === "shortcut" ? ActionPresentation.isKeyboard(a) : !ActionPresentation.isKeyboard(a))
+        })
+        var rows = [{id:"",label:"未配置",path:applicationScope ? "移除应用覆盖，沿用默认配置" : "解除此手势的全局绑定",shortcut:""}]
+        rows.push({category:applicationScope ? "application" : "system",label:applicationScope ? "应用快捷键" : "系统功能"})
+        if (!applicationScope) rows.push({category:"voice",label:"语音操作"})
+        rows.push({category:"shortcut",label:"键盘快捷键"})
+        return rows
+    }
+    readonly property bool compact: width < 800
     objectName: "gestureActionEditor"
-    radius: 14; color: theme.surface; border.color: theme.line
-    implicitHeight: Math.max(664, body.implicitHeight + 40)
+    radius: 12; color: theme.surface; border.color: theme.line
+    implicitHeight: compact ? 134 : 82
+    function actionHint(action) {
+        if (!action) return ""
+        var id = action.id || ""
+        return catalog && catalog.isBrowser && (id.indexOf("web-video:") === 0 || id.indexOf("scene-default:music:") === 0)
+            ? "播放器控制" : (action.shortcut || "")
+    }
+    function replaceDraft(value) {
+        var next = Object.assign({}, drafts)
+        if (value) next[contextKey] = value
+        else delete next[contextKey]
+        drafts = next
+    }
+    function resetDraft() { replaceDraft(null); feedback = ""; feedbackError = false }
     function report(success) {
         feedbackError = !success
-        feedback = success ? "已自动保存" : (applicationScope ? catalog.message : service.notice || "此手势当前不可用，请重新选择")
+        feedback = success ? "已保存更改" : (applicationScope ? catalog.message : service.notice || "此手势当前不可用，请重新选择")
         return success
     }
     function choose(actionId) {
         if (!editable) return
-        if (actionId === savedId && !pendingDefault) return
-        report(applicationScope ? catalog.setBinding(bundle, gesture, actionId)
-                                : globalController.setGlobalGestureAction(gesture, actionId))
+        var action = availableActions.filter(function(a) { return a.id === actionId })[0]
+        if (!action && actionId !== "") { feedbackError = true; feedback = "此动作已不在当前菜单中，原绑定已保留。请刷新快捷键后重试。"; return }
+        replaceDraft(action && action.keyboardPreset ? Object.assign({}, action, {newCustom:true}) : action || {id:"", label:"未配置"})
+        feedback = ""; feedbackError = false
+        mappingMenu.close()
     }
     function chooseCustom(action) {
-        if (!applicationScope || !editable || !action.id) return false
-        return report(catalog.setCustomBinding(bundle, gesture, action.label, action.shortcut))
+        if (!editable || !action.id) return false
+        replaceDraft(Object.assign({}, action, {newCustom:true}))
+        feedback = ""; feedbackError = false
+        mappingMenu.close()
+        return true
+    }
+    function saveDraft() {
+        if (!editable || !dirty) return false
+        var value = draft
+        var success = value.newCustom
+            ? (applicationScope ? catalog.setCustomBinding(bundle, gesture, value.label, value.shortcut)
+                                : globalController.setGlobalCustomBinding(gesture, value.label, value.shortcut))
+            : (applicationScope ? catalog.setBinding(bundle, gesture, value.id)
+                                : globalController.setGlobalGestureAction(gesture, value.id))
+        if (report(success)) replaceDraft(null)
+        return success
     }
     Connections {
         target: editor.catalog
-        function onApplicationBindingsCleared(application) { if (application === editor.bundle) editor.feedback = "" }
+        function onApplicationBindingsCleared(application) {
+            var next = Object.assign({}, editor.drafts)
+            Object.keys(next).forEach(function(key) { if (key.indexOf(application + "/") === 0) delete next[key] })
+            editor.drafts = next
+            if (application === editor.bundle) editor.feedback = ""
+        }
     }
-    onContextKeyChanged: { search.text = ""; feedback = ""; customDialog.close() }
-    onApplicationScopeChanged: { feedback = ""; customDialog.close() }
-
+    onContextKeyChanged: { search.text = ""; category = "all"; feedback = ""; customDialog.close(); mappingMenu.close() }
+    onVisibleChanged: if (!visible) { mappingMenu.close(); customDialog.close() }
     CustomShortcutDialog {
         id: customDialog
         parent: Overlay.overlay
-        service: editor.service
+        service: editor.service; globalScope: !editor.applicationScope; deferredSave: true; scopeDescription: editor.scopeDescription
         width: Math.min(440, parent ? parent.width - 40 : 440)
         x: parent ? (parent.width - width) / 2 : 0
         y: parent ? Math.max(20, (parent.height - height) / 2) : 0
@@ -99,183 +171,130 @@ Rectangle {
             else customDialog.errorText = editor.feedback
         }
     }
-
-    ColumnLayout {
-        id: body
-        anchors.fill: parent; anchors.margins: 20; spacing: 14
-        RowLayout {
-            Layout.fillWidth: true
-            Label { text: "编辑映射"; font.pixelSize: 21; font.weight: Font.DemiBold; color: theme.text }
-            Item { Layout.fillWidth: true }
-            Label { text: "自动保存"; font.pixelSize: 11; color: theme.muted }
-        }
-        ColumnLayout {
-            Layout.fillWidth: true; spacing: 4
-            Label { text: editor.gestureTitle; font.pixelSize: 19; font.weight: Font.DemiBold; color: theme.text }
-            Label {
-                Layout.fillWidth: true
-                text: "作用范围：" + (editor.applicationScope ? editor.applicationName + " · " + catalog.selectedScopeLabel : "全局默认")
-                font.pixelSize: 12; color: theme.muted; elide: Text.ElideRight
+    Label {
+        id: selectedTitle
+        objectName: "selectedGestureTitle"
+        x: 21; y: editor.compact ? 16 : 25; height: 32
+        text: editor.gestureTitle || "请选择"; color: theme.text
+        font.family: theme.family; font.pixelSize: 22; font.weight: Font.Medium
+        verticalAlignment: Text.AlignVCenter
+    }
+    RowLayout {
+        id: fields
+        x: editor.compact ? 21 : selectedTitle.x + selectedTitle.width + 8
+        y: editor.compact ? 70 : 21
+        width: editor.width - x - 21; height: 40; spacing: 12
+        Basic.Button {
+            id: mappingField
+            objectName: "gestureMappingDropdown"
+            Layout.preferredWidth: 296; Layout.fillWidth: editor.compact; Layout.minimumWidth: 160; Layout.preferredHeight: 40
+            hoverEnabled: true; padding: 16; topPadding: 0; bottomPadding: 0
+            topInset: 0; bottomInset: 0
+            Accessible.name: "选择手势映射"
+            ToolTip.visible: hovered && Boolean(editor.draft || editor.saved)
+            ToolTip.delay: 450
+            ToolTip.text: {
+                var action = editor.draft || editor.saved
+                return action ? action.label + (editor.actionHint(action) ? " · " + editor.actionHint(action) : "") + "\n" + editor.actionDescription(action) : ""
             }
-        }
-        ColumnLayout {
-            Layout.fillWidth: true
-            visible: editor.editable
-            spacing: 10
-            Label { text: "绑定映射"; font.pixelSize: 14; font.weight: Font.DemiBold; color: theme.text }
-            UiTextField {
-                id: search
-                objectName: "menuActionSearch"
-                Layout.fillWidth: true; implicitHeight: 40
-                leftPadding: 38; rightPadding: 12
-                hintText: editor.applicationScope ? "搜索动作或快捷键" : "搜索全局功能"
-                font.pixelSize: 13; color: theme.text
-                background: Rectangle { radius: 7; color: theme.surface; border.color: search.activeFocus ? theme.primary : "#D2DBEB" }
-                UiIcon { x: 12; anchors.verticalCenter: parent.verticalCenter; width: 17; height: 17; symbol: "search"; ink: theme.muted }
+            onClicked: if (editor.editable) { search.text = ""; editor.category = "all"; mappingMenu.open() }
+            background: Rectangle { radius: 8; color: mappingField.down ? theme.selection : mappingField.hovered && editor.editable ? theme.subtle : theme.background; border.color: mappingMenu.visible || mappingField.visualFocus ? theme.primary : theme.line }
+            contentItem: RowLayout {
+                spacing: 8
+                Label { Layout.fillWidth: true; text: editor.draft ? (editor.draft.id ? editor.draft.label : "未配置") : editor.saved ? editor.saved.label : editor.pendingDefault || "未配置"; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text; elide: Text.ElideRight }
+                Image { Layout.preferredWidth: 16; Layout.preferredHeight: 16; source: "../assets/figma/redesign-567-33097-caret-down.svg" }
             }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: editor.applicationScope
-                Label { text: "应用快捷键"; color: theme.primary; font.pixelSize: 12 }
-                Label { text: catalog.actions.length + " 个快捷键"; color: theme.muted; font.pixelSize: 11 }
-                Item { Layout.fillWidth: true }
-                UiAction {
-                    objectName: "customShortcutButton"; text: "自定义"; quiet: true; implicitHeight: 30
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 600
-                    ToolTip.text: "为未列出的动作录入快捷键"
-                    onClicked: customDialog.open()
+            Basic.Popup {
+                id: mappingMenu
+                objectName: "gestureMappingMenu"
+                popupType: Popup.Item; parent: mappingField
+                width: Math.min(440, editor.Window.width - 48); height: Math.min(520, editor.Window.height - 80, menuBody.implicitHeight + 24)
+                // The mapping field sits at the bottom of the workbench. Open above it
+                // whenever the available window space cannot contain the anchored menu.
+                y: -height - 8
+                padding: 12; margins: 12; focus: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                background: Rectangle {
+                    radius: 12; color: theme.surface; border.color: theme.line
+                    layer.enabled: true
+                    layer.effect: MultiEffect { shadowEnabled: true; shadowBlur: 0.5; shadowOpacity: 0.25; shadowColor: "#7B8494"; shadowVerticalOffset: 0; shadowHorizontalOffset: 0 }
                 }
-                UiAction { objectName: "refreshMenuActionsButton"; text: catalog.busy ? "读取中…" : "刷新"; quiet: true; implicitHeight: 30; enabled: !catalog.busy; onClicked: catalog.refreshMenu() }
-            }
-            Rectangle {
-                Layout.fillWidth: true; implicitHeight: Math.min(252, Math.max(124, actions.count * 59 + 8))
-                radius: 8; color: theme.surface; border.color: "#D2DBEB"
-                ListView {
-                    id: actions
-                    objectName: "menuActionList"
-                    anchors.fill: parent; anchors.margins: 4
-                    clip: true; spacing: 3
-                    model: editor.applicationScope ? (editor.sharedNavigation ? [] : [{id: "", label: "无", path: editor.sceneScope ? "移除此场景的动作绑定" : "移除此手势的应用覆盖", shortcut: "", available: true}]).concat(editor.filteredActions) : editor.filteredActions
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
-                    delegate: AbstractButton {
-                        id: actionRow
-                        required property var modelData
-                        objectName: "menuAction_" + modelData.id
-                        width: actions.width; height: 56
-                        hoverEnabled: true
-                        enabled: !editor.applicationScope || !catalog.busy || modelData.custom === true || modelData.preset === true || !modelData.id
-                        checked: editor.savedId === modelData.id
-                        Accessible.name: modelData.path + " " + modelData.shortcut
-                        Accessible.role: Accessible.RadioButton
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 600
-                        ToolTip.text: modelData.path + (modelData.preset === true ? "（应用标准快捷键，可按实际设置自定义）" : modelData.custom === true ? "（以目标应用内的快捷键设置为准）" : modelData.available === false ? "（上次读取时菜单不可用，仍可保存绑定）"
-                            : modelData.available !== true ? "（菜单状态尚未确认）" : "")
-                        onClicked: editor.choose(modelData.id)
-                        background: Rectangle { radius: 7; color: actionRow.checked ? "#EDF3FF" : actionRow.hovered ? theme.subtle : "transparent" }
-                        contentItem: RowLayout {
-                            anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 10
-                            Rectangle {
-                                width: 18; height: 18; radius: 9
-                                color: actionRow.checked ? theme.primary : "white"
-                                border.color: actionRow.checked ? theme.primary : "#8A98AE"
-                                Rectangle { anchors.centerIn: parent; width: 6; height: 6; radius: 3; color: "white"; visible: actionRow.checked }
+                enter: Transition { NumberAnimation { property:"opacity"; from:0; to:1; duration:100 } }
+                exit: Transition { NumberAnimation { property:"opacity"; from:1; to:0; duration:80 } }
+                contentItem: ColumnLayout {
+                    id: menuBody
+                    spacing: 8
+                    FigmaAction { objectName: "gestureMenuBack"; visible: editor.category !== "all"; Layout.fillWidth: true; implicitHeight: 36; quiet: true; text:"返回全部功能"; onClicked: { editor.category="all"; search.text="" } }
+                    Label {
+                        objectName: "gestureMappingScopeDescription"
+                        Layout.fillWidth: true; text: editor.scopeDescription
+                        color: theme.muted; font.family: theme.family; font.pixelSize: 13; wrapMode: Text.Wrap
+                    }
+                    UiTextField {
+                        id: search
+                        objectName: "menuActionSearch"
+                        visible: true
+                        Layout.fillWidth: true; implicitHeight: 40
+                        hintText: editor.category === "application" ? "搜索应用功能或组合键" : editor.category === "shortcut" ? "搜索系统或录制快捷键" : "搜索功能或快捷键"; placeholderText: hintText; font.family: theme.family; font.pixelSize: 16
+                        leftPadding:16; color: theme.text
+                        background: Rectangle { radius:8; color:theme.background; border.color: search.activeFocus ? theme.primary : theme.line }
+                    }
+                    ListView {
+                        id: actions
+                        objectName: "menuActionList"
+                        Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: editor.category === "all" && !editor.searching ? contentHeight : Math.min(288, contentHeight); Layout.minimumHeight: count ? 76 : 0
+                        clip: true; spacing: 4; model: editor.menuRows
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        delegate: Basic.Button {
+                            id: actionRow
+                            required property var modelData
+                            objectName: modelData.category ? "gestureCategory_" + modelData.category : "menuAction_" + modelData.id
+                            width: actions.width; height: Math.max(76, rowContent.implicitHeight + 20); padding:12; topPadding:10; bottomPadding:10
+                            topInset:0; bottomInset:0; hoverEnabled:true
+                            enabled: Boolean(modelData.category) || !editor.applicationScope || !catalog.busy || modelData.custom === true || modelData.preset === true || modelData.keyboardPreset === true || !modelData.id
+                            opacity: enabled ? 1 : 0.45
+                            checked: editor.isChosen(modelData)
+                            Accessible.name: modelData.label + " " + editor.actionHint(modelData) + " " + editor.actionDescription(modelData)
+                            ToolTip.visible: hovered; ToolTip.delay:450
+                            ToolTip.text: modelData.label + (editor.actionHint(modelData) ? " · " + editor.actionHint(modelData) : "") + "\n" + editor.actionDescription(modelData)
+                            onClicked: {
+                                if (modelData.category === "voice") { mappingMenu.close(); editor.voiceSettingsRequested() }
+                                else if (modelData.category) editor.category = modelData.category
+                                else editor.choose(modelData.id)
                             }
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 3
-                                Label { Layout.fillWidth: true; text: modelData.label; color: theme.text; font.pixelSize: 13; elide: Text.ElideRight }
-                                Label { Layout.fillWidth: true; text: modelData.custom === true || modelData.preset === true ? modelData.path : modelData.available === false ? "菜单暂不可用 · " + modelData.path : modelData.available !== true ? "状态待确认 · " + modelData.path : modelData.path; color: theme.muted; font.pixelSize: 10; elide: Text.ElideRight }
+                            background: Rectangle { radius:8; color: actionRow.down || actionRow.checked ? theme.selection : actionRow.hovered ? theme.subtle : theme.surface; border.width: actionRow.visualFocus ? 1 : 0; border.color:theme.primary }
+                            contentItem: ColumnLayout {
+                                id: rowContent
+                                spacing: 4
+                                RowLayout {
+                                    Layout.fillWidth: true; spacing: 12
+                                    Label { Layout.fillWidth: true; text: modelData.label === "无" ? "未配置" : modelData.label; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; wrapMode: Text.Wrap }
+                                    Label { objectName: "menuActionShortcut_" + (modelData.id || modelData.category); visible: !modelData.category && text.length > 0; text: editor.actionHint(modelData); color: theme.primary; font.family: theme.family; font.pixelSize: 14; font.weight: Font.Medium }
+                                    FigmaIcon { visible: Boolean(modelData.category); symbol: "chevron-right"; Layout.preferredWidth: 16; Layout.preferredHeight: 16 }
+                                }
+                                Label {
+                                    objectName: "menuActionDescription_" + (modelData.id || modelData.category)
+                                    Layout.fillWidth: true; text: editor.actionDescription(modelData)
+                                    color: theme.muted; font.family: theme.family; font.pixelSize: 13; wrapMode: Text.Wrap
+                                }
                             }
-                            Label { text: modelData.shortcut; color: theme.muted; font.pixelSize: 11 }
                         }
+                    }
+                    FigmaAction {
+                        objectName: "customShortcutButton"
+                        visible: editor.category === "shortcut" || (editor.category === "all" && editor.searching)
+                        Layout.fillWidth: true; text: "录制自己的快捷键"; onClicked: { mappingMenu.close(); customDialog.open() }
+                    }
+                    FigmaAction { objectName:"refreshMenuActionsButton"; visible:editor.applicationScope && editor.category === "application"; Layout.fillWidth:true; text:catalog.busy ? "读取中…" : "刷新快捷键"; quiet:true; enabled:!catalog.busy; onClicked:catalog.refreshMenu() }
+                    Label {
+                        Layout.fillWidth: true; color:theme.muted; font.family:theme.family; font.pixelSize:14; wrapMode:Text.Wrap
+                        text: editor.searching && !actions.count ? (editor.category === "application" ? "没有匹配的应用功能。可刷新菜单，或返回后选择「键盘快捷键」自行录制。" : "没有匹配的功能，可录入自己的快捷键。") : editor.category === "shortcut" ? "Cmd = ⌘ · Ctrl = ⌃ · Alt = ⌥ · Shift = ⇧\n选择或录入后，点击保存更改生效。" : editor.category === "all" ? "按类别展开，或搜索名称、组合键和说明。" : editor.applicationScope ? catalog.message : "选择后点击保存更改"
                     }
                 }
             }
-            Label {
-                Layout.fillWidth: true
-                visible: (!editor.applicationScope || !catalog.busy) && editor.filteredActions.length === 0 && search.text.length > 0
-                text: editor.applicationScope ? "没有匹配的动作或快捷键" : "没有匹配的全局功能"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
-            }
-            UiNotice {
-                objectName: "menuReadMessage"
-                visible: editor.applicationScope
-                Layout.fillWidth: true; text: catalog.message
-                warning: catalog.menuState === "error" || catalog.menuState === "partial"
-                font.pixelSize: 11; wrapMode: Text.Wrap
-            }
         }
-        Rectangle {
-            Layout.fillWidth: true
-            visible: !editor.editable
-            implicitHeight: readOnlyContent.implicitHeight + 28
-            radius: 10; color: theme.subtle
-            ColumnLayout {
-                id: readOnlyContent
-                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 14; spacing: 10
-                Label {
-                    Layout.fillWidth: true
-                    text: editor.sharedSceneNavigation ? "浏览器通用绑定" : !editor.applicationScope ? (editor.voiceLocked ? "语音手势组" : "保留手势")
-                        : editor.anchorGesture ? "已被全局占用" : "尚未添加应用"
-                    font.weight: Font.DemiBold; color: theme.text; font.pixelSize: 14
-                }
-                Label {
-                    objectName: "selectedGestureDescription"
-                    Layout.fillWidth: true; text: editor.currentDescription + (editor.sharedSceneNavigation && editor.saved ? " · " + editor.saved.shortcut : ""); wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted
-                }
-                Label {
-                    Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 12; color: theme.muted
-                    text: editor.sharedSceneNavigation ? "所有场景沿用浏览器默认配置中的转圈绑定，不会被音量等场景动作覆盖。修改请切换到「默认配置」。" : !editor.applicationScope ? (editor.voiceLocked
-                        ? "Tap 和上下左右滑保留给语音输入，不能绑定全局功能。可在应用中覆盖；覆盖任意一个，该应用常规状态下停用整个语音手势组。"
-                        : "此手势用于切换输入法，不能绑定全局功能。")
-                        : editor.anchorGesture ? "当前用于「" + catalog.globalOccupancy[editor.gesture] + "」。请先在全局默认中更换该功能的手势，再设置应用绑定。"
-                        : "在上方栏目选择应用，查看它的菜单快捷键。"
-                }
-            }
-        }
-        Rectangle {
-            Layout.fillWidth: true; visible: editor.editable && Boolean(editor.saved)
-            implicitHeight: savedDetails.implicitHeight + 24
-            radius: 8; color: theme.subtle
-            ColumnLayout {
-                id: savedDetails
-                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                anchors.margins: 12; spacing: 6
-                Label {
-                    objectName: "savedMenuBinding"
-                    Layout.fillWidth: true
-                    text: "已保存：" + (editor.saved ? editor.saved.label + (editor.saved.shortcut ? " · " + editor.saved.shortcut : "") : "")
-                    font.pixelSize: 12; color: theme.text; wrapMode: Text.Wrap
-                }
-                Label {
-                    objectName: "savedMenuBindingStatus"
-                    Layout.fillWidth: true; text: editor.savedStatus
-                    font.pixelSize: 11; wrapMode: Text.Wrap
-                    color: (!editor.applicationScope || !catalog.busy) && editor.savedAction && editor.savedAction.available === true ? theme.success : theme.muted
-                }
-                Label {
-                    Layout.fillWidth: true
-                    visible: editor.applicationScope && editor.savedId.indexOf("custom:") !== 0 && !(editor.savedAction && editor.savedAction.preset === true) && !catalog.busy && (!editor.savedAction || editor.savedAction.available !== true)
-                    text: "原绑定仍保留。可在目标应用中打开相关窗口或菜单后刷新，也可重新选择动作。"
-                    font.pixelSize: 11; color: theme.muted; wrapMode: Text.Wrap
-                }
-            }
-        }
-        UiNotice {
-            objectName: "menuMappingFeedback"
-            Layout.fillWidth: true; visible: text.length > 0
-            text: editor.feedback
-            warning: editor.feedbackError
-            color: warning ? theme.warning : theme.success
-            font.pixelSize: 12; wrapMode: Text.Wrap
-        }
-        Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
-        Label {
-            objectName: "globalBindingEffect"
-            Layout.fillWidth: true; visible: !editor.applicationScope && editor.editable
-            text: editor.globalEffect; color: theme.muted
-            font.pixelSize: 12; wrapMode: Text.Wrap
-        }
-        Label { Layout.fillWidth: true; visible: editor.editable; text: !editor.applicationScope ? "全局功能优先生效，应用内会自动禁用被占用的手势。Tap 和四向滑动保留为语音组。" : editor.sceneScope ? "仅在前台识别到「" + catalog.selectedSceneLabel + "」、焦点不在文本框且语音空闲时生效。" : editor.voiceLocked ? "设置此覆盖后，该应用常规状态下停用整个语音手势组。其他应用不受影响。" : "输入模式与操作模式均可用，仅在目标应用位于前台时生效"; color: theme.muted; font.pixelSize: 11; wrapMode: Text.Wrap }
+        FigmaAction { objectName:"resetMenuMappingButton"; Layout.preferredWidth:112; Layout.preferredHeight:40; font.pixelSize:16; text:"还原"; onClicked:editor.resetDraft() }
+        FigmaAction { objectName:"saveMenuMappingButton"; Layout.preferredWidth:172; Layout.preferredHeight:40; font.pixelSize:16; primary:true; text:"保存更改"; enabled:editor.editable && editor.dirty; onClicked:editor.saveDraft() }
+        Item { visible:!editor.compact; Layout.fillWidth:true }
     }
 }

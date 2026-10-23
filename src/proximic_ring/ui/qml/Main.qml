@@ -6,10 +6,14 @@ import QtQuick.Window
 
 ApplicationWindow {
     id: root
-    width: 1440
-    height: 940
+    width: 1200
+    height: 780
     minimumWidth: 940
     minimumHeight: 700
+    readonly property bool unifiedTitlebar: Qt.platform.os === "osx"
+    flags: unifiedTitlebar
+           ? Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint
+           : Qt.Window
     visible: true
     title: "Mythlink"
     color: uiTheme.background
@@ -18,30 +22,49 @@ ApplicationWindow {
     Material.primary: uiTheme.primary
     Material.background: uiTheme.surface
     Material.foreground: uiTheme.text
-    readonly property string uiFontFamily: Qt.platform.os === "osx"
-                                           ? ".AppleSystemUIFont"
-                                           : "Microsoft YaHei UI"
+    readonly property string uiFontFamily: uiTheme.family
     font.family: uiFontFamily
 
 
-    UiTheme { id: uiTheme }
+    FigmaTheme { id: uiTheme }
     property int currentPage: 0
-    readonly property var pageTitles: ["我的 Ring", "语音输入", "场景与手势", "触摸板"]
-    readonly property int sidebarWidth: width < 1100 ? 180 : 218
+    // Keep association features implemented, but hide their UI surfaces.
+    readonly property bool associationUiVisible: false
+    readonly property var pageTitles: ["我的 Ring", "听写与编辑", "手势控制", "平面触控", "历史记录", "自动锁屏"]
+    property bool voiceNavigationExpanded: true
+    readonly property int sidebarWidth: 220
+    // ApplicationWindow keeps content below the native traffic lights via its
+    // safe-area padding; the two background surfaces extend behind them.
+    background: Rectangle {
+        color: uiTheme.background
+        Rectangle {
+            width: root.sidebarWidth
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+            color: uiTheme.sidebar
+        }
+    }
     function showVoice(history) {
-        currentPage = 1
-        Qt.callLater(function() {
-            if (history) mainPageScroll.scrollToHistory()
-            else mainPageScroll.contentItem.contentY = 0
-        })
+        voiceNavigationExpanded = true
+        currentPage = history ? 4 : 1
+        Qt.callLater(function() { mainPageScroll.contentItem.contentY = 0 })
+    }
+    function showPreferences(section) {
+        runtimeSettingsDialog.showSection(section)
+        runtimeSettingsDialog.open()
     }
     function showSettings(page) {
+        if (page === 9) { currentPage = 5; return }
+        if (page === 7) {
+            runtimeSettingsDialog.close()
+            currentPage = 2
+            return
+        }
         // Legacy service routes open the single advanced form.
         if (page === 4 || page === 5) {
             showAdvancedSettings(page)
             return
         }
-        runtimeSettingsDialog.open()
+        showPreferences(1)
         runtimeSettingsDialog.navigate(page)
     }
     function showAdvancedSettings(section) {
@@ -197,6 +220,16 @@ ApplicationWindow {
         appController.requestQuit()
     }
 
+    onVisibleChanged: if (!visible) appController.voicePractice.cancel()
+
+    onActiveChanged: {
+        if (!active) appController.voicePractice.cancel()
+        if (active) {
+            appController.inlineInput.refreshInputMethodVersion()
+            if (runtimeSettingsDialog.visible) appController.agent.refreshInstallation()
+        }
+    }
+
     Connections {
         target: appController
         function onDevicePickerRequested() {
@@ -205,92 +238,7 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
-        id: inputMethodSetupDialog
-        objectName: "inputMethodSetupDialog"
-        parent: Overlay.overlay
-        popupType: Popup.Item
-        title: "语音输入法设置"
-        anchors.centerIn: parent
-        width: Math.min(560, root.width - 48)
-        modal: true
-        Material.theme: Material.Light
-        background: Rectangle { color: root.panel; radius: 18; border.color: root.border }
-        Overlay.modal: Rectangle { color: "#99000000" }
-        standardButtons: Dialog.Close
-        closePolicy: appController.inlineInput.installing ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        onOpened: appController.inlineInput.permissions.refresh()
-        contentItem: ScrollView {
-            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
-            id: inputMethodSetupScroll
-            objectName: "inputMethodSetupScroll"
-            clip: true
-            contentWidth: availableWidth
-            implicitHeight: Math.min(inputMethodSetupContent.implicitHeight, root.height - 200)
-            ColumnLayout {
-            id: inputMethodSetupContent
-            width: inputMethodSetupScroll.availableWidth
-            spacing: 14
-            Label {
-                Layout.fillWidth: true
-                text: "1. 安装语音输入法"
-                color: root.textMain
-                font.bold: true
-            }
-            Label {
-                Layout.fillWidth: true
-                text: "首次使用点击安装即可。更新前请先切回拼音或 ABC。"
-                color: root.textMuted
-                wrapMode: Text.Wrap
-            }
-            RowLayout {
-                Button {
-                    objectName: "installInputMethodButton"
-                    text: appController.inlineInput.installing ? "正在安装…" : "安装／更新输入法"
-                    enabled: !appController.inlineInput.installing
-                    onClicked: appController.inlineInput.installInputMethod()
-                }
-                BusyIndicator {
-                    running: appController.inlineInput.installing
-                    visible: running
-                    Layout.preferredWidth: 28
-                    Layout.preferredHeight: 28
-                }
-            }
-            Label {
-                objectName: "inputMethodInstallationMessage"
-                Layout.fillWidth: true
-                text: appController.inlineInput.installationMessage
-                color: root.textMuted
-                wrapMode: Text.Wrap
-            }
-            PermissionNotice {
-                objectName: "inputMethodPermissionNotice"
-                Layout.fillWidth: true
-                message: appController.inlineInput.permissions.accessibilityWarningText
-                onActivated: appController.inlineInput.openAccessibilitySettings()
-            }
-            Label {
-                Layout.fillWidth: true
-                text: "2. 启用语音输入法"
-                color: root.textMain
-                font.bold: true
-            }
-            Label {
-                Layout.fillWidth: true
-                text: "在键盘设置的输入法列表中启用语音输入法。连接 Ring 并开启识别后，点入文本框再 Tap 即可开始听写。"
-                color: root.textMuted
-                wrapMode: Text.Wrap
-            }
-            Button {
-                text: "打开键盘设置"
-                onClicked: appController.inlineInput.openInputSettings()
-            }
-            }
-        }
-    }
-
-    Dialog {
+    FigmaDialog {
         id: devicePicker
         objectName: "devicePicker"
         parent: Overlay.overlay
@@ -311,7 +259,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 8
 
-                UiTextField {
+                FigmaTextField {
                     id: deviceSearchField
                     objectName: "deviceSearchField"
                     Layout.fillWidth: true
@@ -321,7 +269,7 @@ ApplicationWindow {
                     onTextEdited: appController.deviceSearch = text
                 }
 
-                Button {
+                FigmaAction {
                     text: "清除"
                     enabled: deviceSearchField.text.length > 0
                     onClicked: {
@@ -402,7 +350,7 @@ ApplicationWindow {
                                 }
                             }
 
-                            Button {
+                            FigmaAction {
                                 id: connectButton
                                 text: "连接"
                                 enabled: !appController.busy
@@ -419,12 +367,12 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
-                Button {
+                FigmaAction {
                     text: appController.scanBusy ? "扫描中…" : "重新扫描"
                     enabled: !appController.scanBusy && !appController.busy
                     onClicked: appController.scanDevices()
                 }
-                Button {
+                FigmaAction {
                     text: "取消"
                     onClicked: devicePicker.close()
                 }
@@ -432,29 +380,34 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
+    SettingsDialog {
         id: gpuInstallDialog
         objectName: "gpuInstallDialog"
-        parent: Overlay.overlay
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
-        width: Math.min(500, parent.width - 48)
-        implicitHeight: 210
-        modal: true
-        popupType: Popup.Item
+        width: Math.min(560, parent.width - 48)
+        height: Math.min(340, parent.height - 48)
         title: "安装 NVIDIA GPU 加速"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        subtitle: "为本地语音识别安装 GPU 运行环境。"
+        symbol: "tool"
         onAccepted: appController.installGpuSupport()
-
         contentItem: Label {
+            leftPadding: 28; rightPadding: 28; topPadding: 24; bottomPadding: 24
             text: "安装需要下载数 GB 文件。应用将退出并打开独立安装窗口；安装验证成功后会自动重新启动。是否继续？"
-            color: root.textMain
-            font.pixelSize: 13
+            color: root.textMain; font.pixelSize: 13; lineHeight: 1.4
             wrapMode: Text.Wrap
+        }
+        footer: DialogButtonBox {
+            leftPadding: 28; rightPadding: 28; topPadding: 16; bottomPadding: 20; spacing: 12
+            background: Rectangle {
+                radius: 20; color: uiTheme.surface
+                Rectangle { anchors.top: parent.top; width: parent.width; height: 20; color: parent.color }
+                Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: uiTheme.line }
+            }
+            FigmaAction { text: "取消"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+            FigmaAction { text: "安装"; primary: true; DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
         }
     }
 
-    Dialog {
+    FigmaDialog {
         id: runtimeLogDialog
         objectName: "runtimeLogDialog"
         parent: Overlay.overlay
@@ -492,7 +445,7 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             spacing: 12
 
-            ScrollView {
+            UiScrollView {
                 ScrollBar.vertical.policy: ScrollBar.AlwaysOff
                 id: logScroll
                 objectName: "logScroll"
@@ -572,26 +525,33 @@ ApplicationWindow {
 
             RowLayout {
                 Layout.fillWidth: true
-                Button {
+                FigmaAction {
                     objectName: "exportDiagnosticLogButton"
                     text: "导出完整日志"
                     onClicked: appController.exportDiagnosticLog()
                 }
-                Button {
+                FigmaAction {
                     objectName: "openDiagnosticLogDirectoryButton"
                     text: "打开日志目录"
                     onClicked: appController.openDiagnosticLogDirectory()
                 }
                 Item { Layout.fillWidth: true }
-                Button {
+                FigmaAction {
                     objectName: "jumpToLatestLogButton"
                     text: "跳到最新"
                     onClicked: logArea.jumpToLatest()
                 }
-                Button { text: "清空窗口"; onClicked: appController.clearLog() }
-                Button { text: "关闭"; onClicked: runtimeLogDialog.close() }
+                FigmaAction { text: "清空窗口"; onClicked: appController.clearLog() }
+                FigmaAction { text: "关闭"; onClicked: runtimeLogDialog.close() }
             }
         }
+    }
+
+    UiWindowDragArea {
+        objectName: "mainWindowDragArea"
+        parent: root.background
+        anchors.fill: parent
+        z: -1
     }
 
     Rectangle {
@@ -601,68 +561,143 @@ ApplicationWindow {
         anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.left: parent.left
         color: uiTheme.sidebar
         ColumnLayout {
-            anchors.fill: parent; anchors.margins: 16; spacing: 10
+            anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20
+            anchors.topMargin: 24; anchors.bottomMargin: 16; spacing: 8
             Image {
                 objectName: "mythlinkLogo"
-                Layout.topMargin: 22; Layout.leftMargin: 6; Layout.bottomMargin: 38
-                Layout.preferredWidth: Math.min(162, sidebar.width - 44)
-                Layout.preferredHeight: Layout.preferredWidth * 31.4473 / 162
-                source: "../assets/figma/mythlink-logo.svg"
-                sourceSize.width: Math.ceil(width * Screen.devicePixelRatio)
-                fillMode: Image.PreserveAspectFit
+                Layout.topMargin: 8; Layout.bottomMargin: 16
+                Layout.preferredWidth: 168; Layout.preferredHeight: 32.6123
+                source: "../assets/figma/redesign-383-9247-brand.svg"
                 Accessible.name: "Mythlink"
             }
-            Repeater {
-                model: [{label: "首页", icon: "home", page: 0}, {label: "语音输入", icon: "voice", page: 1}, {label: "触摸板", icon: "pointer", page: 3}, {label: "场景与手势", icon: "gesture", page: 2}]
-                delegate: AbstractButton {
-                    required property int index
-                    required property var modelData
-                    objectName: "mainNav" + modelData.page
-                    Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.maximumWidth: sidebar.width - 32; implicitHeight: 48
-                    hoverEnabled: true
-                    Accessible.name: modelData.label
-                    checked: root.currentPage === modelData.page
-                    onClicked: root.currentPage = modelData.page
-                    background: Rectangle { radius: 10; color: parent.checked ? uiTheme.selection : parent.hovered ? "#E6E9F3" : "transparent"; border.color: parent.activeFocus ? uiTheme.primary : "transparent" }
-                    contentItem: RowLayout {
-                        anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 12; spacing: 13
-                        UiIcon { Layout.preferredWidth: 21; Layout.preferredHeight: 21; symbol: modelData.icon; ink: uiTheme.text }
-                        Label { Layout.fillWidth: true; text: modelData.label; color: uiTheme.text; font.pixelSize: 16; font.weight: root.currentPage === modelData.page ? Font.DemiBold : Font.Normal }
-                    }
+            FigmaNavItem { objectName: "mainNav0"; Layout.fillWidth: true; text: "首页"; symbol: "home"; checked: root.currentPage === 0; onClicked: root.currentPage = 0 }
+            FigmaNavItem { objectName: "mainNav2"; Layout.fillWidth: true; text: "手势控制"; symbol: "gesture"; checked: root.currentPage === 2; onClicked: root.currentPage = 2 }
+            FigmaNavItem { objectName: "voiceNavigationGroup"; Layout.fillWidth: true; text: "语音输入"; symbol: "mic"; disclosure: true; expanded: root.voiceNavigationExpanded; onClicked: root.voiceNavigationExpanded = !root.voiceNavigationExpanded }
+            Item {
+                visible: root.voiceNavigationExpanded
+                Layout.fillWidth: true; Layout.preferredHeight: 92
+                Column {
+                    anchors.fill: parent; spacing: 4
+                    FigmaNavItem { objectName: "mainNav1"; width: parent.width; text: "听写与编辑"; childRoute: true; checked: root.currentPage === 1; onClicked: root.showVoice(false) }
+                    FigmaNavItem { objectName: "mainNav4"; width: parent.width; text: "历史记录"; childRoute: true; checked: root.currentPage === 4; onClicked: root.showVoice(true) }
                 }
+                Image { x: 0; y: 0; source: "../assets/figma/redesign-383-9247-tree-ends-at-last-voice-child.svg" }
             }
+            FigmaNavItem { objectName: "mainNav3"; Layout.fillWidth: true; text: "平面触控"; symbol: "pointer"; checked: root.currentPage === 3; onClicked: root.currentPage = 3 }
+            FigmaNavItem { objectName: "mainNav5"; Layout.fillWidth: true; text: "自动锁屏"; symbol: "lock"; checked: root.currentPage === 5; onClicked: root.currentPage = 5 }
             Item { Layout.fillHeight: true }
-            Rectangle { Layout.fillWidth: true; height: 1; color: uiTheme.line }
-            RowLayout {
-                Layout.fillWidth: true; spacing: 4
-                UiAction { objectName: "contactButton"; text: ""; symbol: "mail"; quiet: true; Accessible.name: "联系我们"; onClicked: contactDialog.open(); ToolTip.visible: hovered; ToolTip.text: "联系我们" }
-                Item { Layout.fillWidth: true }
-                UiAction { objectName: "runtimeSettingsButton"; text: ""; symbol: "settings"; quiet: true; Accessible.name: "设置"; onClicked: runtimeSettingsDialog.open(); ToolTip.visible: hovered; ToolTip.text: "设置" }
-                UiAction { objectName: "helpButton"; text: ""; symbol: "help"; quiet: true; Accessible.name: "帮助"; onClicked: helpDialog.open(); ToolTip.visible: hovered; ToolTip.text: "帮助" }
+            Item {
+                objectName: "sidebarUtilityBar"
+                Layout.fillWidth: true; Layout.preferredHeight: 44
+                Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: uiTheme.line }
+                FigmaAction {
+                    objectName: "sidebarAccountButton"; symbol: "account"; quiet: true
+                    anchors.left: parent.left; anchors.leftMargin: 6
+                    width: 32; height: 44
+                    Accessible.name: "账户"; onClicked: root.showPreferences(0)
+                }
+                Row {
+                    anchors.right: parent.right; anchors.rightMargin: 6; height: 44; spacing: 0
+                    FigmaAction { objectName: "runtimeSettingsButton"; symbol: "settings"; quiet: true; width: 32; height: 44; Accessible.name: "设置"; onClicked: root.showPreferences(1) }
+                    FigmaAction { objectName: "helpButton"; symbol: "help"; quiet: true; width: 32; height: 44; Accessible.name: "帮助"; onClicked: root.showPreferences(2) }
+                }
             }
         }
     }
+
     Item {
         id: workspace
         anchors.left: sidebar.right; anchors.right: parent.right
         anchors.top: parent.top; anchors.bottom: parent.bottom
-        anchors.leftMargin: root.width < 1100 ? 24 : 40
-        anchors.rightMargin: root.width < 1100 ? 24 : 40
+        anchors.leftMargin: 24
+        anchors.rightMargin: 24
         Item {
             id: pageHeader
+            objectName: "mainPageHeader"
             anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
-            height: 108
+            height: (root.currentPage === 1 || root.currentPage === 2) ? 104 - root.topPadding : 76
             Column {
-                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; spacing: 5
-                Label { text: root.pageTitles[root.currentPage]; color: uiTheme.text; font.pixelSize: 32; font.weight: Font.Bold }
-                Label { text: root.currentPage === 0 ? (appController.deviceName || "连接你的 Ring，开始使用") : root.currentPage === 1 ? "说话完成输入与修改，回顾每一次语音记录" : root.currentPage === 3 ? (appController.touchpad.inputMode === "stroke" ? "用 Ring 书写笔画，选择候选字完成输入" : "让 Ring 成为你的触摸板，直接控制系统指针") : "查看手势与应用操作的对应关系"; color: uiTheme.muted; font.pixelSize: 12 }
+                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                anchors.verticalCenterOffset: (root.currentPage === 1 || root.currentPage === 2) ? 2 - root.topPadding / 2 : 0
+                width: Math.max(200, parent.width - 220); spacing: 0
+                Label { height: (root.currentPage === 1 || root.currentPage === 2) ? 36 : implicitHeight; verticalAlignment: Text.AlignVCenter; text: root.pageTitles[root.currentPage]; color: uiTheme.text; font.pixelSize: 28; font.weight: Font.Bold }
+                Label {
+                    visible: root.currentPage !== 0
+                    height: (root.currentPage === 1 || root.currentPage === 2) ? 24 : implicitHeight
+                    verticalAlignment: Text.AlignVCenter
+                    width: parent.width; elide: Text.ElideRight
+                    text: root.currentPage === 2 ? "为不同场景配置戒指手势" : root.currentPage === 1 ? "语音手势、热词与输入测试" : root.currentPage === 3 ? "光标偏好调节，笔画输入测试" : root.currentPage === 4 ? "查找听写与修改的结果" : root.currentPage === 5 ? "离开后锁屏，靠近后响指解锁" : "查看手势与应用操作的对应关系"
+                    color: uiTheme.muted; font.pixelSize: (root.currentPage === 1 || root.currentPage === 2) ? 16 : 14
+                }
             }
-            RowLayout {
-                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 8
-                Rectangle { width: 7; height: 7; radius: 4; color: appController.connected ? uiTheme.success : "#9AA3B6" }
-                Label { text: appController.connected ? "Ring 已连接" : "未连接设备"; color: uiTheme.muted; font.pixelSize: 12 }
+            FigmaAction {
+                objectName: "accountEntryButton"
+                visible: root.currentPage === 0
+                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                width: 212; height: 48; quiet: true; leftPadding: 0; rightPadding: 0
+                Accessible.name: appController.localProfile.signedIn ? "查看账户" : "登录"
+                onClicked: root.showPreferences(0)
+                contentItem: RowLayout {
+                    spacing: 8
+                    Column {
+                        Layout.preferredWidth: 164; Layout.alignment: Qt.AlignVCenter; spacing: 0
+                        Label {
+                            objectName: "accountHeaderName"
+                            width: parent.width; height: 24
+                            text: appController.localProfile.signedIn ? (appController.localProfile.displayName || "我的账户") : "登录"
+                            font.family: uiTheme.family; font.pixelSize: 16; font.weight: Font.Medium
+                            color: uiTheme.text; horizontalAlignment: Text.AlignRight; verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight; textFormat: Text.PlainText
+                        }
+                        Label {
+                            objectName: "accountHeaderEmail"
+                            width: parent.width; height: 22
+                            text: appController.localProfile.signedIn ? (appController.localProfile.email || "未填写邮箱") : "填写用户名和邮箱"
+                            font.family: uiTheme.family; font.pixelSize: 14; font.weight: Font.Normal
+                            color: uiTheme.muted; horizontalAlignment: Text.AlignRight; verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight; textFormat: Text.PlainText
+                        }
+                    }
+                    Image { Layout.preferredWidth: 40; Layout.preferredHeight: 40; source: "../assets/figma/redesign-383-9247-generic-avatar.svg" }
+                }
+            }
+            FigmaAction {
+                id: deviceEntry
+                objectName: "headerDeviceEntry"
+                visible: root.currentPage !== 0
+                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                anchors.verticalCenterOffset: (root.currentPage === 1 || root.currentPage === 2) ? 2 - root.topPadding / 2 : 0
+                implicitWidth: (root.currentPage === 1 || root.currentPage === 2) ? 208 : Math.max(129, implicitContentWidth + leftPadding + rightPadding)
+                implicitHeight: (root.currentPage === 1 || root.currentPage === 2) ? 48 : 36
+                font.pixelSize: (root.currentPage === 1 || root.currentPage === 2) ? 14 : 16
+                font.weight: (root.currentPage === 1 || root.currentPage === 2) ? Font.Normal : Font.Medium
+                leftPadding: (root.currentPage === 1 || root.currentPage === 2) ? 12 : 20
+                symbol: "ring"; navigation: true; quiet: true
+                text: (appController.deviceName || "Ring") + "  " + (appController.connected ? "已连接" : appController.busy ? "连接中" : "未连接")
+                onClicked: root.currentPage = 0
+                contentItem: RowLayout {
+                    spacing: (root.currentPage === 1 || root.currentPage === 2) ? 12 : 4
+                    FigmaIcon { symbol: "ring"; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
+                    RowLayout {
+                        Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 6
+                        Label {
+                            Layout.fillWidth: root.currentPage !== 1 && root.currentPage !== 2; Layout.minimumWidth: 0
+                            text: (root.currentPage === 1 || root.currentPage === 2) ? (appController.deviceName || "Ring") : deviceEntry.text
+                            font.family: deviceEntry.font.family; font.pixelSize: deviceEntry.font.pixelSize; font.weight: Font.Medium
+                            color: (root.currentPage === 1 || root.currentPage === 2) ? uiTheme.text : uiTheme.muted
+                            horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+                        }
+                        Label {
+                            visible: (root.currentPage === 1 || root.currentPage === 2); Layout.fillWidth: true
+                            text: appController.connected ? "已连接" : appController.busy ? "连接中" : "未连接"
+                            font.family: uiTheme.family; font.pixelSize: 14; color: uiTheme.muted
+                        }
+                    }
+                    FigmaIcon { symbol: "chevron-right"; Layout.preferredWidth: 16; Layout.preferredHeight: 16 }
+                }
             }
         }
+
         Item {
             id: pageBody
             anchors.top: pageHeader.bottom; anchors.bottom: parent.bottom
@@ -672,8 +707,11 @@ ApplicationWindow {
                 visible: root.currentPage === 0
                 controller: appController
                 onVoiceRequested: function(history) { root.showVoice(history) }
+                onDeleteHistoryRequested: function(record) { mainPageScroll.requestHistoryDelete(record) }
                 onGesturesRequested: root.currentPage = 2
-                onHelpRequested: helpDialog.open()
+                onTouchpadRequested: root.currentPage = 3
+                onHelpRequested: root.showPreferences(2)
+                onTutorialRequested: tutorialPreview.open()
                 onDevicePickerRequested: appController.requestDevicePicker()
                 onConnectionRequested: {
                     if (appController.connected) appController.disconnectDevice()
@@ -685,55 +723,13 @@ ApplicationWindow {
                 anchors.fill: parent
                 visible: root.currentPage === 2
                 controller: appController
+                onVoiceSettingsRequested: mainPageScroll.scrollToGestures()
             }
         }
     }
-    Dialog {
-        id: contactDialog
-        objectName: "contactDialog"
-        parent: Overlay.overlay
-        popupType: Popup.Item
-        anchors.centerIn: parent
-        width: Math.min(480, root.width - 48)
-        modal: true
-        title: "联系我们"
-        property bool copied: false
-        property bool emailCopied: false
-        onOpened: { copied = false; emailCopied = false }
-        footer: Item {
-            implicitHeight: 58
-            UiAction {
-                anchors { right: parent.right; bottom: parent.bottom; margins: 16 }
-                text: "关闭"; quiet: true
-                onClicked: contactDialog.close()
-            }
-        }
-        background: Rectangle { color: uiTheme.surface; radius: 16; border.color: uiTheme.line }
-        contentItem: ColumnLayout {
-            spacing: 16
-            Label { Layout.fillWidth: true; text: "让 Mythlink 更好用"; font.pixelSize: 18; font.bold: true; color: uiTheme.text }
-            Label { Layout.fillWidth: true; text: "欢迎向我们反馈使用中遇到的问题，也欢迎分享你的想法和建议。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            RowLayout {
-                Layout.fillWidth: true
-                Label { Layout.fillWidth: true; text: appController.inlineInput.permissions.contactEmail; color: uiTheme.primary; font.pixelSize: 16; wrapMode: Text.WrapAnywhere }
-                UiAction {
-                    objectName: "copyContactEmailButton"
-                    text: contactDialog.emailCopied ? "已复制" : "复制邮箱"; quiet: true
-                    onClicked: contactDialog.emailCopied = appController.inlineInput.permissions.copyContactEmail()
-                }
-            }
-            Label { Layout.fillWidth: true; text: "反馈问题时，可以附上使用的应用、操作步骤和截图，方便我们了解具体情况。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            UiAction {
-                objectName: "copyContactAppInfoButton"
-                text: contactDialog.copied ? "已复制应用信息" : "复制应用信息"
-                onClicked: contactDialog.copied = appController.inlineInput.permissions.copyAppInfo()
-            }
-            Label { Layout.fillWidth: true; text: "应用信息包含版本号和系统版本，方便反馈时附上。"; wrapMode: Text.Wrap; color: uiTheme.muted; font.pixelSize: 12 }
-        }
-    }
-    Dialog {
-        id: helpDialog
-        objectName: "helpDialog"
+    FigmaDialog {
+        id: helpCenterDialog
+        objectName: "helpCenterDialog"
         parent: Overlay.overlay
         anchors.centerIn: parent
         width: Math.min(560, root.width - 48)
@@ -749,11 +745,20 @@ ApplicationWindow {
             Label { Layout.fillWidth: true; text: "连接 Ring 并开启语音识别。点入文本框后，使用当前配置的语音手势开始输入；语音输入页可查看记录。"; wrapMode: Text.Wrap; color: uiTheme.muted }
             Label { Layout.fillWidth: true; text: "鼠标控制"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
             Label { Layout.fillWidth: true; text: "在触摸板页开启鼠标控制，通过戒指触摸板移动指针和轻触点击，并调整指针速度。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            Label { Layout.fillWidth: true; text: "场景与手势"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
-            Label { Layout.fillWidth: true; text: "Tap 与四向滑动组成语音手势组。应用覆盖其中任意一个后，该应用常规状态下停用整组语音操作。放映、阅读和播放等场景独立配置；全局功能占用的手势会在应用内置灰。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            UiAction { Layout.alignment: Qt.AlignLeft; text: "输入法与权限设置"; onClicked: { helpDialog.close(); inputMethodSetupDialog.open() } }
-            UiAction { objectName: "runtimeLogButton"; Layout.alignment: Qt.AlignLeft; text: "故障排查 · 实时日志"; onClicked: { helpDialog.close(); runtimeLogDialog.open() } }
+            Label { Layout.fillWidth: true; text: "手势控制"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
+            Label { Layout.fillWidth: true; text: "默认双击 Tap 开始语音、单击 Tap 结束语音。仅与输入手势重叠时，输入框内优先执行输入功能；其他手势按应用优先、全局兜底执行。语音处理期间仍可取消本次操作。"; wrapMode: Text.Wrap; color: uiTheme.muted }
+            Label { Layout.fillWidth: true; text: "输入法安装与系统授权统一在“设置 → 系统与权限”中管理。"; wrapMode: Text.Wrap; color: uiTheme.muted }
         }
+    }
+
+    ReleaseNotesDialog { id: releaseNotesDialog; objectName: "releaseNotesDialog"; appVersion: appController.appVersion }
+    TutorialPreviewDialog {
+        id: tutorialPreview
+        controller: appController
+        onHomeRequested: { root.currentPage = 0; close() }
+        onSettingsRequested: { close(); root.showSettings(6) }
+        onVoiceRequested: { root.showVoice(false); close() }
+        onGesturesRequested: { root.currentPage = 2; close() }
     }
 
     TouchpadPage {
@@ -766,12 +771,22 @@ ApplicationWindow {
 
     VoicePage {
         id: mainPageScroll
+        associationUiVisible: root.associationUiVisible
         parent: pageBody
-        visible: root.currentPage === 1
+        visible: root.currentPage === 1 || root.currentPage === 4
+        historyOnly: root.currentPage === 4
         anchors.fill: parent
         controller: appController
         onHomeRequested: root.currentPage = 0
-        onInputSetupRequested: inputMethodSetupDialog.open()
+        onHistoryRequested: root.showVoice(true)
+        onTutorialRequested: tutorialPreview.open()
+    }
+
+    LockPage {
+        parent: pageBody; anchors.fill: parent
+        visible: root.currentPage === 5
+        controller: appController
+        onSettingsRequested: root.showSettings(6)
     }
 
         AdvancedSettingsDialog {
@@ -780,7 +795,7 @@ ApplicationWindow {
             onGpuSetupRequested: gpuInstallDialog.open()
             onClosed: {
                 if (root.visible) {
-                    runtimeSettingsDialog.open()
+                    root.showPreferences(1)
                     Qt.callLater(function() {
                         runtimeSettingsScroll.contentItem.contentY = advancedSettingsDialog.returnScrollPosition
                     })
@@ -788,33 +803,58 @@ ApplicationWindow {
             }
         }
 
-        Dialog {
+        PreferencesDialog {
             id: runtimeSettingsDialog
             objectName: "runtimeSettingsDialog"
-            parent: Overlay.overlay
-            x: Math.round((parent.width - width) / 2)
-            y: Math.round((parent.height - height) / 2)
-            width: Math.min(820, parent.width - 48)
-            height: Math.min(860, parent.height - 48)
-            modal: true
-            popupType: Popup.Item
             property int currentPage: 0
             readonly property var pageTitles: ["设置", "输入与控制", "手势说明", "麦克风与语音", "语音识别服务", "文本处理服务", "系统与权限", "应用快捷键", "微信快捷键设置", "离开锁屏"]
-            title: pageTitles[currentPage]
-            Overlay.modal: Rectangle { color: "#99000000" }
-            header: Label {
-                text: runtimeSettingsDialog.title
-                leftPadding: 24; rightPadding: 24; topPadding: 22; bottomPadding: 14
-                color: root.textMain; font.pixelSize: 28; font.bold: true
+            title: section === 0 ? accountPage.title : section === 2 ? "帮助" : pageTitles[currentPage]
+            section: 1
+            showBack: section === 1 && currentPage !== 0
+            backObjectName: "settingsBackButton"
+            closeObjectName: "settingsApplyButton"
+            onBackRequested: goBack()
+            onCloseRequested: applyAndClose()
+            onAccountRequested: showSection(0)
+            onHelpRequested: showSection(2)
+            onSettingsRequested: {
+                showSection(1)
+                settingsOverview.expandedSection = ""
+                navigate(0)
             }
-            enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 100 } }
-            exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
             onClosed: {
                 appController.appGestures.recording = false
                 appController.inlineInput.permissions.cancelScreenPreview()
             }
-            onAboutToShow: navigate(0)
-            onOpened: appController.refreshMicrophones()
+
+            onOpened: {
+                if (section === 0) accountPage.focusEditor()
+                refreshStatus()
+            }
+            function refreshStatus() {
+                appController.agent.refreshInstallation()
+                appController.startup.refresh()
+                appController.refreshMicrophones()
+                appController.inlineInput.refreshInputMethodVersion()
+                appController.inlineInput.permissions.refresh()
+                appController.inlineInput.permissions.refreshScreenRecording()
+            }
+            function showSection(nextSection) {
+                // Keep the popup and dimmer mounted while changing pages.
+                if (opened && section === nextSection) return
+                saveCurrentEditor()
+                appController.appGestures.recording = false
+                appController.inlineInput.permissions.cancelScreenPreview()
+                section = nextSection
+                if (section === 0) {
+                    accountPage.resetDraft()
+                    if (visible) accountPage.focusEditor()
+                } else if (section === 1) {
+                    settingsOverview.expandedSection = ""
+                    navigate(0)
+                    if (visible) refreshStatus()
+                }
+            }
             closePolicy: Popup.CloseOnEscape
             readonly property bool deviceSettingsLocked:
                 appController.connected || appController.busy
@@ -825,13 +865,6 @@ ApplicationWindow {
             function thresholdForSensitivity(sensitivity) {
                 return 0.05 * Math.pow(0.02, (Number(sensitivity) - 1) / 9)
             }
-            background: Rectangle {
-                radius: 18
-                color: "#FFFFFF"
-                border.width: 1
-                border.color: "#E1E5F0"
-            }
-
             function navigate(page) {
                 // A ScrollView is a focus scope and can retain its editor's
                 // focus. Focus the plain container so pending edits are saved.
@@ -840,10 +873,16 @@ ApplicationWindow {
                 if (page !== 6)
                     appController.inlineInput.permissions.cancelScreenPreview()
                 // Former audio/input detail routes now land on the grouped form.
-                currentPage = page === 1 || page === 3 ? 0 : page
+                currentPage = page === 1 || page === 3 || page === 6 ? 0 : page
+                if (page === 6) settingsOverview.expandedSection = ""
                 if (page === 6 && Qt.platform.os === "osx")
                     appController.inlineInput.permissions.refreshScreenRecording()
-                Qt.callLater(function() { runtimeSettingsScroll.contentItem.contentY = 0 })
+                Qt.callLater(function() {
+                    var flick = runtimeSettingsScroll.contentItem
+                    flick.contentY = page === 6
+                        ? Math.min(settingsOverview.y + settingsOverview.permissionsPosition,
+                                   Math.max(0, flick.contentHeight - flick.height)) : 0
+                })
             }
             function goBack() {
                 if (currentPage === 0) close()
@@ -861,50 +900,61 @@ ApplicationWindow {
                 settingsContent.forceActiveFocus(Qt.OtherFocusReason)
             }
 
-            contentItem: ColumnLayout {
+            contentItem: Item {
                 id: settingsContent
-                spacing: 12
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: runtimeSettingsDialog.currentPage !== 0
-                    Button {
-                        objectName: "settingsBackButton"
-                        text: "返回"
-                        onClicked: runtimeSettingsDialog.goBack()
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: runtimeSettingsDialog.currentPage >= 7 && runtimeSettingsDialog.currentPage <= 8 ? "场景与手势 / 应用快捷键" : "设置"
-                        color: root.textMuted; font.pixelSize: 12
-                        elide: Text.ElideLeft
-                    }
+                AccountPreferencesPage {
+                    id: accountPage
+                    anchors.fill: parent
+                    visible: runtimeSettingsDialog.section === 0
+                    profile: appController.localProfile
+                    onCloseRequested: runtimeSettingsDialog.close()
                 }
-                ScrollView {
+                HelpPreferencesPage {
+                    anchors.fill: parent
+                    visible: runtimeSettingsDialog.section === 2
+                    appVersion: appController.appVersion
+                    onTutorialRequested: { runtimeSettingsDialog.close(); tutorialPreview.open() }
+                    onHelpCenterRequested: { runtimeSettingsDialog.close(); helpCenterDialog.open() }
+                    onReleaseNotesRequested: releaseNotesDialog.open()
+                }
+                UiScrollView {
                     id: runtimeSettingsScroll
                     objectName: "runtimeSettingsScroll"
-                    Layout.fillWidth: true; Layout.fillHeight: true
+                    anchors.fill: parent
+                    visible: runtimeSettingsDialog.section === 1
                     clip: true
                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical: PreferenceScrollBar {
+                        parent: runtimeSettingsDialog.background
+                        visible: runtimeSettingsDialog.section === 1 && size < 1
+                        x: runtimeSettingsDialog.width - 13; y: 107
+                        height: runtimeSettingsDialog.height - 143
+                    }
                     ColumnLayout {
                         width: runtimeSettingsScroll.availableWidth
                         spacing: 14
                         SettingsOverview {
+                            id: settingsOverview
+                            onResetScrollRequested: Qt.callLater(function() { runtimeSettingsScroll.contentItem.contentY = 0 })
                             objectName: "settingsPage0"
                             Layout.fillWidth: true
-                            Layout.leftMargin: 20; Layout.rightMargin: 20
-                            Layout.topMargin: 8; Layout.bottomMargin: 20
+                            Layout.rightMargin: 12
                             visible: runtimeSettingsDialog.currentPage === 0
                             controller: appController
                             settingsDialog: runtimeSettingsDialog
-                            onDetailRequested: function(page) { runtimeSettingsDialog.navigate(page) }
+                            onDetailRequested: function(page) {
+                                if (page === 12) { runtimeSettingsDialog.close(); root.currentPage = 2 }
+                                else if (page === 9) { runtimeSettingsDialog.close(); root.currentPage = 5 }
+                                else if (page === 10 || page === 11) { runtimeSettingsDialog.close(); root.showVoice(page === 10); if (page === 11) Qt.callLater(function() { mainPageScroll.toggleHotwords() }) }
+                                else runtimeSettingsDialog.navigate(page)
+                            }
                             onAdvancedSettingsRequested: root.showAdvancedSettings(4)
-                            onInputMethodSetupRequested: inputMethodSetupDialog.open()
+                            onLogRequested: { runtimeSettingsDialog.saveCurrentEditor(); runtimeSettingsDialog.close(); runtimeLogDialog.open() }
                         }
                         ProximitySettings {
                             objectName: "settingsPage9"
-                            Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                            Layout.topMargin: 8; Layout.bottomMargin: 20
+                            Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
+                            Layout.topMargin: 24; Layout.bottomMargin: 28
                             visible: runtimeSettingsDialog.currentPage === 9
                             controller: appController.proximity
                             host: appController
@@ -912,51 +962,53 @@ ApplicationWindow {
                         ColumnLayout {
                             objectName: "settingsPage2"
                             Layout.fillWidth: true
+                            Layout.topMargin: 24; Layout.bottomMargin: 28
                             visible: runtimeSettingsDialog.currentPage === 2
-                            spacing: 14
+                            spacing: 18
                             Label {
                                 objectName: "ringGestureModeLabel"
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                text: "Ring 全局菜单 · " + appController.ringGestures.modeLabel
-                                      + "\n提示、模式切换与窗口选择的手势在“场景与手势 → 全局默认”中配置。"
-                                      + "\n应用覆盖语音组后，整组语音操作在该应用常规状态下停用。"
-                                      + "\n下滑进入输入框选择，四向滑动移动高亮，5 秒无操作退出。"
-                                      + "\n普通框选中即聚焦，Tap 开始语音；地址栏需先 Tap 确认聚焦。"
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
+                                text: "按输入焦点自动分配手势"
+                                      + "\n提示、窗口选择与页面滚动的手势在“手势控制 → 全局默认”中配置。"
+                                      + "\n输入焦点仅影响与输入功能冲突的手势；其余手势按应用优先、全局兜底执行。"
+                                      + "\n双击 Tap 沿用现有输入法启动入口；输入时下滑润色本句，不发送。"
+                                      + "\n录音中下滑：定稿后润色，左滑撤销整句；听写后下滑：左滑先还原听写。"
                                 color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
                             }
                             SettingsFormRow {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 visible: appController.appGestures.supported
-                                title: "发送与切换对话"
-                                description: "选择 Codex、WorkBuddy 或微信，自定义手势对应的快捷键"
-                                UiAction {
+                                title: "应用手势"
+                                description: "添加应用后配置专属手势；未配置的应用使用全局配置"
+                                FigmaAction {
                                     objectName: "openAppGestureSettingsButton"
                                     Layout.alignment: Qt.AlignRight
                                     text: "设置快捷键"
-                                    onClicked: runtimeSettingsDialog.navigate(7)
+                                    onClicked: root.showSettings(7)
                                 }
                             }
 
                             SettingsSectionHeader {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 objectName: "gestureSettingsSection"
                                 title: "听写手势"
                                 badge: "即时生效"
                                 accent: "#16875C"
                             }
                             Label {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                text: "每项最多设置两个手势，语音操作之间不能重复分配。应用常规配置覆盖语音组的任意成员后，整组在该应用内停用；移除全部覆盖后恢复。"
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
+                                text: "每项最多设置两个手势；开始与结束可共用同一手势，其他语音操作不能重复分配。语音手势与应用、全局手势可复用，按输入焦点自动分配。"
                                 color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                             }
-                            GestureBindingRow { actionName: "confirm"; title: "确认 · 开始／结束本句语音" }
+                            GestureBindingRow { actionName: "confirm"; title: "开始本句语音" }
+                            GestureBindingRow { actionName: "end"; title: "结束本句语音" }
                             GestureBindingRow { actionName: "undo"; title: "撤销 · 处理中用于取消" }
                             GestureBindingRow { actionName: "switch_mode"; title: "转换 · 下划线期间转为编辑" }
                             ColumnLayout {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 visible: appController.appGestures.supported
                                 Label { text: "切入 Mythlink"; color: root.textMain }
-                                ComboBox {
+                                SettingsSelect {
                                     id: inputSourceGestureSelector
                                     objectName: "inputSourceGestureSelector"
                                     Layout.fillWidth: true
@@ -976,25 +1028,25 @@ ApplicationWindow {
                                 }
                                 Label {
                                     Layout.fillWidth: true
-                                    text: "默认未绑定，可自行选择空闲手势。此操作只切换输入法，不开始听写；暂停语音识别时也可用。tap 自动切换并开始听写不受此设置影响。"
+                                    text: "默认未绑定，可自行选择空闲手势。此操作只切换输入法，不开始听写；暂停语音识别时也可用。双击 tap 自动切换并开始听写不受此设置影响。"
                                     color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                                 }
                             }
                             UiNotice {
                                 objectName: "gestureSettingsErrorLabel"
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 visible: appController.gestureSettingsError.length > 0
                                 text: appController.gestureSettingsError
                                 font.pixelSize: 12; wrapMode: Text.Wrap
                             }
                             RowLayout {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 Label {
                                     Layout.fillWidth: true
                                     text: "确认至少保留一个手势。设置会自动保存。"
                                     color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                                 }
-                                Button {
+                                FigmaAction {
                                     objectName: "resetGestureBindingsButton"
                                     text: "恢复默认手势"
                                     onClicked: appController.resetGestureBindings()
@@ -1004,55 +1056,14 @@ ApplicationWindow {
 
                         }
                         ColumnLayout {
-                            objectName: "settingsPage6"
-                            Layout.fillWidth: true
-                            visible: runtimeSettingsDialog.currentPage === 6
-                            spacing: 14
-                            SettingsFormRow {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                visible: appController.inlineInput.enabled
-                                title: "语音输入法"
-                                description: "安装或更新输入法，在系统中启用"
-                                UiAction {
-                                    objectName: "openInputMethodSetupButton"
-                                    Layout.alignment: Qt.AlignRight
-                                    text: "安装与管理"
-                                    onClicked: inputMethodSetupDialog.open()
-                                }
-                            }
-                            SettingsFormGroup {
-                                objectName: "screenRecordingPermissionCard"
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                                visible: Qt.platform.os === "osx"
-                                title: "窗口实时预览"
-                                description: "开启屏幕录制权限后，可在窗口总览中查看各个窗口的实时画面。"
-                                SettingsFormRow {
-                                    title: "屏幕录制"
-                                    description: appController.inlineInput.permissions.screenRecordingGranted
-                                        ? "已开启" : "在系统设置中管理此权限。"
-                                    UiAction {
-                                        objectName: "openScreenRecordingPermissionsButton"
-                                        text: "去系统设置"
-                                        enabled: !appController.inlineInput.permissions.screenRecordingRequesting
-                                        onClicked: appController.inlineInput.permissions.openScreenRecordingSettings()
-                                    }
-                                }
-                                PermissionNotice {
-                                    objectName: "screenRecordingPermissionNotice"
-                                    Layout.fillWidth: true; actionText: ""
-                                    message: appController.inlineInput.permissions.screenRecordingWarning
-                                        ? "未开启屏幕录制权限，暂时无法显示窗口预览。仍可选择和切换窗口。" : ""
-                                }
-                            }
-                        }
-                        ColumnLayout {
                             objectName: "settingsPage7"
                             Layout.fillWidth: true
+                            Layout.topMargin: 24; Layout.bottomMargin: 28
                             visible: runtimeSettingsDialog.currentPage === 7
-                            spacing: 14
+                            spacing: 18
                             AppGestureSettings {
                                 id: appGestureSettings
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 service: appController.appGestures
                                 onWechatSetupRequested: runtimeSettingsDialog.navigate(8)
                             }
@@ -1060,10 +1071,11 @@ ApplicationWindow {
                         ColumnLayout {
                             objectName: "settingsPage8"
                             Layout.fillWidth: true
+                            Layout.topMargin: 24; Layout.bottomMargin: 28
                             visible: runtimeSettingsDialog.currentPage === 8
-                            spacing: 14
+                            spacing: 18
                             WeChatShortcutGuide {
-                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 service: appController.appGestures
                             }
                         }
@@ -1071,48 +1083,6 @@ ApplicationWindow {
                 }
             }
 
-            footer: Rectangle {
-                implicitHeight: 64
-                color: root.panel
-                radius: 18
-
-                Rectangle {
-                    width: parent.width; height: parent.radius
-                    color: parent.color
-                }
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    height: 1
-                    color: root.border
-                }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 20
-                    anchors.rightMargin: 20
-                    spacing: 10
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: "设置自动保存"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                    }
-
-                    UiAction {
-                        id: settingsApplyButton
-                        objectName: "settingsApplyButton"
-                        Layout.preferredWidth: 88
-                        Layout.preferredHeight: 38
-                        text: "完成"
-                        primary: true
-                        onClicked: runtimeSettingsDialog.applyAndClose()
-                    }
-                }
-            }
         }
 
     Window {
@@ -1272,7 +1242,7 @@ ApplicationWindow {
             var maximum = Screen.height - height - 20
             return Math.round(Math.max(20, Math.min(maximum, preferred)))
         }
-        visible: appController.associationRecommendationVisible
+        visible: root.associationUiVisible && appController.associationRecommendationVisible
                  && !appController.associationDetailVisible
                  && !appController.associationCenterVisible
         color: "transparent"
@@ -1356,7 +1326,7 @@ ApplicationWindow {
         minimumHeight: 420
         x: Math.round((Screen.width - width) / 2)
         y: Math.round((Screen.height - height) / 2)
-        visible: appController.associationDetailVisible
+        visible: root.associationUiVisible && appController.associationDetailVisible
         title: "推荐关联详情"
         color: root.color
         flags: Qt.Window | Qt.WindowStaysOnTopHint
@@ -1475,7 +1445,7 @@ ApplicationWindow {
         minimumHeight: 520
         x: Math.round((Screen.width - width) / 2)
         y: Math.round((Screen.height - height) / 2)
-        visible: appController.associationCenterVisible
+        visible: root.associationUiVisible && appController.associationCenterVisible
         title: "数据关联中心"
         color: root.color
         onClosing: function(close) {

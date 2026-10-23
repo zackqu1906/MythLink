@@ -1,5 +1,7 @@
 param(
-    [switch]$SkipDependencyInstall
+    [switch]$SkipDependencyInstall,
+    [string]$Version,
+    [switch]$AutoVersion
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,12 +10,20 @@ $Python = Join-Path $ProjectRoot ".runtime\venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw "Missing .runtime Python. Run scripts/setup.ps1 -SkipLocalLLM first."
 }
+$VersionArgs = @()
+if ($Version) { $VersionArgs += @("--version", $Version) }
+if ($AutoVersion) { $VersionArgs += "--auto-version" }
+$AppVersion = & $Python (Join-Path $ProjectRoot "tools\build_version.py") @VersionArgs
+if ($LASTEXITCODE -ne 0) { throw "Version selection failed." }
+Write-Host "Building Mythlink $AppVersion"
 
 if (-not $SkipDependencyInstall) {
     & $Python -m pip install -r (Join-Path $ProjectRoot "requirements-packaging.txt")
 }
 
 Push-Location $ProjectRoot
+$PreviousBuildVersion = $env:MYTHLINK_BUILD_VERSION
+$env:MYTHLINK_BUILD_VERSION = $AppVersion
 try {
     & $Python -m PyInstaller --noconfirm --clean "packaging\mythlink.spec"
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
@@ -35,10 +45,10 @@ try {
     if (-not $Iscc) {
         throw "Inno Setup 6 not found. Install it, then rerun this script."
     }
-    & $Iscc "packaging\windows\Mythlink.iss"
+    & $Iscc "/DMyAppVersion=$AppVersion" "packaging\windows\Mythlink.iss"
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 
-    $Installer = Join-Path $ProjectRoot "dist\installer\Mythlink-0.6.0-windows-x64-setup.exe"
+    $Installer = Join-Path $ProjectRoot "dist\installer\Mythlink-$AppVersion-windows-x64-setup.exe"
     if ($env:WINDOWS_SIGNING_CERT_SHA1) {
         $SignToolCandidates = @(
             (Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
@@ -63,7 +73,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Windows signature verification failed." }
     }
 } finally {
+    $env:MYTHLINK_BUILD_VERSION = $PreviousBuildVersion
     Pop-Location
 }
 
-Write-Host "Installer: $ProjectRoot\dist\installer\Mythlink-0.6.0-windows-x64-setup.exe"
+Write-Host "Installer: $Installer"

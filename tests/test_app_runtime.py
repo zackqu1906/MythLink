@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from proximic_ring import app_runtime
-from proximic_ring.app_runtime import (
+from proximic_ring.voice import app_runtime
+from proximic_ring.voice.app_runtime import (
     _ImuSampleBuffer,
     RecognitionRuntime,
     RuntimeSettings,
@@ -15,8 +15,8 @@ from proximic_ring.app_runtime import (
     apply_asr_gain,
     normalize_funasr_nano_hotwords,
 )
-from proximic_ring.config import DetectorConfig
-from proximic_ring.events import Stage2Event
+from proximic_ring.voice.detection.config import DetectorConfig
+from proximic_ring.voice.detection.events import Stage2Event
 
 
 def test_volcengine_context_provider_uses_native_ime_on_macos(monkeypatch):
@@ -736,3 +736,60 @@ def test_runtime_detects_drop_while_model_initialization_is_blocked(monkeypatch)
         )
     assert events.count("stopping") == events.count("source-close") == 1
     assert events.index("stopping") < events.index("detector-finished")
+
+
+@pytest.mark.parametrize("gesture_mode", [False, True])
+def test_practice_audio_is_excluded_from_detection_and_normal_audio_resumes(monkeypatch, gesture_mode):
+    practice = threading.Event()
+    practice.set()
+    seen = {"practice": [], "normal": [], "detector": [], "start": []}
+    class Source:
+        error = None
+        def __init__(self, **kwargs): self.index = 0
+        def connect(self): pass
+        def start_stream(self, **kwargs): pass
+        def close(self): pass
+        def read(self, frames):
+            self.index += 1
+            if self.index == 2:
+                practice.clear()
+                controller.pending_start = True
+            return np.full(320, self.index / 10, dtype=np.float32) if self.index <= 2 else None
+    class Detector:
+        config = DetectorConfig(stage1_threshold=.005)
+        def reset(self): pass
+        def feed(self, block):
+            seen["detector"].append(float(block[0]))
+            return []
+    class Controller:
+        active = False
+        pending_start = False
+        def reset(self): self.pending_start = False
+        def flush(self): pass
+        def close(self): pass
+        def process(self, block, events, **kwargs):
+            seen["normal"].append(float(block[0]))
+            seen["start"].append(self.pending_start)
+    controller = Controller()
+    def consume(block, busy):
+        assert not busy
+        if practice.is_set():
+            seen["practice"].append(float(block[0]))
+            return True
+        return False
+    monkeypatch.setattr(app_runtime, "RingAudioSource", Source)
+    monkeypatch.setattr(app_runtime, "_build_detector", lambda _: Detector())
+    monkeypatch.setattr(app_runtime, "_build_session_controller", lambda *args, **kwargs: controller)
+    enabled = threading.Event()
+    enabled.set()
+    RecognitionRuntime(RuntimeSettings(asr_gain_db=0, speech_control_mode="gesture" if gesture_mode else "proximity")).run(
+        threading.Event(), enabled, on_update=lambda _: None, on_state=lambda _: None,
+        on_connected=lambda: None, on_disconnected=lambda: None, on_started=lambda: None,
+        practice_active=practice.is_set, practice_audio_consumer=consume,
+    )
+    assert seen["practice"] == pytest.approx([.1])
+    assert seen["detector"] == pytest.approx([] if gesture_mode else [.2])
+    if gesture_mode:
+        assert seen["start"] == [True]
+    assert seen["normal"] == pytest.approx([.2])
+    # Runtime EOF closes the recognition gate after the resumed block.

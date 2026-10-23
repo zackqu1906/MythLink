@@ -4,11 +4,11 @@ import json
 
 import pytest
 
-from proximic_ring.app_gestures import (AppBinding, KEY_CODES, action_phase, default_profiles,
+from proximic_ring.gestures.app_gestures import (AppBinding, KEY_CODES, action_phase, default_profiles,
     migrate_voice_defaults, normalize_shortcut, profiles_from_json, profiles_to_json,
     validate_profiles, profile_for_application)
-from proximic_ring.app_shortcuts import ShortcutTarget
-from proximic_ring.gesture_settings import BoundGestureEvent, GestureBindings
+from proximic_ring.desktop.app_shortcuts import ShortcutTarget
+from proximic_ring.gestures.gesture_settings import BoundGestureEvent, GestureBindings
 from test_interaction_controls import _controller, _close
 
 
@@ -46,6 +46,17 @@ def test_default_profiles_roundtrip_and_no_project_picker():
     validate_profiles(p, GestureBindings())
 
 
+def test_down_is_reserved_for_polish(route):
+    c, service, inline, _, sent, messages, emit = route
+    assert service.setBinding("codex", "next", "swipe-down", "Cmd+Shift+]", True)
+    emit("swipe-down")
+    assert not messages and not sent
+    inline._view.update(phase="dictated")
+    emit("swipe-down")
+    assert messages == [("polish", {"restore_raw_on_undo": True})]
+    assert not sent
+
+
 def test_conflicts_are_per_app_voice_undo_and_edit_can_be_reused():
     p = default_profiles()
     p["codex"]["next"] = AppBinding("swipe-left", "Cmd+Shift+]")
@@ -55,8 +66,10 @@ def test_conflicts_are_per_app_voice_undo_and_edit_can_be_reused():
     with pytest.raises(ValueError):
         validate_profiles(p, GestureBindings())
     p["codex"]["previous"] = AppBinding("tap", "Cmd+Shift+[")
-    with pytest.raises(ValueError):
-        validate_profiles(p, GestureBindings())
+    validate_profiles(p, GestureBindings())  # Outside input, tap can have an application binding.
+    validate_profiles(p, GestureBindings(end=("double-tap", "")))  # Released by remapping END.
+    p["codex"]["previous"] = AppBinding("double-tap", "Cmd+Shift+[")
+    validate_profiles(p, GestureBindings())
 
 
 def test_migration_only_retires_old_default_aliases():
@@ -87,7 +100,7 @@ def test_actual_key_codes_not_unicode_positions():
 def route(tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
     import proximic_ring.ui.controller as module
-    monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "app-gestures.ini"), QSettings.IniFormat))
+    monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
     # This fixture exercises an explicitly configured legacy installation.
     module.QSettings().setValue("gestures/appProfiles", profiles_to_json(default_profiles()))
     controller = _controller(tmp_path, monkeypatch)
@@ -100,11 +113,17 @@ def route(tmp_path, monkeypatch):
                         has_composition=False, awaiting_readback=False, raw="hello", edit_requested=False)
     sent = []
     class Backend:
-        target = ShortcutTarget("com.openai.codex", 42, "codex", "window", "composer", "AXTextArea")
-        def capture(self, *, plain_enter=False, menu_action=False):
-            return replace(self.target, plain_enter=plain_enter, menu_action=menu_action) if self.target else None
+        target = ShortcutTarget("com.openai.codex", 42, "codex", "window", "composer", "AXTextArea", input_context="text")
+        def capture(self, *, plain_enter=False, menu_action=False, focus_sensitive=True, scene=False):
+            return replace(self.target, plain_enter=plain_enter, menu_action=menu_action,
+                           focus_sensitive=focus_sensitive) if self.target else None
         def same_target(self, target, *, require_focus=False):
-            return self.target is not None and replace(target, plain_enter=False, menu_action=False) == self.target
+            if self.target is None:
+                return False
+            current = replace(self.target, focus_sensitive=target.focus_sensitive)
+            if not target.focus_sensitive:
+                current = replace(current, focus=target.focus, role=target.role, input_context=target.input_context)
+            return replace(target, plain_enter=False, menu_action=False) == current
         def post(self, target, shortcut, *, require_focus=False):
             if not self.same_target(target, require_focus=require_focus):
                 raise RuntimeError("目标窗口已变化")
@@ -112,6 +131,28 @@ def route(tmp_path, monkeypatch):
     backend = Backend()
     service = controller._app_gestures
     service.backend = backend
+    read_foreground = service.foreground_identity
+    def foreground_identity():
+        if hasattr(service.backend, "target"):
+            target = service.backend.target
+            return (target.bundle, target.pid) if target is not None else None
+        return read_foreground()
+    monkeypatch.setattr(service, "foreground_identity", foreground_identity)
+    # Routing tests model the same scene as IMK metadata. Dedicated focus tests
+    # vary AX and IMK independently and exercise the real probe/revalidation.
+    from proximic_ring.voice.ime.focus_probe import InputFocus
+    def imk_focus():
+        target = getattr(service.backend, "target", None)
+        if target is None or target.input_context == "unknown":
+            return InputFocus("unavailable", reason="input_method_not_ready")
+        selection = (0, 0) if target.input_context == "text" else (-1, -1)
+        proof = (inline._epoch, inline._client_id + str(target.focus), inline._utterance_id,
+                 target.bundle, target.pid, selection)
+        return InputFocus(target.input_context, proof)
+    monkeypatch.setattr(inline, "capture_start_focus", imk_focus)
+    monkeypatch.setattr(inline, "same_input_focus", lambda proof: imk_focus() == proof)
+    monkeypatch.setattr(inline, "capture_gesture_target", lambda: imk_focus().target)
+    monkeypatch.setattr(inline, "same_gesture_target", lambda target: imk_focus() == InputFocus('text', target))
     messages = []
     monkeypatch.setattr(inline, "_send", lambda kind, **kw: messages.append((kind, kw)) or True)
     def emit(name):
@@ -128,10 +169,12 @@ def route(tmp_path, monkeypatch):
     ("workbuddy", "vendor.WorkBuddy", "circle-clockwise", "Cmd+]"),
     ("wechat", "com.tencent.xinWeChat", "circle-counterclockwise", "Cmd+Shift+["),
 ])
-def test_idle_actions_work_with_recognition_paused_and_other_input_method(route, app, bundle, name, shortcut):
+def test_idle_actions_work_with_recognition_paused_and_other_input_method(route, monkeypatch, app, bundle, name, shortcut):
+    from test_application_menus import configure
     c, s, inline, backend, sent, _, emit = route
+    assert configure(s, monkeypatch, bundle).setCustomBinding(bundle, name, "切换对话", shortcut)
     inline._view = {"ready": False, "phase": "idle"}  # Pinyin selected; no IME connection needed.
-    backend.target = replace(backend.target, bundle=bundle, profile=app)
+    backend.target = replace(backend.target, bundle=bundle, profile=app, input_context="nontext", focus="page")
     emit(name)
     assert sent == [(app, shortcut)]
 
@@ -148,7 +191,20 @@ def test_continuous_send_finishes_commits_and_sends_exactly_once(route):
     inline.settled.emit("dictated", "完整句子")
     inline.settled.emit("dictated", "完整句子")
     assert sent == [("codex", "Return")]
+    assert messages[-1] == ("end_input", {"outcome": "sent"})
     assert s._pending is None and inline._utterance_id == ""
+
+
+def test_failed_send_keeps_sentence_and_never_shows_sent_feedback(route, monkeypatch):
+    _, service, inline, backend, sent, messages, emit = route
+    inline._view.update(phase="dictated", can_cancel=True, can_polish=True)
+    def fail(*args, **kwargs):
+        raise RuntimeError("发送快捷键失败")
+    monkeypatch.setattr(backend, "post", fail)
+    emit("swipe-up")
+    assert not sent and not messages
+    assert inline._utterance_id == "u" and inline._view["can_cancel"]
+    assert "发送快捷键失败" in service.notice
 
 
 @pytest.mark.parametrize("change", ["cancel", "convert", "focus", "app", "empty", "error", "disconnect", "settings", "sentence", "timeout"])
@@ -184,7 +240,7 @@ def test_busy_navigation_is_not_replayed_when_work_finishes(route, phase, name):
     _, s, inline, _, sent, _, emit = route
     inline._view.update(phase=phase)
     emit(name)
-    assert not sent and s.notice
+    assert not sent
     inline._view.update(phase="dictated", has_composition=False)
     inline.settled.emit("dictated", "done")
     assert not sent
@@ -218,14 +274,16 @@ def test_undo_request_blocks_navigation_before_native_ack(route):
     assert not sent
 
 
-def test_same_gesture_reuse_keeps_voice_priority_and_never_falls_through(route):
-    _, s, inline, _, sent, messages, emit = route
-    assert s.setBinding("codex", "next", "swipe-left", "Cmd+Shift+]", True)
+def test_same_gesture_reuse_keeps_voice_priority_and_never_falls_through(route, monkeypatch):
+    from test_application_menus import configure
+    _, s, inline, backend, sent, messages, emit = route
+    assert configure(s, monkeypatch, backend.target.bundle).setCustomBinding(backend.target.bundle, "swipe-left", "下一个任务", "Cmd+Shift+]")
     inline._view.update(phase="listening", has_composition=True)
     emit("swipe-left")
     assert messages[-1][0] == "cancel" and not sent
     inline._action_pending = None
     inline._view.update(phase="idle", has_composition=False)
+    backend.target = replace(backend.target, input_context="nontext", focus="page")
     emit("swipe-left")
     assert sent == [("codex", "Cmd+Shift+]")]
 
@@ -253,7 +311,7 @@ def test_pending_send_focus_read_failure_does_not_escape_gui_callback(route, mon
     inline._view.update(phase="listening", has_composition=True)
     def fail(*args, **kwargs):
         raise RuntimeError("application closed")
-    monkeypatch.setattr(backend, "same_target", fail)
+    monkeypatch.setattr(inline, "same_gesture_target", fail)
     emit("swipe-up")
     assert not sent and not messages and s._pending is None
     assert "输入目标" in s.notice
@@ -267,19 +325,23 @@ def test_capture_failure_is_reported_not_mislabeled_as_unmapped(route, monkeypat
     emit("swipe-up")
     assert not sent and "读取前台应用" in s.notice
     log = c._diagnostic_log.path.read_text()
-    assert 'reason="capture_failed"' in log
+    assert '"reason":"capture_failed"' in log
     assert 'reason="unmapped_gesture"' not in log
 
 
 @pytest.mark.parametrize("old_confirmation", [False, True])
-def test_wechat_navigation_needs_no_test_or_confirmation_and_uses_current_binding(route, old_confirmation):
+def test_wechat_navigation_needs_no_test_or_confirmation_and_uses_current_binding(route, monkeypatch, old_confirmation):
+    from test_application_menus import configure
     c, s, inline, backend, sent, _, emit = route
-    backend.target = replace(backend.target, profile="wechat", bundle="com.tencent.xinWeChat")
+    backend.target = replace(backend.target, profile="wechat", bundle="com.tencent.xinWeChat", input_context="nontext", focus="page")
     inline._view.update(application="com.tencent.xinWeChat")
+    catalog = configure(s, monkeypatch, backend.target.bundle)
+    assert catalog.setCustomBinding(backend.target.bundle, "circle-clockwise", "下一个聊天", "Cmd+Shift+]")
+    assert catalog.setCustomBinding(backend.target.bundle, "circle-counterclockwise", "上一个聊天", "Cmd+Shift+[")
     c._settings.setValue("gestures/wechatConfigured", old_confirmation)
     emit("circle-clockwise")
     assert sent == [("wechat", "Cmd+Shift+]")]
-    s.setBinding("wechat", "next", "circle-clockwise", "Cmd+Alt+]", True)
+    assert catalog.setCustomBinding(backend.target.bundle, "circle-clockwise", "下一个聊天", "Cmd+Alt+]")
     s._last_dispatch = None
     emit("circle-clockwise")
     assert sent[-1] == ("wechat", "Cmd+Alt+]")
@@ -291,7 +353,7 @@ def test_wechat_navigation_needs_no_test_or_confirmation_and_uses_current_bindin
 @pytest.mark.parametrize("phase", ["listening", "finishing", "editing", "applying"])
 def test_wechat_navigation_still_waits_for_text_operation_to_finish(route, phase):
     _, _, inline, backend, sent, _, emit = route
-    backend.target = replace(backend.target, profile="wechat", bundle="com.tencent.xinWeChat")
+    backend.target = replace(backend.target, profile="wechat", bundle="com.tencent.xinWeChat", input_context="nontext", focus="page")
     inline._view.update(application="com.tencent.xinWeChat", phase=phase)
     emit("circle-clockwise")
     assert not sent
@@ -305,7 +367,7 @@ def test_current_shortcut_settings_survive_restart(route, tmp_path, monkeypatch)
 
 
 def test_detecting_changed_wechat_language_updates_guidance_without_disabling_gestures(route):
-    from proximic_ring.wechat_setup import MENU_TITLES, menu_details
+    from proximic_ring.platforms.macos.wechat_setup import MENU_TITLES, menu_details
     c, s, *_ = route
     generation = s._generation
     s._apply_setup_result("menu", s._menu_generation, menu_details(MENU_TITLES["en"], version="4.1.11"))
@@ -365,8 +427,8 @@ def test_input_swipe_up_is_plain_enter_without_app_or_role_whitelist(route, bund
 
 
 def test_swipe_up_settings_migrate_to_fixed_global_enter(route):
-    from proximic_ring.ui.app_gesture_controller import AppGestureController
-    from proximic_ring.gesture_settings import reserve_ring_gestures
+    from proximic_ring.ui.gestures.app_gesture_controller import AppGestureController
+    from proximic_ring.gestures.gesture_settings import reserve_ring_gestures
     c, s, *_ = route
     profiles = default_profiles()
     profiles["codex"]["send"] = AppBinding("snap", "Cmd+Return", False)
@@ -376,7 +438,7 @@ def test_swipe_up_settings_migrate_to_fixed_global_enter(route):
     try:
         assert all(actions["send"] == AppBinding("swipe-up", "Return")
                    for actions in restored._profiles.values())
-        assert not restored._profiles["workbuddy"]["next"].enabled
+        assert restored._profiles["workbuddy"]["next"].enabled
         assert not s.setBinding("codex", "send", "swipe-up", "Cmd+Return", True)
         assert reserve_ring_gestures(GestureBindings(confirm=("swipe-up", ""))) == GestureBindings()
     finally:

@@ -73,7 +73,7 @@ def test_native_permissions_without_wizard_preserve_voice_and_leave_settings_acc
     QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 0))
     QTest.qWait(180)
     button = item(root, "permissionSetupButton")
-    assert button.property("text") == "请求权限" and button.property("enabled")
+    assert button.property("text") == "一键开启" and button.property("enabled")
     assert button.height() <= 44
     # Explicit request skips the denied microphone; no custom modal or forced Settings window.
     QMetaObject.invokeMethod(button, "click")
@@ -102,6 +102,8 @@ def test_regular_input_enhancement_is_live_without_reconnecting(inline_ui, monke
     root.show()
     QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 0))
     QTest.qWait(150)
+    QMetaObject.invokeMethod(item(root, "settingsAudioEntry"), "click")
+    QTest.qWait(50)
     slider = item(root, "asrGainSlider")
     assert slider.property("visible") and slider.property("enabled")
     assert len(root.findChildren(QObject, "asrGainSlider")) == 1

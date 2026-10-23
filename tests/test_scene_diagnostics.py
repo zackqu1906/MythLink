@@ -6,11 +6,11 @@ import sys
 import threading
 from types import SimpleNamespace
 import pytest
-from proximic_ring.scene_diagnostics import SceneDiagnostics, SceneActionError, safe_data
+from proximic_ring.diagnostics.scene_diagnostics import SceneDiagnostics, SceneActionError, safe_data
 from proximic_ring.scenes.recognition.engine import detect_scene
 from proximic_ring.scenes.models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
-from proximic_ring.native_access import NativeAccessChannel
-from proximic_ring.diagnostic_log import RotatingDiagnosticLog
+from proximic_ring.platforms.macos.native_access import NativeAccessChannel
+from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
 from test_gesture_scenes import presentation, window_tree, metadata
 from test_app_gestures import route
 from test_app_shortcuts import desktop
@@ -38,7 +38,8 @@ def test_scene_success_is_one_correlated_trace_with_unverified_delivery(presenta
     service.handle_override(event)
     assert sent == [('com.microsoft.Powerpoint', 'Right')]
     rows = [r for r in records(service) if r['trace'] == event.trace_id]
-    assert [r['stage'] for r in rows] == ['received', 'capture', 'route', 'route', 'dispatch', 'outcome']
+    assert [r['stage'] for r in rows] == ['received', 'capture', 'route', 'dispatch', 'outcome']
+    assert rows[2]['owner'] == 'outside'
     assert rows[-1]['reason'] == 'shortcut_posted' and rows[-1]['delivery'] == 'posted_unverified'
     assert rows[-1]['shortcut'] == 'Right' and rows[-1]['pid'] == 42
     assert all(r['run'] == c._diagnostic_run_id for r in rows)
@@ -62,7 +63,7 @@ def test_every_consumed_scene_stop_records_why_without_replay(presentation, monk
     if change == 'missing_binding': monkeypatch.setattr(service._catalog, 'for_scene', lambda *a: {})
     if change == 'blocked': event = replace(event, target=replace(event.target, blocked=True))
     if change == 'mode_generation':
-        from proximic_ring.ui.ring_gesture_controller import ModeGestureEvent
+        from proximic_ring.ui.gestures.ring_gesture_controller import ModeGestureEvent
         c._apply_gesture(ModeGestureEvent(event, c._ring_gestures._generation - 1), c._disconnect_event)
     elif change == 'disconnect':
         c._disconnect_event.set()
@@ -110,12 +111,12 @@ def test_unknown_delivery_is_logged_and_never_retried(presentation, monkeypatch)
     assert records(service)[-1]['native']['delivery'] == 'unknown' and '无法确认' in service.notice
 
 
-def test_text_focus_keeps_regular_route_and_explains_why(presentation):
+def test_text_focus_claims_input_without_scene_or_regular_app_fallback(presentation):
     _, service, _, backend, _, sent, _ = presentation
     backend.target = replace(backend.target, input_context='text')
     assert service.scene_envelope(SimpleNamespace(name='swipe-right')) is None
-    assert records(service)[-1]['reason'] == 'text_focus'
-    assert records(service)[-1]['fallback'] == 'regular' and not sent
+    assert records(service)[-1]['reason'] == 'text'
+    assert records(service)[-1]['owner'] == 'input' and not sent
 
 
 @pytest.mark.parametrize('scene', [PRESENTATION, PDF, IMAGE, VIDEO, MUSIC])

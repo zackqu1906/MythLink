@@ -16,12 +16,15 @@ def _controller(tmp_path, monkeypatch):
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     monkeypatch.setattr(controller_module, "app_data_root", lambda: tmp_path)
+    monkeypatch.setattr(controller_module, "QSettings", lambda *_args: QSettings(
+        str(tmp_path / "settings.ini"), QSettings.IniFormat))
     controller = controller_module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
     return controller
 
 
 def _close(controller):
+    controller.proximity.close()
     controller._text_processing_worker.close(wait=True)
     controller._close_voice_history()
 
@@ -53,7 +56,7 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=1.000s (pre-roll=0.40s)")
     assert controller._transcript_active is True
-    assert controller.transcriptText == "正在收听语音 · tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
     assert controller.transcriptPrimaryText == ""
     assert controller.interactionState == "listening"
     assert controller.interactionCanCancel is True
@@ -66,7 +69,7 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=2.000s (pre-roll=0.40s)")
     assert controller.interactionState == "listening"
-    assert controller.transcriptText == "正在收听语音 · tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
     _close(controller)
 
 
@@ -82,7 +85,7 @@ def test_overlay_keeps_asr_as_primary_text_while_status_changes(
     controller._apply_runtime_update("正在形成", False, "", 23)
 
     assert controller.transcriptPrimaryText == "正在形成"
-    assert controller.transcriptText == "正在收听语音 · tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
 
     controller._apply_runtime_update("这是最终识别文本", True, "", 23)
 
@@ -158,7 +161,7 @@ def test_processing_edit_can_be_switched_directly_to_dictation(
 ):
     import json
 
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AutoInteraction
 
@@ -225,7 +228,7 @@ def test_processing_edit_can_be_switched_directly_to_dictation(
 
 
 def test_failed_initial_edit_keeps_f8_dictation_fallback(tmp_path, monkeypatch):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import (
         InputModeRoutingResult,
         TextProcessingResult,
@@ -345,7 +348,7 @@ def test_empty_final_reports_no_text_and_accepts_the_next_sentence(
 def test_empty_final_keeps_previous_undo_without_a_floating_window(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -485,7 +488,7 @@ def test_detector_evidence_does_not_attach_to_previous_interaction(
 
 
 def test_applied_operations_support_multiple_undo_steps(tmp_path, monkeypatch):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -551,7 +554,7 @@ def test_applied_operations_support_multiple_undo_steps(tmp_path, monkeypatch):
 def test_undo_stacks_are_isolated_by_application_and_text_field(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -644,7 +647,7 @@ def test_undo_stacks_are_isolated_by_application_and_text_field(
 def test_undo_rechecks_focus_before_the_foreground_poll_catches_up(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -690,7 +693,7 @@ def test_undo_rechecks_focus_before_the_foreground_poll_catches_up(
 def test_delayed_mode_switch_result_stays_bound_to_its_text_field(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 
@@ -773,7 +776,7 @@ def test_delayed_mode_switch_never_converts_a_newer_operation_in_same_stack(
 ):
     from PySide6.QtTest import QTest
 
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 
@@ -858,7 +861,7 @@ def test_delayed_mode_switch_never_converts_a_newer_operation_in_same_stack(
 def test_cancelling_next_utterance_keeps_previous_alternate_request(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import (
         _AppliedInteraction,
@@ -981,7 +984,7 @@ def test_cancelling_next_utterance_keeps_previous_alternate_request(
 def test_device_session_end_clears_undo_stack_without_changing_text(
     tmp_path, monkeypatch, end_event
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -1034,7 +1037,7 @@ def test_success_recommends_recent_asr_failures_and_writes_link_index(
     import json
     import numpy as np
 
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -1139,7 +1142,7 @@ def test_applied_result_remains_on_multi_undo_stack(
     import json
     import numpy as np
 
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -1196,7 +1199,7 @@ def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
 ):
     import json
     import numpy as np
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import (
         InputModeRoutingResult,
         TextProcessingResult,
@@ -1377,7 +1380,7 @@ def test_green_mode_switch_executes_after_accessibility_wrapper_rebuild(
 ):
     from PySide6.QtTest import QTest
 
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 
@@ -1476,7 +1479,7 @@ def test_green_mode_switch_executes_after_accessibility_wrapper_rebuild(
 def test_green_mode_switch_rejects_a_different_field_in_the_same_app(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 
@@ -1567,7 +1570,7 @@ def test_green_mode_switch_rejects_a_different_field_in_the_same_app(
 def test_mode_switch_accepts_replacement_with_refreshed_target_identity(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 
@@ -1674,7 +1677,7 @@ def test_mode_switch_accepts_replacement_with_refreshed_target_identity(
 
 def test_failed_mode_switch_restores_exact_previous_text(tmp_path, monkeypatch):
     import proximic_ring.ui.controller as controller_module
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 
@@ -1762,7 +1765,7 @@ def test_failed_mode_switch_restores_exact_previous_text(tmp_path, monkeypatch):
 def test_auto_dictation_commits_asr_without_waiting_for_llm_candidates(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import InputModeRoutingResult
 
     controller = _controller(tmp_path, monkeypatch)
@@ -1840,7 +1843,7 @@ def test_auto_dictation_commits_asr_without_waiting_for_llm_candidates(
 def test_late_edit_protocol_failure_retries_only_after_explicit_f8(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 
@@ -1916,7 +1919,7 @@ def test_late_edit_protocol_failure_retries_only_after_explicit_f8(
 def test_first_dictation_keeps_a_reliable_empty_pre_application_snapshot(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
 
     controller = _controller(tmp_path, monkeypatch)
     target = DesktopTargetRef(1, 2, "微信", process_id=30)
@@ -1940,7 +1943,7 @@ def test_first_dictation_keeps_a_reliable_empty_pre_application_snapshot(
 
 
 def test_dictation_recaptures_missing_target_at_commit(tmp_path, monkeypatch):
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.text_processing import TextProcessingResult
 
     controller = _controller(tmp_path, monkeypatch)
@@ -1970,7 +1973,7 @@ def test_dictation_recaptures_missing_target_at_commit(tmp_path, monkeypatch):
 
 
 def test_dictation_injection_failure_is_visible_in_overlay(tmp_path, monkeypatch):
-    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef
     from proximic_ring.text_processing import TextProcessingResult
 
     controller = _controller(tmp_path, monkeypatch)
@@ -1999,7 +2002,7 @@ def test_dictation_injection_failure_is_visible_in_overlay(tmp_path, monkeypatch
 def test_native_undo_does_not_show_association_prompt(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _EditReview
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2049,7 +2052,7 @@ def test_manual_edit_after_failed_llm_creates_recommended_dpo_link(
 ):
     import numpy as np
 
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import (
         LLMSettings,
         TextProcessingRequest,
@@ -2057,6 +2060,7 @@ def test_manual_edit_after_failed_llm_creates_recommended_dpo_link(
     )
 
     controller = _controller(tmp_path, monkeypatch)
+    controller.smartAssociationEnabled = True
     target = DesktopTargetRef(1, 2, "编辑器", process_id=30)
     collector = controller._modification_dataset
     collector.record_audio(56, np.zeros(16_000, dtype=np.float32))
@@ -2254,7 +2258,7 @@ def test_main_history_manual_mode_labels_one_correct_and_multiple_wrong(
 def test_auto_edit_failure_is_cached_until_classification_finishes(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import (
         InputModeRoutingResult,
         TextProcessingResult,
@@ -2393,7 +2397,7 @@ def test_auto_error_without_edit_target_still_allows_switch_and_cancel(
 def test_failed_edit_cancel_skips_readback_and_survives_release_error(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2430,7 +2434,7 @@ def test_failed_edit_cancel_skips_readback_and_survives_release_error(
 def test_edit_result_applies_immediately_without_preview_confirmation(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2481,7 +2485,7 @@ def test_undo_keeps_stack_when_native_shortcut_send_raises(
     tmp_path, monkeypatch
 ):
     import proximic_ring.ui.controller as controller_module
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     monkeypatch.setattr(controller_module.sys, "platform", "darwin")
@@ -2540,7 +2544,7 @@ def test_undo_does_not_rewrite_when_app_ignores_native_shortcut(
     tmp_path, monkeypatch
 ):
     import proximic_ring.ui.controller as controller_module
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     monkeypatch.setattr(controller_module.sys, "platform", "darwin")
@@ -2598,7 +2602,7 @@ def test_undo_does_not_rewrite_when_app_ignores_native_shortcut(
 def test_unobservable_native_undo_never_appends_snapshot_after_command_z(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2668,7 +2672,7 @@ def test_undo_sends_native_shortcut_without_snapshot_rewrite(
     tmp_path, monkeypatch
 ):
     import proximic_ring.ui.controller as controller_module
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     monkeypatch.setattr(controller_module.sys, "platform", "darwin")
@@ -2725,7 +2729,7 @@ def test_undo_sends_native_shortcut_without_snapshot_rewrite(
 def test_multi_undo_leaves_granularity_to_native_history(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2788,7 +2792,7 @@ def test_multi_undo_leaves_granularity_to_native_history(
 def test_legacy_first_dictation_also_uses_native_history(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2831,7 +2835,7 @@ def test_legacy_first_dictation_also_uses_native_history(
 def test_unobservable_edit_undo_does_not_add_a_snapshot_write(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2878,7 +2882,7 @@ def test_unobservable_edit_undo_does_not_add_a_snapshot_write(
 def test_undo_follows_native_history_after_manual_edit(
     tmp_path, monkeypatch
 ):
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
@@ -2932,7 +2936,7 @@ def test_explicit_full_delete_finishes_and_enters_undo_stack(
     tmp_path, monkeypatch
 ):
     import proximic_ring.ui.controller as controller_module
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
 
     monkeypatch.setattr(controller_module.sys, "platform", "darwin")
@@ -2998,7 +3002,7 @@ def test_unresolved_full_clear_cannot_be_reclassified_by_late_tab(
 ):
     import json
 
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import _AppliedInteraction, _AutoInteraction
 

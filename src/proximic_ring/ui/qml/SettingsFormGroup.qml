@@ -2,45 +2,55 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-ColumnLayout {
+Control {
     id: group
     property string title: ""
     property string description: ""
     property string symbol: ""
     default property alias rows: body.data
     Layout.fillWidth: true
-    spacing: 10
+    padding: 20
+    implicitWidth: implicitContentWidth + leftPadding + rightPadding
+    implicitHeight: implicitContentHeight + topPadding + bottomPadding
     UiTheme { id: theme }
-    ColumnLayout {
-        Layout.fillWidth: true
-        spacing: 4
-        RowLayout {
+    background: Rectangle {
+        radius: 14
+        color: theme.surface
+        border.color: theme.line
+    }
+    contentItem: ColumnLayout {
+        spacing: 16
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 7
-            UiIcon {
-                visible: group.symbol.length > 0
-                symbol: group.symbol
-                Layout.preferredWidth: 20; Layout.preferredHeight: 20
+            spacing: 6
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                UiIcon {
+                    visible: group.symbol.length > 0
+                    symbol: group.symbol; tint: true; ink: theme.primary
+                    Layout.preferredWidth: 20; Layout.preferredHeight: 20
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: group.title
+                    font.pixelSize: 17; font.weight: Font.DemiBold
+                    color: theme.text; wrapMode: Text.Wrap
+                }
             }
             Label {
                 Layout.fillWidth: true
-                text: group.title
-                font.pixelSize: 19; font.bold: true
+                visible: text.length > 0
+                text: group.description
+                font.pixelSize: 12; lineHeight: 1.2
                 color: theme.muted; wrapMode: Text.Wrap
             }
         }
-        Label {
+        Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: theme.line }
+        ColumnLayout {
+            id: body
             Layout.fillWidth: true
-            visible: text.length > 0
-            text: group.description
-            font.pixelSize: 12; color: theme.muted; wrapMode: Text.Wrap
+            spacing: 20
         }
-    }
-    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: theme.line }
-    ColumnLayout {
-        id: body
-        Layout.fillWidth: true
-        Layout.topMargin: 2
-        spacing: 22
     }
 }

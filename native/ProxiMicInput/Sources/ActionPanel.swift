@@ -15,6 +15,8 @@ final class ActionPanel: NSObject {
     private let spinner = VoiceHudSpinner(frame: .zero)
     private let cancelButton = VoiceHudHint(action: "undo")
     private let convertButton = VoiceHudHint(action: "switch_mode")
+    private let polishHint = VoiceHudHint(action: "polish")
+    private var actionHints: [VoiceHudHint] { [cancelButton, convertButton, polishHint] }
     private let stack = NSStackView()
     private let state = NSStackView()
     private let hints = NSStackView()
@@ -25,6 +27,8 @@ final class ActionPanel: NSObject {
     private var gestureHints = VoiceHudBindings()
     private var cancelAvailable = false
     private var editAvailable = false
+    private var polishAvailable = false
+    private var polishDetail = "润色本句"
     private var cancelDetail = "取消本句"
     private var dismissTimer: Timer?
     private var shouldShow = false
@@ -86,14 +90,14 @@ final class ActionPanel: NSObject {
         state.alignment = .centerY
         state.spacing = 8
         state.detachesHiddenViews = true
-        hints.setViews([cancelButton, convertButton], in: .center)
+        hints.setViews(actionHints, in: .center)
         hints.identifier = NSUserInterfaceItemIdentifier("voiceGestureHints")
         hints.orientation = .horizontal
         hints.alignment = .centerY
         hints.spacing = 6
         hints.detachesHiddenViews = true
         hintWidthConstraint = hints.widthAnchor.constraint(equalToConstant: 0)
-        for hint in [cancelButton, convertButton] {
+        for hint in actionHints {
             scaledConstraints += [(hint.widthAnchor.constraint(equalToConstant: 59), 59),
                                   (hint.heightAnchor.constraint(equalToConstant: 32), 32)]
         }
@@ -117,6 +121,8 @@ final class ActionPanel: NSObject {
         NSLayoutConstraint.activate(scaledConstraints.map { $0.0 } + [hintWidthConstraint, stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor)])
         cancelButton.target = self; cancelButton.action = #selector(cancel)
         convertButton.target = self; convertButton.action = #selector(convert)
+        // Down swipe is routed by the host, including waiting for final ASR.
+        polishHint.setAccessibilityRole(.image)
         refreshHints()
         applyAppearance()
     }
@@ -142,14 +148,14 @@ final class ActionPanel: NSObject {
         status.font = VoiceHudStyle.font(max(11, 12 * scale))
         state.spacing = 8 * scale
         hints.spacing = 6 * scale
-        for hint in [cancelButton, convertButton] { hint.uiScale = scale }
+        for hint in actionHints { hint.uiScale = scale }
         effect.cornerRadius = InputPaletteStyle.cornerRadius
         fitVisibleActions()
     }
 
     private func fitVisibleActions() {
         let scale = appearance.scale
-        let count = [cancelButton, convertButton].filter { !$0.isHidden }.count
+        let count = actionHints.filter { !$0.isHidden }.count
         let actionsWidth = CGFloat(count * 59 + max(0, count - 1) * 6) * scale
         hintWidthConstraint.constant = actionsWidth
         hints.isHidden = count == 0
@@ -171,10 +177,13 @@ final class ActionPanel: NSObject {
                                available: cancelAvailable, detail: cancelDetail)
         convertButton.configure(gestures: gestureHints.actions["switch_mode"] ?? [], functionAsset: "function-edit",
                                 available: editAvailable, detail: "转换为编辑")
+        polishHint.configure(gestures: ["swipe-down"], functionAsset: "function-polish",
+                             available: polishAvailable, detail: polishDetail)
     }
 
     func applyPresentation(_ presentation: ActionPanelPresentation) {
         status.stringValue = presentation.title
+        status.setAccessibilityLabel(presentation.title)
         status.toolTip = presentation.detail ?? presentation.title
         status.textColor = VoiceHudStyle.text
         statusSymbol.image = presentation.isError ? VoiceHudAssets.image("status-error") : nil
@@ -184,7 +193,7 @@ final class ActionPanel: NSObject {
 
     func update(_ session: CompositionSession, historyDepth: Int = 0) {
         anchor.update(utteranceID: session.utteranceID,
-                      editing: session.phase == .editing ||
+                      editing: session.phase == .editing || session.phase == .polishing ||
                           (session.phase == .finishing && session.editRequested) ||
                           (session.phase == .edited && session.awaitingReadback),
                       currentSize: panel.frame.size)
@@ -192,12 +201,15 @@ final class ActionPanel: NSObject {
         dismissTimer = nil
         let presentation = ActionPanelPresentation(phase: session.phase, error: session.error,
             empty: session.raw.isEmpty, editRequested: session.editRequested,
-            readableRange: session.editScope == "readable_range")
-        let nextVisualState = "\(session.phase)|\(presentation.title)|\(presentation.isError)|\(session.canCancel)|\(session.canEdit)|\(historyDepth > 0)"
+            readableRange: session.editScope == "readable_range", polished: session.polished)
+        let pendingDictation = [.listening, .finishing].contains(session.phase) && !session.editRequested
+        polishAvailable = pendingDictation || session.canPolish
+        polishDetail = pendingDictation ? "结束听写并润色本句" : "润色本句"
+        let nextVisualState = "\(session.phase)|\(presentation.title)|\(presentation.isError)|\(session.canCancel)|\(session.canEdit)|\(polishAvailable)|\(historyDepth > 0)"
         let animateState = panel.isVisible && visualState != nextVisualState
         visualState = nextVisualState
         applyPresentation(presentation)
-        busy = !presentation.isError && (session.phase == .editing || session.phase == .finishing)
+        busy = !presentation.isError && [.editing, .polishing, .finishing].contains(session.phase)
         progress.setAnimating(busy)
         spinner.setAnimating(busy)
         if busy {
@@ -223,6 +235,59 @@ final class ActionPanel: NSObject {
         if [.dictated, .edited, .undone, .interrupted, .error].contains(session.phase) {
             dismissTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in self?.hide() }
         }
+    }
+
+    func showSent() {
+        dismissTimer?.invalidate()
+        let animateState = panel.isVisible
+        visualState = "sent"
+        applyPresentation(ActionPanelPresentation(phase: .interrupted, error: "已发送"))
+        statusSymbol.image = VoiceHudAssets.image("status-done")
+        statusSymbol.setAccessibilityLabel("已发送")
+        statusSymbol.isHidden = false
+        busy = false
+        progress.setAnimating(false)
+        spinner.setAnimating(false)
+        cancelAvailable = false
+        editAvailable = false
+        polishAvailable = false
+        refreshHints()
+        shouldShow = true
+        fitVisibleActions()
+        if animateState { VoiceHudMotion.transition(stack) }
+        dismissTimer = Timer.scheduledTimer(withTimeInterval: 1.6, repeats: false) { [weak self] _ in self?.hide() }
+    }
+
+    func showNotice(_ text: String) {
+        dismissTimer?.invalidate()
+        visualState = "notice"
+        applyPresentation(ActionPanelPresentation(phase: .error, error: text))
+        busy = false
+        progress.setAnimating(false)
+        spinner.setAnimating(false)
+        cancelAvailable = false
+        editAvailable = false
+        polishAvailable = false
+        refreshHints()
+        shouldShow = true
+        fitVisibleActions()
+        dismissTimer = Timer.scheduledTimer(withTimeInterval: 2.8, repeats: false) { [weak self] _ in self?.hide() }
+    }
+
+    func showLearnedHotwords(_ words: [String]) {
+        let words = words.prefix(8).map { String($0.prefix(40)) }.filter { !$0.isEmpty }
+        guard !words.isEmpty else { return }
+        status.stringValue = words.count == 1 ? "已收录 · \(words[0])" : "已收录 \(words.count) 个热词"
+        status.toolTip = "已收录热词：" + words.joined(separator: "、") + "。从下一句开始优先使用。"
+        status.setAccessibilityLabel(status.toolTip)
+        statusSymbol.image = VoiceHudAssets.image("status-done")
+        statusSymbol.isHidden = false
+        progress.setAnimating(false)
+        spinner.setAnimating(false)
+        shouldShow = true
+        VoiceHudMotion.transition(stack)
+        dismissTimer?.invalidate()
+        dismissTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { [weak self] _ in self?.hide() }
     }
 
     func position(caret: NSRect?, clientLevel: Int32) {

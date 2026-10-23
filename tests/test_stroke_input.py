@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import threading
 import time
 
-from proximic_ring.stroke_input import StrokeCollector, StrokeDictionary, SYMBOLS
-from proximic_ring.touchpad_strokes import TouchpadStrokeOutput
+from proximic_ring.touchpad.stroke.stroke_input import StrokeCollector, StrokeDictionary, SYMBOLS
+from proximic_ring.touchpad.touchpad_strokes import TouchpadStrokeOutput
 from ring_python_sdk.touchpad import TouchpadMove, TouchpadContact, TouchpadClickVerdict
 
 
@@ -91,7 +91,7 @@ def test_worker_reorders_contact_batch_and_original_sdk_click_wins_over_pixel_pa
     batch=[TouchpadContact('down',0,now),TouchpadContact('up',10,now),TouchpadClick(10,now)]
     batch += [TouchpadMove(1,0,.99,step,now) for step in range(13)]
     # Enqueue atomically to reproduce SDK contact-before-movement delivery.
-    with output.lock: output.events.extend(batch)
+    with output.lock: output.events.extend((event, None) for event in batch)
     output.wake.set()
     assert written.wait(1)
     output.stop(); assert done.wait(1)
@@ -142,7 +142,7 @@ def test_original_detector_tap_with_amplified_movement_confirms_without_adding_s
     output = TouchpadStrokeOutput(connection=threading.Event(), on_ready=ready.set,
         on_end=lambda *_: done.set(), on_stroke=paths.append, on_tap=tapped.set)
     output.start(); assert ready.wait(1); output.activate()
-    with output.lock: output.events.extend(batch)
+    with output.lock: output.events.extend((event, None) for event in batch)
     output.wake.set()
     assert tapped.wait(1)
     output.stop(); assert done.wait(1)
@@ -160,7 +160,7 @@ def test_short_written_stroke_without_sdk_click_is_preserved():
     batch = [TouchpadContact('down', 0, now), TouchpadContact('up', 10, now)]
     batch += [TouchpadMove(1, 0, .99, step, now) for step in range(10)]
     batch.append(TouchpadClickVerdict(0, 10, False, now))
-    with output.lock: output.events.extend(batch)
+    with output.lock: output.events.extend((event, None) for event in batch)
     output.wake.set()
     assert written.wait(1)
     output.stop(); assert done.wait(1)
@@ -181,7 +181,7 @@ def test_multiple_strokes_in_one_batch_keep_separate_sdk_boundaries():
            TouchpadContact('down',14,now),TouchpadContact('up',24,now)]
     batch += [TouchpadMove(1,0,.5,step,now) for step in range(27)]
     batch += [TouchpadClickVerdict(0,10,False,now),TouchpadClickVerdict(14,24,False,now)]
-    with output.lock: output.events.extend(batch)
+    with output.lock: output.events.extend((event, None) for event in batch)
     output.wake.set(); assert written.wait(1)
     output.stop(); assert done.wait(1)
     assert [path[-1] for path in paths]==[(9.,0.),(9.,0.)]
@@ -200,7 +200,7 @@ def test_late_click_with_already_received_lift_frames_never_publishes_a_stroke()
     try:
         now = time.monotonic()
         with output.lock:
-            output.events.extend([TouchpadContact('down', 0, now)] +
+            output.events.extend((event, None) for event in [TouchpadContact('down', 0, now)] +
                 [TouchpadMove(.3, 0., .99, step, now) for step in range(14)])
         output.wake.set(); assert traced.wait(1)
         output.submit(TouchpadContact('up', 10, time.monotonic()))
@@ -227,7 +227,7 @@ def test_negative_verdict_keeps_short_stroke_and_does_not_consume_next_click():
         batch = [TouchpadContact('down', 0, now), TouchpadContact('up', 10, now),
                  TouchpadContact('down', 14, now), TouchpadContact('up', 24, now)]
         batch += [TouchpadMove(.3, 0., .99, step, now) for step in range(27)]
-        with output.lock: output.events.extend(batch)
+        with output.lock: output.events.extend((event, None) for event in batch)
         output.wake.set()
         assert not written.wait(.05)
         output.submit(TouchpadClickVerdict(0, 10, False, time.monotonic()))
@@ -249,7 +249,7 @@ def test_missing_verdict_expires_without_turning_contact_into_stroke():
     try:
         now = time.monotonic()
         with output.lock:
-            output.events.extend([TouchpadContact('down', 0, now), TouchpadContact('up', 10, now)] +
+            output.events.extend((event, None) for event in [TouchpadContact('down', 0, now), TouchpadContact('up', 10, now)] +
                 [TouchpadMove(1., 0., .99, step, now) for step in range(14)])
         output.wake.set()
         assert not written.wait(.6)

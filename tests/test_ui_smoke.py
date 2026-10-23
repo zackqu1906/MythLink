@@ -143,7 +143,7 @@ def test_macos_edit_does_not_report_success_without_verified_replacement(
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QCoreApplication, QSettings
 
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import AppController, _EditReview
 
     _app = QCoreApplication.instance() or QCoreApplication(["mac-edit-verification"])
@@ -193,7 +193,7 @@ def test_macos_edit_accepts_equivalent_line_endings_and_unicode(
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QCoreApplication, QSettings
 
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.ui.controller import AppController, _EditReview
 
     _app = QCoreApplication.instance() or QCoreApplication(["mac-edit-normalization"])
@@ -236,7 +236,7 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QCoreApplication, QSettings
 
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
     from proximic_ring.ui.controller import AppController, _EditReview
 
@@ -392,7 +392,7 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QCoreApplication, QSettings
 
-    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import InputModeRoutingResult
     from proximic_ring.ui.controller import AppController
 

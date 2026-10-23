@@ -1,0 +1,80 @@
+{
+  "schema_version": 4,
+  "goal": "请用苹果备忘录新建一篇笔记，标题为“Workflow 对比测试”，正文逐条记录：\n1. 记录用户操作经验；\n2. 提取可复用流程；\n3. 通过手势触发 Agent 执行。\n保留这三条原文，完成后确认新笔记的标题和正文已显示。",
+  "parameters": {
+    "note_title": "Workflow 对比测试",
+    "note_body": "1. 记录用户操作经验；\n2. 提取可复用流程；\n3. 通过手势触发 Agent 执行。"
+  },
+  "initial_state": "备忘录已运行，在 All on My Mac 列表选中 15:59 创建的学习样本“Workflow 对比测试”，焦点在笔记列表，没有弹窗。每轮重新选中该学习样本；所有测试新建笔记均保留，列表数量会增加。",
+  "workflow": {
+    "name": "苹果备忘录新建并填写指定笔记",
+    "goal": "在 macOS 苹果备忘录中新建一篇笔记，将 {{note_title}} 写入标题行，并把 {{note_body}} 逐条原样写入正文，然后确认标题与正文已在界面中显示。",
+    "parameters": [
+      {
+        "name": "note_title",
+        "description": "新笔记首行标题，需原样保留"
+      },
+      {
+        "name": "note_body",
+        "description": "正文内容，按用户要求逐条列出、保持原文"
+      }
+    ],
+    "steps": [
+      {
+        "action": "在苹果备忘录中定位并绑定目标应用，读取当前窗口与笔记列表。",
+        "method": "用 cua_repl 执行 cua.getApp(\"Notes\") 绑定苹果备忘录；该调用返回应用绑定对象并自动输出当前 AX 状态，可从状态中读取窗口标题、侧栏文件夹、笔记列表与工具栏按钮（含 Description: New Note）。若显示名解析失败，按 recovery_notes 改用 bundle ID。",
+        "check": "当前绑定的应用窗口标题为 Notes，且状态中可见笔记列表与工具栏的 New Note 按钮（用于下一步重新定位）。"
+      },
+      {
+        "action": "在苹果备忘录中新建一篇空白笔记并保持正文编辑区聚焦。",
+        "method": "在最近一次 AX 状态中定位工具栏中 Description/Help 为 New Note（创建笔记）的按钮并执行 click，然后在同一次 cua_repl 调用中 getAXState() 读取操作后的状态；每次操作后都从新状态重新定位元素，不复用旧索引。",
+        "check": "列表中出现一条新建且处于选中状态的笔记，焦点位于正文编辑区，可继续输入。"
+      },
+      {
+        "action": "在新建笔记编辑区写入标题 {{note_title}} 与正文 {{note_body}}。",
+        "method": "用已绑定的应用对象执行 paste(text, { format: \"text\" })，将文本设为“首行 {{note_title}} + 换行 + 逐条排列的 {{note_body}}”一次粘贴到已聚焦的正文编辑区；随后在同一次调用中 getAXState() 读取状态差异，核对标题行与正文内容。",
+        "check": "正文编辑区内容等于 {{note_title}} 与 {{note_body}} 的逐行组合，且笔记列表对应行的标题显示为 {{note_title}}。"
+      }
+    ],
+    "conditions": [
+      "macOS 桌面可被 cua_repl 以计算机使用方式访问，且目标应用（苹果备忘录，bundle ID com.apple.Notes）已安装、可启动或已运行。",
+      "系统/应用授权允许 Agent 读取并操作该应用（本次控制事件显示按已有应用授权执行 click、paste、读取状态）。",
+      "笔记正文编辑区处于可输入状态（新建笔记后焦点落在正文编辑区）。"
+    ],
+    "fallbacks": [
+      {
+        "when": "cua.getApp 用应用显示名无法解析到目标应用时",
+        "action": "建议先用 cua.listApps() 取得该应用的 bundle ID（苹果备忘录为 com.apple.Notes），再用 bundle ID 调用 cua.getApp 完成绑定，然后回到主路径。"
+      },
+      {
+        "when": "点击 New Note 后状态中未出现新笔记，或按钮定位失效时",
+        "action": "建议重新 getAXState()（需要完整树时关闭 diffing）获取最新状态，按 Description/Help（New Note）重新定位按钮后再点击，不要在旧索引上重复点击，之后继续主路径的粘贴步骤。"
+      },
+      {
+        "when": "paste 后正文编辑区为空或文本未出现时",
+        "action": "建议先确认焦点仍在正文编辑区（必要时点击该编辑区使其聚焦）后重新 paste 同一 {{note_title}}/{{note_body}} 文本，再读取状态核对；此为建议分支，记录中未执行过该恢复。"
+      }
+    ]
+  },
+  "source": {
+    "job_id": "3c247a1f68a24b07be006e83266e8f47",
+    "workflow_index": 0,
+    "session_id": "3e92ebeba32747a892c5f4c2f4594515",
+    "episode_id": "adc86c573c1e4be68a89e74b5c5adaae",
+    "prompt_version": "desktop-awm-4",
+    "source_directory": "/Users/admin/.codex/worktrees/3584/ProximicVoice-main/agent-experience/workflows",
+    "json_file": "3c247a1f68a24b07be006e83266e8f47.flow.json",
+    "text_file": "3c247a1f68a24b07be006e83266e8f47.flow.txt",
+    "text_sha256": "2fc52b2f1814594993f271503ba4e53606ab65ff8798acf6c4cfd52a2f799598",
+    "json_sha256": "58184591c27473c8154b42e6cb4027e451dbc6eb6b23d6e8586da8c662f7682a",
+    "experiment": "direct_goal_or_steps_v1",
+    "steps_selection": "verbatim 操作步骤 section of frozen source text; substitute declared parameters once",
+    "parent_case_id": "6644ac72abc33447e9ded0cf4f46b773"
+  },
+  "execution_guidance": "以下流程是本次任务的操作指南。沿用其中有用的具体路径，避免从头探索替代方案。\n结合当前界面重新定位目标；不得复用历史控件编号、坐标或临时变量。\n目标状态已满足的步骤可跳过。检查必要的到位条件；条件不符时局部恢复，再回到主路径。\n当前工具返回已包含所需观察时，直接用该返回验证，不为相同检查额外重复读取界面。\n若流程与本次任务或当前界面冲突，以本次任务和实际观察为准。缺少必要信息时询问用户。\n继续遵守现有 computer use、暂停、权限和结果验证规则。流程不是已经执行或已经成功的证明。",
+  "natural_language_workflow": "操作步骤：\n1. 动作：在苹果备忘录中定位并绑定目标应用，读取当前窗口与笔记列表。\n   执行方法：用 cua_repl 执行 cua.getApp(\"Notes\") 绑定苹果备忘录；该调用返回应用绑定对象并自动输出当前 AX 状态，可从状态中读取窗口标题、侧栏文件夹、笔记列表与工具栏按钮（含 Description: New Note）。若显示名解析失败，按 recovery_notes 改用 bundle ID。\n   完成条件：当前绑定的应用窗口标题为 Notes，且状态中可见笔记列表与工具栏的 New Note 按钮（用于下一步重新定位）。\n2. 动作：在苹果备忘录中新建一篇空白笔记并保持正文编辑区聚焦。\n   执行方法：在最近一次 AX 状态中定位工具栏中 Description/Help 为 New Note（创建笔记）的按钮并执行 click，然后在同一次 cua_repl 调用中 getAXState() 读取操作后的状态；每次操作后都从新状态重新定位元素，不复用旧索引。\n   完成条件：列表中出现一条新建且处于选中状态的笔记，焦点位于正文编辑区，可继续输入。\n3. 动作：在新建笔记编辑区写入标题 {{note_title}} 与正文 {{note_body}}。\n   执行方法：用已绑定的应用对象执行 paste(text, { format: \"text\" })，将文本设为“首行 {{note_title}} + 换行 + 逐条排列的 {{note_body}}”一次粘贴到已聚焦的正文编辑区；随后在同一次调用中 getAXState() 读取状态差异，核对标题行与正文内容。\n   完成条件：正文编辑区内容等于 {{note_title}} 与 {{note_body}} 的逐行组合，且笔记列表对应行的标题显示为 {{note_title}}。",
+  "renderer_version": "desktop-awm-4-direct-steps",
+  "parameter_binding": "reference",
+  "input_style": "direct_goal_or_steps",
+  "id": "4cb0c69007bcd81decb468912c91a49f"
+}

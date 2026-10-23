@@ -1,0 +1,44 @@
+Session dir: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211
+Connecting 'Ringo8F56' (C23BC3B9-2293-AE6A-CD46-F03111E6EC4D) ...
+Connected successfully.
+MTU: 498
+button capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_button.csv
+r2w capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_raise_to_wake.csv
+Periodic battery polling disabled for this streaming session.
+IMU chip: icm42688
+DEVICE DeviceInfo(format_ver=1, hw_rev=1, fw_major=1, fw_minor=2, fw_patch=133, fw_tweak=0, components=(InfoComponent(id=1, present=1, count=1, model=1, flags=3), InfoComponent(id=2, present=0, count=0, model=0, flags=0), InfoComponent(id=3, present=1, count=1, model=1, flags=0), InfoComponent(id=4, present=1, count=1, model=1, flags=3), InfoComponent(id=5, present=1, count=1, model=1, flags=3), InfoComponent(id=6, present=1, count=1, model=2, flags=0), InfoComponent(id=7, present=1, count=1, model=1, flags=0), InfoComponent(id=8, present=1, count=1, model=2, flags=0)))
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio.wav
+PHASE mic_only_default
+RESULT {"phase": "mic_only_default", "blocks": 59, "samples": 94400, "nonzero": 94241, "zero_blocks": 0, "tail_nonzero": 31949}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio.wav
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio_2.wav
+PHASE mic_restart_default
+RESULT {"phase": "mic_restart_default", "blocks": 58, "samples": 92800, "nonzero": 92636, "zero_blocks": 0, "tail_nonzero": 31943}
+swipe START sent
+swipe capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_swipe.csv
+PHASE mic_with_gestures
+RESULT {"phase": "mic_with_gestures", "blocks": 60, "samples": 96000, "nonzero": 95842, "zero_blocks": 0, "tail_nonzero": 31942}
+PHASE mic_with_gestures_and_quaternion
+RESULT {"phase": "mic_with_gestures_and_quaternion", "blocks": 61, "samples": 97600, "nonzero": 97436, "zero_blocks": 0, "tail_nonzero": 31943}
+swipe STOP sent
+swipe saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_swipe.csv
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio_2.wav
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio_3.wav
+PHASE mic_explicit_zero_db
+RESULT {"phase": "mic_explicit_zero_db", "blocks": 58, "samples": 92800, "nonzero": 86071, "zero_blocks": 0, "tail_nonzero": 29634}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio_3.wav
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio_4.wav
+PHASE mic_restored_default
+RESULT {"phase": "mic_restored_default", "blocks": 58, "samples": 92800, "nonzero": 92651, "zero_blocks": 0, "tail_nonzero": 31934}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_audio_4.wav
+button saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_button.csv
+r2w saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/session/20261014_134211/ring_raise_to_wake.csv
+Disconnected.

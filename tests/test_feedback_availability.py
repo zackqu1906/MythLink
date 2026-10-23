@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from proximic_ring.ui.feedback_availability import feedback_block_reason
+from proximic_ring.ui.shared.feedback_availability import feedback_block_reason
 
 
 def host():

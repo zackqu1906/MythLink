@@ -8,8 +8,8 @@ ColumnLayout {
     required property var host
     property bool showAdvanced: false
     readonly property bool hasCalibration: controller.savedCalibration.baseline !== undefined
-    spacing: 28
-    UiTheme { id: theme }
+    spacing: 18
+    FigmaTheme { id: theme }
     onVisibleChanged: {
         if (visible) controller.refresh()
         else showAdvanced = false
@@ -17,17 +17,17 @@ ColumnLayout {
 
     Rectangle {
         Layout.fillWidth: true
-        implicitHeight: statusContent.implicitHeight + 32
-        radius: 12; color: theme.subtle; border.color: theme.line
+        implicitHeight: statusContent.implicitHeight + 40
+        radius: 14; color: "#EDF1FF"; border.color: "#DCE3FC"
         ColumnLayout {
             id: statusContent
-            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+            anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
             spacing: 14
-            SettingsFormRow {
+            FigmaFormRow {
                 title: "离开锁屏，弹指解锁"
-                description: "戴着戒指离开后锁屏，返回、屏幕亮起后可弹指解锁。"
+                description: "戴着戒指离开后自动锁屏。快捷键、菜单或系统空闲锁屏后，也可直接弹指解锁，无需先离开再返回。"
                 controlWidth: 48
-                SettingsSwitch {
+                FigmaSwitch {
                     objectName: "proximityEnabled"
                     Layout.alignment: Qt.AlignRight
                     Accessible.name: "离开锁屏，弹指解锁"
@@ -68,15 +68,15 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         title: "开始使用"
         description: "使用首页连接的戒指，完成以下设置后开启上方功能。"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "1. 校准戒指"
             descriptionObjectName: "proximitySavedCalibration"
             description: "戴好戒指，坐在电脑前保持正常使用姿势，采集 10 秒。"
                 + (pane.hasCalibration ? "\n已保存校准，重连和重启后仍可使用。" : "\n当前戒指尚未校准。")
-            UiAction {
+            FigmaAction {
                 objectName: "proximityCalibrate"
                 Layout.alignment: Qt.AlignRight
                 text: pane.controller.calibrating ? "正在校准…" : pane.hasCalibration ? "重新校准（10 秒）" : "开始 10 秒校准"
@@ -84,7 +84,7 @@ ColumnLayout {
                 enabled: !pane.controller.busy
                 onClicked: pane.controller.startCalibration()
             }
-            UiAction {
+            FigmaAction {
                 objectName: "proximityCancelCalibration"
                 Layout.alignment: Qt.AlignRight
                 text: "取消校准"
@@ -111,21 +111,21 @@ ColumnLayout {
                 color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
             title: "2. 解锁密码"
             descriptionObjectName: "proximityPasswordStatus"
             description: !pane.controller.passwordStatusChecked ? "正在检查已保存的密码授权…"
                 : !pane.controller.passwordConfigured ? "通过系统安全输入框，设置这台 Mac 的登录密码。"
                 : !pane.controller.passwordAccessReady ? "密码已保存，请允许当前组件访问，并在系统弹窗中选择“始终允许”。"
                 : "密码与访问授权已就绪；更改 Mac 登录密码后，请在这里更新。"
-            UiAction {
+            FigmaAction {
                 objectName: "proximityConfigurePassword"
                 Layout.alignment: Qt.AlignRight
                 text: pane.controller.passwordConfigured ? "更新解锁密码" : "设置解锁密码"
                 enabled: !pane.controller.busy
                 onClicked: pane.controller.configurePassword()
             }
-            UiAction {
+            FigmaAction {
                 objectName: "proximityAuthorizePassword"
                 Layout.alignment: Qt.AlignRight
                 text: "允许访问已存密码"
@@ -133,27 +133,13 @@ ColumnLayout {
                 enabled: !pane.controller.busy
                 onClicked: pane.controller.authorizePassword()
             }
-            UiAction {
+            FigmaAction {
                 objectName: "proximityForgetPassword"
                 Layout.alignment: Qt.AlignRight
                 text: "删除已存密码"; quiet: true
                 visible: pane.controller.passwordConfigured
                 enabled: !pane.controller.busy
                 onClicked: pane.controller.forgetPassword()
-            }
-        }
-        SettingsFormRow {
-            title: "3. 系统权限"
-            descriptionObjectName: "proximityPermissionStatus"
-            description: (pane.controller.permissionReady ? "辅助功能权限已就绪。" : "请允许距离锁屏组件使用辅助功能。")
-                + "开启功能时还需允许蓝牙权限。"
-            descriptionWarning: pane.controller.passwordStatusChecked && !pane.controller.permissionReady
-            UiAction {
-                objectName: "proximityRequestPermissions"
-                Layout.alignment: Qt.AlignRight
-                text: "打开权限设置"
-                enabled: !pane.controller.busy
-                onClicked: pane.controller.requestPermissions()
             }
         }
         Label {
@@ -164,19 +150,76 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
+        title: "自动更新基线"
+        description: "选择哪些操作可以用于采集桌前信号，减轻长期漂移的影响。"
+        FigmaFormRow {
+            title: "根据操作更新基线"
+            description: "开启后，在所选操作后的 15 秒内采样。最近 120 秒内至少 5 个有效读数、跨度至少 2 秒即可更新。键鼠操作及已启用的手势、语音证据可保护 10 秒不因远离锁屏，不必等基线更新完成。"
+            controlWidth: 48
+            FigmaSwitch {
+                objectName: "proximityBaseline_enabled"
+                Layout.alignment: Qt.AlignRight
+                Accessible.name: "根据操作更新基线"
+                checked: pane.controller.baselineOptions.enabled
+                enabled: !pane.controller.busy
+                onClicked: {
+                    pane.controller.setBaselineOption("enabled", checked)
+                    checked = Qt.binding(function() { return pane.controller.baselineOptions.enabled })
+                }
+            }
+        }
+        Repeater {
+            model: [
+                { key: "keyboardMouse", title: "键盘和鼠标操作", description: "将系统检测到的键鼠操作作为采样依据。" },
+                { key: "gestures", title: "戒指手势操作", description: "将当前戒指的有效手势作为采样依据；远处操作也会参与更新。" },
+                { key: "voice", title: "语音输入", description: "将本应用新识别到的语音文字作为采样依据；远处输入也会参与更新。" }
+            ]
+            delegate: FigmaFormRow {
+                required property var modelData
+                title: modelData.title
+                description: modelData.description
+                controlWidth: 48
+                FigmaSwitch {
+                    objectName: "proximityBaseline_" + modelData.key
+                    Layout.alignment: Qt.AlignRight
+                    Accessible.name: modelData.title + "用于更新基线"
+                    checked: pane.controller.baselineOptions[modelData.key]
+                    enabled: !pane.controller.busy
+                    onClicked: {
+                        pane.controller.setBaselineOption(modelData.key, checked)
+                        checked = Qt.binding(function() { return pane.controller.baselineOptions[modelData.key] })
+                    }
+                }
+            }
+        }
+        Label {
+            objectName: "proximityBaselineProgress"
+            Layout.fillWidth: true
+            text: !pane.controller.baselineOptions.enabled ? "已关闭自动更新，保留当前基线。"
+                : !pane.controller.baselineOptions.keyboardMouse && !pane.controller.baselineOptions.gestures && !pane.controller.baselineOptions.voice
+                    ? "请至少开启一种操作来源。"
+                : !pane.controller.enabled ? "开启离开锁屏后开始自动采样；请先完成一次手动校准。"
+                : "本轮有效读数：" + (pane.controller.learnedThresholds.activity_calibration_samples || 0)
+                    + " / 5" + (pane.controller.learnedThresholds.activity_lock_protected ? " · 近期操作保护中" : "")
+                    + "。更新时同时调整靠近阈值（基线 − 4 dB）和远离阈值（基线 − 8 dB），并保存到当前戒指。"
+            color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
+        }
+    }
+
+    FigmaFormGroup {
         title: "锁屏提示"
         description: "可选：在系统锁屏界面显示弹指解锁的使用提示。"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "提示文字"
             description: pane.controller.lockScreenMessage
-            UiAction {
+            FigmaAction {
                 objectName: "proximityCopyLockMessage"
                 Layout.alignment: Qt.AlignRight
                 text: "复制提示文字"
                 onClicked: pane.controller.copyLockScreenMessage()
             }
-            UiAction {
+            FigmaAction {
                 objectName: "proximityOpenLockSettings"
                 Layout.alignment: Qt.AlignRight
                 text: "打开系统锁屏设置"
@@ -197,18 +240,18 @@ ColumnLayout {
         }
     }
 
-    UiAction {
+    FigmaAction {
         objectName: "proximityAdvancedButton"
         Layout.alignment: Qt.AlignRight
         text: pane.showAdvanced ? "收起高级选项  ⌃" : "高级选项  ⌄"
         onClicked: pane.showAdvanced = !pane.showAdvanced
     }
-    SettingsFormGroup {
+    FigmaFormGroup {
         objectName: "proximityAdvancedSettings"
         title: "距离检测"
         visible: pane.showAdvanced
         description: pane.controller.enabled ? "关闭上方功能后才能调整参数，重新开启后生效。" : "修改自动保存，开启功能后生效。"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "远离确认次数"
             description: "连续多次检测到弱信号后确认离开，中间不达标会重新计数。"
             SpinBox {
@@ -221,20 +264,20 @@ ColumnLayout {
                 onValueModified: pane.controller.setOption("awaySamples", value)
             }
         }
-        SettingsFormRow {
-            title: "断连锁屏等待"
-            description: "弱信号断连后，等待多少秒再锁屏。"
+        FigmaFormRow {
+            title: "断连后的离开确认"
+            description: "弱信号断连持续达到此时间后，回来时可自动亮屏；断连期间不会锁屏。"
             SpinBox {
                 objectName: "proximity_lostDelay"
                 Layout.fillWidth: true
-                Accessible.name: "弱信号断连后锁屏等待秒数"
+                Accessible.name: "弱信号断连后返回检测等待秒数"
                 from: 5; to: 120; editable: true
                 enabled: !pane.controller.enabled
                 value: pane.controller.options.lostDelay
                 onValueModified: pane.controller.setOption("lostDelay", value)
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
             visible: pane.controller.enabled
             title: "当前信号"
             description: "信号强度会受遮挡影响，不能精确测距。"
@@ -245,24 +288,25 @@ ColumnLayout {
                 color: theme.text; font.pixelSize: 14
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
             title: "已保存的校准"
-            description: "重新校准后更新，同一枚戒指重连时沿用。"
+            description: "手动校准或自动采样完成后更新，同一枚戒指重连时沿用。"
             Label {
                 objectName: "proximityCalibrationDetails"
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignRight
                 text: !pane.hasCalibration ? "尚未校准"
                     : "基线 " + Number(pane.controller.savedCalibration.baseline).toFixed(1) + " dBm"
+                      + "\n靠近阈值 ≥ " + Number(pane.controller.savedCalibration.baseline - 4).toFixed(1) + " dBm"
                       + "\n远离阈值 < " + Number(pane.controller.savedCalibration.baseline - 8).toFixed(1) + " dBm"
                       + "\n" + pane.controller.savedCalibration.samples.length + " 个样本"
                 color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
             title: "授权排查"
             description: "如授权未生效，核对系统中是否允许“Mythlink 距离锁屏”或对应启动应用；更新后可能需要重新授权。"
-            UiAction {
+            FigmaAction {
                 objectName: "proximityRevealComponent"
                 Layout.alignment: Qt.AlignRight
                 text: "查看组件位置"
@@ -271,13 +315,13 @@ ColumnLayout {
         }
         Label {
             Layout.fillWidth: true
-            text: "确认离开后，一次有效的近处信号即可确认返回并恢复手势。由本功能锁屏时，手势就绪后才会亮屏，每次返回只亮一次，亮屏不会解锁；需要弹指完成解锁。手动锁屏仍使用系统方式解锁。\n\n开启期间保持后台监测，屏幕可以熄灭。合盖或手动睡眠后需先唤醒；重启或注销后仍需手动登录。完全退出应用后，距离锁屏停止。"
+            text: "开启功能后，快捷键、菜单、系统空闲和远离锁屏均支持弹指解锁。同一枚戒指的手势连接就绪后即可使用，无需先离开再返回。确认离开后，一次有效的近处信号可确认返回，等待手势就绪后单次亮屏；亮屏不会直接解锁。\n\n开启期间保持后台监测，屏幕可以熄灭。合盖或手动睡眠后需先唤醒；重启、注销或切换用户后仍需先使用系统方式登录。完全退出应用后，锁屏与解锁功能停止。"
             color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
         }
     }
     Label {
         Layout.fillWidth: true
-        text: "仅由本功能锁屏时支持弹指解锁。持有已连接戒指的人可触发解锁，请妥善保管戒指。"
+        text: "功能开启后也支持手动锁屏的弹指解锁。持有已连接戒指的人可触发解锁，请妥善保管戒指。"
         color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
     }
 }

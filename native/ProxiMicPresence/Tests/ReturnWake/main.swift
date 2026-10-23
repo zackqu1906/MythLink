@@ -163,14 +163,15 @@ p.connectionChanged()
 for t in 7...12 { check(!sample(&p, Double(t), -75), "far reconnect never wakes") }
 check(sample(&p, 13), "first near callback after reconnect wakes")
 
-// A manual lock can wake after a trip but does not acquire gesture unlock ownership.
+// Return alone never unlocks. Manual locks in a monitored session also accept snap.
 p = departed()
 var manualLock = PresencePolicy()
+_ = manualLock.step(now: -1, locked: false, connected: true, permitted: true, awake: true)
 _ = manualLock.step(now: 0, locked: true, connected: true, permitted: true, awake: true)
 check(sample(&p, 2.1), "actual return wakes a manual lock")
 check(!manualLock.ownsLock, "wake cannot claim manual lock")
-check(manualLock.requestGestureUnlock(now: 3, locked: true, connected: true, permitted: true, awake: true) == nil,
-      "manual lock still requires system unlock")
+check(manualLock.requestGestureUnlock(now: 3, locked: true, connected: true, permitted: true, awake: true) == .unlock,
+      "fresh snap can unlock a monitored manual lock")
 
 // Unlock consumes this trip, including return before an idle lock.
 p = departed(false)
@@ -210,7 +211,7 @@ for t in 3...20 { _ = sample(&p, Double(t), connected: false, weakLoss: true) }
 check(!p.awaitingReturn, "radio recovery cannot reuse old disconnect evidence")
 for t in 21...25 { check(!sample(&p, Double(t)), "near after radio recovery cannot fabricate return") }
 
-// Both production policies: smoothed departure, raw return, ownership and gesture requirement.
+// Both policies: connected departure locks; disconnected return can wake an external lock.
 for loseConnection in [false, true] {
     var lock = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, awaySamples: loseConnection ? 30 : 2, lostDelay: 5)
     var wake = ReturnWakePolicy()
@@ -224,7 +225,9 @@ for loseConnection in [false, true] {
         if connected { wake.sample(lock.smoothedRSSI!, now: t, farThreshold: lock.lockRSSI) }
         let action = lock.step(now: t, locked: locked, connected: connected, permitted: true, awake: true)
         check(action != .unlock, "RSSI never unlocks in production replay")
+        check(connected || action != .lock, "disconnect never requests a lock")
         if action == .lock { locked = true }
+        if loseConnection && t == 12 { locked = true } // e.g. OS idle lock, never a proximity action.
         if wake.step(now: t, locked: locked, connected: connected, available: true, locallyActive: false,
                      rawRSSI: connected ? raw : nil, sampledAt: connected ? t : nil,
                      weakDisconnect: lock.disconnectEvidence == "weak", farThreshold: lock.lockRSSI,
@@ -232,19 +235,19 @@ for loseConnection in [false, true] {
             wakeCount += 1
         }
     }
-    check(wakeCount == 1 && locked && lock.ownsLock, "one wake preserves locked owned session")
-    check(lock.lastLockReason == (loseConnection ? "disconnected" : "weak_signal"), "both departure paths exercised")
+    check(wakeCount == 1 && locked && lock.ownsLock == !loseConnection, "one return wakes either lock source")
+    check(lock.lastLockReason == (loseConnection ? "" : "weak_signal"), "only connected RSSI requests lock")
     check(lock.requestGestureUnlock(now: 51, locked: true, connected: true, permitted: true, awake: true) == .unlock,
           "new snap remains required after waking")
 }
 print("Return display wake: \(count) assertions passed; no system effects")
 
 // Regression: return/reconnect may precede gesture readiness by seconds. Delay
-// only the owned-lock display wake until the host has installed the snap route.
+// the display wake until the host has installed the available snap route.
 func display(_ g: inout ReturnDisplayGate, returned: Bool = true, locked: Bool = true,
-             owned: Bool = true, available: Bool = true, connected: Bool = true,
+             requiresGesture: Bool = true, available: Bool = true, connected: Bool = true,
              healthy: Bool = true, token: String = "this-lock", installed: String = "this-lock") -> Bool {
-    g.step(returnConfirmed: returned, locked: locked, ownsLock: owned, available: available,
+    g.step(returnConfirmed: returned, locked: locked, requiresGesture: requiresGesture, available: available,
            connected: connected, gestureReady: healthy, token: token, installedToken: installed)
 }
 var displayGate = ReturnDisplayGate()
@@ -269,6 +272,6 @@ for context in 0...2 {
     check(!display(&displayGate, returned: false), "old readiness cannot recreate a cancelled return")
 }
 displayGate = ReturnDisplayGate()
-check(display(&displayGate, owned: false, healthy: false, token: "", installed: ""),
-      "manual lock still wakes on actual return without acquiring snap unlock")
+check(display(&displayGate, requiresGesture: false, healthy: false, token: "", installed: ""),
+      "unprepared session can still use display-only return wake")
 print("Return wake readiness gate: \(count) assertions passed; no system effects")

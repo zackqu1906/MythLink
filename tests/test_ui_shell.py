@@ -16,7 +16,7 @@ def visual_child(item, name):
             return found
 
 
-@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
 def test_shell_navigation_preserves_live_state_and_configuration(inline_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QMetaObject, QPointF
     from PySide6.QtTest import QTest
@@ -43,19 +43,26 @@ def test_shell_navigation_preserves_live_state_and_configuration(inline_ui, tmp_
         assert origin.x() >= root.property("sidebarWidth")
         assert origin.x() + surface.width() <= root.width()
         assert origin.y() + surface.height() <= root.height()
+        if page == "gesturesPage" and size == (1200, 780):
+            mapping = root.findChild(QObject, "gestureMappingPanel")
+            editor = root.findChild(QObject, "gestureActionEditor")
+            position = editor.mapToItem(mapping, QPointF())
+            assert position.x() >= mapping.width()
+            assert position.y() == pytest.approx(0)
+            assert editor.width() >= 340
         assert root.grabWindow().save(str(shots / f"{page}-{size[0]}.png"))
-    assert visual_child(root.contentItem(), "mainNav4") is None
+    assert visual_child(root.contentItem(), "mainNav4") is not None
     assert controller.gestureBindings == bindings_before
     assert controller.appGestures.profiles == profiles_before
     assert controller.ringGestures.mode == mode_before
     assert bridge.messages == messages_before
     assert {key: controller._settings.value(key) for key in controller._settings.allKeys()} == settings_before
 
-    # The home history link must reveal the existing voice history, not a new page.
+    # The home history link opens the dedicated history route and its existing model.
     root.setProperty("currentPage", 0)
     QMetaObject.invokeMethod(root.findChild(QObject, "homeAllHistoryButton"), "click")
     QTest.qWait(100)
-    assert root.property("currentPage") == 1
+    assert root.property("currentPage") == 4
     history = root.findChild(QObject, "voiceHistoryCard")
     origin = history.mapToScene(QPointF())
     assert 0 <= origin.y() < root.height()
@@ -73,7 +80,7 @@ def test_voice_gestures_are_inspectable_but_cannot_open_binding_editor(inline_ui
     messages_before = list(bridge.messages)
     page = root.findChild(QObject, "gesturesPage")
     edit = root.findChild(QObject, "gestureActionEditor")
-    for key in ("tap", "swipe-left", "swipe-right"):
+    for key in ("tap", "double-tap", "swipe-left", "swipe-right"):
         card = visual_child(page, "gestureCard_" + key)
         QMetaObject.invokeMethod(card, "click")
         QTest.qWait(20)
@@ -85,7 +92,7 @@ def test_voice_gestures_are_inspectable_but_cannot_open_binding_editor(inline_ui
 
 
 def test_settings_open_unified_advanced_window_directly(inline_ui, tmp_path):
-    from PySide6.QtCore import QObject, QMetaObject
+    from PySide6.QtCore import QObject, QMetaObject, QPointF
     from PySide6.QtTest import QTest
 
     _, _, _, root, _ = inline_ui
@@ -109,13 +116,20 @@ def test_settings_open_unified_advanced_window_directly(inline_ui, tmp_path):
     assert not root.findChild(QObject, "runtimeSettingsDialog").property("visible")
     assert root.findChild(QObject, "settingsPage4").property("visible")
     assert root.findChild(QObject, "settingsPage5").property("visible")
-    QMetaObject.invokeMethod(root.findChild(QObject, "advancedSettingsDoneButton"), "click")
+    back = root.findChild(QObject, "advancedSettingsBackButton")
+    assert back.property("visible")
+    content = back.property("contentItem")
+    icon = content.childItems()[0]
+    center = icon.mapToItem(back, QPointF(icon.width() / 2, icon.height() / 2))
+    assert center.x() == pytest.approx(back.width() / 2)
+    assert center.y() == pytest.approx(back.height() / 2)
+    QMetaObject.invokeMethod(back, "click")
     QTest.qWait(160)
     assert root.findChild(QObject, "runtimeSettingsDialog").property("visible")
     QMetaObject.invokeMethod(root.findChild(QObject, "runtimeSettingsDialog"), "close")
 
 
-@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
 def test_settings_form_navigation_preserves_configuration_and_live_voice(inline_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QMetaObject, QPointF
     from PySide6.QtTest import QTest
@@ -133,6 +147,8 @@ def test_settings_form_navigation_preserves_configuration_and_live_voice(inline_
     scroll = root.findChild(QObject, "runtimeSettingsScroll")
     QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(150)
+    QMetaObject.invokeMethod(root.findChild(QObject, "settingsAudioEntry"), "click")
+    QTest.qWait(60)
     assert root.findChild(QObject, "settingsAudioGroup").property("visible")
     assert root.findChild(QObject, "settingsInputGroup").property("visible")
     assert root.findChild(QObject, "settingsCategory3") is None
@@ -141,6 +157,8 @@ def test_settings_form_navigation_preserves_configuration_and_live_voice(inline_
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(shots / f"settings-top-{size[0]}.png"))
+    QMetaObject.invokeMethod(root.findChild(QObject, "settingsOverviewBackButton"), "click")
+    QTest.qWait(60)
     flick = scroll.property("contentItem")
     flick.setProperty("contentY", max(0, flick.property("contentHeight") - flick.height()))
     QTest.qWait(40)

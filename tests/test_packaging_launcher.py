@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import io
 from pathlib import Path
+import re
+import runpy
 import sys
 import types
 
@@ -35,7 +37,21 @@ def test_entrypoint_diverts_multiprocessing_before_starting_ui(monkeypatch) -> N
     assert calls == ["freeze_support", "run"]
 
 
-def test_packaged_qml_runtime_check_requires_every_imported_module(tmp_path) -> None:
+def test_agent_ui_check_is_explicit_and_bypasses_normal_startup(monkeypatch):
+    from proximic_ring.diagnostics import agent_card_check
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, 'argv', ['Mythlink', '--self-check-agent-ui',
+                                               '--output-dir', '/tmp/ui-evidence'])
+    monkeypatch.setattr(launcher.multiprocessing, 'freeze_support', lambda: None)
+    monkeypatch.setattr(launcher, 'run', lambda: pytest.fail('must not start normal services'))
+    calls = []
+    monkeypatch.setattr(agent_card_check, 'main', lambda args: calls.append(args) or 0)
+    assert launcher._entrypoint() == 0
+    assert calls == [['--output-dir', '/tmp/ui-evidence']]
+
+
+@pytest.mark.parametrize("missing_module", ["Controls/Material", "Shapes"])
+def test_packaged_qml_runtime_check_requires_every_imported_module(tmp_path, missing_module) -> None:
     launcher = _load_launcher()
     qml_root = tmp_path / "PySide6" / "qml"
     for relative_path in launcher._BUNDLED_QML_FILES:
@@ -45,13 +61,32 @@ def test_packaged_qml_runtime_check_requires_every_imported_module(tmp_path) -> 
 
     launcher._verify_bundled_qml_runtime(tmp_path)
 
-    (qml_root / "QtQuick" / "Controls" / "Material" / "qmldir").unlink()
-    with pytest.raises(RuntimeError, match="Controls/Material/qmldir"):
+    (qml_root / "QtQuick" / missing_module / "qmldir").unlink()
+    with pytest.raises(RuntimeError, match=missing_module + "/qmldir"):
         launcher._verify_bundled_qml_runtime(tmp_path)
 
 
+def test_qml_packaging_hook_keeps_plugins_and_metadata_for_actual_ui_imports(monkeypatch):
+    root = Path(__file__).parents[1]
+    imports = set()
+    for qml in (root / "src/proximic_ring").rglob("*.qml"):
+        imports.update(re.findall(r"^import (Qt[\w.]+)", qml.read_text(), re.MULTILINE))
+    destinations = {"PySide6/Qt/qml/" + name.replace(".", "/") for name in imports}
+    unused = "PySide6/Qt/qml/QtQuick/Pdf"
+    plugins = [(path + "/plugin.dylib", path) for path in sorted(destinations | {unused})]
+    metadata = [(path + "/qmldir", path) for path in sorted(destinations | {unused})]
+    qt = types.ModuleType("PyInstaller.utils.hooks.qt")
+    qt.add_qt6_dependencies = lambda _: ([], [], [])
+    qt.pyside6_library_info = types.SimpleNamespace(
+        collect_qtqml_files=lambda: (plugins, metadata))
+    monkeypatch.setitem(sys.modules, qt.__name__, qt)
+    hook = runpy.run_path(str(root / "packaging/hooks/hook-PySide6.QtQml.py"))
+    assert {item[1] for item in hook["binaries"]} == destinations
+    assert {item[1] for item in hook["datas"]} == destinations
+
+
 def test_frozen_installer_command_does_not_start_ui_or_require_python(monkeypatch) -> None:
-    from proximic_ring import input_method_install
+    from proximic_ring.voice.ime import input_method_install
     launcher = _load_launcher()
     monkeypatch.setattr(launcher.sys, "argv", ["/Applications/Mythlink.app/Contents/MacOS/Mythlink", "--input-method", "install"])
     monkeypatch.setattr(launcher.multiprocessing, "freeze_support", lambda: None)
@@ -63,7 +98,7 @@ def test_frozen_installer_command_does_not_start_ui_or_require_python(monkeypatc
 
 
 def test_native_access_worker_does_not_launch_ui_or_another_asr_host(monkeypatch):
-    from proximic_ring import native_access_worker
+    from proximic_ring.platforms.macos import native_access_worker
     launcher = _load_launcher()
     monkeypatch.setattr(launcher.sys, "argv", ["Mythlink", "--native-access-worker"])
     monkeypatch.setattr(launcher.multiprocessing, "freeze_support", lambda: None)
@@ -76,8 +111,8 @@ def test_open_unified_log_rotates_oversized_previous_run(
     monkeypatch, tmp_path
 ) -> None:
     launcher = _load_launcher()
-    import proximic_ring.runtime_diagnostics as diagnostics
-    from proximic_ring.diagnostic_log import RotatingDiagnosticLog
+    import proximic_ring.diagnostics.runtime_diagnostics as diagnostics
+    from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
 
     runtime_paths = types.ModuleType("proximic_ring.runtime_paths")
     runtime_paths.app_data_root = lambda: tmp_path
@@ -142,7 +177,7 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
 def test_permission_status_command_is_read_only_and_does_not_start_main_ui(monkeypatch, capsys):
     import json
     from PySide6 import QtCore, QtWidgets
-    import proximic_ring.mac_permissions as permissions
+    import proximic_ring.platforms.macos.mac_permissions as permissions
     launcher = _load_launcher()
     monkeypatch.setattr(launcher.sys, 'argv', ['Mythlink', '--permission-status'])
     monkeypatch.setattr(launcher.multiprocessing, 'freeze_support', lambda: None)
@@ -156,3 +191,13 @@ def test_permission_status_command_is_read_only_and_does_not_start_main_ui(monke
     monkeypatch.setattr(permissions, 'permission_status_report', report)
     assert launcher._entrypoint() == 0
     assert json.loads(capsys.readouterr().out)['bluetooth'] == 'Undetermined'
+
+
+def test_native_browser_host_keeps_stdout_framing_and_never_opens_ui(monkeypatch):
+    from proximic_ring.browser_bridge import native_host
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, 'argv', ['Mythlink', '--browser-native-host'])
+    monkeypatch.setattr(launcher.multiprocessing, 'freeze_support', lambda: None)
+    monkeypatch.setattr(launcher, 'run', lambda: pytest.fail('native messaging must not start UI/logging'))
+    monkeypatch.setattr(native_host, 'main', lambda: 23)
+    assert launcher._entrypoint() == 23

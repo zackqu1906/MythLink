@@ -58,3 +58,21 @@
 Figma 的 Code Connect 指向 React 设计库组件，当前项目采用 Qt Quick，因此直接使用相应图层的 SVG 导出。
 
 设置页三个分组标题使用 [设置原稿](https://www.figma.com/design/KHu0n7WydXkMMHC8pp2TFo/MythLink?node-id=274-1181) 的原始 SVG，放入 20 × 20 图标区域等比显示，保留原色与源文件尺寸。
+
+## 语音历史 v2（2026-10-12）
+
+依据 [03 语音 · 历史记录 / v2](https://www.figma.com/design/KHu0n7WydXkMMHC8pp2TFo/MythLink?node-id=995-7924)。按用户确认，历史区仍在语音输入页下方；页面顶部状态和导航保持现有结构。保留原稿的白底、浅灰紫筛选底色 `#F6F7FD` 和细边框／分隔线 `#E3E7EF`。嵌入现有窗口后使用 18px 标题、14/22 正文、12/18 元信息及原文／改后说明，记录内边距为 12px；外层沿用现有卡片的 16px 圆角与 20px 留白。
+
+`history/` 下的六个 SVG 均为该原稿导出的原文件，尺寸保持 16 × 16，不重绘、不着色、不截取截图。`history/manifest.json` 记录图层 ID、尺寸和 SHA-256。复制／删除／更多分别位于 24 × 24 的点击区域内；异常状态标识在时间左侧，类型标签位于应用名右侧。播放录音仍在“更多”菜单内。
+
+原稿字体 Source Han Sans SC Regular／Medium 从 [Adobe 官方 2.005R](https://github.com/adobe-fonts/source-han-sans/tree/2.005R/OTF/SimplifiedChinese) 原样取得，连同 OFL 许可证保存在 `../fonts/`，由历史区的 FontLoader 加载，不安装系统字体。
+
+搜索、记录类型、应用、时间和结果筛选全部可用；按用户最新确认，将原稿中的记录类型和处理模式合并为听写／润色（下滑）／指令，与列表标识一致。1200 × 780 下筛选区为一行五列，窄窗口改为三列两行；搜索框略宽，各控件底边对齐，下拉菜单沿用相同字号与细边框。应用来自现有记录，时间按本地日期筛选今天／近 7 天／近 30 天。按用户确认，本次不显示原稿中的“重试／再次输入”按钮；原有播放、复制、删除、查看详情继续可用。
+
+## 听写与编辑布局核对（2026-10-23）
+
+依据新文件的 [听写与编辑 / VoiceWorkbench](https://www.figma.com/design/lTJ3fi0mMULAjIsnF8ybwH/1022-MythLink-Ring?node-id=567-32820)。标准 1200 × 780 窗口：内容宽 932px、卡片间距 16px、卡片内边距 20px；语音手势卡 136px 高，输入模拟卡 500px 高。输入源和收音测试并排等宽、40px 高；文本框使用剩余高度，底部操作 40px 高。窄窗口将手势排列为三列，操作内容增加时允许页面滚动。
+
+`redesign-567-32897-microphone.svg` 是收音测试槽位的原始 16 × 16 图标；`redesign-246-3060-navigation-active.svg` 是导航按钮 Hover / Pressed 的原始 16 × 16 蓝色箭头，沿用设计的旋转角度。其余图标复用已下载的同节点素材。新增文件的节点和 SHA-256 记录在 `redesign-manifest.json`，SVG 未修改。
+
+按用户后续要求保留热词弹窗入口、真实收音波形和录音回放。手势文案读取实际配置；开始和定稿手势不同时，在同一槽位分两行显示。教学里的展开收音卡保持独立布局。

@@ -1,0 +1,7 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="40" height="24" viewBox="0 0 40 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Control/Enable Toggle v3">
+<path d="M12 1H28C34.0751 1 39 5.92487 39 12C39 18.0751 34.0751 23 28 23H12C5.92487 23 1 18.0751 1 12C1 5.92487 5.92487 1 12 1Z" fill="#A7AFBF"/>
+<path d="M12 1H28C34.0751 1 39 5.92487 39 12C39 18.0751 34.0751 23 28 23H12C5.92487 23 1 18.0751 1 12C1 5.92487 5.92487 1 12 1Z" stroke="#0225BA" stroke-width="2"/>
+<circle id="Ellipse" cx="12" cy="12" r="10" fill="#FCFCFE"/>
+</g>
+</svg>

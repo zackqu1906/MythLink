@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-from proximic_ring.native_access import NativeAccessChannel
-from proximic_ring.text_focus import window_stamp
+from proximic_ring.platforms.macos.native_access import NativeAccessChannel
+from proximic_ring.desktop.text_focus import window_stamp
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or os.environ.get("PROXIMIC_TEST_WINDOW_SELECTOR") != "1",

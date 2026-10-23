@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.mac_permissions import MacPermissionError, PermissionState
-from proximic_ring.native_access import NativeAccessChannel
+from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, PermissionState
+from proximic_ring.platforms.macos.native_access import NativeAccessChannel
 
 
 def test_process_cached_denial_recovers_without_restarting_host(tmp_path, monkeypatch):
@@ -109,7 +109,7 @@ print(json.dumps({"id": m["id"], "result": {"actions": actions}}), flush=True)
 
 def test_frozen_channel_launches_same_executable_without_source_python(monkeypatch):
     import io
-    import proximic_ring.native_access as module
+    import proximic_ring.platforms.macos.native_access as module
     calls = []
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", "/Applications/Mythlink.app/Contents/MacOS/Mythlink")
@@ -121,8 +121,8 @@ def test_frozen_channel_launches_same_executable_without_source_python(monkeypat
 
 
 def test_worker_keeps_ax_targets_local_and_rejects_handles_after_restart(monkeypatch):
-    import proximic_ring.native_access_worker as worker
-    from proximic_ring.app_shortcuts import ShortcutTarget
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
     monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, True))
     target = ShortcutTarget("com.openai.codex", 42, "codex", object(), object(), "AXTextArea")
     posted = []
@@ -144,7 +144,7 @@ def test_worker_keeps_ax_targets_local_and_rejects_handles_after_restart(monkeyp
 
 
 def test_worker_event_permission_denial_prevents_writes(monkeypatch):
-    import proximic_ring.native_access_worker as worker
+    import proximic_ring.platforms.macos.native_access_worker as worker
     monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, False))
     dispatcher = worker.Dispatcher()
     for operation in ["shortcut", "sentence_key", "scroll_apply"]:
@@ -153,10 +153,35 @@ def test_worker_event_permission_denial_prevents_writes(monkeypatch):
     assert dispatcher.handle({"operation": "status"})["permissions"]["post_events"] is False
 
 
+def test_focus_independent_policy_survives_capture_and_native_worker_dispatch(monkeypatch):
+    import proximic_ring.platforms.macos.native_access as access
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    from proximic_ring.desktop.app_shortcuts import MacAppShortcuts, ShortcutTarget
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(worker, 'read_permission_state', lambda: PermissionState(True, True))
+    dispatcher, options, posted = worker.Dispatcher(), [], []
+    def capture(**kwargs):
+        options.append(kwargs)
+        return ShortcutTarget('test.app', 42, 'test.app', menu_action=True,
+                              focus_sensitive=kwargs.get('focus_sensitive', True))
+    dispatcher.shortcuts = SimpleNamespace(capture=capture,
+        same_target=lambda target, **kwargs: not target.focus_sensitive,
+        post=lambda target, shortcut, **kwargs: posted.append((target.focus_sensitive, shortcut)))
+    monkeypatch.setattr(access, 'native_access', lambda: SimpleNamespace(
+        call=lambda operation, **kwargs: dispatcher.handle(dict(operation=operation, **kwargs))['result'],
+        last_diagnostic={}))
+    backend = MacAppShortcuts()
+    target = backend.capture(menu_action=True, focus_sensitive=False)
+    assert options == [dict(plain_enter=False, menu_action=True, focus_sensitive=False)]
+    assert not target.focus_sensitive and backend.same_target(target)
+    backend.post(target, 'Cmd+N')
+    assert posted == [(False, 'Cmd+N')]
+
+
 @pytest.mark.parametrize('post_events', [False, None])
 def test_readonly_shortcut_and_scroll_discovery_need_no_event_posting_permission(monkeypatch, post_events):
-    import proximic_ring.native_access_worker as worker
-    from proximic_ring.app_shortcuts import ShortcutTarget
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
     monkeypatch.setattr(worker, 'read_permission_state', lambda: PermissionState(True, post_events))
     target = ShortcutTarget('example.app', 42, 'example.app')
     dispatcher = worker.Dispatcher()
@@ -178,14 +203,14 @@ def test_readonly_shortcut_and_scroll_discovery_need_no_event_posting_permission
 @pytest.mark.parametrize('accessibility', [False, None])
 @pytest.mark.parametrize('operation', ['capture', 'same_target', 'scroll_plan', 'shortcut', 'scroll_apply'])
 def test_ax_permission_is_still_required_for_target_reads_and_writes(monkeypatch, accessibility, operation):
-    import proximic_ring.native_access_worker as worker
+    import proximic_ring.platforms.macos.native_access_worker as worker
     monkeypatch.setattr(worker, 'read_permission_state', lambda: PermissionState(accessibility, True))
     with pytest.raises(MacPermissionError):
         worker.Dispatcher().handle({'operation': operation})
 
 
 def test_window_selector_uses_only_ax_permission_and_never_key_posting(monkeypatch):
-    import proximic_ring.native_access_worker as worker
+    import proximic_ring.platforms.macos.native_access_worker as worker
     from test_window_selector import Desktop
     d = Desktop()
     dispatcher = worker.Dispatcher()
@@ -204,7 +229,7 @@ def test_window_selector_uses_only_ax_permission_and_never_key_posting(monkeypat
 
 
 def test_windowless_selector_diagnostics_cross_worker_boundary_without_window_content(monkeypatch):
-    import proximic_ring.native_access_worker as worker
+    import proximic_ring.platforms.macos.native_access_worker as worker
     from test_window_selector import Desktop
     d = Desktop()
     d.stamp = {"pid": 0, "window": 0}
@@ -220,7 +245,7 @@ def test_windowless_selector_diagnostics_cross_worker_boundary_without_window_co
 
 
 def test_focus_uses_ax_permission_and_keeps_plans_inside_worker(monkeypatch):
-    import proximic_ring.native_access_worker as worker
+    import proximic_ring.platforms.macos.native_access_worker as worker
     from test_text_focus import Desktop
     d = Desktop()
     dispatcher = worker.Dispatcher()
@@ -236,7 +261,7 @@ def test_focus_uses_ax_permission_and_keeps_plans_inside_worker(monkeypatch):
 
 
 def test_scroll_worker_keeps_targets_private_and_checks_event_posting_permission(monkeypatch):
-    import proximic_ring.native_access_worker as worker
+    import proximic_ring.platforms.macos.native_access_worker as worker
     from test_page_scroll import ScrollDesktop
     d = ScrollDesktop()
     dispatcher = worker.Dispatcher()
@@ -255,8 +280,8 @@ def test_scroll_worker_keeps_targets_private_and_checks_event_posting_permission
 
 
 def test_sentence_key_pins_pid_in_request(monkeypatch):
-    import proximic_ring.wechat_native_keys as keys
-    import proximic_ring.native_access as channel
+    import proximic_ring.platforms.macos.wechat_native_keys as keys
+    import proximic_ring.platforms.macos.native_access as channel
     calls = []
     app = SimpleNamespace(bundleIdentifier=lambda: "com.microsoft.VSCode", processIdentifier=lambda: 123)
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWorkspace=SimpleNamespace(
@@ -269,7 +294,7 @@ def test_sentence_key_pins_pid_in_request(monkeypatch):
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS worker")
 def test_real_source_worker_status_uses_public_apis_without_events():
-    process = subprocess.run([sys.executable, "-B", "-m", "proximic_ring.native_access_worker"],
+    process = subprocess.run([sys.executable, "-B", "-m", "proximic_ring.platforms.macos.native_access_worker"],
         input='{"id":1,"operation":"status"}\n', capture_output=True, text=True, timeout=5)
     assert process.returncode == 0, process.stderr
     reply = json.loads(process.stdout)

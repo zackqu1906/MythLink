@@ -16,13 +16,13 @@ __all__ = [
 ]
 
 _EXPORTS = {
-    "DetectorConfig": (".config", "DetectorConfig"),
-    "ProxiMicDetector": (".detector", "ProxiMicDetector"),
-    "Stage1Event": (".events", "Stage1Event"),
-    "Stage2Event": (".events", "Stage2Event"),
-    "CnnNet8": (".model", "CnnNet8"),
-    "ProxiMicModel": (".model", "ProxiMicModel"),
-    "LegacyInferencePipeline": (".pipeline", "LegacyInferencePipeline"),
+    "DetectorConfig": (".voice.detection.config", "DetectorConfig"),
+    "ProxiMicDetector": (".voice.detection.detector", "ProxiMicDetector"),
+    "Stage1Event": (".voice.detection.events", "Stage1Event"),
+    "Stage2Event": (".voice.detection.events", "Stage2Event"),
+    "CnnNet8": (".voice.detection.model", "CnnNet8"),
+    "ProxiMicModel": (".voice.detection.model", "ProxiMicModel"),
+    "LegacyInferencePipeline": (".voice.detection.pipeline", "LegacyInferencePipeline"),
 }
 
 

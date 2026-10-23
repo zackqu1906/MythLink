@@ -15,6 +15,7 @@ class TouchpadMixin:
                           on_stats: Callable[[TouchpadStats], None] | None = None,
                           on_stopped: Callable[[Exception | None], None] | None = None,
                           on_pointer_move: Callable[[TouchpadEvent], None] | None = None,
+                          on_discarded_event: Callable[[TouchpadEvent, str], None] | None = None,
                           model_path: Path | None = None, duration_s: float | None = 90.):
         """Start original-AAR touchpad inference, without moving the OS pointer.
 
@@ -24,8 +25,9 @@ class TouchpadMixin:
         Raw IMU and quaternion modes are mutually exclusive with touchpad.
         Optional on_pointer_move receives the original paced mouse movement;
         on_event keeps the current full trajectory and click/stroke decisions.
+        on_discarded_event optionally observes expired/closed event delivery.
         """
-        if not callable(on_event) or any(cb is not None and not callable(cb) for cb in (on_stats, on_stopped, on_pointer_move)):
+        if not callable(on_event) or any(cb is not None and not callable(cb) for cb in (on_stats, on_stopped, on_pointer_move, on_discarded_event)):
             raise TypeError('Touchpad callbacks must be callable')
         if duration_s is not None and (not math.isfinite(duration_s) or duration_s <= 0):
             raise ValueError('duration_s must be positive and finite, or None')
@@ -39,7 +41,7 @@ class TouchpadMixin:
             client, rx_uuid = self.client, self.rx_uuid
             stream = TouchpadStream(on_event, on_stats=on_stats, model_path=model_path,
                                     duration_s=duration_s, on_end=self._touchpad_finished,
-                                    on_pointer_move=on_pointer_move)
+                                    on_pointer_move=on_pointer_move, on_discarded_event=on_discarded_event)
             self.touchpad, self.touchpad_active = stream, True
             self.touchpad_error = None
             self._touchpad_stopped_cb = on_stopped

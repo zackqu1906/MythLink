@@ -106,7 +106,7 @@ def test_native_capture_passes_verified_installed_category_to_recognizer(monkeyp
         CFBundleDocumentTypes=[dict(CFBundleTypeRole='Viewer', CFBundleTypeExtensions=['mp3', 'mp4'])])
     window, focus = player()
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle=bundle)
-    from proximic_ring.mac_workspace import frontmost_application
+    from proximic_ring.platforms.macos.mac_workspace import frontmost_application
     frontmost_application().bundleURL = lambda: SimpleNamespace(path=lambda: str(path))
     result = backend.capture(menu_action=True, scene=True)
     assert result.scene == MUSIC and result.input_context == 'nontext' and not result.blocked

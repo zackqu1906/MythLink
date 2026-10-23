@@ -7,7 +7,7 @@ import pytest
 
 from proximic_ring.asr.streaming import StreamingASRUpdate
 from proximic_ring.cli import build_parser
-from proximic_ring.desktop_output import DesktopTranscriptOutput
+from proximic_ring.platforms.windows.desktop_output import DesktopTranscriptOutput
 
 
 class FakeInjector:
@@ -140,7 +140,7 @@ def test_desktop_output_cli_is_opt_in():
 def test_win32_input_structure_has_native_size():
     if os.name != "nt":
         return
-    from proximic_ring.desktop_output import _INPUT
+    from proximic_ring.platforms.windows.desktop_output import _INPUT
 
     expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
     assert ctypes.sizeof(_INPUT) == expected

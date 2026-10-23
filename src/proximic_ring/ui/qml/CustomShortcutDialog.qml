@@ -2,9 +2,12 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Dialog {
+FigmaDialog {
     id: dialog
     required property var service
+    property bool globalScope: false
+    property bool deferredSave: false
+    property string scopeDescription: ""
     signal actionChosen(var action)
     property string capturedShortcut: ""
     property bool manualInput: false
@@ -17,24 +20,26 @@ Dialog {
     padding: 24
     enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 100 } }
     exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
-    UiTheme { id: theme }
+    FigmaTheme { id: theme }
     onAboutToShow: { actionName.text = ""; capturedShortcut = ""; typedShortcut.text = ""; manualInput = false; errorText = "" }
     onOpened: actionName.forceActiveFocus()
     onAboutToHide: { shortcut.focus = false; service.recording = false }
-    background: Rectangle { radius: 16; color: theme.surface; border.color: theme.line }
+    background: Rectangle { radius: 12; color: theme.surface; border.color: theme.line }
     header: Label {
-        text: dialog.title; color: theme.text; font.pixelSize: 21; font.weight: Font.DemiBold
+        text: dialog.title; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium
         leftPadding: 24; rightPadding: 24; topPadding: 24; bottomPadding: 8
     }
     contentItem: ColumnLayout {
         spacing: 14
         Label {
             Layout.fillWidth: true
-            text: "先在目标应用中确认或设置快捷键，再在这里录入相同的组合键。"
+            text: "录入系统快捷键，或你在应用中设置的组合键。触发手势时会发送这些按键；动作名称仅用于辨认，不会创建新的系统或应用命令。"
+                + (dialog.scopeDescription ? "\n" + dialog.scopeDescription : "")
             wrapMode: Text.Wrap; color: theme.muted; font.pixelSize: 13
         }
         Label { text: "动作名称"; color: theme.text; font.pixelSize: 13 }
         UiTextField {
+            font.family: theme.family
             id: actionName
             objectName: "customShortcutName"
             Layout.fillWidth: true; implicitHeight: 42
@@ -46,7 +51,7 @@ Dialog {
             Layout.fillWidth: true
             Label { text: "快捷键"; color: theme.text; font.pixelSize: 13 }
             Item { Layout.fillWidth: true }
-            UiAction {
+            FigmaAction {
                 objectName: "customShortcutEntryMode"
                 text: dialog.manualInput ? "录制按键" : "手动输入"; quiet: true; implicitHeight: 28
                 onClicked: {
@@ -59,6 +64,7 @@ Dialog {
             }
         }
         ShortcutField {
+            font.family: theme.family
             id: shortcut
             objectName: "customShortcutRecorder"
             Layout.fillWidth: true; implicitHeight: 42
@@ -70,6 +76,7 @@ Dialog {
             background: Rectangle { radius: 8; color: theme.surface; border.color: shortcut.activeFocus ? theme.primary : theme.line }
         }
         UiTextField {
+            font.family: theme.family
             id: typedShortcut
             objectName: "customShortcutText"
             Layout.fillWidth: true; implicitHeight: 42; visible: dialog.manualInput
@@ -79,7 +86,7 @@ Dialog {
         }
         Label {
             Layout.fillWidth: true
-            text: shortcut.activeFocus ? "请按下组合键，Esc 取消录入" : "支持单组组合键；点击使用后立即生效并自动保存。"
+            text: shortcut.activeFocus ? "请按下组合键，Esc 取消录入" : dialog.deferredSave ? "录入后回到映射栏，点击保存更改生效。" : "支持单组组合键；点击使用后立即生效并自动保存。"
             wrapMode: Text.Wrap; color: theme.muted; font.pixelSize: 11
         }
         UiNotice {
@@ -90,8 +97,8 @@ Dialog {
     }
     footer: DialogButtonBox {
         leftPadding: 24; rightPadding: 24; bottomPadding: 20; topPadding: 0; spacing: 10
-        UiAction { objectName: "cancelCustomShortcutButton"; text: "取消"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
-        UiAction {
+        FigmaAction { objectName: "cancelCustomShortcutButton"; text: "取消"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+        FigmaAction {
             objectName: "useCustomShortcutButton"; text: "使用此快捷键"; primary: true
             enabled: actionName.text.trim().length > 0 && dialog.shortcutValue.length > 0
             DialogButtonBox.buttonRole: DialogButtonBox.ActionRole

@@ -1,7 +1,7 @@
 import pytest
 
 from ring_python_sdk.touchpad import TouchpadClick, TouchpadContact, TouchpadMove
-from proximic_ring.touchpad_clicks import TouchpadClicks
+from proximic_ring.touchpad.touchpad_clicks import TouchpadClicks
 
 
 def click(step, at):

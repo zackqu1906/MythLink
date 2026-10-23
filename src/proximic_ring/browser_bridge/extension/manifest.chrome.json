@@ -1,0 +1,44 @@
+{
+  "name": "Mythlink 浏览器助手",
+  "version": "0.1.0",
+  "description": "将网页播放器状态连接到 Mythlink，用戒指控制视频和音频。",
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "all_frames": true,
+      "match_about_blank": true,
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "manifest_version": 3,
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7Fl1IlJ1QSQGsbM2W6I23PyPsmHJL0yrc2S8gZoWQxPlvBvRvch1t6vnmrg6UnaZaLOrYnM7av6usV2ZIrxmrT3VME2QoR69YCtZFyf1Ag49zk/vx9+W0Rg+gc4f5l6eFqFRIiPhAIduDifm9nHoocaOREEyu6uMBow02A4gz0E2dM3bYbIf7dtMn0rtmlrbAfbenE8v2xI2RrCmzRSkFnCASuxerHXtpWpNpdt4gGY4KsebwN8ryCoPljy8bUTTuIDKiw/EGzV6WPxXwwKi1S7J23hN2tCq9HGL1InZ2c814BK9x1upgtsyRVMujz5LOpMGSJ/HP0Ccn44/EPRxkQIDAQAB",
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "webNavigation",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon48.png"
+  }
+}

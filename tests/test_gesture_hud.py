@@ -8,7 +8,7 @@ import pytest
 
 from PySide6.QtCore import QRect
 
-from proximic_ring.ui.gesture_hud import hud_geometry, screen_for_window
+from proximic_ring.ui.gestures.gesture_hud import hud_geometry, screen_for_window
 
 
 def test_foreground_window_screen_wins_over_mouse_and_negative_origins():
@@ -38,7 +38,7 @@ from pathlib import Path
 from PySide6.QtCore import QMetaObject, QRectF, Qt, qInstallMessageHandler
 from PySide6.QtWidgets import QApplication, QLineEdit
 from PySide6.QtTest import QTest
-from proximic_ring.ui.gesture_hud import GestureHud
+from proximic_ring.ui.gestures.gesture_hud import GestureHud
 
 messages = []
 qInstallMessageHandler(lambda kind, context, message: messages.append(message))
@@ -103,10 +103,11 @@ check_layout(6)
 assert hud.window.grabWindow().save(str(shots / 'input-hud.png'))
 hud.preview('operation')
 assert root.property('entranceTime') < 50
-QTest.qWait(1500)
+QTest.qWait(1900)  # Six staggered hints finish their entrance after 1745 ms.
 assert hud.window.isVisible()
 assert root.property('mode') == 'operation'
-check_layout(3)
+check_layout(6)
+assert root.property('overflow') == 1
 assert hud.window.grabWindow().save(str(shots / 'operation-hud.png'))
 assert app.focusWidget() is focus
 QTest.qWait(1700)
@@ -116,19 +117,19 @@ assert not hud.window.isVisible()
 assert not root.property('animationRunning')
 hud.show_mode('input', input_fields_available=False)
 QTest.qWait(1900)
-assert root.property('inputFieldsAvailable') is False
+assert root.property('inputFieldsAvailable') is None
 check_layout(6)
 remaining, entrance = hud._timer.remainingTime(), root.property('entranceTime')
 hud.update_input_fields(False, '输入框读取未完成，请重试')
-assert root.property('inputFieldsHint') == '输入框读取未完成，请重试'
-assert root.property('fieldHint') == '输入框读取未完成，请重试'
+assert root.property('inputFieldsHint') is None
+assert root.property('fieldHint') is None
 assert root.property('entranceTime') >= entrance
 assert hud._timer.remainingTime() <= remaining
 check_layout(6)
 hud.update_input_fields(True, '')
-assert root.property('inputFieldsAvailable') is True
+assert root.property('inputFieldsAvailable') is None
 hud.update_input_fields(True, '部分区域未提供控件')
-assert root.property('inputFieldsAvailable') is True
+assert root.property('inputFieldsAvailable') is None
 check_layout(6)
 hud.show_mode('input', message='请先结束本句')
 assert root.property('notice') == '请先结束本句'
@@ -137,16 +138,16 @@ assert app.focusWidget() is focus
 hud.preview('operation')
 assert root.property('notice') == ''  # A later request must clear a previous notice.
 hud.update_input_fields(False, '需要辅助功能权限')
-assert root.property('inputFieldsAvailable') is True  # Preview stays independent.
+assert root.property('inputFieldsAvailable') is None  # Preview stays independent.
 keys = ['swipe-left', 'swipe-right', 'swipe-up', 'swipe-down', 'tap', 'snap', 'circle-clockwise', 'circle-counterclockwise']
 rows = [dict(key=g, gesture=g, action='很长的场景动作名称用于检查省略和字号', scope='scene', application='PowerPoint',
              scene='presentation', sceneLabel='放映', voiceDisabled=True) for g in keys]
-hud.show_mode('input', scene_actions=rows)
+hud.show_mode('operation', scene_actions=rows)
 QTest.qWait(1900)
 assert next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
-assert root.property('voiceDisabled') and root.property('overflow') == 2
+assert not root.property('voiceDisabled') and root.property('overflow') == 7
 assert root.property('sceneActive') and root.property('modeTitle') == '放映'
-assert root.property('fieldHint') == ''
+assert root.property('fieldHint') is None
 assert not next(item for item in visual_items(root) if item.objectName() == 'gestureHudGlobalShortcuts').isVisible()
 check_layout(6)
 assert app.focusWidget() is focus and not hud.window.isActive()
@@ -160,14 +161,14 @@ assert root.property('mode') == 'operation' and root.property('contextLabel') ==
 check_layout(6)
 assert hud.window.grabWindow().save(str(shots / 'presentation-operation-hud.png'))
 for count in range(1, 6):
-    hud.show_mode('input', scene_actions=rows[:count])
+    hud.show_mode('operation', scene_actions=rows[:count])
     QTest.qWait(1900)
     assert hud.window.grabWindow().save(str(shots / ('scene-' + str(count) + '-hud.png')))
-    check_layout(count)
+    check_layout(6)
 hud.show_mode('input')
 assert next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
 assert not any('Error' in line or 'ReferenceError' in line or 'TypeError' in line for line in messages), messages
-assert 'proximic_ring.app_runtime' not in sys.modules
+assert 'proximic_ring.voice.app_runtime' not in sys.modules
 assert 'proximic_ring.host_gestures' not in sys.modules
 assert 'torch' not in sys.modules
 hud.close(); editor.close()
@@ -182,7 +183,8 @@ assert not root.property('animationRunning')
 
 @pytest.mark.parametrize("native_failure", [False, True])
 def test_cocoa_hint_never_uses_qt_process_activation(monkeypatch, native_failure):
-    from proximic_ring.ui import gesture_hud as module, notifications
+    from proximic_ring.ui.gestures import gesture_hud as module
+    from proximic_ring.ui.shared import notifications
 
     calls, diagnostics = [], []
     # Simulate Qt's Cocoa raise implementation bringing the main UI forward.
@@ -222,8 +224,8 @@ import Quartz
 from PySide6.QtCore import QObject, Signal, Qt
 from PySide6.QtWidgets import QApplication, QLineEdit
 from PySide6.QtTest import QTest
-from proximic_ring.ui.gesture_hud import GestureHud
-from proximic_ring.ui.focus_band import FocusBand
+from proximic_ring.ui.gestures.gesture_hud import GestureHud
+from proximic_ring.ui.desktop.focus_band import FocusBand
 
 workspace = AppKit.NSWorkspace.sharedWorkspace()
 foreground = workspace.frontmostApplication()

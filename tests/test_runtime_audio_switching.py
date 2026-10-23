@@ -3,13 +3,14 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from proximic_ring import app_runtime
+from proximic_ring.voice import app_runtime
 from proximic_ring.asr.controller import ProximitySessionController
-from proximic_ring.live_audio_settings import AudioConfiguration, LiveAudioSettings
+from proximic_ring.audio.live_audio_settings import AudioConfiguration, LiveAudioSettings
+from proximic_ring.gestures.gesture_settings import GestureBindings
 
 
 def test_runtime_finishes_old_turn_waits_for_commit_and_keeps_gestures_and_session_ids(monkeypatch):
-    import proximic_ring.firmware_gestures as gestures
+    import proximic_ring.gestures.firmware_gestures as gestures
 
     stop, recognition = threading.Event(), threading.Event()
     recognition.set()
@@ -120,6 +121,8 @@ def test_runtime_finishes_old_turn_waits_for_commit_and_keeps_gestures_and_sessi
     monkeypatch.setattr(gestures, "FirmwareGestureWorker", Firmware)
     app_runtime.RecognitionRuntime(app_runtime.RuntimeSettings(
         speech_control_mode="gesture", asr_end_on_tap=True, push_to_talk=False,
+        # This scenario uses tap to toggle both endpoints, regardless of UI defaults.
+        gesture_bindings=GestureBindings(confirm=("tap", ""), end=("tap", "")),
     )).run(stop, recognition, on_update=lambda _: None, on_state=lambda _: None,
            on_connected=lambda: None, on_disconnected=lambda: None, on_started=lambda: None,
            on_session_ended=recognition.clear, on_gesture=forwarded.append,

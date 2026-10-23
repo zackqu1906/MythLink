@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from proximic_ring import app_runtime
+from proximic_ring.voice import app_runtime
 from proximic_ring.asr.controller import ProximitySessionController
-from proximic_ring.gesture_settings import GestureBindings
+from proximic_ring.gestures.gesture_settings import GestureBindings
 from test_asr_controller import StreamingRecorder, activate_event, make_gate
 
 
@@ -32,6 +32,20 @@ def test_gesture_control_ignores_detector_and_hold_and_keeps_only_confirmed_audi
     np.testing.assert_array_equal(sink.ended[0], np.full(107 * 320, 0.2, dtype=np.float32))
 
 
+def test_separate_start_and_end_gestures_only_act_in_their_phase():
+    sink = StreamingRecorder()
+    gate = make_gate(sink, start_on_gesture=True)
+    block = np.full(320, 0.2, dtype=np.float32)
+    assert gate.request_gesture_toggle(allow_start=False, allow_end=True) is None
+    assert gate.request_gesture_toggle(allow_start=True, allow_end=False) == "start"
+    gate.process(block, [])
+    assert gate.active
+    assert gate.request_gesture_toggle(allow_start=True, allow_end=False) is None
+    assert gate.request_gesture_toggle(allow_start=False, allow_end=True) == "end"
+    gate.process(block, [])
+    assert not gate.active and len(sink.ended) == 1
+
+
 @pytest.mark.parametrize("boundary", ["discard_current", "reset", "abort", "flush"])
 def test_pending_start_does_not_survive_cancel_pause_or_disconnect(boundary):
     sink = StreamingRecorder()
@@ -48,12 +62,12 @@ def test_pending_start_does_not_survive_cancel_pause_or_disconnect(boundary):
 @pytest.mark.parametrize("audio_source", ["ring", "microphone"])
 @pytest.mark.parametrize("control_mode", ["proximity", "gesture"])
 def test_four_combinations_use_selected_audio_and_respect_processing_gate(monkeypatch, audio_source, control_mode):
-    import proximic_ring.firmware_gestures as gestures
+    import proximic_ring.gestures.firmware_gestures as gestures
 
     state, logs, finals, actions, detections = {}, [], [], [], []
     disconnect, recognition, cancel = threading.Event(), threading.Event(), threading.Event()
     recognition.set()
-    bindings = GestureBindings(confirm=("snap", "tap"))
+    bindings = GestureBindings(confirm=("snap", "tap"), end=("snap", "tap"))
     producer = threading.get_ident()
 
     def gesture(name="snap"):
@@ -244,7 +258,7 @@ def test_settings_persist_independent_choices_and_lock_during_connection(tmp_pat
 
 
 def test_dataset_marks_audio_source_and_does_not_label_gesture_start_as_proximity(tmp_path):
-    from proximic_ring.modification_dataset import ModificationDatasetCollector
+    from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
 
     collector = ModificationDatasetCollector(tmp_path, user_id="test")
     collector.set_capture_configuration(audio_source="microphone", speech_control_mode="gesture")

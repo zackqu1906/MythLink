@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from proximic_ring.touchpad_mouse import TouchpadMouseOutput
+from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from ring_python_sdk.touchpad import TouchpadClick, TouchpadClickVerdict, TouchpadContact, TouchpadProcessor
 from ring_python_sdk.touchpad.core import ClickDetector
 

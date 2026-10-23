@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
 from proximic_ring.text_processing import TextProcessingResult
 from test_interaction_controls import _controller, _close
 
@@ -89,7 +89,7 @@ def test_error_reopens_gate_and_next_speech_retires_old_callbacks(controller, re
     ))
     assert controller.interactionState == "listening"
     assert controller._transcript_active is True
-    assert controller.transcriptText == "正在收听语音 · tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
     assert controller._recognition_event.is_set() is True
 
 

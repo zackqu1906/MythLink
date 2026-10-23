@@ -135,7 +135,7 @@ def test_page_toggle_and_settings_share_existing_source(inline_ui, tmp_path, siz
     source.future.set_result(None); QTest.qWait(25)
     assert tp.active and output.active
     assert toggle.property('text') == '停止触摸板'
-    assert '直到手动停止' in root.findChild(QObject, 'touchpadRunStatus').property('text')
+    assert '已启用' in root.findChild(QObject, 'touchpadRunStatus').property('text')
     assert not root.findChild(QObject, 'touchpadGainSlider').property('enabled')
     source.starts[0]['on_stats'](SimpleNamespace(warmup_frames=200)); QTest.qWait(25)
     assert root.grabWindow().save(str(shots/f'touchpad-active-{size[0]}.png'))
@@ -150,7 +150,7 @@ def test_page_toggle_and_settings_share_existing_source(inline_ui, tmp_path, siz
 
 
 def test_legacy_stop_duration_is_retired(inline_ui):
-    from proximic_ring.ui.touchpad_controller import TouchpadController
+    from proximic_ring.ui.touchpad.touchpad_controller import TouchpadController
     c, *_ = inline_ui
     c._settings.setValue('touchpad/seconds', 30)
     reloaded = TouchpadController(c, output_factory=Output)
@@ -230,7 +230,7 @@ def test_lock_and_exit_stop_pointer_without_restarting_recognition(inline_ui):
 
 def test_pointer_reports_event_posting_denial_separately_from_accessibility(inline_ui):
     from PySide6.QtTest import QTest
-    from proximic_ring.mac_permissions import MacPermissionError, PermissionState
+    from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, PermissionState
     c, *_ = inline_ui
     tp, source = prepare(c)
     class PendingPostAccess(Output):

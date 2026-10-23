@@ -5,7 +5,7 @@ import pytest
 from PySide6.QtCore import QObject, QCoreApplication, QSettings, Signal, Qt, QBluetoothPermission
 from PySide6.QtTest import QTest
 
-from proximic_ring.ui.permission_setup_controller import PermissionSetupController, STEPS
+from proximic_ring.ui.permissions.permission_setup_controller import PermissionSetupController, STEPS
 
 
 class Permissions(QObject):

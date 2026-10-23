@@ -27,10 +27,10 @@ ColumnLayout {
 
     Label {
         Layout.fillWidth: true
-        text: "输入模式：上滑固定按一次 Enter，适用于所有应用和浏览器的当前输入框。发送、换行或搜索由该输入框决定；听写中会先定稿。\n下方仅设置各应用的聊天／任务操作；操作模式上滑仍为页面滚动。"
+        text: "输入框有焦点时：上滑固定按一次 Enter，适用于所有应用和浏览器的当前输入框。发送、换行或搜索由该输入框决定；听写中会先定稿。\n应用配置优先于全局配置；仅与输入手势重叠时，输入框内优先执行输入功能。"
         color: "#687286"; wrapMode: Text.Wrap; font.pixelSize: 12
     }
-    ComboBox {
+    SettingsSelect {
         id: appPicker
         objectName: "appGestureAppPicker"
         Layout.fillWidth: true
@@ -49,22 +49,22 @@ ColumnLayout {
         delegate: Rectangle {
             id: row
             required property var modelData
-            readonly property bool voiceLocked: ["tap", "swipe-left", "swipe-right"].indexOf(modelData.gesture) >= 0
+            readonly property bool voiceLocked: settings.service.catalog.voiceGestures.indexOf(modelData.gesture) >= 0
             Layout.fillWidth: true
-            implicitHeight: fields.implicitHeight + 24
-            color: "#F5F7FD"; radius: 10
+            implicitHeight: fields.implicitHeight + 40
+            color: "#FFFFFF"; radius: 14; border.color: "#E1E5F0"
             function save(gesture, shortcut, enabled) {
                 settings.service.setBinding(settings.selectedApp, modelData.action, gesture, shortcut, enabled)
             }
             ColumnLayout {
                 id: fields
                 enabled: !row.voiceLocked
-                anchors.fill: parent; anchors.margins: 12
+                anchors.fill: parent; anchors.margins: 20
                 spacing: 5
                 RowLayout {
                     Layout.fillWidth: true
                     Label { Layout.fillWidth: true; text: settings.actionLabel(row.modelData.action, row.modelData.label) + (row.voiceLocked ? " · 语音手势已锁定" : ""); color: "#171C28" }
-                    Switch {
+                    SettingsSwitch {
                         objectName: "appGestureEnabled_" + row.modelData.action
                         Layout.preferredHeight: 32
                         checked: row.modelData.enabled
@@ -75,15 +75,19 @@ ColumnLayout {
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    ComboBox {
+                    SettingsSelect {
                         id: gesture
                         Layout.fillWidth: true; Layout.minimumWidth: 120
                         Layout.preferredHeight: 44
-                        model: settings.service.gestures.filter(function(g) { return ["tap", "swipe-left", "swipe-right"].indexOf(g.value) < 0 })
+                        model: settings.service.gestures.filter(function(g) { return settings.service.catalog.voiceGestures.indexOf(g.value) < 0 })
                         textRole: "label"; valueRole: "value"
-                        displayText: row.voiceLocked
-                                     ? ({"tap": "点击 Tap", "swipe-left": "左滑", "swipe-right": "右滑"})[row.modelData.gesture]
-                                     : currentText
+                        displayText: {
+                            if (!row.voiceLocked) return currentText
+                            for (var j = 0; j < settings.service.gestures.length; ++j)
+                                if (settings.service.gestures[j].value === row.modelData.gesture)
+                                    return settings.service.gestures[j].label
+                            return row.modelData.gesture
+                        }
                         currentIndex: {
                             for (var i = 0; i < model.length; i++)
                                 if (model[i].value === row.modelData.gesture) return i

@@ -1,6 +1,6 @@
 import pytest
 
-from proximic_ring.text_selection import spatial_target
+from proximic_ring.desktop.text_selection import spatial_target
 from test_text_focus import Desktop, Node
 
 

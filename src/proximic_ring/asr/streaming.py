@@ -294,6 +294,7 @@ class StreamingASRWorker:
             f"[ASR CONTEXT] session={self._session_id} "
             f"backend={getattr(self.backend, 'backend_name', type(self.backend).__name__)} "
             f"status={status} source={source} "
+            f"hotwords={int(snapshot.get('hotword_count', 0) or 0)} "
             f"items={int(snapshot.get('item_count', 0) or 0)} "
             f"chars={int(snapshot.get('sent_char_count', 0) or 0)} "
             f"source_chars={int(snapshot.get('source_char_count', 0) or 0)} "
@@ -456,6 +457,14 @@ class StreamingASRWorker:
                     # A backend may re-decode it to correct provisional text
                     # that saw reject-confirmation tail audio.
                     self._session_samples = int(audio.size)
+                    all_zero = bool(audio.size and not np.any(audio))
+                    self._report_timing(
+                        f"[ASR AUDIO] session={self._session_id} "
+                        f"samples={audio.size} all_zero={all_zero} "
+                        f"peak={float(np.max(np.abs(audio))) if audio.size else 0.0:.7f} "
+                        f"rms={float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) if audio.size else 0.0:.7f} "
+                        f"zero_samples={int(audio.size - np.count_nonzero(audio))}"
+                    )
                     self._mark_backend_chunk_ready(chunk_ready_time_s)
                     final_started_time_s = time.perf_counter()
                     self._report_timing(
@@ -482,13 +491,21 @@ class StreamingASRWorker:
                         f"{max(0.0, finished_time_s - final_started_time_s) * 1000:.1f}ms "
                         f"since_model_start={total_s:.3f}s"
                     )
-                    self._emit(
-                        text,
-                        is_final=True,
-                        latency_s=latency,
-                        duration_s=self._session_samples / self.sample_rate,
-                        chunk_ready_time_s=chunk_ready_time_s,
-                    )
+                    if not str(text or "").strip() and all_zero and audio.size >= 2 * self.sample_rate:
+                        self._emit_error(
+                            RuntimeError("本句录音全为静音，请检查麦克风或重新连接"),
+                            is_final=True,
+                            latency_s=latency,
+                            chunk_ready_time_s=chunk_ready_time_s,
+                        )
+                    else:
+                        self._emit(
+                            text,
+                            is_final=True,
+                            latency_s=latency,
+                            duration_s=self._session_samples / self.sample_rate,
+                            chunk_ready_time_s=chunk_ready_time_s,
+                        )
                     self._session_samples = 0
                     self._session_model_started_time_s = None
                     self._session_error = None

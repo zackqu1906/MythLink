@@ -8,8 +8,8 @@ import threading
 import pytest
 from PySide6.QtCore import QObject, QCoreApplication, QSettings, QRect, Signal, Qt
 
-from proximic_ring.ui import gesture_trigger_controller as module
-from proximic_ring.ui.gesture_trigger_overlay import trigger_geometry
+from proximic_ring.ui.gestures import gesture_trigger_controller as module
+from proximic_ring.ui.gestures.gesture_trigger_overlay import trigger_geometry
 
 
 @pytest.fixture
@@ -133,8 +133,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QPointF, QSettings, Signal, Qt, qInstallMessageHandler
 from PySide6.QtWidgets import QApplication, QLineEdit
 from PySide6.QtTest import QTest
-from proximic_ring.ui.gesture_trigger_controller import GestureTriggerController
-from proximic_ring.ui.gesture_trigger_overlay import GestureTriggerOverlay
+from proximic_ring.ui.gestures.gesture_trigger_controller import GestureTriggerController
+from proximic_ring.ui.gestures.gesture_trigger_overlay import GestureTriggerOverlay
 
 messages = []
 qInstallMessageHandler(lambda kind, context, message: messages.append(message))
@@ -245,7 +245,7 @@ owner.connectedChanged.emit()
 assert not toast.window.isVisible() and not toast._entries and not names()
 assert not errors, errors
 assert not any('Error' in line or 'ReferenceError' in line or 'TypeError' in line for line in messages), messages
-assert 'torch' not in sys.modules and 'proximic_ring.app_runtime' not in sys.modules
+assert 'torch' not in sys.modules and 'proximic_ring.voice.app_runtime' not in sys.modules
 toast.close(); controller.close(); editor.close()
 '''
     environment = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software")

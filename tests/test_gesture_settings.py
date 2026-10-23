@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.gesture_settings import BoundGestureEvent, GestureBindings, GESTURE_LABELS
-from proximic_ring.voice_actions import voice_action_for_gesture
+from proximic_ring.gestures.gesture_settings import BoundGestureEvent, GestureBindings, GESTURE_LABELS
+from proximic_ring.voice.voice_actions import voice_action_for_gesture
 from test_interaction_controls import _controller, _close
 
 
@@ -16,20 +16,67 @@ def isolate_settings(tmp_path, monkeypatch):
 
 
 def test_defaults_match_sdk_and_current_assignments():
-    from proximic_ring.firmware_gestures import GESTURE_NAMES
+    from proximic_ring.gestures.firmware_gestures import GESTURE_NAMES
 
-    assert set(GESTURE_LABELS) == set(GESTURE_NAMES.values()) - {"empty"}
+    assert set(GESTURE_LABELS) == set(GESTURE_NAMES.values()) | {"double-tap", "double-index-pinch", "double-middle-pinch"}
     bindings = GestureBindings()
-    assert bindings.confirm == ("tap", "")
+    assert bindings.confirm == ("double-tap", "")
+    assert bindings.end == ("tap", "")
     assert bindings.undo == ("swipe-left", "")
     assert bindings.switch_mode == ("swipe-right", "")
     assert GestureBindings.from_json(bindings.to_json()) == bindings
 
 
+def test_legacy_confirm_bindings_keep_toggle_until_controller_migration():
+    import json
+    old = {"confirm": ["snap", ""], "undo": ["swipe-left", ""],
+           "switch_mode": ["swipe-right", ""]}
+    assert GestureBindings.from_json(json.dumps(old)).end == ("snap", "")
+    old["confirm"] = ["tap", ""]
+    migrated = GestureBindings.from_json(json.dumps(old))
+    assert migrated.confirm == migrated.end == ("tap", "")
+    old["confirm"] = ["double-tap", ""]
+    assert GestureBindings.from_json(json.dumps(old)).end == ("tap", "")
+
+
+def test_saved_single_tap_default_migrates_to_double_start_single_end(tmp_path, monkeypatch):
+    controller = _controller(tmp_path, monkeypatch)
+    try:
+        controller._settings.setValue("input/gestureBindings", GestureBindings(confirm=("tap", "")).to_json())
+        controller._settings.setValue("gestures/appDefaultsMigrated", True)
+        controller._settings.setValue("gestures/doubleTapDefaultMigrated", False)
+    finally:
+        _close(controller)
+    migrated = _controller(tmp_path, monkeypatch)
+    try:
+        assert migrated.gestureBindings["confirm"] == ["double-tap", ""]
+        assert migrated.gestureBindings["end"] == ["tap", ""]
+        assert migrated.confirmGestureHint == "双击 tap"
+        assert migrated.endGestureHint == "单击 tap"
+        assert not migrated.setGestureBinding("undo", 1, "tap")
+        assert migrated.setGestureBinding("end", 0, "double-tap")
+        assert migrated.setGestureBinding("undo", 1, "tap")
+        assert migrated.gestureBindings["undo"] == ["swipe-left", "tap"]
+    finally:
+        _close(migrated)
+
+
+def test_down_is_reserved_for_polish_in_voice_settings(tmp_path, monkeypatch):
+    controller = _controller(tmp_path, monkeypatch)
+    try:
+        assert all("swipe-down" not in pair for pair in controller.gestureBindings.values())
+        assert "swipe-down" not in {row["value"] for row in controller.gestureOptionsForSlot("undo", 1)}
+        assert not controller.setGestureBinding("undo", 1, "swipe-down")
+        assert not controller._app_gestures.setInputSourceGesture("swipe-down")
+        assert not controller.ringGestures.textFields.picker.active.is_set()
+    finally:
+        _close(controller)
+
+
 @pytest.mark.parametrize("changes", [
     {"confirm": ("tap", "tap")},
     {"confirm": ("tap", "swipe-left")},
-    {"undo": ("tap", "")},
+    {"undo": ("double-tap", "")},
     {"switch_mode": ("swipe-left", "")},
     {"confirm": ("", "")},
     {"undo": ("snap", "", "")},
@@ -42,7 +89,8 @@ def test_invalid_or_conflicting_assignments_are_rejected(changes):
 
 
 def test_custom_cancel_undo_and_conversion_keep_action_priority():
-    bindings = GestureBindings(confirm=("swipe-up", "swipe-down"), undo=("tap", "snap"), switch_mode=("swipe-left", "swipe-right"))
+    bindings = GestureBindings(confirm=("swipe-up", "swipe-down"), end=("swipe-up", "swipe-down"),
+                               undo=("tap", "snap"), switch_mode=("swipe-left", "swipe-right"))
     for name in bindings.undo:
         assert voice_action_for_gesture(name, interaction_active=True, bindings=bindings) == "cancel"
         assert voice_action_for_gesture(name, interaction_active=True, undo_active=True, bindings=bindings) == "undo"
@@ -59,6 +107,7 @@ def test_settings_save_restore_conflicts_and_immediate_dispatch(tmp_path, monkey
         controller._runtime_active = controller._connected = True
         # Free and reassign tap; the runtime endpoint and GUI share the snapshot.
         assert controller.setGestureBinding("confirm", 0, "snap")
+        assert controller.setGestureBinding("end", 0, "snap")
         assert controller.setGestureBinding("undo", 0, "tap")
         assert controller.setGestureBinding("switch_mode", 1, "swipe-left")
         assert controller.confirmGestureHint == "弹指（snap）"
@@ -83,13 +132,13 @@ def test_settings_save_restore_conflicts_and_immediate_dispatch(tmp_path, monkey
         assert calls == ["cancel", "cancel"]  # Down is no longer an undo alias.
         assert not controller.setGestureBinding("confirm", 1, "swipe-up")  # Reserved by app send.
         assert not controller._app_gestures.setInputSourceGesture("swipe-down")
-        assert not controller.setGestureBinding("confirm", 1, "swipe-down")  # Global field/scroll command.
+        assert not controller.setGestureBinding("confirm", 1, "swipe-down")  # Reserved for polishing.
         assert controller.setGestureBinding("switch_mode", 0, "")
         assert controller._app_gestures.setInputSourceGesture("swipe-right")
         assert not controller.setGestureBinding("confirm", 1, "swipe-right")
         assert controller._app_gestures.setInputSourceGesture("")
         assert controller.setGestureBinding("confirm", 1, "swipe-right")
-        assert "右滑" in controller.transcriptText
+        assert controller.endGestureHint in controller.transcriptText
 
         restarted = _controller(tmp_path, monkeypatch)
         assert restarted.gestureBindings == controller.gestureBindings

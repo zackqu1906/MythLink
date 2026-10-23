@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 
 from ring_python_sdk.audio.adpcm import decode_ima_adpcm_frame
+from ring_python_sdk.audio.diagnostics import ADPCMAudioDiagnostics
 from ring_python_sdk.audio.opus_codec import DecodedOpusBlock, OrderedOpusDecoder
 from ring_python_sdk.audio.ordered_mic_flush import OrderedMicBuffer
 from ring_python_sdk.core.constants import (
@@ -69,6 +70,7 @@ class AudioProcessor:
         self.on_pcm = on_pcm
         self._assembler = MicCaptureAssembler()
         self._public_adpcm = MicBlockAssembler()
+        self._audio_diagnostics = ADPCMAudioDiagnostics(str(output_path))
         self._encoding = encoding or "adpcm"
         self._buffer = OrderedMicBuffer()
         self._frame_seq = SeqTracker(bits=16)
@@ -88,6 +90,7 @@ class AudioProcessor:
         self._accept_opus_results(decoded)
         self.stats.dropped_frame_count += blocked_count
         self._flush_buffer()
+        self._audio_diagnostics.close()
         self._wave.close()
         self._closed = True
 
@@ -135,8 +138,11 @@ class AudioProcessor:
             return
         self.stats.packet_count += 1
         if self._encoding == "adpcm":
-            frame = self._public_adpcm.accept(bytes(data))
+            packet = bytes(data)
+            self._audio_diagnostics.record_notification(packet)
+            frame = self._public_adpcm.accept(packet)
             if frame is not None:
+                self._audio_diagnostics.observe(frame, self._public_adpcm.last_decoded_block)
                 self._frame_seq.observe(frame.sequence)
                 self.stats.frame_count += 1
                 # Public blocks are independently decoded and retired in order;

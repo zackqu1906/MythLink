@@ -4,6 +4,10 @@ TASK_ROOT="${0:A:h:h}"
 BUILD_ROOT="$TASK_ROOT/.build/input-method"
 mkdir -p "$BUILD_ROOT/module-cache"
 xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -framework AppKit \
+  "$TASK_ROOT/scripts/InputSourceSelection.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Tests/SourceSelection/main.swift" -o "$BUILD_ROOT/source-selection-tests"
+"$BUILD_ROOT/source-selection-tests"
+xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -framework AppKit \
   "$TASK_ROOT/native/ProxiMicInput/Sources/ActionPanelAnchor.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Tests/ActionPanelAnchor/main.swift" -o "$BUILD_ROOT/panel-anchor-tests"
 "$BUILD_ROOT/panel-anchor-tests"

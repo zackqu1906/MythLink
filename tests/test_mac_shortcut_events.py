@@ -2,9 +2,9 @@
 from dataclasses import replace
 import sys
 import pytest
-from proximic_ring.mac_shortcut_events import prepare_chord, MODIFIER_KEYS
-from proximic_ring.app_gestures import KEY_CODES
-from proximic_ring.scene_diagnostics import SceneActionError
+from proximic_ring.platforms.macos.mac_shortcut_events import prepare_chord, MODIFIER_KEYS
+from proximic_ring.gestures.app_gestures import KEY_CODES
+from proximic_ring.diagnostics.scene_diagnostics import SceneActionError
 from test_app_shortcuts import desktop
 
 
@@ -87,7 +87,7 @@ def test_modifier_only_flags_never_survive_a_completed_chord(desktop):
 @pytest.mark.skipif(sys.platform!='darwin',reason='macOS event construction without sending')
 def test_real_coregraphics_creates_flags_changed_events_without_posting():
     import Quartz
-    from proximic_ring.app_shortcuts import verify_native_api
+    from proximic_ring.desktop.app_shortcuts import verify_native_api
     verify_native_api()
     events,_,_=prepare_chord(Quartz,'Cmd+Shift+Return')
     assert [Quartz.CGEventGetType(event) for _,_,event in events]==[12,12,10,11,12,12]

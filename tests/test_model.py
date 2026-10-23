@@ -1,9 +1,9 @@
 import numpy as np
 
-from proximic_ring.features import LegacyFeatureExtractor
-from proximic_ring.model import ProxiMicModel
-from proximic_ring.pipeline import LegacyInferencePipeline
-from proximic_ring.resample import LegacyDownsampler16kTo8k
+from proximic_ring.voice.detection.features import LegacyFeatureExtractor
+from proximic_ring.voice.detection.model import ProxiMicModel
+from proximic_ring.voice.detection.pipeline import LegacyInferencePipeline
+from proximic_ring.voice.detection.resample import LegacyDownsampler16kTo8k
 
 
 def test_model_loads_and_shapes():

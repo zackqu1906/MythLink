@@ -16,8 +16,8 @@ def test_real_occluded_window_stream_updates_and_stops_without_saving_images():
     import AppKit
     import Foundation
     import Quartz
-    from proximic_ring.window_capture import WindowCapture
-    from proximic_ring.window_selector import MacWindowAX
+    from proximic_ring.desktop.window_capture import WindowCapture
+    from proximic_ring.desktop.window_selector import MacWindowAX
     if not Quartz.CGPreflightScreenCaptureAccess(): pytest.skip("Screen recording authorization required")
     foreground = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
     script = r'''
@@ -72,7 +72,7 @@ app.run()
         assert len(frames)==count
         # The setup verifier uses this same external fixture, returns only a
         # status, and stops after its first frame. It never saves window data.
-        from proximic_ring.screen_preview_check import verify_screen_preview
+        from proximic_ring.desktop.screen_preview_check import verify_screen_preview
         verified=[]
         worker=threading.Thread(target=lambda: verified.append(verify_screen_preview(
             threading.Event(), target_reader=lambda:card, timeout=5)))

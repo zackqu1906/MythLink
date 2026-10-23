@@ -9,9 +9,10 @@ from .processor import TouchpadProcessor
 
 class TouchpadStream:
     def __init__(self, on_event, *, on_stats=None, model_path=None, duration_s=90., on_end=None,
-                 on_pointer_move=None):
+                 on_pointer_move=None, on_discarded_event=None):
         self.on_event, self.on_stats, self.on_end = on_event, on_stats, on_end
         self.on_pointer_move = on_pointer_move
+        self.on_discarded_event = on_discarded_event
         self.model_path, self.duration_s = model_path, duration_s
         self.queue = asyncio.Queue(maxsize=64)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='ring-touchpad')
@@ -96,16 +97,24 @@ class TouchpadStream:
                                     packet_queue_age_ms=self.stats.packet_queue_age_ms)
                 self.stats = replace(stats, queue_overflows=self.overflows)
                 now = time.monotonic()
-                if self.closed:break
-                if self.duration_s is not None and now-self.started >= self.duration_s:break
+                if self.closed:
+                    for event in events: self._discard(event, 'sdk_stream_closed')
+                    break
+                if self.duration_s is not None and now-self.started >= self.duration_s:
+                    for event in events: self._discard(event, 'sdk_duration_expired')
+                    break
                 if now-(self.started if last_valid is None else last_valid)>8:
                     raise TimeoutError('No valid touchpad tokens for 8 seconds')
                 for event in pointer_events:
                     if self.closed:break
                     if time.monotonic()-event.timestamp <= .1:self.on_pointer_move(event)
                 for event in events:
-                    if self.closed:break
-                    if time.monotonic()-event.timestamp <= .1:self.on_event(event)
+                    if self.closed:
+                        self._discard(event, 'sdk_stream_closed')
+                    elif time.monotonic()-event.timestamp <= .1:
+                        self.on_event(event)
+                    else:
+                        self._discard(event, 'sdk_callback_expired')
                 if now-stats_at >= .5 and not self.closed:
                     if self.on_stats:self.on_stats(self.stats)
                     stats_at = now
@@ -117,3 +126,11 @@ class TouchpadStream:
         finally:
             self.closed = True
             if self.on_end:self.on_end(self)
+
+    def _discard(self, event, reason):
+        # Optional diagnostics cannot alter delivery or stop the BLE loop.
+        if self.on_discarded_event is not None:
+            try:
+                self.on_discarded_event(event, reason)
+            except Exception:
+                pass

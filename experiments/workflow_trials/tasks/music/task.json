@@ -1,0 +1,6 @@
+{
+  "schema_version": 2,
+  "parameters": {},
+  "initial_state": "Music 已运行且显示 Songs 页面；Controls → Stop 已停止播放，LCD 没有当前曲目，previous/next 禁用，随机播放关闭（shuffle 按钮）。每轮用相同方法复位。当前库为本地音频素材，播放次数会累计、随机序列无法完全复原。",
+  "name": "Apple Music 随机播放并确认播放曲目"
+}

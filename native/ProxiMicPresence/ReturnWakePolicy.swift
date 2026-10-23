@@ -1,15 +1,15 @@
 import Foundation
 
-/// An owned lock lights up only after the host has installed its snap route.
-/// Manual locks retain display-only return wake and never acquire unlock rights.
+/// When snap unlock is available, return wake waits for its installed route.
+/// A session without a prepared credential can still use display-only wake.
 struct ReturnDisplayGate {
     private(set) var wokeForReturn = false
 
-    mutating func step(returnConfirmed: Bool, locked: Bool, ownsLock: Bool, available: Bool,
+    mutating func step(returnConfirmed: Bool, locked: Bool, requiresGesture: Bool, available: Bool,
                        connected: Bool, gestureReady: Bool, token: String, installedToken: String) -> Bool {
         guard returnConfirmed, locked, available else { wokeForReturn = false; return false }
         guard !wokeForReturn, connected else { return false }
-        if ownsLock && (!gestureReady || token.isEmpty || installedToken != token) { return false }
+        if requiresGesture && (!gestureReady || token.isEmpty || installedToken != token) { return false }
         wokeForReturn = true
         return true
     }

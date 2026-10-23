@@ -1,0 +1,381 @@
+{
+  "user_observation": "Toggling recognition did not help; audio worked after clicking update input method.",
+  "installation_success_confirmed": false,
+  "events": [
+    {
+      "time": "2026-10-14T15:02:17.157+08:00",
+      "line": "[2026-10-14T15:02:17.157+08:00] [INFO] [runtime.background] run=7ddcd6dc process=91257 thread='MainThread' [EVENT INPUT_METHOD] run=7ddcd6dc type=\"connected\" phase=\"idle\" ready=false revision=0 characters=0 has_composition=false awaiting_readback=false readback_diagnostics=\"{}\" client_read_diagnostics=\"{}\" handoff_diagnostics=\"{}\""
+    },
+    {
+      "time": "2026-10-14T15:02:18.912+08:00",
+      "line": "[2026-10-14T15:02:18.912+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"reconnect_device\" accepted=true has_previous_device=true"
+    },
+    {
+      "time": "2026-10-14T15:02:21.893+08:00",
+      "line": "[2026-10-14T15:02:21.893+08:00] [INFO] [stdout] run=7ddcd6dc process=91257 thread='RingAudioSource' mic ON command sent (encode=1)"
+    },
+    {
+      "time": "2026-10-14T15:02:22.163+08:00",
+      "event": "ring_audio_health",
+      "data": {
+        "event": "first_block",
+        "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_150219/ring_audio.wav",
+        "encoding": "adpcm",
+        "sequence": 0,
+        "uptime_ms": 14480476,
+        "blocks": 1,
+        "missing_blocks": 0,
+        "zero_start_sequence": null,
+        "zero_start_uptime_ms": null,
+        "zero_audio_s": 0.0,
+        "zero_wall_s": 0,
+        "pcm_samples": 1600,
+        "pcm_all_zero": false,
+        "pcm_peak": 5259,
+        "pcm_rms": 718.557,
+        "encoded_bytes": 806,
+        "predictor": -84,
+        "step_index": 0,
+        "reserved": 0,
+        "declared_samples": 1600,
+        "nibble_histogram": [
+          233,
+          193,
+          130,
+          121,
+          66,
+          32,
+          14,
+          30,
+          210,
+          187,
+          122,
+          93,
+          66,
+          44,
+          23,
+          35
+        ],
+        "encoded_sha256": "6947a484198752f3a6f77e1f80e85617e650135e2aaae0948fa6c1383da7b188",
+        "pcm_sha256": "90f89a353d4fc49cc83e90e56111229b2e896b9d7e3bd10fefea8a812192ab42"
+      }
+    },
+    {
+      "time": "2026-10-14T15:02:22.171+08:00",
+      "line": "[2026-10-14T15:02:22.171+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"start_recognition\" source=\"saved_configuration\" accepted=true connected=true busy=false"
+    },
+    {
+      "time": "2026-10-14T15:02:26.303+08:00",
+      "line": "[2026-10-14T15:02:26.303+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"disconnect_device\" source=\"user\" accepted=true connected=true"
+    },
+    {
+      "time": "2026-10-14T15:02:26.547+08:00",
+      "line": "[2026-10-14T15:02:26.547+08:00] [INFO] [stdout] run=7ddcd6dc process=91257 thread='RingAudioSource' mic OFF command sent (encode=1)"
+    },
+    {
+      "time": "2026-10-14T15:02:42.471+08:00",
+      "line": "[2026-10-14T15:02:42.471+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"reconnect_device\" accepted=true has_previous_device=true"
+    },
+    {
+      "time": "2026-10-14T15:02:45.252+08:00",
+      "line": "[2026-10-14T15:02:45.252+08:00] [INFO] [stdout] run=7ddcd6dc process=91257 thread='RingAudioSource' mic ON command sent (encode=1)"
+    },
+    {
+      "time": "2026-10-14T15:02:45.500+08:00",
+      "event": "ring_audio_health",
+      "data": {
+        "event": "first_block",
+        "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_150242/ring_audio.wav",
+        "encoding": "adpcm",
+        "sequence": 0,
+        "uptime_ms": 14503814,
+        "blocks": 1,
+        "missing_blocks": 0,
+        "zero_start_sequence": null,
+        "zero_start_uptime_ms": null,
+        "zero_audio_s": 0.0,
+        "zero_wall_s": 0,
+        "pcm_samples": 1600,
+        "pcm_all_zero": true,
+        "pcm_peak": 0,
+        "pcm_rms": 0.0,
+        "encoded_bytes": 806,
+        "predictor": 0,
+        "step_index": 0,
+        "reserved": 0,
+        "declared_samples": 1600,
+        "nibble_histogram": [
+          1599,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+        "pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1"
+      }
+    },
+    {
+      "time": "2026-10-14T15:02:45.505+08:00",
+      "line": "[2026-10-14T15:02:45.505+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"start_recognition\" source=\"saved_configuration\" accepted=true connected=true busy=false"
+    },
+    {
+      "time": "2026-10-14T15:02:48.346+08:00",
+      "event": "ring_audio_health",
+      "data": {
+        "event": "zero_pcm_started",
+        "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_150242/ring_audio.wav",
+        "encoding": "adpcm",
+        "sequence": 29,
+        "uptime_ms": 14506714,
+        "blocks": 30,
+        "missing_blocks": 0,
+        "zero_start_sequence": 10,
+        "zero_start_uptime_ms": 14504814,
+        "zero_audio_s": 2.0,
+        "zero_wall_s": 1.912,
+        "pcm_samples": 1600,
+        "pcm_all_zero": true,
+        "pcm_peak": 0,
+        "pcm_rms": 0.0,
+        "encoded_bytes": 806,
+        "predictor": 0,
+        "step_index": 0,
+        "reserved": 0,
+        "declared_samples": 1600,
+        "nibble_histogram": [
+          1599,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+        "pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1"
+      }
+    },
+    {
+      "time": "2026-10-14T15:02:57.419+08:00",
+      "line": "[2026-10-14T15:02:57.419+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [ASR AUDIO] session=1 samples=166720 all_zero=True peak=0.0000000 rms=0.0000000 zero_samples=166720"
+    },
+    {
+      "time": "2026-10-14T15:03:01.116+08:00",
+      "line": "[2026-10-14T15:03:01.116+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"pause_recognition\" source=\"user\" accepted=true connected=true"
+    },
+    {
+      "time": "2026-10-14T15:03:02.364+08:00",
+      "line": "[2026-10-14T15:03:02.364+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"start_recognition\" source=\"user\" accepted=true connected=true busy=false"
+    },
+    {
+      "time": "2026-10-14T15:03:11.068+08:00",
+      "line": "[2026-10-14T15:03:11.068+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [ASR AUDIO] session=2 samples=88320 all_zero=True peak=0.0000000 rms=0.0000000 zero_samples=88320"
+    },
+    {
+      "time": "2026-10-14T15:03:16.728+08:00",
+      "line": "[2026-10-14T15:03:16.728+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"pause_recognition\" source=\"user\" accepted=true connected=true"
+    },
+    {
+      "time": "2026-10-14T15:03:17.708+08:00",
+      "line": "[2026-10-14T15:03:17.708+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"start_recognition\" source=\"user\" accepted=true connected=true busy=false"
+    },
+    {
+      "time": "2026-10-14T15:03:18.367+08:00",
+      "event": "ring_audio_health",
+      "data": {
+        "event": "zero_pcm_continues",
+        "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_150242/ring_audio.wav",
+        "encoding": "adpcm",
+        "sequence": 330,
+        "uptime_ms": 14536814,
+        "blocks": 331,
+        "missing_blocks": 0,
+        "zero_start_sequence": 10,
+        "zero_start_uptime_ms": 14504814,
+        "zero_audio_s": 32.1,
+        "zero_wall_s": 31.933,
+        "pcm_samples": 1600,
+        "pcm_all_zero": true,
+        "pcm_peak": 0,
+        "pcm_rms": 0.0,
+        "encoded_bytes": 806,
+        "predictor": 0,
+        "step_index": 0,
+        "reserved": 0,
+        "declared_samples": 1600,
+        "nibble_histogram": [
+          1599,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+        "pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1"
+      }
+    },
+    {
+      "time": "2026-10-14T15:03:26.351+08:00",
+      "line": "[2026-10-14T15:03:26.351+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [ASR AUDIO] session=3 samples=64320 all_zero=True peak=0.0000000 rms=0.0000000 zero_samples=64320"
+    },
+    {
+      "time": "2026-10-14T15:03:45.106+08:00",
+      "line": "[2026-10-14T15:03:45.106+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [ASR AUDIO] session=4 samples=105920 all_zero=True peak=0.0000000 rms=0.0000000 zero_samples=105920"
+    },
+    {
+      "time": "2026-10-14T15:03:48.368+08:00",
+      "event": "ring_audio_health",
+      "data": {
+        "event": "zero_pcm_continues",
+        "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_150242/ring_audio.wav",
+        "encoding": "adpcm",
+        "sequence": 631,
+        "uptime_ms": 14566914,
+        "blocks": 632,
+        "missing_blocks": 0,
+        "zero_start_sequence": 10,
+        "zero_start_uptime_ms": 14504814,
+        "zero_audio_s": 62.2,
+        "zero_wall_s": 61.934,
+        "pcm_samples": 1600,
+        "pcm_all_zero": true,
+        "pcm_peak": 0,
+        "pcm_rms": 0.0,
+        "encoded_bytes": 806,
+        "predictor": 0,
+        "step_index": 0,
+        "reserved": 0,
+        "declared_samples": 1600,
+        "nibble_histogram": [
+          1599,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+        "pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1"
+      }
+    },
+    {
+      "time": "2026-10-14T15:03:54.774+08:00",
+      "line": "[2026-10-14T15:03:54.774+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"pause_recognition\" source=\"user\" accepted=true connected=true"
+    },
+    {
+      "time": "2026-10-14T15:03:55.262+08:00",
+      "line": "[2026-10-14T15:03:55.262+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"start_recognition\" source=\"user\" accepted=true connected=true busy=false"
+    },
+    {
+      "time": "2026-10-14T15:04:07.131+08:00",
+      "event": "ring_audio_health",
+      "data": {
+        "event": "zero_pcm_recovered",
+        "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_150242/ring_audio.wav",
+        "encoding": "adpcm",
+        "sequence": 819,
+        "uptime_ms": 14585714,
+        "blocks": 820,
+        "missing_blocks": 0,
+        "zero_start_sequence": 10,
+        "zero_start_uptime_ms": 14504814,
+        "zero_audio_s": 80.9,
+        "zero_wall_s": 80.696,
+        "pcm_samples": 1600,
+        "pcm_all_zero": false,
+        "pcm_peak": 25241,
+        "pcm_rms": 23156.348,
+        "encoded_bytes": 806,
+        "predictor": -23170,
+        "step_index": 0,
+        "reserved": 0,
+        "declared_samples": 1600,
+        "nibble_histogram": [
+          1544,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          10,
+          42,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "encoded_sha256": "f100a94f82e997b5c1d2fa01d689627e990f5f4dae1d1ac8967c62d158c4beca",
+        "pcm_sha256": "1ee3fb98d99c83916c73d1a1860f1dcf174577c14acdf514a81d36849ed49f0d"
+      }
+    },
+    {
+      "time": "2026-10-14T15:04:10.033+08:00",
+      "line": "[2026-10-14T15:04:10.033+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [ASR AUDIO] session=5 samples=104320 all_zero=False peak=0.7702942 rms=0.1064190 zero_samples=64041"
+    },
+    {
+      "time": "2026-10-14T15:05:18.883+08:00",
+      "line": "[2026-10-14T15:05:18.883+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [ASR AUDIO] session=6 samples=49920 all_zero=False peak=0.2802124 rms=0.0380452 zero_samples=66"
+    },
+    {
+      "time": "2026-10-14T15:09:41.815+08:00",
+      "line": "[2026-10-14T15:09:41.815+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"quit_application\" repeated=false connected=true recognition_enabled=true"
+    },
+    {
+      "time": "2026-10-14T15:09:41.821+08:00",
+      "line": "[2026-10-14T15:09:41.821+08:00] [INFO] [runtime] run=7ddcd6dc process=91257 thread='MainThread' [EVENT USER_ACTION] run=7ddcd6dc action=\"disconnect_device\" source=\"quit_cleanup\" accepted=true connected=true"
+    },
+    {
+      "time": "2026-10-14T15:09:42.161+08:00",
+      "line": "[2026-10-14T15:09:42.161+08:00] [INFO] [stdout] run=7ddcd6dc process=91257 thread='RingAudioSource' mic OFF command sent (encode=1)"
+    }
+  ],
+  "user_reports_installation_success": true,
+  "installation_timestamps_available": false,
+  "interpretation": "Audio recovered after 80.9s of decoded zeros on the same capture. The user reports a successful IME update, but no update start/finish event was recorded by this old process; causality remains unverified."
+}

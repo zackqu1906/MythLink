@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import numpy as np
-from proximic_ring.modification_dataset import ModificationDatasetCollector
+from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
 
 with TemporaryDirectory(prefix='voice-record-audit-') as tmp:
     c=ModificationDatasetCollector(tmp,'audit_only')

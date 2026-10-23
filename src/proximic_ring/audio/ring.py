@@ -12,8 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
-from ..pcm import decode_pcm16le
-from ..mac_activity import MacActivity
+from .pcm import decode_pcm16le
+from ..platforms.macos.mac_activity import MacActivity
 from .base import AudioSource
 
 _STOP = object()
@@ -26,6 +26,8 @@ _WATCHDOG_CONFIRM_S = 1.0
 _INITIAL_PCM_TIMEOUT_S = 3.0
 _FRESH_PCM_TIMEOUT_S = 3.0
 _INITIAL_MIC_SETTLE_S = 1.0
+# The same connection settling period must precede gesture START as well as
+# MIC ON. Keep the legacy constant name for existing callers/tests.
 _EARLY_STARTUP_STALL_S = 2.0
 _EARLY_STARTUP_MAX_CALLBACKS = 5
 _MIC_RECOVERY_PAUSE_S = 0.75
@@ -862,8 +864,21 @@ class RingAudioSource(AudioSource):
             if self._stop.is_set():
                 return
 
+            # Service discovery/notify completion is not firmware stream
+            # readiness. Previously only MIC waited; gesture START could be
+            # sent within 50 ms of connection, while the device was settling.
+            while not self._stop.is_set():
+                remaining = _INITIAL_MIC_SETTLE_S - (time.monotonic() - connected_at)
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(0.05, remaining))
+            if self._stop.is_set():
+                return
+
             # Firmware recognition has its own START; it never needs raw IMU.
             await self._start_gestures(session)
+            if self._stop.is_set():
+                return
             await self._start_touchpad(session)
             await self._start_imu_best_effort(session)
 
@@ -876,10 +891,6 @@ class RingAudioSource(AudioSource):
                 self._stream_paused.set()
                 self._ready.set()
             else:
-                # Preserve the proven CONNECT -> MIC ON settling interval.
-                settle_remaining = _INITIAL_MIC_SETTLE_S - (time.monotonic() - connected_at)
-                if settle_remaining > 0:
-                    await asyncio.sleep(settle_remaining)
                 started = await self._start_mic_and_wait(
                     session, timeout_s=_INITIAL_PCM_TIMEOUT_S,
                 )
@@ -1084,14 +1095,24 @@ class RingAudioSource(AudioSource):
     async def _start_gestures(self, session) -> None:
         if self.gesture_observer is None:
             return
+        start = None
         try:
             self._gesture_activity.start()
-            await session.swipe_on(on_trigger=self.gesture_observer, print_events=False,
-                                   print_triggers=False, print_profile=False)
+            print("[GESTURE_STARTUP] resetting device gesture stream before START")
+            start = asyncio.create_task(session.swipe_on(
+                on_trigger=self.gesture_observer, print_events=False,
+                print_triggers=False, print_profile=False, reset_device=True))
+            while not start.done():
+                if self._stop.is_set():
+                    return
+                await asyncio.wait({start}, timeout=0.05)
+            if self._stop.is_set():
+                return
+            await start
             self.gestures_active = True
             if self.gesture_state_observer is not None:
                 self.gesture_state_observer(True)
-            print("Ring firmware gestures enabled (26 06 / 26 07)")
+            print("[GESTURE_STARTUP] START sent; firmware output not yet confirmed (26 06 / 26 07)")
         except BaseException as exc:
             self._gesture_activity.close()
             if not isinstance(exc, Exception):
@@ -1101,6 +1122,28 @@ class RingAudioSource(AudioSource):
             if self.gesture_state_observer is not None:
                 self.gesture_state_observer(False)
             raise RuntimeError(f"Ring 固件手势启动失败：{exc}") from exc
+        finally:
+            if start is not None:
+                if not start.done():
+                    start.cancel()
+                await asyncio.gather(start, return_exceptions=True)
+            if self._stop.is_set():
+                self._gesture_activity.close()
+
+    def gesture_diagnostics(self) -> dict:
+        """Separate device packet evidence from host START and action routing."""
+        endpoint = self._touchpad_endpoint
+        processor = getattr(endpoint[1], "swipe", None) if endpoint else None
+        stats = getattr(processor, "stats", None)
+        packets = int(getattr(stats, "packet_count", 0))
+        return {
+            "device_packet_count": packets,
+            "device_trigger_count": int(getattr(stats, "trigger_count", 0)),
+            "invalid_packet_count": int(getattr(stats, "invalid_packet_count", 0)),
+            "callback_error_count": int(getattr(stats, "callback_error_count", 0)),
+            "startup_evidence": ("device_packets" if packets else
+                                 "start_sent" if self.gestures_active else "not_started"),
+        }
 
     def _submit_touchpad(self, enabled, options):
         """Return a Future immediately; all SDK calls stay on the owning BLE loop."""

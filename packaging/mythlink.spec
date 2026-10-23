@@ -3,16 +3,30 @@
 from pathlib import Path
 import os
 import platform
+import runpy
+import tomllib
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 
 project_root = Path(SPECPATH).parent
 source_root = project_root / "src"
+app_version = tomllib.loads((project_root / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
+if os.environ.get('MYTHLINK_BUILD_VERSION', app_version) != app_version:
+    raise ValueError('Build version differs from pyproject.toml; restart the build with the intended version.')
+version_file = project_root / '.build/package-version.txt'
+version_file.parent.mkdir(parents=True, exist_ok=True)
+version_file.write_text(app_version, encoding='utf-8')
 streaming_root = project_root / "third_party" / "streaming-sensevoice"
 funasr_root = project_root / "third_party" / "Fun-ASR"
+workflow_policy = runpy.run_path(str(project_root / 'packaging/legacy_workflows.py'))
+legacy_excludes = workflow_policy['excluded_modules'](source_root)
 
-datas = collect_data_files("proximic_ring")
+datas = [item for item in collect_data_files("proximic_ring")
+         if workflow_policy['include_data'](item[0])]
+datas.append((str(version_file), 'proximic_ring'))
+# The local ASR tokenizer/model inspects dependency metadata lazily.
+datas += copy_metadata("transformers", recursive=True)
 datas += collect_data_files("ring_python_sdk", includes=["touchpad/assets/*"])
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
@@ -34,6 +48,9 @@ hiddenimports = collect_submodules("proximic_ring.asr.backends")
 if platform.system() == "Darwin":
     hiddenimports += ["MNN", "_mnncengine"]
 hiddenimports += [
+    "PySide6.QtWebEngineQuick",
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebChannel",
     "funasr",
     "funasr.auto.auto_model",
     "funasr.frontends.wav_frontend",
@@ -54,6 +71,9 @@ hiddenimports += [
 # so make this one supported architecture explicit instead of bundling every
 # Transformers model family.
 hiddenimports += collect_submodules("transformers.models.qwen3", on_error="raise")
+# AutoTokenizer imports EncoderDecoderConfig even when the checkpoint is a
+# single encoder. Keep this shared factory dependency after model pruning.
+hiddenimports += collect_submodules("transformers.models.encoder_decoder", on_error="raise")
 
 a = Analysis(
     [str(project_root / "packaging" / "launcher.py")],
@@ -64,7 +84,7 @@ a = Analysis(
     hookspath=[str(project_root / "packaging" / "hooks")],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
+    excludes=legacy_excludes + [
         "tkinter",
         "matplotlib",
         "IPython",
@@ -100,8 +120,8 @@ a = Analysis(
 
 # Both ModelScope and Transformers expose enormous TYPE_CHECKING import maps.
 # The former is replaced by the focused download shim above.  For the latter,
-# retain common runtime code plus the auto factories and the one architecture
-# embedded in Fun-ASR-Nano.
+# retain common runtime code, auto-factory dependencies, and the architectures
+# used by Fun-ASR-Nano.
 def _used_transformers_model(name):
     normalized = str(name).replace("\\", "/")
     marker = "transformers/models/"
@@ -112,6 +132,7 @@ def _used_transformers_model(name):
         relative == "__init__.py"
         or relative.startswith("auto/")
         or relative.startswith("qwen3/")
+        or relative.startswith("encoder_decoder/")
     )
 
 
@@ -121,6 +142,7 @@ a.pure = [
     if not str(item[0]).startswith("transformers.models.")
     or str(item[0]).startswith("transformers.models.auto")
     or str(item[0]).startswith("transformers.models.qwen3")
+    or str(item[0]).startswith("transformers.models.encoder_decoder")
 ]
 a.datas = [item for item in a.datas if _used_transformers_model(item[0])]
 
@@ -206,8 +228,8 @@ if platform.system() == "Darwin":
         bundle_identifier="com.proximic.voice",
         info_plist={
             "CFBundleDisplayName": "Mythlink",
-            "CFBundleShortVersionString": "0.6.0",
-            "CFBundleVersion": "0.6.0",
+            "CFBundleShortVersionString": app_version,
+            "CFBundleVersion": app_version,
             "LSMinimumSystemVersion": "15.0",
             # The same executable also runs permission/gesture workers. Start
             # without a Dock icon; ui.main promotes only the normal Qt host.

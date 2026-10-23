@@ -35,7 +35,7 @@ def enabled_profiles(bundle, profiles, preferred='', enabled=None):
     if enabled is None:
         enabled = [primary_scene(bundle, profiles, preferred)]
         if bundle.casefold() in BROWSERS:
-            enabled += [PDF, VIDEO]  # Mixed content is normal within one browser.
+            enabled += [VIDEO, MUSIC]  # The browser extension detects HTML media.
     return {scene: profiles[scene] for scene in SCENE_LABELS if scene in profiles and scene in enabled}
 
 

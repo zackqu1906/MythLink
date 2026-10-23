@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import time
 import pytest
 from PySide6.QtCore import QCoreApplication
-from proximic_ring.ui.scene_notice_controller import SceneNoticeController
+from proximic_ring.ui.scenes.scene_notice_controller import SceneNoticeController
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def test_delayed_reply_never_announces_outdated_foreground(notice,change):
 
 
 def test_poll_is_read_only_single_flight_and_pauses_for_unconfigured_or_busy(notice,monkeypatch):
-    import proximic_ring.ui.scene_notice_controller as module
+    import proximic_ring.ui.scenes.scene_notice_controller as module
     obj,state,logs,calls=notice
     pending=[]
     monkeypatch.setattr(module.threading,'Thread',lambda **kw:SimpleNamespace(start=lambda:pending.append(kw['target'])))
@@ -111,9 +111,9 @@ def test_permission_errors_back_off_and_log_only_once(notice):
 
 
 def test_worker_scene_observation_requires_ax_only_and_never_keeps_send_targets(monkeypatch):
-    from proximic_ring import native_access_worker as worker
-    from proximic_ring.mac_permissions import MacPermissionError,PermissionState
-    from proximic_ring.app_shortcuts import ShortcutTarget
+    from proximic_ring.platforms.macos import native_access_worker as worker
+    from proximic_ring.platforms.macos.mac_permissions import MacPermissionError,PermissionState
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
     monkeypatch.setattr(worker,'read_permission_state',lambda:PermissionState(True,False))
     dispatcher=worker.Dispatcher();captures=[]
     value=ShortcutTarget('test.player',12,'generic',scene='video',input_context='nontext')
@@ -182,8 +182,8 @@ def test_real_permission_controller_pending_does_not_block_background_scene_read
     from PySide6.QtCore import QSettings
     from PySide6.QtTest import QTest
     from test_permission_setup import Permissions,PermissionApp
-    from proximic_ring.ui.permission_setup_controller import PermissionSetupController
-    from proximic_ring.ui.feedback_availability import feedback_block_reason
+    from proximic_ring.ui.permissions.permission_setup_controller import PermissionSetupController
+    from proximic_ring.ui.shared.feedback_availability import feedback_block_reason
     obj,state,logs,calls=notice
     perms=Permissions();perms.states.update(bluetooth=True,microphone=True)
     setup=PermissionSetupController(perms,QSettings(str(tmp_path/'permissions.ini'),QSettings.IniFormat),

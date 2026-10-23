@@ -7,6 +7,19 @@ Item {
     property bool presented: false
     property bool nativeMaterial: false
     property int iconRevision: 0
+    property point pointerPosition: Qt.point(-1, -1)
+    onPointerPositionChanged: {
+        const p = grid.mapFromItem(root, pointerPosition.x, pointerPosition.y)
+        if (p.x < 0 || p.y < 0 || p.x >= grid.width || p.y >= grid.height)
+            return
+        const index = grid.indexAt(p.x + grid.contentX, p.y + grid.contentY)
+        const item = grid.itemAtIndex(index)
+        if (item) {
+            const within = item.cardItem.mapFromItem(root, pointerPosition.x, pointerPosition.y)
+            if (within.x >= 0 && within.y >= 0 && within.x < item.cardItem.width && within.y < item.cardItem.height)
+                windowSelector.hover(index)
+        }
+    }
     readonly property bool expandsSelection: windowSelector.atApps
         && windowSelector.selected >= 0 && windowSelector.selected < windowSelector.cards.length
         && windowSelector.cards[windowSelector.selected].windowCount > 1
@@ -120,6 +133,7 @@ Item {
                 required property int index
                 width: grid.cellWidth; height: grid.cellHeight
                 readonly property bool chosen: index === windowSelector.selected
+                property alias cardItem: card
                 Rectangle {
                     id: card
                     objectName: "windowPreviewCard"
@@ -177,7 +191,12 @@ Item {
                     }
                     Text { anchors { right: parent.right; bottom: parent.bottom; margins: 18 }
                         text: chosen ? (windowSelector.atApps && modelData.windowCount > 1 ? "›" : "↗") : ""; color: "#eeeeee"; font.pixelSize: 21 }
-                    MouseArea { id: cardMouse; anchors.fill: parent; hoverEnabled: true; onClicked: windowSelector.pick(index) }
+                    MouseArea {
+                        id: cardMouse
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: windowSelector.click(index)
+                    }
                 }
             }
             Connections {
@@ -201,28 +220,10 @@ Item {
                 noticeBackground: "#403521"
                 noticeBorder: "#665330"
                 Layout.fillWidth: true
-                text: "未开启屏幕录制权限，暂时无法显示窗口预览。仍可选择和切换窗口。"
+                text: "未开启屏幕录制权限，暂时无法显示窗口预览。仍可选择和切换窗口。权限可在设置的“系统与权限”中管理。"
                 color: "#F2C66D"; font.pixelSize: 13; wrapMode: Text.Wrap
             }
-            Button {
-                id: permissionButton
-                objectName: "windowSelectorPermissionButton"
-                text: "去开启"; focusPolicy: Qt.NoFocus
-                implicitWidth: 80; implicitHeight: 36
-                padding: 8; hoverEnabled: true
-                background: Rectangle {
-                    radius: 10
-                    color: permissionButton.down ? "#55472D" : permissionButton.hovered ? "#493D28" : "#403521"
-                    border.color: "#665330"
-                }
-                contentItem: Text {
-                    text: permissionButton.text
-                    color: "#F2C66D"; font.pixelSize: 13
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                onClicked: windowPreviews.requestPermission()
-            }
+
         }
         Rectangle {
             id: footer
@@ -236,7 +237,7 @@ Item {
                 spacing: 18
                 Text { text: windowSelector.atApps ? "↑ ↓ ← →  选择应用" : "↑ ↓ ← →  选择窗口"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { visible: !windowSelector.atApps && Boolean(windowSelector.globalLabels.switch_mode); text: windowSelector.globalLabels.switch_mode + "  返回上级"; color: "#cccccc"; font.pixelSize: 13 }
-                Text { text: root.expandsSelection ? "Tap  展开" : "Tap  进入窗口"; color: "#f5f5f5"; font.pixelSize: 13 }
+                Text { text: root.expandsSelection ? "单击 / Tap  展开" : "单击 / Tap  进入窗口"; color: "#f5f5f5"; font.pixelSize: 13 }
                 Text { visible: Boolean(windowSelector.globalLabels.window_selector); text: windowSelector.globalLabels.window_selector + "  取消窗口选择"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { visible: Boolean(windowSelector.globalLabels.show_menu); text: windowSelector.globalLabels.show_menu + "  提示环"; color: "#cccccc"; font.pixelSize: 13 }
             }

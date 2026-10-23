@@ -28,6 +28,8 @@ from typing import Any
 import numpy as np
 
 from ..factory import ASRBackendSettings
+from ..punctuation import trim_short_utterance_end
+from ...voice.hotwords import select_hotwords
 
 
 DEFAULT_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
@@ -308,9 +310,13 @@ class VolcengineStreamingASR:
         source = str(supplied.get("source", "focused_text") or "focused_text")
         raw_text = str(supplied.get("text", "") or "")
         context_data, truncated = _dialog_context_data(raw_text)
-        source_char_count = int(
-            supplied.get("source_char_count", len(raw_text)) or 0
-        )
+        try:
+            source_char_count = int(
+                supplied.get("source_char_count", len(raw_text)) or 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            # Optional editor diagnostics must not discard valid hotwords.
+            source_char_count = len(raw_text)
         sent_char_count = sum(len(item["text"]) for item in context_data)
 
         if status != "captured":
@@ -334,6 +340,11 @@ class VolcengineStreamingASR:
             "truncated": bool(truncated or source_char_count > len(raw_text)),
             "reason": reason,
         }
+        words = supplied.get("hotwords", [])
+        hotwords = select_hotwords(words if isinstance(words, list) else [])
+        if hotwords:
+            metadata["hotwords"] = hotwords
+            metadata["hotword_count"] = len(hotwords)
         for key in ("target_key", "application", "read_method"):
             value = str(supplied.get(key, "") or "")
             if value:
@@ -498,13 +509,16 @@ class VolcengineStreamingASR:
         if self.language != "auto":
             request["request"]["language"] = self.language
         context_data = context_metadata.get("context_data")
+        corpus_context = {}
         if isinstance(context_data, list) and context_data:
+            corpus_context.update(context_type=_DIALOG_CONTEXT_TYPE, context_data=context_data)
+        hotwords = context_metadata.get("hotwords", [])
+        if hotwords:
+            corpus_context["hotwords"] = [{"word": word} for word in hotwords]
+        if corpus_context:
             request["request"]["corpus"] = {
                 "context": json.dumps(
-                    {
-                        "context_type": _DIALOG_CONTEXT_TYPE,
-                        "context_data": context_data,
-                    },
+                    corpus_context,
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
@@ -522,7 +536,7 @@ class VolcengineStreamingASR:
             )
         )
         self._check_cancelled(generation, cancel_event, stop_event)
-        if context_data:
+        if corpus_context:
             self._session_context_metadata["status"] = "sent"
         self._next_sequence += 1
         # Audio sending must never wait for a cloud response.  The old design
@@ -748,7 +762,9 @@ class VolcengineStreamingASR:
                 f"finish complete; received_frames={self._received_frames} chars={len(self._last_text)} "
                 f"audio_rms_dbfs={rms_dbfs:.1f} peak={self._audio_peak:.3f}"
             )
-            return self._last_text
+            # Keep streaming hypotheses and the raw service result intact.
+            # Only a completed utterance has a stable length for this policy.
+            return trim_short_utterance_end(self._last_text)
         finally:
             self._close(expected_generation=generation)
 

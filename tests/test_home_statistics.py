@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from proximic_ring.ui.home_statistics import HomeStatistics, summarize_history
+from proximic_ring.ui.voice.home_statistics import HomeStatistics, summarize_history
 
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=timezone(timedelta(hours=8)))

@@ -1,18 +1,20 @@
 import threading
+from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.ui.window_selector_controller import WindowSelectorController
+from proximic_ring.ui.desktop.window_selector_controller import WindowSelectorController
 from test_app_gestures import route
 from test_ring_gestures import request
-from test_text_focus_controller import fields, start, until
+from test_text_focus_controller import until
 from test_window_selector import Desktop
 
 
 @pytest.fixture
 def selector(route):
-    c, _, inline, _, sent, _, _ = route
+    c, _, inline, backend, sent, _, _ = route
+    backend.target = replace(backend.target, input_context="nontext", focus="page", role="AXGroup")
     ring = c.ringGestures
     ring._selector.close()
     d = Desktop()
@@ -29,7 +31,6 @@ def selector(route):
     service = WindowSelectorController(ring, enabled=True, channel=channel,
                                        clock=lambda: d.now, stamp_reader=d.front)
     ring._selector = service
-    service.changed.connect(ring._fields.sync)
     service.notice.connect(notices.append)
     yield c, inline, service, channel, d, calls, notices, threads, sent
     if channel.wait: channel.wait.set()
@@ -41,7 +42,7 @@ def opened(c, service):
     until(lambda: service.phase == "ready")
 
 
-@pytest.mark.parametrize("mode", ["input", "operation"])
+@pytest.mark.parametrize("mode", ["operation"])
 def test_gestures_navigate_confirm_exact_window_and_never_start_voice(selector, mode):
     c, _, s, _, d, calls, notices, threads, sent = selector
     shown, hidden = [], []
@@ -65,13 +66,13 @@ def test_gestures_navigate_confirm_exact_window_and_never_start_voice(selector, 
     assert not request(c, "swipe-down") and s.selected == 0
     assert not request(c, "swipe-right") and s.selected == 1
     assert c.ringGestures.mode == mode
-    assert not request(c, "index-pinch") and shown == [(mode, "")]
+    assert not request(c, "index-pinch")
     assert not request(c, "tap")
     until(lambda: not s.blocked.is_set())
     assert d.activated == [(10, d.b)] and hidden and not notices
     c._apply_gesture(old, c._disconnect_event)
     assert not sent and c.ringGestures.mode == mode
-    if mode == "input": assert request(c, "tap")
+    assert request(c, "double-tap")
     assert all(t != threading.get_ident() for t in threads)
 
 
@@ -87,7 +88,7 @@ def test_cancel_and_timeout_keep_original_window_and_mode(selector, action):
         c.connectedChanged.emit()
     else: inline._view["phase"] = "listening"; s.poll()
     until(lambda: not s.blocked.is_set())
-    assert not d.activated and c.ringGestures.mode == "input"
+    assert not d.activated and c.ringGestures.mode == "operation"
 
 
 @pytest.mark.parametrize("change", ["front", "focus", "missing_focus", "space", "screen"])
@@ -140,28 +141,24 @@ def test_busy_sentence_never_queues_window_selection(selector, phase):
     request(c, "clench", deliver=False)
     inline._view["phase"] = "dictated"
     QCoreApplication.processEvents()
-    assert shown[-1][1] == "请先结束本句" and not calls and not s.blocked.is_set()
+    assert not shown and not calls and not s.blocked.is_set()
 
 
-def test_selection_suspends_field_plans_and_cancel_preserves_focus(selector, fields):
+@pytest.mark.parametrize("confirm", [False, True])
+def test_window_selection_never_starts_field_discovery(selector, monkeypatch, confirm):
     c, _, s, _, _, _, _, _, _ = selector
-    fc, _, f, channel, d, calls, _, _ = fields
-    assert fc is c
-    s.changed.connect(f.sync)
-    start(f)
-    channel.wait_for_plan = threading.Event()
-    request(c, "swipe-down")
-    until(lambda: f.pending.is_set() and f.picker._working)
+    fields = c.ringGestures.textFields
+    calls = []
+    monkeypatch.setattr(fields._channel, "call", lambda *a, **kw: calls.append((a, kw)))
+    monkeypatch.setattr(fields, "sync", lambda: calls.append("sync"))
     opened(c, s)
-    assert not f._active and not f.picker.active.is_set()
-    channel.wait_for_plan.set()
-    until(lambda: not f.picker._working)
-    before = list(calls)
-    f.poll(); f.refresh()
-    assert calls == before and d.writes == [d.a]
-    request(c, "clench")
-    until(lambda: not f._working)
-    assert f._active and f.available and d.writes == [d.a]
+    if confirm:
+        request(c, "swipe-right")
+        request(c, "tap")
+        until(lambda: s.phase == "closed")
+    else:
+        request(c, "clench")
+    assert not calls and not fields._timer.isActive() and not fields.picker.active.is_set()
 
 
 def test_first_presentation_does_not_wait_for_window_discovery(selector):
@@ -196,7 +193,7 @@ def test_left_selects_and_middle_pinch_returns_without_changing_mode(selector):
     request(c, "swipe-right")
     assert s.selected == 1
     assert calls == ["selector_list"] and not notices
-    assert c.ringGestures.mode == "input"
+    assert c.ringGestures.mode == "operation"
 
 
 @pytest.mark.parametrize("child", [False, True])
@@ -214,7 +211,7 @@ def test_single_window_app_enters_on_first_tap_without_changing_page(selector):
     pages = []
     s.pageChanged.connect(lambda: pages.append(s.atApps))
     request(c, "swipe-right")
-    assert s.cards[s.selected]["title"] == "1 个窗口 · Tap 进入"
+    assert s.cards[s.selected]["title"] == "1 个窗口 · 单击或 Tap 进入"
     request(c, "tap")
     until(lambda: s.phase == "closed")
     assert d.activated == [(20, d.c)] and not pages
@@ -294,3 +291,125 @@ def test_native_exception_keeps_reason_stage_location_and_never_retries_activati
     error = next(row for row in log if row.get("action") == "native_error")
     assert error["error_type"] == "TimeoutError" and "window_selector.py:100:activate" in error["locations"]
     assert "private" not in str(log)
+
+
+def test_activation_waits_for_current_ui_turn_and_submits_only_once(selector, monkeypatch):
+    c, _, s, _, d, calls, _, _, sent = selector
+    logs = []
+    monkeypatch.setattr(c, '_event_log', lambda event, **fields: logs.append(fields))
+    opened(c, s)
+    s.pick(1)
+    s.confirm()
+    assert s.phase == 'activating' and 'selector_activate' not in calls
+    s.confirm()
+    until(lambda: s.phase == 'closed')
+    assert calls.count('selector_activate') == 1 and d.activated == [(20, d.c)] and not sent
+    dispatch = next(row for row in logs if row.get('action') == 'activation_dispatch')
+    assert dispatch['dismiss_ms'] >= 0 and dispatch['ui_turn_ms'] >= 0
+
+
+@pytest.mark.parametrize('change', ['cancel', 'disconnect', 'generation', 'speech'])
+def test_cancel_before_deferred_activation_never_switches_windows(selector, change):
+    c, inline, s, _, d, calls, _, _, _ = selector
+    opened(c, s)
+    s.pick(1)
+    s.confirm()
+    if change == 'cancel': s.cancel()
+    elif change == 'disconnect': c._disconnect_event.set()
+    elif change == 'generation': c.ringGestures._generation += 1
+    elif change == 'speech': inline._view['phase'] = 'listening'
+    QCoreApplication.processEvents()
+    s.poll()
+    assert s.phase == 'closed' and not d.activated and 'selector_activate' not in calls
+
+
+def test_pointer_click_expands_then_enters_exact_window_once(selector):
+    c, _, s, _, d, calls, _, _, _ = selector
+    opened(c, s)
+    s.click(0)
+    assert not s.atApps and s.phase == 'ready' and not d.activated
+    s.click(1)
+    s.click(0)  # A second confirm cannot alter the in-flight destination.
+    until(lambda: s.phase == 'closed')
+    assert d.activated == [(10, d.b)] and calls.count('selector_activate') == 1
+
+
+@pytest.mark.parametrize('confirm', ['click', 'tap'])
+def test_hover_and_both_confirmation_methods_share_the_selected_target(selector, confirm):
+    c, _, s, _, d, calls, _, _, _ = selector
+    opened(c, s)
+    s.hover(1)
+    assert s.selected == 1 and not d.activated
+    if confirm == 'click': s.click(1)
+    else: request(c, 'tap')
+    until(lambda: s.phase == 'closed')
+    assert d.activated == [(20, d.c)] and calls.count('selector_activate') == 1
+
+
+@pytest.mark.parametrize('index', [-1, 2, 999])
+def test_invalid_pointer_card_never_confirms_the_previous_selection(selector, index):
+    c, _, s, _, d, calls, _, _, _ = selector
+    opened(c, s)
+    s.hover(index)
+    s.click(index)
+    assert s.atApps and s.phase == 'ready' and not d.activated
+    assert 'selector_activate' not in calls
+
+
+def test_motion_on_same_card_renews_timeout_without_repeating_preview_selection(selector):
+    c, _, s, _, d, _, _, _, _ = selector
+    opened(c, s)
+    selections, updates = [], []
+    s.selectionChanged.connect(lambda: selections.append(s.selected))
+    s.changed.connect(lambda: updates.append(s.remaining))
+    for i in range(200):
+        d.now = i / 200
+        s.hover(s.selected)
+    assert not selections and not updates
+    d.now = 8
+    s.hover(s.selected)
+    d.now = 11
+    s.poll()
+    assert s.phase == 'ready' and s.remaining == 7 and not selections
+
+
+def test_pointer_context_tracks_entry_activation_and_exit(selector):
+    c, _, s, _, _, _, _, _, _ = selector
+    original = s.pointer_context
+    request(c, 'clench', deliver=False)
+    QCoreApplication.processEvents()
+    assert s.pointer_context[1] in {'loading', 'ready'} and s.pointer_context != original
+    until(lambda: s.phase == 'ready')
+    s.click(1)
+    assert s.pointer_context[1] == 'activating'
+    until(lambda: s.phase == 'closed')
+    assert s.pointer_context[1] == 'closed' and s.pointer_context[0] != original[0]
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_selector_preserves_touchpad_toggle_and_output(enabled, selector):
+    from test_ui_touchpad import Source, Output
+    c, _, s, _, _, _, _, _, _ = selector
+    tp, source = c.touchpad, Source()
+    tp.output_factory = Output
+    tp.attach(source, c._disconnect_event)
+    if enabled:
+        tp.start()
+        source.future.set_result(None)
+        until(lambda: tp.state == 'running')
+    original = tp._run.output if tp._run else None
+    try:
+        opened(c, s)
+        assert tp.active is enabled
+        if enabled:
+            assert tp._run.output is original and original.active
+            assert original.options['click_context']() == s.pointer_context
+        s.cancel()
+        assert tp.active is enabled
+        assert len(source.starts) == int(enabled) and source.stops == 0
+        if enabled:
+            assert tp._run.output is original and original.active
+            assert original.options['click_context']()[1] == 'closed'
+    finally:
+        tp.stop()
+        QCoreApplication.processEvents()

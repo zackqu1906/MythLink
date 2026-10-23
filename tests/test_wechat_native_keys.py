@@ -3,14 +3,14 @@ import sys
 
 import pytest
 
-from proximic_ring.wechat_native_keys import send_wechat_key
-from proximic_ring.wechat_native_keys import send_codex_key
-from proximic_ring.wechat_native_keys import send_input_method_key
+from proximic_ring.platforms.macos.wechat_native_keys import send_wechat_key
+from proximic_ring.platforms.macos.wechat_native_keys import send_codex_key
+from proximic_ring.platforms.macos.wechat_native_keys import send_input_method_key
 
 
 @pytest.fixture
 def desktop(monkeypatch):
-    import proximic_ring.wechat_native_keys as keys
+    import proximic_ring.platforms.macos.wechat_native_keys as keys
     monkeypatch.setattr(keys, "_send_key", keys._send_key_direct)
     monkeypatch.setattr(keys, "_refresh_workspace", lambda: None)
     state = SimpleNamespace(bundle="com.tencent.xinWeChat", pid=42, permission=True, sent=[])
@@ -183,6 +183,33 @@ def test_default_keys_require_an_explicit_non_wechat_target(desktop, application
     assert not state.sent
 
 
+@pytest.mark.parametrize("bundle", [None, ""])
+def test_unbundled_sentence_keys_require_the_begin_time_pid(desktop, bundle):
+    state, _ = desktop
+    state.bundle = bundle
+    send_input_method_key("", "select_previous", 3, 789, expected_pid=42)
+    send_input_method_key("", "delete", 0, 790, expected_pid=42)
+    assert [e["code"] for _, e in state.sent] == [123] * 6 + [51] * 2
+    assert all(pid == 42 for pid, _ in state.sent)
+    state.sent.clear()
+    state.pid = 43  # Another unbundled process must not inherit the command.
+    with pytest.raises(RuntimeError, match="进程"):
+        send_input_method_key("", "delete", 0, 791, expected_pid=42)
+    assert not state.sent
+
+
+def test_unbundled_process_switch_stops_remaining_keys(desktop):
+    state, quartz = desktop
+    state.bundle = None
+    def post(pid, event):
+        state.sent.append((pid, event))
+        if not event["pressed"]: state.pid += 1
+    quartz.CGEventPostToPid = post
+    with pytest.raises(RuntimeError):
+        send_input_method_key("", "select_previous", 3, 789, expected_pid=42)
+    assert len(state.sent) == 2
+
+
 def test_default_keys_stop_on_target_change_and_cannot_copy_or_send(desktop):
     state, quartz = desktop
     state.bundle = "org.example.Editor"
@@ -203,7 +230,7 @@ def test_default_keys_stop_on_target_change_and_cannot_copy_or_send(desktop):
 
 
 def test_worker_refreshes_cached_foreground_before_validation(desktop, monkeypatch):
-    import proximic_ring.wechat_native_keys as keys
+    import proximic_ring.platforms.macos.wechat_native_keys as keys
     state, _ = desktop
     state.bundle = "com.apple.Safari"  # Cached before switching to WeChat.
     monkeypatch.setattr(keys, "_refresh_workspace", lambda: setattr(state, "bundle", "com.tencent.xinWeChat"))
@@ -212,7 +239,7 @@ def test_worker_refreshes_cached_foreground_before_validation(desktop, monkeypat
 
 
 def test_refresh_cannot_bypass_pinned_process(desktop, monkeypatch):
-    import proximic_ring.wechat_native_keys as keys
+    import proximic_ring.platforms.macos.wechat_native_keys as keys
     state, _ = desktop
     monkeypatch.setattr(keys, "_refresh_workspace", lambda: setattr(state, "pid", 99))
     with pytest.raises(RuntimeError, match="进程已变化"):
@@ -221,7 +248,7 @@ def test_refresh_cannot_bypass_pinned_process(desktop, monkeypatch):
 
 
 def test_foreground_change_waiting_in_runloop_stops_remaining_chords(desktop, monkeypatch):
-    import proximic_ring.wechat_native_keys as keys
+    import proximic_ring.platforms.macos.wechat_native_keys as keys
     state, _ = desktop
     refreshes = []
     def refresh():

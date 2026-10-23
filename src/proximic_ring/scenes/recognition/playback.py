@@ -8,6 +8,7 @@ class PlaybackControls:
     play: bool = False
     seek: bool = False
     structural_seek: bool = False
+    fullscreen: bool = False
 
     def observe(self, node, read, *, use_title=True, web_structure=False):
         role = read(node, 'AXRole')
@@ -35,6 +36,9 @@ class PlaybackControls:
         if use_title:
             labels += ' ' + str(read(node, 'AXTitle') or '').casefold()
         self.play |= role in {'AXButton', 'AXCheckBox'} and bool(re.search(r'\b(?:play|pause)\b|播放|暂停|暫停', labels))
+        if web_structure:
+            self.fullscreen |= role in {'AXButton', 'AXCheckBox'} and bool(re.search(
+                r'\bfull[\s-]*screen\b|全屏|全螢幕', labels))
         self.seek |= role in {'AXSlider', 'AXValueIndicator'} and bool(re.search(
             r'\b(?:seek|scrub\w*|timeline|playback|progress|time)\b|进度|進度|时间|時間', labels))
 

@@ -15,19 +15,26 @@ struct VoiceHudAppearance: Equatable {
 /// Display metadata only. The host remains the sole owner of gesture routing.
 struct VoiceHudBindings: Equatable {
     static let names = [
-        "tap": "轻点", "swipe-left": "左滑", "swipe-right": "右滑",
+        "tap": "轻点", "double-tap": "双击 tap", "swipe-left": "左滑", "swipe-right": "右滑",
         "swipe-up": "上滑", "swipe-down": "下滑", "snap": "响指",
         "circle-clockwise": "顺时针", "circle-counterclockwise": "逆时针",
         "index-pinch": "食指捏合", "middle-pinch": "中指捏合", "clench": "握拳"
     ]
     private(set) var actions: [String: [String]] = [
-        "undo": ["swipe-left"], "confirm": ["tap"], "switch_mode": ["swipe-right"]
+        "undo": ["swipe-left"], "confirm": ["double-tap"], "end": ["tap"], "switch_mode": ["swipe-right"]
     ]
 
+    static func assetName(_ gesture: String) -> String {
+        return "gesture-" + (gesture == "double-tap" ? "tap" : gesture)
+    }
+
     mutating func apply(_ value: Any?) {
-        guard let payload = value as? [String: [String]], Set(payload.keys) == Set(actions.keys),
+        guard let payload = value as? [String: [String]],
+              (Set(payload.keys) == Set(actions.keys) || Set(payload.keys) == Set(actions.keys).subtracting(["end"])),
               payload.values.allSatisfy({ $0.count <= 2 && $0.allSatisfy { $0.isEmpty || Self.names[$0] != nil } }),
               payload["confirm"]?.contains(where: { !$0.isEmpty }) == true else { return }
-        actions = payload.mapValues { $0.filter { !$0.isEmpty } }
+        var updated = payload.mapValues { $0.filter { !$0.isEmpty } }
+        if updated["end"] == nil { updated["end"] = updated["confirm"] }
+        actions = updated
     }
 }

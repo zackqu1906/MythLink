@@ -90,7 +90,7 @@ def test_superseded_focus_check_cannot_change_newer_state(component, monkeypatch
 
 
 def test_qt_workspace_lookup_cannot_deliver_pending_begin_ack(component, monkeypatch):
-    from proximic_ring import mac_workspace
+    from proximic_ring.platforms.macos import mac_workspace
     c, _ = component
     origin = ('test.editor', 123)
     monkeypatch.setattr(c, '_foreground_identity', lambda: origin)
@@ -114,7 +114,7 @@ def test_qt_workspace_lookup_cannot_deliver_pending_begin_ack(component, monkeyp
 
 
 def test_background_workspace_refresh_still_services_notifications(component, monkeypatch):
-    from proximic_ring import mac_workspace
+    from proximic_ring.platforms.macos import mac_workspace
     state = {'app': 'old', 'drains': 0}
     workspace = SimpleNamespace(frontmostApplication=lambda: state['app'])
     def drain(_):

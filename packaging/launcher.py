@@ -18,7 +18,10 @@ _BUNDLED_QML_FILES = (
     "QtQuick/Controls/qmldir",
     "QtQuick/Controls/Material/qmldir",
     "QtQuick/Layouts/qmldir",
+    "QtQuick/Shapes/qmldir",
     "QtQuick/Window/qmldir",
+    "QtWebEngine/qmldir",
+    "QtWebChannel/qmldir",
 )
 
 
@@ -41,7 +44,7 @@ def _verify_bundled_qml_runtime(resource_root: Path) -> None:
 
 def _open_diagnostic_log() -> tuple[Path, object]:
     try:
-        from proximic_ring.runtime_diagnostics import configure_diagnostics
+        from proximic_ring.diagnostics.runtime_diagnostics import configure_diagnostics
         capture = configure_diagnostics()
         return capture.writer.path, capture
     except Exception:
@@ -113,25 +116,28 @@ def run() -> int:
             if not package_self_check:
                 return 0
         if package_self_check:
+            from proximic_ring.agent_workflow.history.package_check import verify_runtime
+            verify_runtime(frozen=is_frozen())
+            print("[startup] Computer History recommendation runtime ready")
             if is_frozen():
                 _verify_bundled_qml_runtime(resource_root())
             if sys.platform == "darwin":
-                from proximic_ring.app_shortcuts import verify_native_api
-                from proximic_ring.ime_bridge import default_socket_path
+                from proximic_ring.desktop.app_shortcuts import verify_native_api
+                from proximic_ring.voice.ime.ime_bridge import default_socket_path
 
                 verify_native_api()
-                from proximic_ring.mac_permissions import read_permission_state
+                from proximic_ring.platforms.macos.mac_permissions import read_permission_state
 
                 permissions = read_permission_state()
                 if permissions.error:
                     raise RuntimeError("macOS permission APIs unavailable: " + permissions.error)
                 print("[startup] macOS app gesture bridges ready")
                 if is_frozen():
-                    from proximic_ring.input_method_install import InputMethodInstaller
+                    from proximic_ring.voice.ime.input_method_install import InputMethodInstaller
 
                     InputMethodInstaller().verify_payload()
                     print("[startup] bundled input method installer ready")
-                    from proximic_ring.ui.proximity_controller import helper_path
+                    from proximic_ring.ui.proximity.proximity_controller import helper_path
                     import subprocess
                     presence = helper_path()
                     if not presence.is_file():
@@ -171,21 +177,44 @@ def run() -> int:
 
 def _entrypoint() -> int:
     multiprocessing.freeze_support()
+    if len(sys.argv) >= 2 and sys.argv[1] == "--self-check-agent-ui":
+        from proximic_ring.diagnostics.agent_card_check import main
+        return main(sys.argv[2:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "--self-check-codex-native":
+        from proximic_ring.agent_workflow.agent.native_check import main
+        return main(sys.argv[2:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "--workflow-embedding-worker":
+        if getattr(sys, 'frozen', False):
+            print('旧 Workflow 编码器不再包含在安装包中。', file=sys.stderr)
+            return 2
+        from proximic_ring.agent_workflow.operations.operation_embedding_worker import main
+        main(sys.argv[2:])
+        return 0
+    if len(sys.argv) >= 2 and sys.argv[1] == "--workflow-worker":
+        if getattr(sys, 'frozen', False):
+            print('旧 Workflow 提取不再包含在安装包中。', file=sys.stderr)
+            return 2
+        from proximic_ring.agent_workflow.extraction.workflows import main
+        main(sys.argv[2:])
+        return 0
+    if len(sys.argv) >= 2 and sys.argv[1] == "--browser-native-host":
+        from proximic_ring.browser_bridge.native_host import main
+        return main()
     if len(sys.argv) == 2 and sys.argv[1] == "--permission-status":
         import json
         from PySide6.QtWidgets import QApplication
         from PySide6.QtCore import QSettings
-        from proximic_ring.mac_permissions import permission_status_report
+        from proximic_ring.platforms.macos.mac_permissions import permission_status_report
         app = QApplication([sys.argv[0]])
         report = permission_status_report(app, QSettings("ProxiMic", "ProxiMic Voice"))
         print(json.dumps(report, ensure_ascii=False))
         return 1 if report["backend_errors"] else 0
     if len(sys.argv) == 2 and sys.argv[1] == "--native-access-worker":
-        from proximic_ring.native_access_worker import main
+        from proximic_ring.platforms.macos.native_access_worker import main
 
         return main()
     if len(sys.argv) >= 2 and sys.argv[1] == "--input-method":
-        from proximic_ring.input_method_install import main
+        from proximic_ring.voice.ime.input_method_install import main
 
         return main(sys.argv[2:])
     return run()

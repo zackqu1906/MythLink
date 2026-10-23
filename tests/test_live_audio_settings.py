@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from proximic_ring.app_runtime import RuntimeSettings
+from proximic_ring.voice.app_runtime import RuntimeSettings
 from proximic_ring.audio.reconfiguration import AudioInputPipeline
-from proximic_ring.live_audio_settings import AudioConfiguration, LiveAudioSettings
+from proximic_ring.audio.live_audio_settings import AudioConfiguration, LiveAudioSettings
 from test_asr_controller import StreamingRecorder, make_gate
 
 
@@ -211,7 +211,7 @@ def test_blank_exception_still_reports_failed_change(pipeline):
 
 @pytest.mark.parametrize("initial_mode", ["gesture", "proximity"])
 def test_windows_hold_to_talk_hook_follows_live_control_mode(pipeline, monkeypatch, initial_mode):
-    from proximic_ring import push_to_talk
+    from proximic_ring.platforms.windows import push_to_talk
 
     pipeline, _, gate, _, _, _ = pipeline
     hooks, reported = [], []

@@ -22,7 +22,7 @@ Rectangle {
                     objectName: "voicePreviewGesture_" + parent.modelData
                     anchors.centerIn: parent
                     width: 20; height: 20
-                    source: "../assets/figma/voice-hud/gesture-" + parent.modelData + ".svg"
+                    source: "../assets/figma/voice-hud/gesture-" + (parent.modelData === "double-tap" ? "tap" : parent.modelData) + ".svg"
                     fillMode: Image.PreserveAspectFit
                 }
             }

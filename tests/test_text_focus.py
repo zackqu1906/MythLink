@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from proximic_ring.text_focus import FocusError, MacAX, TextFocusSession
+from proximic_ring.desktop.text_focus import FocusError, MacAX, TextFocusSession
 
 
 @dataclass(eq=False)
@@ -196,7 +196,7 @@ def test_async_focus_readback_is_confirmed_before_reporting_failure(setter_error
 
 
 def test_native_focus_confirmation_is_bounded_and_stops_on_user_focus_change(monkeypatch):
-    import proximic_ring.text_focus as module
+    import proximic_ring.desktop.text_focus as module
     ax = object.__new__(MacAX)
     now = [0.0]
     ax.clock = lambda: now[0]
@@ -319,9 +319,9 @@ def test_lazy_ax_warmup_does_not_report_no_fields_or_queue_focus():
 def test_native_focus_click_routes_one_balanced_pair_to_ax_window(monkeypatch, failure):
     import sys
     from types import SimpleNamespace
-    import proximic_ring.mac_permissions as permissions
-    import proximic_ring.page_scroll as scroll
-    from proximic_ring.text_focus import Scope
+    import proximic_ring.platforms.macos.mac_permissions as permissions
+    import proximic_ring.desktop.page_scroll as scroll
+    from proximic_ring.desktop.text_focus import Scope
     posted = []
     address = object()
     # The first WindowServer entry is the suggestion popup, not the AX window.
@@ -386,9 +386,9 @@ def test_native_focus_events_have_real_appkit_window_number_without_posting(monk
     import AppKit
     import Quartz as Q
     from types import SimpleNamespace
-    import proximic_ring.mac_permissions as permissions
-    import proximic_ring.page_scroll as scroll
-    from proximic_ring.text_focus import Scope
+    import proximic_ring.platforms.macos.mac_permissions as permissions
+    import proximic_ring.desktop.page_scroll as scroll
+    from proximic_ring.desktop.text_focus import Scope
     router = scroll.MacScrollAX()
     # Loading the coordinate setter creates no UI and posts no input.
     setter = router._window_location_setter()

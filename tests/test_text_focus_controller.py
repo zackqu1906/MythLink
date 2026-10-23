@@ -2,11 +2,10 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication
 from PySide6.QtTest import QTest
 
-from proximic_ring.mac_permissions import MacPermissionError, PermissionState
-from proximic_ring.ui.text_focus_controller import TextFocusController
+from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, PermissionState
+from proximic_ring.ui.desktop.text_focus_controller import TextFocusController
 from test_app_gestures import route
 from test_ring_gestures import request
 from test_text_focus import Desktop, Node
@@ -57,43 +56,103 @@ def start(service):
     service._timer.stop()
 
 
-def settled(service):
-    until(lambda: not service.picker._working and service.picker._snapshot is not None)
-    service.picker.landed(service.picker._serial)
-    service.picker._probe.stop()
-
-
-def test_autofocus_once_and_down_enters_spatial_selection_without_legacy_actions(fields):
-    c, _, service, _, d, calls, threads, notices = fields
-    start(service)
-    assert d.writes == [d.a] and service.available
-    button = Node("AXButton", parent=d.window)
-    d.app.attrs["AXFocusedUIElement"] = button
-    for _ in range(2):
+def test_retained_controller_is_inert_by_default(route, monkeypatch):
+    c, _, _, _, _, _, _ = route
+    monkeypatch.delenv("PROXIMIC_STARTUP_PROBE", raising=False)
+    calls = []
+    channel = SimpleNamespace(call=lambda *a, **kw: calls.append((a, kw)), close=lambda: None)
+    service = TextFocusController(c.ringGestures, channel=channel,
+                                  stamp_reader=lambda: calls.append("stamp"))
+    try:
+        service.sync()
+        service.refresh()
         service.poll()
-        until(lambda: not service._working)
-    service.refresh()  # Waking the hint does not refocus a manually moved cursor.
-    until(lambda: not service._working)
-    assert d.writes == [d.a]
-    request(c, "swipe-down")
-    settled(service)
-    assert d.writes[-1] is d.a
-    request(c, "swipe-down")
-    settled(service)
-    assert d.writes[-1] is d.b
-    request(c, "swipe-down")
-    settled(service)
-    assert d.writes[-1] is d.b  # No wrap when there is no field below.
-    request(c, "swipe-up")
-    settled(service)
-    assert d.writes[-1] is d.a and service.picker._snapshot["index"] == 1
-    assert all(t != threading.get_ident() for t in threads)
+        assert service.capture_stamp() is None
+        assert service.picker.claim("swipe-down", None) is None
+        QTest.qWait(550)
+        assert not calls and not service._timer.isActive()
+        assert not service.picker.active.is_set()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("phase", ["idle", "listening", "finishing", "editing", "dictated"])
+def test_runtime_never_discovers_selects_or_refreshes_fields(route, monkeypatch, phase):
+    c, _, inline, _, sent, _, _ = route
+    ring, calls, requests, shown = c.ringGestures, [], [], []
+    fields = ring.textFields
+    for name in ("sync", "refresh", "capture_stamp"):
+        monkeypatch.setattr(fields, name, lambda *a, **kw: calls.append((a, kw)))
+    for name in ("claim", "handle", "discard", "stop"):
+        monkeypatch.setattr(fields.picker, name, lambda *a, **kw: calls.append((a, kw)))
+    monkeypatch.setattr(fields._channel, "call", lambda *a, **kw: calls.append((a, kw)))
+    ring._requested.connect(lambda *args: requests.append(args))
+    ring.showRequested.connect(lambda *args: shown.append(args))
+    c.connectedChanged.emit()
+    ring.changed.emit()
+    ring._selector.changed.emit()
+    ring.showMenu()
+    shown.clear()
+    inline._view["phase"] = phase
+    generation = ring._generation
+    for name in ("swipe-down", "tap", "swipe-left", "swipe-right", "swipe-up"):
+        assert request(c, name)
+    assert not requests and not shown and not sent
+    assert ring._generation == generation
+    inline._view["phase"] = "idle"
     request(c, "middle-pinch")
-    assert not service._active
-    before = list(calls)
-    request(c, "swipe-down")
-    QTest.qWait(20)
-    assert calls == before
+    request(c, "middle-pinch")
+    c._connected = False
+    c.connectedChanged.emit()
+    c._connected = True
+    c.connectedChanged.emit()
+    for blocked in (True, False):
+        c._proximity._gesture_state = (blocked, "")
+        ring.lock_state_changed()
+    ring.input_owner_changed()
+    QTest.qWait(550)
+    assert not calls and not fields._timer.isActive()
+    assert not fields.pending.is_set() and not fields.picker.active.is_set()
+
+
+@pytest.mark.parametrize("action", ["enter", "move", "confirm", "voice"])
+def test_legacy_queued_selection_is_ignored(route, monkeypatch, action):
+    import time
+    from proximic_ring.ui.gestures.ring_gesture_controller import MenuRequest
+    c, _, _, _, _, _, _ = route
+    ring, calls = c.ringGestures, []
+    monkeypatch.setattr(ring.textFields.picker, "handle", lambda *a: calls.append(a))
+    monkeypatch.setattr(ring.textFields.picker, "discard", lambda *a: calls.append(a))
+    transition = object()
+    ring._transition = transition
+    ring._apply(MenuRequest("swipe-down", ring._generation, time.monotonic(), False,
+                           transition=transition, selection={"action": action}), c._disconnect_event)
+    assert not calls and ring._transition is None and ring.mode == "input"
+
+
+def test_retired_field_state_does_not_block_voice_or_application_routes(route, monkeypatch):
+    from test_application_menus import configure, BUNDLE, ACTION
+    from dataclasses import replace
+    c, service, _, backend, sent, _, _ = route
+    ring = c.ringGestures
+    catalog = configure(service, monkeypatch)
+    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
+    assert catalog.setBinding(BUNDLE, "circle-clockwise", ACTION["id"])
+    fields = ring.textFields
+    fields.pending.set()
+    fields.applying.set()
+    fields.picker.active.set()
+    try:
+        assert request(c, "tap")
+        event = ring.envelope(SimpleNamespace(name="circle-clockwise"))
+        assert ring.accepts(event)
+        c._apply_gesture(event, c._disconnect_event)
+        assert sent == [(BUNDLE, "Ctrl+Tab")]
+        assert ring.setGlobalGestureAction("clench", "show_menu")
+    finally:
+        fields.pending.clear()
+        fields.applying.clear()
+        fields.picker.active.clear()
 
 
 def test_window_change_focuses_once_and_does_not_queue_when_speech_is_busy(fields):
@@ -117,45 +176,6 @@ def test_window_change_focuses_once_and_does_not_queue_when_speech_is_busy(field
     assert d.writes[-1] is new.children[0]
 
 
-@pytest.mark.parametrize("change", ["mode", "disconnect", "speech", "target"])
-def test_pending_discovery_cannot_apply_after_context_changes(fields, change):
-    c, inline, service, channel, d, calls, _, notices = fields
-    start(service)
-    channel.wait_for_plan = threading.Event()
-    request(c, "swipe-down")
-    until(lambda: service.pending.is_set() and service.picker._working)
-    assert not request(c, "tap", deliver=False)
-    if change == "mode": request(c, "middle-pinch")
-    elif change == "disconnect":
-        c._connected = False
-        c._disconnect_event.set()
-        c.connectedChanged.emit()
-    elif change == "speech": inline._view["phase"] = "editing"
-    else: d.stamp["pid"] = 99
-    channel.wait_for_plan.set()
-    until(lambda: not service.picker._working)
-    assert d.writes == [d.a]
-    assert not service.pending.is_set()
-    if change == "speech": assert notices[-1] == "请先结束本句"
-
-
-def test_permission_and_empty_scope_are_distinct_grey_states(fields):
-    c, _, service, channel, d, _, _, notices = fields
-    channel.denied = True
-    service.sync()
-    until(lambda: not service._working)
-    service._timer.stop()
-    assert not service.available and service.hint == "需要辅助功能权限"
-    channel.denied = False
-    d.window.children = []
-    service.poll()
-    until(lambda: not service._working)
-    assert not service.available and service.hint == "当前窗口未提供文本框"
-    request(c, "swipe-down")
-    until(lambda: not service.picker._working)
-    assert not d.writes and notices[-1] == "当前窗口未提供文本框"
-
-
 def test_permission_recovery_refreshes_hint_without_recapturing_focus(fields):
     _, _, service, channel, d, _, _, _ = fields
     start(service)
@@ -171,160 +191,3 @@ def test_permission_recovery_refreshes_hint_without_recapturing_focus(fields):
     assert service.available
     assert d.app.attrs["AXFocusedUIElement"] is button
     assert d.writes == [d.a]
-
-
-def test_partial_tree_still_enables_switching_and_explains_missing_regions(fields):
-    c, _, service, _, d, _, _, _ = fields
-    from proximic_ring.text_focus import FocusError
-    broken = Node("AXUnknown")
-    d.window.children.insert(0, broken)
-    children = d.children
-    def read(node, limit):
-        if node is broken:
-            raise FocusError("unavailable")
-        return children(node, limit)
-    d.children = read
-    start(service)
-    assert service.available and service.hint == "部分区域未提供控件"
-    request(c, "swipe-down")
-    settled(service)
-    request(c, "swipe-down")
-    settled(service)
-    assert d.writes[-1] is d.b
-    assert service.available and service.hint == "部分区域未提供控件"
-
-
-def make_browser(d):
-    d.app.attrs["bundle"] = "com.apple.Safari"
-    d.a.attrs["AXIdentifier"] = "address-field"
-    d.window.children = []
-    d.window.add(Node("AXToolbar").add(d.a), Node("AXWebArea").add(d.b))
-
-
-@pytest.mark.parametrize("change", ["popup_stamp", "transient_no_window", "before_passive_probe"])
-def test_passive_monitor_never_undoes_address_confirmation(fields, change):
-    c, _, service, _, d, calls, _, _ = fields
-    make_browser(d)
-    start(service)
-    if change == "before_passive_probe":
-        service._last_scope = None
-    request(c, "swipe-down")
-    settled(service)
-    request(c, "swipe-up")
-    settled(service)
-    assert not request(c, "tap")
-    until(lambda: not service.picker._working)
-    assert d.app.attrs["AXFocusedUIElement"] is d.a
-    before = list(d.writes)
-    call_count = len(calls)
-    if change == "popup_stamp": d.stamp["window"] = 99
-    elif change == "transient_no_window":
-        d.app.attrs["AXFocusedWindow"] = None
-        service.poll()
-        until(lambda: not service._working)
-        d.app.attrs["AXFocusedWindow"] = d.window
-    for _ in range(3):
-        service.poll()
-        until(lambda: not service._working)
-    assert d.writes == before and d.app.attrs["AXFocusedUIElement"] is d.a
-    assert "focus_apply" not in calls[call_count:]
-
-
-def test_ordinary_tap_immediately_preserves_voice_route_and_address_tap_only_focuses(fields):
-    c, inline, service, _, d, _, _, _ = fields
-    make_browser(d)
-    start(service)
-    assert d.writes == [d.b]  # Never open the address dropdown during automatic focus.
-    exited = []
-    service.picker.exited.connect(exited.append)
-    request(c, "swipe-down")
-    settled(service)
-    request(c, "swipe-up")
-    settled(service)
-    assert service.picker._deferred and d.writes == [d.b]
-    assert not request(c, "tap")
-    until(lambda: not service.picker._working)
-    assert not service.picker.active.is_set() and exited == ["confirm"]
-    assert d.writes == [d.b, d.a]
-    assert request(c, "tap")
-    request(c, "swipe-down")
-    settled(service)
-    request(c, "swipe-down")
-    settled(service)
-    assert not service.picker._deferred
-    assert request(c, "tap", deliver=False)
-    assert not service.picker.active.is_set()  # Before the audio endpoint sees this Tap.
-    inline._view["phase"] = "listening"
-    QCoreApplication.processEvents()
-    assert exited == ["confirm", "confirm"] and not service.pending.is_set()
-    assert d.app.attrs["AXFocusedUIElement"] is d.b
-
-
-@pytest.mark.parametrize("address", [False, True])
-def test_idle_clock_starts_at_landing_and_timeout_preserves_focus(fields, address):
-    c, _, service, _, d, _, _, _ = fields
-    if address:
-        make_browser(d)
-    start(service)
-    picker = service.picker
-    now = [100.0]
-    picker.clock = lambda: now[0]
-    exits, progress = [], []
-    picker.exited.connect(exits.append)
-    picker.progress.connect(lambda ratio, warn: progress.append((ratio, warn)))
-    request(c, "swipe-down")
-    settled(service)
-    if address:
-        request(c, "swipe-up")
-        settled(service)
-    before = list(d.writes)
-    now[0] += 3.9
-    picker.tick()
-    assert progress[-1][1] is True and .21 < progress[-1][0] < .23
-    # Recognition freezes the idle clock even if delivery to Qt is delayed.
-    assert not request(c, "swipe-left", deliver=False)
-    assert not request(c, "tap", deliver=False)
-    now[0] += 1.15
-    picker.tick()
-    assert picker.active.is_set() and not exits
-    QCoreApplication.processEvents()
-    until(lambda: not picker._working)
-    assert picker._deadline is None
-    now[0] += .4
-    picker.landed(picker._serial)
-    picker._probe.stop()
-    assert picker._deadline == now[0]+5
-    now[0] += 4.99
-    picker.tick()
-    assert picker.active.is_set()
-    now[0] += .02
-    picker.tick()
-    assert not picker.active.is_set() and exits == ["timeout"]
-    assert d.writes == before and d.app.attrs["AXFocusedUIElement"] is (d.b if address else d.a)
-
-
-@pytest.mark.parametrize("change", ["window", "manual_focus", "disconnect", "mode"])
-def test_active_selection_cancels_on_context_changes(fields, change):
-    c, _, service, _, d, _, _, _ = fields
-    start(service)
-    old_action = c.ringGestures.envelope(SimpleNamespace(name="swipe-up"))
-    request(c, "swipe-down", deliver=False)
-    assert not c.ringGestures.accepts(old_action)
-    for name in ("tap", "swipe-left", "swipe-up"):
-        assert not request(c, name, deliver=False)
-    QCoreApplication.processEvents()
-    settled(service)
-    before = list(d.writes)
-    if change == "window":
-        d.stamp["window"] = 99
-        d.app.attrs["AXFocusedWindow"] = Node("AXWindow", frame=d.window.frame)
-    elif change == "manual_focus": d.app.attrs["AXFocusedUIElement"] = Node("AXButton", parent=d.window)
-    elif change == "disconnect":
-        c._connected = False
-        c.connectedChanged.emit()
-    else: request(c, "middle-pinch")
-    service.picker.poll()
-    until(lambda: not service.picker._working)
-    assert not service.picker.active.is_set() and not service.pending.is_set()
-    assert d.writes == before
-    assert not c.ringGestures.accepts(old_action)

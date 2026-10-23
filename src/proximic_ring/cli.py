@@ -5,13 +5,13 @@ import json
 from pathlib import Path
 
 from .audio import MicrophoneSource, RingAudioSource, WavSource
-from .collect import CollectionConfig, collect_ring_dataset
-from .config import DetectorConfig
-from .detector import ProxiMicDetector
-from .model import ProxiMicModel
-from .pipeline import LegacyInferencePipeline
-from .runner import run_source
-from .train import train_proximity_model
+from .voice.training.collect import CollectionConfig, collect_ring_dataset
+from .voice.detection.config import DetectorConfig
+from .voice.detection.detector import ProxiMicDetector
+from .voice.detection.model import ProxiMicModel
+from .voice.detection.pipeline import LegacyInferencePipeline
+from .voice.runner import run_source
+from .voice.training.train import train_proximity_model
 from .asr.console import StreamingASRConsole
 
 
@@ -323,7 +323,7 @@ def _build_session_controller(
         if asr_backend_kind(output_backend) != "streaming":
             raise ValueError("--desktop-output requires a streaming ASR backend")
 
-        from .desktop_output import DesktopTranscriptOutput
+        from .platforms.windows.desktop_output import DesktopTranscriptOutput
 
         desktop_output = DesktopTranscriptOutput(
             backend=output_backend,
@@ -435,7 +435,7 @@ def _build_session_controller(
             raise ValueError("--push-to-talk is currently supported only on Windows")
         if args.disable_proximic_detector:
             raise ValueError("--push-to-talk cannot be combined with --disable-proximic-detector")
-        from .push_to_talk import WindowsPushToTalkHotkey
+        from .platforms.windows.push_to_talk import WindowsPushToTalkHotkey
 
         push_to_talk = WindowsPushToTalkHotkey(
             on_error=on_state,
@@ -444,7 +444,7 @@ def _build_session_controller(
         session_sinks.append(push_to_talk)
 
     if desktop_output is not None:
-        from .desktop_output import DesktopOutputLifecycleSink
+        from .platforms.windows.desktop_output import DesktopOutputLifecycleSink
 
         # Fanout closes sinks in order.  Appending this last keeps the overlay
         # alive until every ASR worker has emitted its queued final result.

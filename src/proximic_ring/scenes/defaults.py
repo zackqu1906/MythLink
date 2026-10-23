@@ -1,5 +1,5 @@
 """Default mappings built from the common scene registry and action resolver."""
-from ..app_gestures import APP_LABELS, default_profiles, profile_for_application
+from ..gestures.app_gestures import APP_LABELS, default_profiles, profile_for_application
 from .models import PRESENTATION
 from .registry import SCENES, PENDING_TEMPLATES, PRESENTATION_GESTURES
 from .capabilities import BROWSERS, application_scene_profiles, presentation_profile
@@ -36,6 +36,8 @@ def _scope_defaults(bundle, scene, profile, menus, *, entry=False):
                 resolved[gesture] = item
                 break
         else:
+            if bundle.casefold() in BROWSERS and scene in {"video", "music"}:
+                continue  # No generic HTML media API for next/previous track.
             if definition.pending_format == "per_gesture":
                 pending[gesture] = choices[0]
     return resolved, pending

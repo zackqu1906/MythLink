@@ -6,7 +6,8 @@ import time
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.ui.gesture_hud_model import hint_view
+from proximic_ring.ui.gestures.gesture_hud_model import hint_view
+from proximic_ring.voice.ime.focus_probe import InputFocus
 from test_app_gestures import route
 from test_application_menus import ACTION, BUNDLE, configure
 from test_gesture_scenes import presentation
@@ -14,14 +15,14 @@ from test_gesture_scenes import presentation
 
 @pytest.mark.parametrize("mode", ["input", "operation"])
 def test_menu_resolves_regular_app_without_scene_or_voice_override(route, monkeypatch, mode):
-    import proximic_ring.ui.ring_gesture_controller as module
+    import proximic_ring.ui.gestures.ring_gesture_controller as module
 
     c, service, _, backend, _, _, _ = route
     catalog = configure(service, monkeypatch)
     assert catalog.setBinding(BUNDLE, "circle-clockwise", ACTION["id"])
     assert not catalog.voice_overridden(BUNDLE)
     assert BUNDLE not in catalog.configured_scenes()
-    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
+    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE, input_context="nontext", focus="page")
     captures = []
     def capture(**kwargs):
         captures.append(kwargs)
@@ -38,11 +39,11 @@ def test_menu_resolves_regular_app_without_scene_or_voice_override(route, monkey
     ring.showRequested.connect(lambda *args: defaults.append(args))
     ring.showMenu()
     QCoreApplication.processEvents()
-    assert captures == [dict(menu_action=True, scene=True)]
+    assert captures == [dict(menu_action=True, scene=True, focus_sensitive=False)]
     assert not defaults and len(shown) == 1
     assert shown[0]["orbs"][0]["action"] == ACTION["label"]
     assert not shown[0]["sceneActive"]
-    assert shown[0]["modeTitle"] == ("输入模式" if mode == "input" else "操作模式")
+    assert shown[0]["modeTitle"] == "应用手势"
 
 
 def test_detected_scene_hides_other_actions_then_restores_app_modes_on_exit(presentation):
@@ -52,18 +53,18 @@ def test_detected_scene_hides_other_actions_then_restores_app_modes_on_exit(pres
     ring.sceneHudRequested.connect(lambda mode, rows: views.append(hint_view(mode, rows)))
     def show(target):
         ring._pending_hud = (ring._generation, time.monotonic(), c._disconnect_event)
-        ring._show_scene_hud(*ring._pending_hud, target)
+        ring._show_scene_hud(*ring._pending_hud, (target, InputFocus(target.input_context)))
     for mode in ("input", "operation"):
         ring._mode = mode
         show(backend.target)
     assert len(views) == 2 and views[0] == views[1]
     assert views[0]["modeTitle"] == "放映"
-    assert {orb["key"] for orb in views[0]["orbs"]} == {"swipe-left", "swipe-right", "tap"}
-    assert all(orb["scope"] != "global" for orb in views[0]["orbs"])
+    assert {orb["key"] for orb in views[0]["orbs"]} == {"swipe-left", "swipe-right", "tap", "double-tap", "swipe-up", "swipe-down"}
+    assert any(orb["scope"] == "global" for orb in views[0]["orbs"])
     defaults = []
     ring.showRequested.connect(lambda mode, message: defaults.append(mode))
     show(replace(backend.target, scene="", input_context="text"))
-    assert defaults == ["operation"]  # The user's previous mode survives leaving the scene.
+    assert defaults == ["input"]  # The current text focus owns the hint.
 
 
 @pytest.mark.parametrize("change", ["generation", "connection"])
@@ -78,6 +79,6 @@ def test_delayed_context_does_not_replace_newer_hints(presentation, change):
     if change == "generation": generation -= 1
     else: connection = threading.Event()
     ring._pending_hud = (generation, created, connection)
-    ring._show_scene_hud(generation, created, connection, backend.target)
+    ring._show_scene_hud(generation, created, connection, (backend.target, InputFocus('nontext')))
     assert not shown
 

@@ -5,7 +5,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from test_inline_ui import inline_ui
+from test_inline_ui import inline_ui as base_inline_ui
+
+
+@pytest.fixture
+def inline_ui(base_inline_ui):
+    base_inline_ui[3].setProperty("currentPage", 4)
+    return base_inline_ui
+
 from test_ui_shell import visual_child
 from test_ui_voice_page import seed_history
 from test_history_management import add_record
@@ -50,15 +57,11 @@ def first_entry(root):
 
 
 def request_delete(root, entry=None):
-    from PySide6.QtCore import QMetaObject
-    from PySide6.QtTest import QTest
     entry = entry or first_entry(root)
-    QMetaObject.invokeMethod(visual_child(entry, "voiceHistoryMoreButton"), "click")
-    QTest.qWait(30)
     invoke(entry, "voiceHistoryDeleteButton")
 
 
-@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+@pytest.mark.parametrize("size", [(1440, 940), (1200, 780), (940, 700)])
 def test_search_filters_reset_and_empty_state_preserve_live_input(inline_ui, tmp_path, size):
     from PySide6.QtCore import QMetaObject, QPointF
     from PySide6.QtTest import QTest
@@ -68,11 +71,12 @@ def test_search_filters_reset_and_empty_state_preserve_live_input(inline_ui, tmp
     bindings = controller.gestureBindings
     root.resize(*size)
     root.show()
+    QTest.qWait(120)
     QMetaObject.invokeMethod(item(root, "mainPageScroll"), "scrollToHistory")
     search(root, "明晚")
     QTest.qWait(100)
     assert item(root, "voiceHistoryList").property("count") == 1
-    select(root, "voiceHistoryModeFilter", 2)
+    select(root, "voiceHistoryModeFilter", 3)
     select(root, "voiceHistoryOutcomeFilter", 1)
     assert item(root, "voiceHistoryList").property("count") == 1
     shot(root, tmp_path, f"history-filtered-{size[0]}.png")
@@ -116,6 +120,53 @@ def test_expand_and_collapse_keep_full_copy_text(inline_ui):
     QTest.qWait(30)
     assert not entry.property("textExpanded") and text.property("truncated")
     assert entry.property("copyText") == rows[1]["candidateText"]
+    assert bridge.messages == before
+
+
+@pytest.mark.parametrize('size', [(1200, 780), (940, 700)])
+def test_unified_record_type_and_filters_reset_without_touching_live_input(inline_ui, tmp_path, size):
+    from datetime import datetime
+    from PySide6.QtCore import QMetaObject, QObject, QPointF
+    from PySide6.QtTest import QTest
+    controller, bridge, _, root, _ = inline_ui
+    rows = seed_history(controller)
+    rows = [dict(row, createdAt=datetime.now().astimezone().isoformat(),
+                 processingMode='edit' if row['mode'] == 'edit' else 'polish') for row in rows]
+    controller._voice_history_entries = rows
+    controller.voiceHistoryChanged.emit()
+    before = list(bridge.messages)
+    root.resize(*size)
+    root.show()
+    QTest.qWait(120)
+    QMetaObject.invokeMethod(item(root, 'mainPageScroll'), 'scrollToHistory')
+    QTest.qWait(100)
+    shot(root, tmp_path, f'history-all-{size[0]}.png')
+    assert root.findChild(QObject, 'voiceHistoryProcessingFilter') is None
+    assert item(root, 'voiceHistoryModeFilter').property('model') == ['全部类型', '听写', '润色（下滑）', '指令']
+    select(root, 'voiceHistoryModeFilter', 2)
+    select(root, 'voiceHistoryApplicationFilter', 1)
+    select(root, 'voiceHistoryTimeFilter', 1)
+    select(root, 'voiceHistoryOutcomeFilter', 1)
+    assert item(root, 'voiceHistoryList').property('count') == 1
+    QTest.qWait(60)
+    assert visual_child(first_entry(root), 'voiceHistoryModeLabel').property('text') == '润色'
+    for name in ['voiceHistorySearch', 'voiceHistoryModeFilter',
+                 'voiceHistoryApplicationFilter', 'voiceHistoryTimeFilter', 'voiceHistoryOutcomeFilter']:
+        field = item(root, name)
+        pos = field.mapToScene(QPointF())
+        assert field.height() >= 32 and 0 <= pos.x() and pos.x() + field.width() <= root.width()
+        assert 0 <= pos.y() and pos.y() + field.height() <= root.height()
+    select(root, 'voiceHistoryModeFilter', 1)
+    assert item(root, 'voiceHistoryList').property('count') == 0
+    select(root, 'voiceHistoryModeFilter', 3)
+    QTest.qWait(60)
+    assert item(root, 'voiceHistoryList').property('count') == 1
+    assert visual_child(first_entry(root), 'voiceHistoryModeLabel').property('text') == '命令'
+    invoke(root, 'voiceHistoryResetFilters')
+    assert item(root, 'voiceHistoryList').property('count') == 3
+    for name in ['voiceHistoryModeFilter', 'voiceHistoryApplicationFilter',
+                 'voiceHistoryTimeFilter', 'voiceHistoryOutcomeFilter']:
+        assert item(root, name).property('currentIndex') == 0
     assert bridge.messages == before
 
 

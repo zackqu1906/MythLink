@@ -8,8 +8,10 @@ Item {
     required property var controller
     readonly property var touchpad: controller.touchpad
     property bool inputVisible: false
+    property bool compactPresentation: false
+    implicitHeight: compactPresentation ? workspace.implicitHeight : 380
     signal homeRequested()
-    UiTheme { id: theme }
+    FigmaTheme { id: theme }
 
     function updateContext() {
         if (inputVisible) touchpad.setStrokeContext(editor.text.slice(0, editor.cursorPosition))
@@ -28,13 +30,14 @@ Item {
 
     ColumnLayout {
         id: workspace
-        width: Math.min(780, box.width - 32)
+        width: box.compactPresentation ? box.width : Math.min(780, box.width - 32)
         anchors.horizontalCenter: parent.horizontalCenter
-        y: Math.max(12, Math.min(70, (box.height - implicitHeight) / 3))
+        y: box.compactPresentation ? 0 : Math.max(12, Math.min(70, (box.height - implicitHeight) / 3))
         spacing: 16
 
         RowLayout {
             objectName: "strokeStatusRow"
+            visible: !box.compactPresentation
             Layout.fillWidth: true; Layout.preferredHeight: 36; spacing: 10
             Rectangle { Layout.preferredWidth: 7; Layout.preferredHeight: 7; Layout.alignment: Qt.AlignVCenter; radius: 4; color: box.touchpad.active ? theme.success : theme.placeholder }
             Label {
@@ -46,21 +49,23 @@ Item {
                 font.pixelSize: 12; color: theme.muted
                 elide: Text.ElideRight
             }
-            UiAction {
+            FigmaAction {
                 visible: !box.controller.connected
                 text: "连接 Ring"; Layout.preferredHeight: 34; Layout.alignment: Qt.AlignVCenter; focusPolicy: Qt.NoFocus
                 onClicked: box.homeRequested()
             }
         }
 
+        Label { visible: box.compactPresentation; text: "虚拟文本框"; color: theme.text; font.pixelSize: 16 }
         Rectangle {
             id: searchShell
             objectName: "strokeSearchShell"
-            Layout.fillWidth: true; height: 64; radius: 32
-            color: theme.surface
+            Layout.fillWidth: true; height: box.compactPresentation ? 220 : 64; radius: box.compactPresentation ? 8 : 32
+            color: theme.background
             border.color: editor.activeFocus ? "#B6C2EE" : theme.line
             border.width: 1
             UiIcon {
+                visible: !box.compactPresentation
                 anchors.left: parent.left; anchors.leftMargin: 22
                 anchors.verticalCenter: parent.verticalCenter
                 width: 20; height: 20; symbol: "edit"; ink: theme.muted
@@ -69,9 +74,10 @@ Item {
                 id: editor
                 objectName: "strokeTestEditor"
                 anchors.fill: parent
-                leftPadding: 56; rightPadding: 24
-                topPadding: 0; bottomPadding: 0
-                font.family: theme.family; font.pixelSize: 22
+                leftPadding: box.compactPresentation ? 12 : 56; rightPadding: 12
+                topPadding: box.compactPresentation ? 12 : 0; bottomPadding: 0
+                verticalAlignment: box.compactPresentation ? TextInput.AlignTop : TextInput.AlignVCenter
+                font.family: theme.family; font.pixelSize: box.compactPresentation ? 16 : 22
                 color: box.touchpad.strokeCode.length ? "transparent" : theme.text; selectionColor: theme.selection; selectedTextColor: theme.text
                 placeholderText: ""
                 placeholderTextColor: theme.placeholder
@@ -105,9 +111,9 @@ Item {
             }
             Text {
                 objectName: "strokeInputHint"
-                anchors.left: parent.left; anchors.leftMargin: 56
-                anchors.verticalCenter: parent.verticalCenter
-                text: "写一笔，输入一个字"; font: editor.font; color: theme.placeholder
+                anchors.left: parent.left; anchors.leftMargin: box.compactPresentation ? 12 : 56
+                y: box.compactPresentation ? 12 : (parent.height - height) / 2
+                text: box.compactPresentation ? "随便写些什么……" : "写一笔，输入一个字"; font: editor.font; color: theme.placeholder
                 visible: !editor.text.length && !editor.preeditText.length && !box.touchpad.strokeCode.length
             }
             Item {
@@ -115,7 +121,7 @@ Item {
                 clip: true; visible: box.touchpad.strokeCode.length > 0
                 Row {
                     x: editor.cursorRectangle.x - editor.leftPadding - prefix.implicitWidth
-                    anchors.verticalCenter: parent.verticalCenter
+                    y: box.compactPresentation ? 12 : (parent.height - height) / 2
                     Text { id: prefix; text: editor.text.slice(0, editor.cursorPosition); font: editor.font; color: theme.text }
                     Text {
                         id: composition; objectName: "strokeCodeLabel"
@@ -131,6 +137,7 @@ Item {
         RowLayout {
             id: candidates
             objectName: "strokeCandidateRow"
+            visible: !box.compactPresentation || box.touchpad.strokeCandidates.length > 0 || box.touchpad.strokeCode.length > 0
             Layout.fillWidth: true; Layout.preferredHeight: 56
             spacing: 4
             Label { visible: box.touchpad.predictionMode; text: "联想"; font.pixelSize: 11; color: theme.placeholder }
@@ -184,6 +191,7 @@ Item {
 
         StrokeTrail {
             id: trail
+            visible: !box.compactPresentation || box.touchpad.strokeCode.length > 0
             trailStyle: box.touchpad.strokeTrailStyle
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: Layout.preferredHeight
@@ -191,25 +199,29 @@ Item {
         }
         RowLayout {
             objectName: "strokeTools"
-            Layout.alignment: Qt.AlignHCenter; spacing: 6
+            Layout.fillWidth: true; spacing: 8
+            FigmaAction { text: "退一笔"; visible: box.compactPresentation; implicitWidth: 100; focusPolicy: Qt.NoFocus; enabled: box.touchpad.strokeCode.length > 0; onClicked: box.touchpad.undoStroke() }
+            FigmaAction { text: "清空练习"; visible: box.compactPresentation; implicitWidth: 100; focusPolicy: Qt.NoFocus; enabled: box.touchpad.strokeCode.length > 0 || editor.text.length > 0; onClicked: { box.touchpad.clearStrokes(); editor.clear() } }
+            Item { Layout.fillWidth: true }
             Repeater {
                 model: [{symbol:"一",code:"h"}, {symbol:"丨",code:"s"}, {symbol:"丿",code:"p"}, {symbol:"丶",code:"n"}, {symbol:"乛",code:"z"}]
-                delegate: UiAction {
+                delegate: FigmaAction {
                     required property var modelData
                     objectName: "strokeButton_" + modelData.code
-                    text: modelData.symbol; font.pixelSize: 20
-                    Layout.preferredWidth: 40; Layout.preferredHeight: 40; focusPolicy: Qt.NoFocus
+                    text: modelData.symbol; font.pixelSize: box.compactPresentation ? 16 : 20
+                    Layout.preferredWidth: box.compactPresentation ? 24 : 40; Layout.preferredHeight: 40; focusPolicy: Qt.NoFocus
                     leftPadding: 0; rightPadding: 0
                     quiet: true
                     Accessible.name: "输入笔画 " + modelData.symbol
                     onClicked: box.touchpad.addStroke(modelData.code)
                 }
             }
-            UiAction { text: "退笔"; quiet: true; implicitHeight: 32; focusPolicy: Qt.NoFocus; enabled: box.touchpad.strokeCode.length > 0; Accessible.name: "退一笔"; onClicked: box.touchpad.undoStroke() }
-            UiAction { text: "清空"; quiet: true; implicitHeight: 32; focusPolicy: Qt.NoFocus; enabled: box.touchpad.strokeCode.length > 0; Accessible.name: "清空笔画"; onClicked: box.touchpad.clearStrokes() }
+            FigmaAction { visible: !box.compactPresentation; text: "退笔"; quiet: true; implicitHeight: 32; focusPolicy: Qt.NoFocus; enabled: box.touchpad.strokeCode.length > 0; Accessible.name: "退一笔"; onClicked: box.touchpad.undoStroke() }
+            FigmaAction { visible: !box.compactPresentation; text: "清空"; quiet: true; implicitHeight: 32; focusPolicy: Qt.NoFocus; enabled: box.touchpad.strokeCode.length > 0; Accessible.name: "清空笔画"; onClicked: box.touchpad.clearStrokes() }
         }
         Label {
             Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter
+            visible: !box.compactPresentation
             text: "左右滑选字 · 轻触确认 · 上滑退一笔 · 下滑清空"
             font.pixelSize: 12; color: theme.muted
         }
@@ -224,6 +236,7 @@ Item {
         }
         Label {
             Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+            visible: !box.compactPresentation
             text: "点入此处或其他应用的输入框后双击进入笔画；固件轻点确认候选字，双击或离开输入框回到鼠标。"
             font.pixelSize: 12; color: theme.muted
         }

@@ -19,7 +19,7 @@ def seed_history(controller):
                   candidateEmpty=False, editSummary="", modeLabel="听写输入")
     rows = [
         dict(common, interactionId="ui-preview-edit", mode="edit", text="把今晚改成明晚", outcome="applied",
-             candidateText="我们明晚开会。", editSummary="今晚 → 明晚"),
+             candidateText="我们明晚开会。", editBeforeText="我们今晚开会。", editSummary="今晚 → 明晚"),
         dict(common, interactionId="ui-preview-dictation", mode="dictation", text="这是一段语音输入。", outcome="applied",
              candidateText="这是一段语音输入。" * 35),
         dict(common, interactionId="ui-preview-cancelled", mode="edit", text="取消本次修改", outcome="cancelled",
@@ -31,7 +31,7 @@ def seed_history(controller):
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
-def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_ui, size):
+def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QPointF
     from PySide6.QtTest import QTest
     controller, bridge, _, root, _ = inline_ui
@@ -53,6 +53,21 @@ def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_
     position = card.mapToScene(QPointF())
     assert position.y() >= 0 and position.y() < root.height()
     assert controller.gestureBindings == before and bridge.messages == messages
+    notice = root.findChild(QObject, "voicePageGesturePriorityNotice")
+    assert "仅下列已绑定的手势优先执行输入功能" in notice.property("text")
+    assert "无需输入框失焦" in notice.property("text")
+    for action, gesture, label in [("send", "swipe-up", "上滑"), ("polish", "swipe-down", "下滑")]:
+        fixed = visual_child(card, f"voicePage_{action}Card")
+        assert fixed.property("visible")
+        icon = visual_child(fixed, f"voicePreviewGesture_{gesture}")
+        assert icon.property("implicitWidth") > 0
+        assert visual_child(fixed, f"voicePage_{action}FixedGesture").property("text") == label + " · 固定手势"
+        pos = fixed.mapToItem(card, QPointF())
+        assert 0 <= pos.x() and pos.x() + fixed.width() <= card.width()
+        assert 0 <= pos.y() and pos.y() + fixed.height() <= card.height()
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"input-gestures-{size[0]}.png"))
 
 
 
@@ -67,7 +82,7 @@ def test_voice_page_edits_existing_bindings_and_only_sends_hud_metadata(inline_u
     QTest.qWait(100)
     page = root.findChild(QObject, "voiceGestureSettingsCard")
     def assert_selections():
-        for action in ("confirm", "undo", "switch_mode"):
+        for action in ("confirm", "end", "undo", "switch_mode"):
             for slot in (0, 1):
                 expected = controller.gestureBindings[action][slot]
                 # Both editors must retain their selection when another slot's
@@ -103,11 +118,13 @@ def test_voice_page_edits_existing_bindings_and_only_sends_hud_metadata(inline_u
     assert icon.property("source").toString().endswith("gesture-snap.svg")
     # The existing settings page shares the same model and conflict validation.
     assert root.findChild(QObject, "undoGesture0").property("selectedGesture") == "snap"
-    assert not controller.setGestureBinding("undo", 0, "tap")
+    assert controller.setGestureBinding("end", 0, "double-tap")
+    assert controller.setGestureBinding("undo", 0, "tap")
+    assert controller.gestureBindings["undo"] == ["tap", ""]
     QTest.qWait(30)
     assert_selections()
-    assert selector.property("selectedGesture") == "snap"
-    for action in ("confirm", "undo", "switch_mode"):
+    assert selector.property("selectedGesture") == "tap"
+    for action in ("confirm", "end", "undo", "switch_mode"):
         for slot in (0, 1):
             control = visual_child(page, f"voicePage_{action}Gesture{slot}")
             position = control.mapToItem(page, QPointF())
@@ -137,6 +154,16 @@ def test_voice_preview_assets_match_the_native_figma_originals():
         assert hashlib.sha256(data).hexdigest() == metadata["sha256"]
 
 
+def test_application_shortcut_settings_open_the_explicit_application_catalog(inline_ui):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    _, _, _, root, _ = inline_ui
+    click(root, "openAppGestureSettingsButton")
+    QTest.qWait(30)
+    assert root.property("currentPage") == 2
+    assert not root.findChild(QObject, "runtimeSettingsDialog").property("visible")
+
+
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
 def test_hud_size_setting_is_persistent_and_display_only(inline_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QMetaObject, QPointF, QSettings
@@ -147,6 +174,8 @@ def test_hud_size_setting_is_persistent_and_display_only(inline_ui, tmp_path, si
     dialog = root.findChild(QObject, "runtimeSettingsDialog")
     QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(180)
+    click(root, "settingsGeneralEntry")
+    QTest.qWait(60)
     slider = root.findChild(QObject, "voiceHudScaleSlider")
     assert slider is not None and slider.property("visible")
     assert slider.property("value") == controller.voiceHudScale == 80
@@ -211,6 +240,45 @@ def test_disconnected_voice_page_only_navigates_home_and_home_opens_bluetooth_pi
     assert scans == ["scan"]
 
 
+@pytest.mark.parametrize("saved_selector", ["remembered-ring", "", "   "])
+def test_home_restores_saved_ring_connection_actions(request, tmp_path, monkeypatch, saved_selector):
+    from PySide6.QtCore import QObject, QSettings
+    from PySide6.QtTest import QTest
+
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat)
+    settings.setValue("ring/name", "Ringo 8F56")
+    settings.setValue("ring/selector", saved_selector)
+    settings.sync()
+    controller, _, _, root, _ = request.getfixturevalue("inline_ui")
+    starts, scans = [], []
+    monkeypatch.setattr(controller, "_start_selected_device", lambda: starts.append(controller.selector))
+    monkeypatch.setattr(controller, "_scan_devices_once", lambda: scans.append("scan"))
+    root.setProperty("currentPage", 0)
+    root.show()
+    QTest.qWait(60)
+
+    connection = root.findChild(QObject, "homeConnectionButton")
+    other = root.findChild(QObject, "homeDevicePickerButton")
+    picker = root.findChild(QObject, "devicePicker")
+    assert starts == scans == []
+    assert other.property("text") == "切换设备"
+    if saved_selector.strip():
+        assert controller.deviceName == "Ringo 8F56"
+        assert connection.property("text") == "重新连接"
+        assert other.property("visible") and other.property("enabled")
+        click(root, "homeConnectionButton")
+        assert starts == [saved_selector] and scans == []
+        assert not picker.property("visible")
+        click(root, "homeDevicePickerButton")
+    else:
+        assert connection.property("text") == "蓝牙连接"
+        assert not other.property("visible")
+        click(root, "homeConnectionButton")
+        assert starts == []
+    QTest.qWait(100)
+    assert scans == ["scan"] and picker.property("visible")
+
+
 def test_home_reconnect_and_voice_toggle_use_separate_existing_operations(inline_ui, monkeypatch):
     from PySide6.QtCore import QObject
     from PySide6.QtTest import QTest
@@ -244,7 +312,7 @@ def test_history_outcomes_copy_and_live_updates_preserve_input(inline_ui, monkey
     from PySide6.QtCore import QObject, QMetaObject, QPointF
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtTest import QTest
-    from proximic_ring.ui.clipboard import QtClipboardBridge
+    from proximic_ring.ui.shared.clipboard import QtClipboardBridge
     controller, bridge, _, root, _ = inline_ui
     rows = seed_history(controller)
     root.resize(*size)

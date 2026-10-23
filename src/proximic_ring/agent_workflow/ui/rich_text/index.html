@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' qrc:; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src file: https: http: data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="vendor/katex.css">
+  <link rel="stylesheet" href="vendor/highlight.css">
+  <link rel="stylesheet" href="message.css">
+  <script defer src="vendor/marked.js"></script>
+  <script defer src="vendor/purify.js"></script>
+  <script defer src="vendor/highlight.js"></script>
+  <script defer src="vendor/katex.js"></script>
+  <script defer src="vendor/mermaid.js"></script>
+  <script defer src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script defer src="message.js"></script>
+  <title>Agent 回复</title>
+</head>
+<body>
+  <main id="message" aria-label="Agent 回复"></main>
+  <dialog id="preview" aria-label="放大预览">
+    <header><span>预览 · 滚动查看</span><button id="preview-close" type="button">关闭</button></header>
+    <div id="preview-content"></div>
+  </dialog>
+</body>
+</html>

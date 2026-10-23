@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from proximic_ring import input_source_switch as switch
-from proximic_ring.gesture_settings import GestureBindings
+from proximic_ring.voice.ime import input_source_switch as switch
+from proximic_ring.gestures.gesture_settings import GestureBindings
 from test_app_gestures import route
 
 
@@ -46,7 +46,7 @@ def wait_result(service):
 
 def prepare(monkeypatch, service):
     assert service.setInputSourceGesture("snap")
-    import proximic_ring.ui.app_gesture_controller as module
+    import proximic_ring.ui.gestures.app_gesture_controller as module
     calls = []
     monkeypatch.setattr(module, 'foreground_pid', lambda: 123)
     monkeypatch.setattr(module, 'select_voice_input_source', lambda pid: calls.append(pid))
@@ -66,6 +66,16 @@ def test_user_bound_snap_switches_with_asr_paused_and_no_supported_app(route, mo
     assert service.notice == '已切换到 Mythlink'
     emit('snap')  # duplicate model event, no second dispatch
     assert calls == [123]
+
+
+def test_update_blocks_gesture_source_selection(route, monkeypatch):
+    controller, service, inline, backend, keys, messages, emit = route
+    calls = prepare(monkeypatch, service)
+    inline._installing = True
+    emit('snap')
+    assert not calls and not service._source_busy
+    assert service.notice == '输入法正在更新，请稍后重试'
+    assert not keys and not messages
 
 
 @pytest.mark.parametrize('phase', ['starting', 'listening', 'finishing', 'editing', 'applying'])
@@ -107,11 +117,11 @@ def test_binding_conflicts_are_rejected_in_both_directions(route):
     assert not service.setInputSourceGesture('tap')
     assert not service.setInputSourceGesture('swipe-up')
     assert not controller.setGestureBinding('undo', 1, 'snap')
-    assert not service.setBinding('codex', 'previous', 'snap', 'Cmd+Shift+[', True)
+    assert service.setBinding('codex', 'previous', 'snap', 'Cmd+Shift+[', True)
     assert service.setInputSourceGesture('')
     assert controller.setGestureBinding('undo', 1, 'snap')
     assert not service.setInputSourceGesture('snap')
-    assert not service.setInputSourceGesture('clench')  # Reserved by the global menu.
+    assert service.setInputSourceGesture('clench')  # Shared with the unfocused global configuration.
     assert controller.setGestureBinding('undo', 1, '')
     assert service.setInputSourceGesture('snap')
     assert controller._settings.value('gestures/inputSourceGesture') == 'snap'
@@ -134,7 +144,7 @@ def test_stale_and_disconnected_gestures_do_not_select(route, monkeypatch):
 def test_error_feedback_has_no_false_success(route, monkeypatch):
     controller, service, *_rest, emit = route
     prepare(monkeypatch, service)
-    import proximic_ring.ui.app_gesture_controller as module
+    import proximic_ring.ui.gestures.app_gesture_controller as module
     def fail(pid):
         raise RuntimeError('未找到 Mythlink，请先安装')
     monkeypatch.setattr(module, 'select_voice_input_source', fail)
@@ -145,7 +155,7 @@ def test_error_feedback_has_no_false_success(route, monkeypatch):
 
 def test_initial_selection_preserves_existing_custom_bindings(route):
     controller, service, *_ = route
-    from proximic_ring.ui.app_gesture_controller import AppGestureController
+    from proximic_ring.ui.gestures.app_gesture_controller import AppGestureController
     controller._settings.remove('gestures/inputSourceGesture')
     controller._gesture_bindings = GestureBindings(undo=('snap', ''))
     second = AppGestureController(controller)
@@ -164,7 +174,7 @@ def test_initial_selection_preserves_existing_custom_bindings(route):
 
 def test_default_unbound_never_selects_or_starts_audio(route, monkeypatch):
     controller, service, inline, backend, keys, messages, emit = route
-    import proximic_ring.ui.app_gesture_controller as module
+    import proximic_ring.ui.gestures.app_gesture_controller as module
     calls = []
     monkeypatch.setattr(module, 'select_voice_input_source', lambda pid: calls.append(pid))
     assert service.inputSourceGesture == ''
@@ -176,7 +186,7 @@ def test_default_unbound_never_selects_or_starts_audio(route, monkeypatch):
 
 def test_user_selected_binding_survives_restart(route):
     controller, service, *_ = route
-    from proximic_ring.ui.app_gesture_controller import AppGestureController
+    from proximic_ring.ui.gestures.app_gesture_controller import AppGestureController
     assert service.setInputSourceGesture('snap')
     second = AppGestureController(controller)
     try:

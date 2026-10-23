@@ -7,7 +7,7 @@ from proximic_ring.asr.session_sink import (
     RawAudioObserverSessionSink,
     SessionFanout,
 )
-from proximic_ring.events import Stage1Event, Stage2Event
+from proximic_ring.voice.detection.events import Stage1Event, Stage2Event
 
 
 class ImmediateWorker:

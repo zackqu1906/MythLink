@@ -1,10 +1,10 @@
-"""Browser circles are shared window commands, independent of scene/voice focus."""
+"""Browser navigation shares saved regular bindings; empty keys inherit global."""
 from dataclasses import replace
 import json
 import pytest
 from PySide6.QtCore import QCoreApplication
 from proximic_ring.browser_shortcuts import NAVIGATION
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
 from test_application_menus import configure
 from test_gesture_scenes import presentation
@@ -27,6 +27,8 @@ def test_circles_switch_tabs_in_every_scene_and_input_context(presentation, monk
     backend.target = replace(backend.target, bundle=bundle, scene=scene, input_context=context, page_key="one")
     for gesture in NAVIGATION:
         assert not request(c, gesture)
+    # Circles do not overlap the default input bindings, so input focus does
+    # not suppress them (the same policy exercised by test_gesture_ownership).
     assert sent == [(bundle,"Ctrl+Tab"),(bundle,"Ctrl+Shift+Tab")]
     assert not messages and inline._view == before
 
@@ -81,11 +83,37 @@ def test_old_site_overrides_are_archived_and_never_route_or_break_loading(route,
         assert not restored.for_target(bundle) and not restored.for_scene(bundle,"video")
     finally:restored.close()
 
-def test_shared_navigation_remains_when_scene_actions_are_cleared(route,monkeypatch):
+def test_cleared_browser_navigation_stays_empty_after_reload(route,monkeypatch):
     _,service,*_=route;bundle=BROWSERS[0];catalog=configure(service,monkeypatch,bundle)
     catalog.clearApplicationBindings(bundle)
-    assert set(catalog.for_target(bundle))=={"menu:"+gesture for gesture in NAVIGATION}
+    assert not catalog.for_target(bundle)
     for scene in ["video","pdf"]:
-        assert set(catalog.for_scene(bundle,scene))=={"scene:"+gesture for gesture in NAVIGATION}
+        assert not catalog.for_scene(bundle,scene)
     catalog.selectScene("regular")
-    assert not catalog.setBinding(bundle,"circle-clockwise","")
+    assert catalog.setBinding(bundle,"circle-clockwise","")
+    restored = ApplicationMappingController(service)
+    try:
+        assert not restored.for_target(bundle)
+        assert not restored.for_scene(bundle, "video")
+    finally:
+        restored.close()
+
+
+@pytest.mark.parametrize("clear_all", [False, True])
+def test_removed_browser_binding_falls_back_to_global(presentation, monkeypatch, clear_all):
+    c, service, _, backend, _, sent, _ = presentation
+    bundle = BROWSERS[0]
+    catalog = configure(service, monkeypatch, bundle)
+    backend.target = replace(backend.target, bundle=bundle, scene="video", input_context="nontext")
+    starts = []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
+    assert c.ringGestures.setGlobalBinding("window_selector", "circle-clockwise")
+    request(c, "circle-clockwise")
+    assert sent == [(bundle, "Ctrl+Tab")] and not starts
+    if clear_all:
+        assert catalog.clearApplicationBindings(bundle)
+    else:
+        assert catalog.setBinding(bundle, "circle-clockwise", "")
+        assert "menu:circle-counterclockwise" in catalog.for_target(bundle)
+    request(c, "circle-clockwise")
+    assert starts == [True] and len(sent) == 1

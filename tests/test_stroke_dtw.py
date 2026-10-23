@@ -1,7 +1,7 @@
 import numpy as np
 
-from proximic_ring.stroke_dtw import DTWRecognizer, sequence, distances
-from proximic_ring.stroke_input import StrokeDictionary
+from proximic_ring.touchpad.stroke.stroke_dtw import DTWRecognizer, sequence, distances
+from proximic_ring.touchpad.stroke.stroke_input import StrokeDictionary
 
 
 def test_runtime_matches_experimental_distance():

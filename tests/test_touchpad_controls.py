@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from proximic_ring.audio.ring import RingAudioSource
-from proximic_ring.touchpad_mouse import TouchpadMouseOutput
+from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from ring_python_sdk.touchpad import TouchpadMove, TouchpadClick
 
 
@@ -100,7 +100,7 @@ def test_output_stops_even_without_token_traffic(reason):
 
 
 def test_output_keeps_running_past_old_limits_until_manual_stop(monkeypatch):
-    import proximic_ring.touchpad_mouse as module
+    import proximic_ring.touchpad.touchpad_mouse as module
     clock = [time.monotonic()]
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
     ready, done = threading.Event(), threading.Event()

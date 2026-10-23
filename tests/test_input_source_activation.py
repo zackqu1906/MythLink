@@ -5,7 +5,7 @@ import time
 import pytest
 from PySide6.QtCore import QCoreApplication, QTimer, QObject, Signal
 
-from proximic_ring.ui.input_source_activation import InputSourceActivation
+from proximic_ring.ui.voice.input_source_activation import InputSourceActivation
 from test_inline_state import component, receive
 
 
@@ -80,6 +80,75 @@ class FakeSource(QObject):
     def cancel(self): self.calls.append(('cancel',))
 
 
+@pytest.fixture
+def local_window(monkeypatch):
+    from types import SimpleNamespace
+    from proximic_ring.ui.voice import input_source_activation as module
+    class FocusHub(QObject):
+        focusWindowChanged = Signal(object)
+    hub, window, restores = FocusHub(), object(), []
+    monkeypatch.setattr(module, 'agent_input_window', lambda origin: window)
+    monkeypatch.setattr(module, 'QGuiApplication', SimpleNamespace(instance=lambda: hub))
+    monkeypatch.setattr(module, 'restore_agent_input_window',
+                        lambda target,pid: restores.append((target,pid)) or True)
+    return hub, window, restores
+
+
+def test_agent_helper_restores_bound_window_before_delivering_selected(tmp_path, local_window):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    hub, window, restores = local_window
+    source = InputSourceActivation(command=helper(tmp_path, '''
+assert sys.argv[-1] == '--host-restores-focus'
+print(json.dumps({'event':'restore_focus'}),flush=True)
+time.sleep(.05)
+print(json.dumps({'event':'selected','focus_restored':True}),flush=True)
+'''))
+    events = []
+    source.event.connect(events.append)
+    source.recover(('', 123))
+    wait_until(lambda: bool(events))
+    assert len(restores) == 1 and restores[0][0] is window and restores[0][1] > 0
+    assert events == [dict(event='selected', focus_restored=True)]
+    assert source._local_window is None
+    source.cancel()
+    app.processEvents()
+
+
+def test_user_switching_local_window_cancels_pending_agent_restore(tmp_path, local_window):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    hub, _, restores = local_window
+    source = InputSourceActivation(command=helper(tmp_path, '''
+time.sleep(.2)
+print(json.dumps({'event':'restore_focus'}),flush=True)
+'''))
+    events = []
+    source.event.connect(events.append)
+    source.start(('', 123))
+    hub.focusWindowChanged.emit(object())  # An intentional click on another window.
+    wait_until(lambda: source._process.state() == source._process.ProcessState.NotRunning)
+    assert not restores and source._local_window is None
+    assert events == [dict(event='error', error='已切换窗口，本句已取消')]
+    source.cancel()
+    app.processEvents()
+
+
+def test_failed_exact_window_restore_never_delivers_selected(tmp_path, local_window, monkeypatch):
+    from proximic_ring.ui.voice import input_source_activation as module
+    app = QCoreApplication.instance() or QCoreApplication([])
+    monkeypatch.setattr(module, 'restore_agent_input_window', lambda *_: False)
+    source = InputSourceActivation(command=helper(tmp_path, '''
+print(json.dumps({'event':'restore_focus'}),flush=True)
+print(json.dumps({'event':'selected','focus_restored':True}),flush=True)
+'''))
+    events = []
+    source.event.connect(events.append)
+    source.start(('', 123))
+    wait_until(lambda: bool(events))
+    assert events == [dict(event='error', error='Agent 输入窗口已变化，本句已取消')]
+    source.cancel()
+    app.processEvents()
+
+
 def prepare(c, monkeypatch):
     monkeypatch.setattr(c,'_foreground_identity',lambda:('test.editor',123))
     c._source_switch_factory=FakeSource
@@ -125,6 +194,60 @@ def test_old_helper_result_cannot_release_next_sentence(component,monkeypatch):
     old.event.emit({'event':'selected'})
     assert c._source_activation is new and c._source_pending
     assert not any(m['type']=='begin' for m in c._bridge.messages)
+
+
+@pytest.mark.parametrize('mode', ['voice', 'stroke'])
+def test_completed_native_error_does_not_poison_next_input_session(component, monkeypatch, mode):
+    c, _ = component
+    monkeypatch.setattr(c, '_foreground_identity', lambda: ('test.editor', 123))
+    c._source_switch_factory = FakeSource
+    ready, failed = [], []
+    if mode == 'voice':
+        assert c.begin(auto_select=True)
+        c.update('新的回答', True, 7)
+    else:
+        c.prepare_input_method('stroke', ('test.editor', 123), ready.append, failed.append)
+    c._source_activation.event.emit({'event': 'selected', 'already_selected': True})
+    receive(c, ready=True, phase='error', utterance_id='previous-answer', application='test.editor',
+            has_composition=False, awaiting_readback=False, error='本句文字或光标已变化，未执行撤销')
+    if mode == 'voice':
+        assert c._bridge.messages[-1]['type'] == 'begin'
+        assert not any(m['type'] == 'update' for m in c._bridge.messages)
+        receive(c, ready=True, phase='listening', application='test.editor')
+        assert [m['text'] for m in c._bridge.messages if m['type'] == 'update'] == ['新的回答']
+    else:
+        assert len(ready) == 1 and not failed
+
+
+@pytest.mark.parametrize('mode', ['voice', 'stroke'])
+@pytest.mark.parametrize('unsettled', [dict(has_composition=True, awaiting_readback=False),
+                                     dict(has_composition=False, awaiting_readback=True), {}])
+def test_unsettled_or_unproven_native_error_cannot_start_new_session(component, monkeypatch, mode, unsettled):
+    c, _ = component
+    monkeypatch.setattr(c, '_foreground_identity', lambda: ('test.editor', 123))
+    c._source_switch_factory = FakeSource
+    ready = []
+    if mode == 'voice':
+        assert c.begin(auto_select=True)
+    else:
+        c.prepare_input_method('stroke', ('test.editor', 123), ready.append, lambda _: None)
+    c._source_activation.event.emit({'event': 'selected', 'already_selected': True})
+    receive(c, ready=True, phase='error', utterance_id='previous-answer', application='test.editor', **unsettled)
+    assert not ready and not any(m['type'] == 'begin' for m in c._bridge.messages)
+
+
+def test_unbundled_startup_still_rejects_another_process(component, monkeypatch):
+    c, _ = component
+    monkeypatch.setattr(c, '_foreground_identity', lambda: ('', 123))
+    c._source_switch_factory = FakeSource
+    assert c.begin(auto_select=True)
+    source = c._source_activation
+    c.bind_session(7); c.update('不能进入另一个窗口', True, 7)
+    monkeypatch.setattr(c, '_foreground_identity', lambda: ('', 456))
+    source.event.emit({'event': 'selected', 'already_selected': True})
+    receive(c, ready=True, phase='idle', utterance_id='', application='')
+    assert not c._startup_buffering
+    assert not any(m['type'] in {'begin', 'update'} for m in c._bridge.messages)
 
 
 def test_new_source_activation_does_not_trigger_early_recovery(component, monkeypatch):
@@ -176,18 +299,54 @@ def test_lost_begin_ack_is_queried_without_duplicate_begin(component, monkeypatc
     assert sum(m['type']=='update' for m in c._bridge.messages)==1
 
 
-def test_cold_selection_leaves_budget_for_native_activation(component, monkeypatch):
+def test_slow_selection_uses_remaining_budget_for_native_activation(component, monkeypatch):
     c, _ = component
     source = prepare(c, monkeypatch)
     utterance = c._utterance_id
-    # TIS cold select finishes with only 0.8s left in the old shared budget.
-    c._startup_deadline = time.monotonic() + .8
+    # Selection finishes near the deadline; a prompt native ACK still succeeds.
+    deadline = c._startup_deadline = time.monotonic() + .2
     source.event.emit({'event': 'selected', 'already_selected': False})
-    assert c._startup_deadline - time.monotonic() > 2.9
+    assert c._startup_deadline == deadline
     receive(c, ready=True, phase='idle', client_id='cold-client', utterance_id='', application='test.editor')
     receive(c, ready=True, phase='listening', application='test.editor')
     updates = [m for m in c._bridge.messages if m['type'] == 'update']
     assert len(updates) == 1 and updates[0]['utterance_id'] == utterance
+
+
+@pytest.mark.parametrize('mode', ['voice', 'stroke'])
+def test_selection_and_focus_recovery_cannot_extend_one_second_startup(component, monkeypatch, mode):
+    c, _ = component
+    now = [100.0]
+    monkeypatch.setattr(time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(c, '_foreground_identity', lambda: ('test.editor', 123))
+    c._source_switch_factory = FakeSource
+    ready, failed = [], []
+    if mode == 'voice':
+        c.interrupted.connect(lambda: failed.append(c.error))
+        assert c.begin(auto_select=True)
+    else:
+        c.prepare_input_method('stroke-token', ('test.editor', 123), ready.append, failed.append)
+    assert c._startup_deadline == 101.0
+    source = c._source_activation
+    now[0] = 100.7
+    source.event.emit({'event': 'selected', 'already_selected': True})
+    receive(c, ready=False, phase='idle', client_id='', utterance_id='')
+    recovery = c._source_activation
+    assert recovery is not source
+    now[0] = 100.85
+    recovery.event.emit({'event': 'selected', 'already_selected': True, 'focus_restored': True})
+    assert c._startup_deadline == 101.0
+    assert 1 <= c._reply_timer.interval() <= 150
+    now[0] = 101.01
+    c._refresh_activation()
+    assert failed == ['输入法未连接到当前文本框，请重新点入文本框']
+    assert not ready and c._source_activation is None
+    assert recovery.calls[-1] == ('cancel',)
+    assert not c._reply_timer.isActive() and not c._activation_timer.isActive()
+    recovery.event.emit({'event': 'selected'})
+    receive(c, ready=True, phase='idle', client_id='late-client', utterance_id='', application='test.editor')
+    assert not ready and len(failed) == 1
+    assert not any(m['type'] in {'begin', 'stroke_begin', 'update'} for m in c._bridge.messages)
 
 
 def test_transient_activation_cannot_release_text_or_cancel_next_begin(component, monkeypatch):
@@ -223,7 +382,7 @@ def test_ime_reconnect_before_first_ack_keeps_same_audio_sentence(component, mon
 
 
 def test_ime_warmup_uses_background_launch_without_selecting_source(tmp_path, monkeypatch):
-    from proximic_ring.ui import input_source_activation as module
+    from proximic_ring.ui.voice import input_source_activation as module
     bundle = tmp_path / 'Library/Input Methods/ProxiMicInput.app'
     executable = bundle / 'Contents/MacOS/ProxiMicInput'
     executable.parent.mkdir(parents=True)
@@ -282,7 +441,7 @@ def test_focus_recovery_command_is_separate_and_cancellable(tmp_path):
 
 @pytest.mark.parametrize('isolation', ['custom_socket', 'package_self_check'])
 def test_isolated_host_never_launches_installed_input_method(tmp_path, monkeypatch, isolation):
-    from proximic_ring.ui import input_source_activation as module
+    from proximic_ring.ui.voice import input_source_activation as module
     bundle = tmp_path / 'Library/Input Methods/ProxiMicInput.app/Contents/MacOS/ProxiMicInput'
     bundle.parent.mkdir(parents=True)
     bundle.touch()

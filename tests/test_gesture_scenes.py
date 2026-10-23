@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.app_shortcuts import LocalMacAppShortcuts, ShortcutTarget
+from proximic_ring.desktop.app_shortcuts import LocalMacAppShortcuts, ShortcutTarget
 from proximic_ring.gesture_scenes import POWERPOINT, PRESENTATION, SCENE_ANCHORS
 from scene_test_helpers import presentation_context
 from proximic_ring.gesture_scenes import presentation_profile, installed_presentation_profile, scene_actions
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
 from test_application_menus import configure
 from test_ring_gestures import request
@@ -147,10 +147,11 @@ def presentation(route, monkeypatch):
     class Backend(LocalMacAppShortcuts):
         target = ShortcutTarget(POWERPOINT, 42, POWERPOINT, "window", "slide", "AXImage",
                                 scene=PRESENTATION, input_context="nontext")
-        def capture(self, *, plain_enter=False, menu_action=False, scene=False):
+        def capture(self, *, plain_enter=False, menu_action=False, scene=False, focus_sensitive=True):
             if self.target is None:
                 return None
-            return replace(self.target, plain_enter=plain_enter, menu_action=menu_action, scene_checked=scene)
+            return replace(self.target, plain_enter=plain_enter, menu_action=menu_action, scene_checked=scene,
+                           focus_sensitive=focus_sensitive)
         def post(self, target, shortcut, *, require_focus=False):
             if not self.same_target(target, require_focus=require_focus):
                 raise RuntimeError("放映窗口或输入状态已变化")
@@ -170,9 +171,9 @@ def test_scene_editor_selection_does_not_change_routing_or_regular_settings(pres
     assert not request(c, "swipe-right")
     assert sent == [(POWERPOINT, "Right")] and c.gestureBindings == before
     catalog.selectScene(PRESENTATION)
-    assert all(not catalog.canBind(g) for g in SCENE_ANCHORS)
+    assert all(catalog.canBind(g) for g in SCENE_ANCHORS)
     for gesture in SCENE_ANCHORS:
-        assert not catalog.setBinding(POWERPOINT, gesture, "powerpoint:next")
+        assert catalog.setBinding(POWERPOINT, gesture, "powerpoint:next")
     restored = ApplicationMappingController(s)
     try:
         assert restored.selectedScene == "regular"
@@ -197,7 +198,7 @@ def test_reserved_overrides_are_consumed_before_audio_focus_and_system_actions(p
 
 
 @pytest.mark.parametrize("change", ["app", "pid", "window", "exit", "text", "unknown", "modal", "disconnect", "mode",
-                                    "settings", "voice", "composition", "writing", "sentence", "focus_pending", "scroll_pending", "expired"])
+                                    "settings", "voice", "composition", "writing", "sentence", "scroll_pending", "expired"])
 def test_queued_scene_gesture_is_dropped_without_replay_or_voice_fallback(presentation, change, monkeypatch):
     c, s, inline, backend, catalog, sent, messages = presentation
     assert not request(c, "tap", deliver=False)
@@ -214,10 +215,9 @@ def test_queued_scene_gesture_is_dropped_without_replay_or_voice_fallback(presen
     if change == "composition": inline._view["has_composition"] = True
     if change == "writing": inline._view["awaiting_readback"] = True
     if change == "sentence": inline._utterance_id = "new-sentence"
-    if change == "focus_pending": c.ringGestures._fields.pending.set()
     if change == "scroll_pending": c.ringGestures._scroll.pending.set()
     if change == "expired":
-        import proximic_ring.ui.app_gesture_controller as module
+        import proximic_ring.ui.gestures.app_gesture_controller as module
         now = module.time.monotonic()
         monkeypatch.setattr(module.time, "monotonic", lambda: now + 2)
     QCoreApplication.processEvents()
@@ -230,7 +230,7 @@ def test_tap_retains_original_voice_endpoint_outside_eligible_scene(presentation
     if context == "exit": backend.target = replace(backend.target, scene="")
     if context in {"text", "unknown"}: backend.target = replace(backend.target, input_context=context)
     if context == "voice": inline._view["phase"] = "listening"
-    assert request(c, "tap", busy=context == "audio")
+    assert request(c, "tap", busy=context == "audio") == (context == "text")
     assert sent == []
 
 
@@ -367,7 +367,8 @@ def test_last_observation_and_hud_use_the_actual_app_not_editor_selection(presen
     shown = []
     c.ringGestures.sceneHudRequested.connect(lambda mode, items: shown.extend(items))
     c.ringGestures._pending_hud = (c.ringGestures._generation, time.monotonic(), c._disconnect_event)
-    c.ringGestures._show_scene_hud(*c.ringGestures._pending_hud, target)
+    from proximic_ring.voice.ime.focus_probe import InputFocus
+    c.ringGestures._show_scene_hud(*c.ringGestures._pending_hud, (target, InputFocus('nontext')))
     assert shown and all(item["application"] == "WPS Office" for item in shown)
 
 
@@ -393,7 +394,7 @@ def test_existing_wps_record_gains_scene_without_readding_or_changing_bindings(r
 
 def test_native_capture_verifies_generic_installed_editor_and_fresh_focus(monkeypatch, tmp_path):
     import sys
-    import proximic_ring.mac_workspace as workspace
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     from test_application_catalog import application
     bundle = "test.custom.slides"
     path = application(tmp_path / 'Slides.app', bundle, CFBundleDocumentTypes=[{
@@ -420,7 +421,7 @@ def test_native_capture_verifies_generic_installed_editor_and_fresh_focus(monkey
 
 def test_native_wps_dialog_exception_is_scene_only_and_rechecks_focus_and_foreground(monkeypatch):
     import sys
-    import proximic_ring.mac_workspace as workspace
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     front = SimpleNamespace(bundleIdentifier=lambda: "com.kingsoft.wpsoffice.mac", processIdentifier=lambda: 42,
                             localizedName=lambda: "WPS Office")
     monkeypatch.setattr(workspace, "frontmost_application", lambda: front)
@@ -482,8 +483,8 @@ def test_wps_only_obsolete_builtin_start_presets_are_repaired(route, monkeypatch
 
 
 def test_native_worker_rechecks_scene_before_autofocus_and_drops_pinned_plan(monkeypatch):
-    from proximic_ring import native_access_worker as worker
-    from proximic_ring.mac_permissions import PermissionState
+    from proximic_ring.platforms.macos import native_access_worker as worker
+    from proximic_ring.platforms.macos.mac_permissions import PermissionState
     monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, False))
     dispatcher = worker.Dispatcher()
     dispatcher.shortcuts = SimpleNamespace(capture=lambda **kw: ShortcutTarget(POWERPOINT, 42, POWERPOINT,
@@ -502,21 +503,22 @@ def test_scene_hud_reports_effective_bindings_and_respects_busy_state(presentati
     ring.sceneHudRequested.connect(lambda mode, items: scenes.append(items))
     ring.showRequested.connect(lambda mode, text: defaults.append((mode, text)))
     ring._pending_hud = (ring._generation, time.monotonic(), c._disconnect_event)
-    ring._show_scene_hud(*ring._pending_hud, backend.target)
+    from proximic_ring.voice.ime.focus_probe import InputFocus
+    ring._show_scene_hud(*ring._pending_hud, (backend.target, InputFocus('nontext')))
     assert {item["action"] for item in scenes[0]} == {"上一个动画 / 上一页", "下一个动画 / 下一页", "结束放映",
-                                                    "未绑定", "手势提示", "切换交互模式", "窗口选择"}
-    assert all(item["voiceDisabled"] for item in scenes[0])
+        "手势提示", "窗口选择", "下一步推荐", "唤起 / 返回 Agent", "向上滚动", "向下滚动"}
+    assert all(item["action"] != "切换交互模式" for item in scenes[0])
     inline._view["phase"] = "listening"
     ring._pending_hud = (ring._generation, time.monotonic(), c._disconnect_event)
-    ring._show_scene_hud(*ring._pending_hud, backend.target)
+    ring._show_scene_hud(*ring._pending_hud, (backend.target, InputFocus('nontext')))
     assert defaults == [("input", "")] and not sent and not messages
 
 
 def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exit(presentation, monkeypatch):
     import threading
     import numpy as np
-    from proximic_ring import app_runtime
-    import proximic_ring.firmware_gestures as host
+    from proximic_ring.voice import app_runtime
+    import proximic_ring.gestures.firmware_gestures as host
     from proximic_ring.asr.controller import ProximitySessionController
     c, _, _, backend, _, sent, _ = presentation
     state, started, finals, globals_ = {}, [], [], []
@@ -529,8 +531,8 @@ def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exi
         def start(self): pass
         def close(self): pass
         def snapshot(self): return {}
-    def gesture():
-        thread = threading.Thread(target=lambda: state["gesture"](SimpleNamespace(name="tap")))
+    def gesture(name="tap"):
+        thread = threading.Thread(target=lambda: state["gesture"](SimpleNamespace(name=name)))
         thread.start(); thread.join(1)
         assert not thread.is_alive()
     class Sink:
@@ -552,8 +554,8 @@ def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exi
                 gesture()
                 QCoreApplication.processEvents()
                 assert sent == [(POWERPOINT, "Escape")] and not gate.gesture_busy and not started
-                backend.target = replace(backend.target, scene="")
-                gesture()
+                backend.target = replace(backend.target, scene="", input_context="text")
+                gesture("double-tap")
                 assert gate.gesture_busy
             elif self.reads == 2:
                 assert gate.active and len(started) == 1

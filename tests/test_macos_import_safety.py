@@ -8,11 +8,11 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WIN32_ADAPTERS = (
-    "src/proximic_ring/app_runtime.py",
-    "src/proximic_ring/desktop_output.py",
-    "src/proximic_ring/desktop_target.py",
-    "src/proximic_ring/push_to_talk.py",
-    "src/proximic_ring/voice_actions.py",
+    "src/proximic_ring/voice/app_runtime.py",
+    "src/proximic_ring/platforms/windows/desktop_output.py",
+    "src/proximic_ring/desktop/desktop_target.py",
+    "src/proximic_ring/platforms/windows/push_to_talk.py",
+    "src/proximic_ring/voice/voice_actions.py",
 )
 
 

@@ -10,7 +10,7 @@ from test_proximity import Process, calibrate
 
 @pytest.fixture
 def proximity_ui(inline_ui, tmp_path, monkeypatch):
-    from proximic_ring.ui import proximity_controller
+    from proximic_ring.ui.proximity import proximity_controller
 
     controller, bridge, _, root, _ = inline_ui
     helper = tmp_path / "helper"
@@ -32,6 +32,18 @@ def proximity_ui(inline_ui, tmp_path, monkeypatch):
 def item(root, name):
     from PySide6.QtCore import QObject
     result = root.findChild(QObject, name)
+    if result is None:
+        # Repeater delegates belong to the visual tree rather than the window's
+        # QObject ownership tree.
+        def visual_child(parent):
+            if parent.objectName() == name:
+                return parent
+            for child in parent.childItems():
+                found = visual_child(child)
+                if found is not None:
+                    return found
+            return None
+        result = visual_child(root.contentItem())
     assert result is not None, name
     return result
 
@@ -76,7 +88,42 @@ def scroll_bottom(root):
     QTest.qWait(40)
 
 
-@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+def test_baseline_evidence_switches_and_updated_thresholds(proximity_ui, tmp_path):
+    from PySide6.QtTest import QTest
+    controller, proximity, _, root, _ = proximity_ui
+    proximity.useDevice("a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3", "Ringo test")
+    open_details(root); finish_status(proximity); calibrate(proximity)
+    assert not item(root, "proximityBaseline_enabled").property("checked")
+    assert item(root, "proximityBaseline_keyboardMouse").property("checked")
+    for name in ("gestures", "voice"):
+        assert not item(root, "proximityBaseline_" + name).property("checked")
+        click(root, "proximityBaseline_" + name)
+        assert proximity.baselineOptions[name]
+    click(root, "proximityBaseline_enabled")
+    click(root, "proximityBaseline_keyboardMouse")
+    assert proximity.baselineOptions == dict(enabled=True, keyboardMouse=False, gestures=True, voice=True)
+    proximity.enabled = True
+    process = proximity._process
+    process.send(dict(event="baseline_updated", device=proximity._target,
+                      revision=proximity._baseline_revision, baseline=-70,
+                      samples=[-70] * 5, duration_seconds=2, sources=["voice"]))
+    QTest.qWait(30)
+    details = item(root, "proximityCalibrationDetails").property("text")
+    assert "-70.0" in details and "-74.0" in details and "-78.0" in details
+    for name in ("enabled", "keyboardMouse", "gestures", "voice"):
+        assert item(root, "proximityBaseline_" + name).property("enabled")
+    flick = item(root, "runtimeSettingsScroll").property("contentItem")
+    group = item(root, "proximityBaseline_enabled")
+    from PySide6.QtCore import QPointF
+    point = group.mapToItem(flick, QPointF(0, 0))
+    flick.setProperty("contentY", max(0, point.y() - 80))
+    QTest.qWait(40)
+    screenshot(root, tmp_path, "proximity-baseline-options.png")
+    click(root, "proximityBaseline_voice")
+    assert not proximity.baselineOptions["voice"] and proximity._process is process
+
+
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
 def test_proximity_details_and_advanced_disclosure_do_not_change_configuration(proximity_ui, tmp_path, size):
     from PySide6.QtCore import QPointF
     from PySide6.QtTest import QTest
@@ -110,6 +157,7 @@ def test_proximity_details_and_advanced_disclosure_do_not_change_configuration(p
     assert not item(root, "settingsPage9").property("showAdvanced")
     assert calls == [["status"]]
     assert not proximity.enabled
+    assert item(root, "proximityOverviewStatus").property("text") == "未开启"
     assert bridge.messages == messages and controller.gestureBindings == bindings
     assert {key: controller._settings.value(key) for key in controller._settings.allKeys()} == before
 
@@ -136,6 +184,7 @@ def test_calibration_progress_and_cancel_preserve_existing_baseline_and_switch(p
     finish_status(proximity)
     calibrate(proximity)
     proximity.enabled = enabled
+    assert item(root, "proximityOverviewStatus").property("text") == ("已开启" if enabled else "未开启")
     before = controller._settings.value("proximity/calibrations/" + proximity._target)
     click(root, "proximityCalibrate")
     assert calls[-1][0] == "calibrate"
@@ -168,9 +217,10 @@ def test_calibration_progress_and_cancel_preserve_existing_baseline_and_switch(p
     ("proximityConfigurePassword", "password"),
     ("proximityAuthorizePassword", "authorize-password"),
     ("proximityForgetPassword", "forget"),
-    ("proximityRequestPermissions", "authorize"),
 ])
 def test_setup_buttons_keep_the_existing_native_routes(proximity_ui, button, command):
+    # Authorization is covered at its single Settings entry by
+    # test_ui_permissions_consolidated; password actions stay on the lock page.
     _, proximity, _, root, calls = proximity_ui
     open_details(root)
     finish_status(proximity, password_access=False)

@@ -7,7 +7,7 @@ import pytest
 
 @pytest.fixture
 def desktop(monkeypatch):
-    from proximic_ring import mac_workspace
+    from proximic_ring.platforms.macos import mac_workspace
     monkeypatch.setattr(mac_workspace, "_on_qt_event_thread", lambda: False)
     monkeypatch.setattr(sys, "platform", "darwin")
     def app(pid, bundle):
@@ -42,43 +42,69 @@ def desktop(monkeypatch):
     return state
 
 
-@pytest.mark.parametrize("reader", ["input_source", "stamp", "settings", "hud", "inline", "activation", "apps"])
+@pytest.mark.parametrize("reader", ["input_source", "stamp", "settings", "hud", "inline", "activation", "apps", "gestures"])
 def test_each_consumer_uses_new_foreground_after_switch(desktop, reader):
     if reader == "input_source":
-        from proximic_ring.input_source_switch import foreground_pid
+        from proximic_ring.voice.ime.input_source_switch import foreground_pid
         assert foreground_pid() == 22
     elif reader == "stamp":
-        from proximic_ring.text_focus import foreground_stamp
+        from proximic_ring.desktop.text_focus import foreground_stamp
         assert foreground_stamp() == {"pid": 22, "window": 202}
     elif reader == "settings":
-        from proximic_ring.wechat_setup import KeyboardShortcutsNavigator
+        from proximic_ring.platforms.macos.wechat_setup import KeyboardShortcutsNavigator
         assert KeyboardShortcutsNavigator._front() is desktop.actual
     elif reader == "hud":
-        from proximic_ring.ui.gesture_hud import foreground_window_bounds
+        from proximic_ring.ui.gestures.gesture_hud import foreground_window_bounds
         assert foreground_window_bounds().x() == 300
     elif reader == "inline":
-        from proximic_ring.ui.inline_controller import InlineInputController
+        from proximic_ring.ui.voice.inline_controller import InlineInputController
         assert InlineInputController._foreground_identity(None) == ("com.openai.codex", 22)
     elif reader == "activation":
-        from proximic_ring.ui.input_source_activation import InputSourceActivation
+        from proximic_ring.ui.voice.input_source_activation import InputSourceActivation
         source = SimpleNamespace(_stage="probing", _process=SimpleNamespace(processId=lambda: 22))
         assert InputSourceActivation.owns_foreground(source)
+    elif reader == "gestures":
+        from proximic_ring.ui.gestures.app_gesture_controller import AppGestureController
+        assert AppGestureController.foreground_identity(None) == ("com.openai.codex", 22)
     else:
-        from proximic_ring.window_selector import MacWindowAX
+        from proximic_ring.desktop.window_selector import MacWindowAX
         assert set(MacWindowAX.apps(None)) == {22}
 
 
 def test_no_foreground_does_not_reuse_previous_app(desktop):
-    from proximic_ring.input_source_switch import foreground_pid
-    from proximic_ring.text_focus import foreground_stamp
+    from proximic_ring.voice.ime.input_source_switch import foreground_pid
+    from proximic_ring.desktop.text_focus import foreground_stamp
     desktop.actual = None
     assert foreground_stamp() == {"pid": 0, "window": 0}
     with pytest.raises(RuntimeError, match="未找到前台应用"):
         foreground_pid()
+    from proximic_ring.ui.gestures.app_gesture_controller import AppGestureController
+    assert AppGestureController.foreground_identity(None) is None
+
+
+def test_gesture_scope_uses_stable_identity_for_unbundled_host(desktop, monkeypatch):
+    from proximic_ring.ui.gestures.app_gesture_controller import AppGestureController
+    from proximic_ring.desktop.host_application import HOST_BUNDLE
+    monkeypatch.setattr("proximic_ring.ui.gestures.app_gesture_controller.os.getpid", lambda: 22)
+    desktop.actual.bundleIdentifier = lambda: None
+    assert AppGestureController.foreground_identity(None) == (HOST_BUNDLE, 22)
+
+
+def test_unbundled_editor_identity_is_pinned_to_pid_for_voice_and_strokes(desktop):
+    from proximic_ring.ui.voice.inline_controller import InlineInputController
+    from proximic_ring.platforms.macos.native_touchpad import WorkerTouchpadMouse
+    desktop.actual = SimpleNamespace(processIdentifier=lambda: 38368, bundleIdentifier=lambda: None)
+    assert InlineInputController._foreground_identity(None) == ("", 38368)
+    pointer = SimpleNamespace(enabled=True, clicks_enabled=True, check_health=lambda: None)
+    assert WorkerTouchpadMouse.double_click_target(pointer) == {"bundle": "", "pid": 38368}
+    desktop.actual = None
+    assert InlineInputController._foreground_identity(None) is None
+    assert WorkerTouchpadMouse.double_click_target(pointer) is None
 
 
 def test_sentence_request_pins_current_app_not_cached_app(desktop, monkeypatch):
-    from proximic_ring import native_access, wechat_native_keys
+    from proximic_ring.platforms.macos import native_access
+    from proximic_ring.platforms.macos import wechat_native_keys
     monkeypatch.setattr(native_access, "native_access", lambda: SimpleNamespace(
         call=lambda operation, **kw: desktop.requested.append((operation, kw))))
     wechat_native_keys._send_key("delete", 0, 123, "com.openai.codex")
@@ -90,7 +116,7 @@ def test_sentence_request_pins_current_app_not_cached_app(desktop, monkeypatch):
 
 
 def test_app_switch_during_multi_key_operation_stops_at_balanced_pair(desktop):
-    from proximic_ring.wechat_native_keys import _send_key_direct
+    from proximic_ring.platforms.macos.wechat_native_keys import _send_key_direct
     quartz = sys.modules["Quartz"]
     quartz.kCGEventFlagMaskCommand, quartz.kCGEventFlagMaskShift = 256, 128
     quartz.kCGEventSourceUserData = 99

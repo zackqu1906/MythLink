@@ -2,155 +2,73 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-ScrollView {
+UiScrollView {
     id: page
     objectName: "touchpadPage"
     required property var controller
     readonly property var touchpad: controller.touchpad
     readonly property bool windowActive: Window.window ? Window.window.active : false
-    property string section: "pointer"
+    property string section: "stroke"
     signal homeRequested()
-    UiTheme { id: theme }
-    clip: true
-    contentWidth: availableWidth
-    contentHeight: content.height
+    FigmaTheme { id: theme }
+    clip: true; contentWidth: availableWidth; contentHeight: content.height
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-    ScrollBar.vertical.policy: ScrollBar.AlwaysOff
-
     Column {
         id: content
-        width: page.availableWidth
-        spacing: 18
+        width: page.availableWidth; spacing: 20
         Rectangle {
-            width: parent.width
-            height: statusContent.implicitHeight + 44
-            radius: 16; color: theme.surface; border.color: theme.line
+            width: parent.width; height: statusContent.implicitHeight + 40
+            radius: 12; color: theme.surface; border.color: theme.line
             ColumnLayout {
                 id: statusContent
-                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                anchors.margins: 22; spacing: 16
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
+                spacing: 16
                 RowLayout {
                     Layout.fillWidth: true; spacing: 16
-                    Rectangle {
-                        width: 58; height: 58; radius: 16
-                        color: page.touchpad.active ? "#EDF2FF" : theme.subtle
-                        UiIcon { anchors.centerIn: parent; width: 29; height: 29; symbol: "pointer" }
-                    }
-                    ColumnLayout {
-                        Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 6
-                        Label {
-                            objectName: "touchpadStatusTitle"
-                            Layout.fillWidth: true
-                            text: !page.touchpad.supported ? "触摸板支持 macOS"
-                                : !page.controller.connected ? "请先在首页连接 Ring" : page.touchpad.strokePreparing ? "正在切换到笔画"
-                                : page.touchpad.active ? (page.touchpad.inputMode === "stroke" ? "触摸板 · 笔画模式" : "触摸板 · 鼠标模式") : page.touchpad.title
-                            color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold; wrapMode: Text.Wrap
-                        }
-                        Label {
-                            objectName: "touchpadStatusDetail"
-                            Layout.fillWidth: true
-                            text: !page.controller.connected ? "连接后即可用 Ring 控制电脑鼠标。"
-                                : page.controller.busy && !page.touchpad.active ? "设备正在准备，完成后即可开启。" : page.touchpad.message
-                            color: page.touchpad.state === "error" ? "#B54756" : theme.muted
-                            font.pixelSize: 12; wrapMode: Text.Wrap
-                        }
-                    }
-                    UiAction {
+                    Label { text: "光标控制与笔画输入"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
+                    FigmaEnableControl {
                         objectName: "touchpadToggleButton"
-                        Layout.preferredWidth: 142; Layout.preferredHeight: 44
-                        visible: page.controller.connected
+                        text: page.touchpad.active ? "停止触摸板" : "开启触摸板"
+                        checked: page.touchpad.active
                         enabled: page.touchpad.active || (page.touchpad.available && !page.touchpad.busy)
-                        text: page.touchpad.state === "starting" ? "取消开启"
-                            : page.touchpad.state === "stopping" ? "正在停止…"
-                            : page.touchpad.active ? "停止触摸板" : "开启触摸板"
-                        primary: !page.touchpad.active
+                        Accessible.name: page.touchpad.active ? "停止触摸板" : "开启触摸板"
                         onClicked: page.touchpad.toggle()
                     }
-                    UiAction {
-                        objectName: "touchpadHomeButton"
-                        Layout.preferredWidth: 118; Layout.preferredHeight: 44
-                        visible: !page.controller.connected
-                        text: "返回首页"; primary: true
-                        onClicked: page.homeRequested()
-                    }
+                    Item { Layout.fillWidth: true }
+                    FigmaAction { objectName: "touchpadHomeButton"; visible: !page.controller.connected; text: "返回首页"; onClicked: page.homeRequested() }
                 }
-                Rectangle { Layout.fillWidth: true; height: 1; color: theme.line }
                 RowLayout {
-                    Layout.fillWidth: true; spacing: 10
-                    Rectangle { width: 7; height: 7; radius: 4; color: page.touchpad.state === "running" ? theme.success : "#9AA3B6" }
-                    Label {
-                        objectName: "touchpadRunStatus"
-                        Layout.fillWidth: true
-                        text: page.touchpad.state === "running" ? (page.touchpad.inputMode === "stroke" ? "笔画输入中 · 双击回到鼠标" : "正在控制鼠标 · 持续生效，直到手动停止")
-                            : "开启后持续生效，点击「停止触摸板」结束。"
-                        color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
-                    }
+                    Layout.fillWidth: true; spacing: 12
+                    FigmaIcon { objectName: "touchpadDoubleTapIcon"; visible: page.touchpad.active; symbol: "tap" }
+                    Label { objectName: "touchpadDoubleTapLabel"; visible: page.touchpad.active; text: "双击"; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text }
+                    Label { objectName: "touchpadRunStatus"; Layout.fillWidth: true; text: page.touchpad.active ? (page.touchpad.inputMode === "stroke" ? "笔画输入中 · 双击回到鼠标" : "已启用 · 在输入框内双击进入笔画") : "请启用功能以体验鼠标控制和笔画输入"; font.pixelSize: 16; color: theme.muted; wrapMode: Text.Wrap }
                 }
-                PermissionNotice {
-                    objectName: "touchpadPermissionNotice"
-                    Layout.fillWidth: true
-                    message: page.touchpad.supported ? page.controller.inlineInput.permissions.accessibilityWarningText : ""
-                    onActivated: page.controller.inlineInput.permissions.openSettings()
-                }
+                Label { objectName: "touchpadStatusTitle"; visible: !page.controller.connected || !page.touchpad.supported; text: !page.touchpad.supported ? "触摸板支持 macOS" : "请先在首页连接 Ring"; color: theme.muted; font.pixelSize: 14 }
+                Label { objectName: "touchpadStatusDetail"; Layout.fillWidth: true; visible: page.touchpad.state === "error" || page.touchpad.busy; text: page.touchpad.message; color: theme.warning; font.pixelSize: 14; wrapMode: Text.Wrap }
+                PermissionNotice { objectName: "touchpadPermissionNotice"; Layout.fillWidth: true; message: page.touchpad.supported ? (page.controller.inlineInput.permissions.accessibilityWarningText ? page.controller.inlineInput.permissions.accessibilityWarningText + " 请在设置的“系统与权限”中管理。" : "") : ""; actionText: "" }
             }
         }
-        Label {
-            width: parent.width; wrapMode: Text.Wrap; color: theme.muted; font.pixelSize: 12
-            text: "开启后默认鼠标模式；第一下点击立即生效，" + page.touchpad.doubleClickIntervalMs + " ms 内再次点击触发双击，在当前输入框进入笔画；再双击或离开输入框回到鼠标。候选字仍由固件轻点确认。"
-        }
-        Rectangle {
-            width: parent.width; height: modeRow.implicitHeight + 36
-            radius: 16; color: theme.surface; border.color: theme.line
-            RowLayout {
-                id: modeRow
-                anchors.fill: parent; anchors.margins: 18; spacing: 12
-                Label { Layout.fillWidth: true; text: "触摸板工作区"; color: theme.text; font.pixelSize: 17; font.bold: true }
-                UiAction {
-                    objectName: "pointerModeButton"
-                    text: "鼠标设置"; primary: page.section === "pointer"
-                    enabled: !page.touchpad.busy
-                    onClicked: page.section = "pointer"
-                }
-                UiAction {
-                    objectName: "strokeModeButton"
-                    text: "笔画试写"; primary: page.section === "stroke"
-                    enabled: !page.touchpad.busy
-                    onClicked: page.section = "stroke"
-                }
-            }
-        }
-        Label {
-            width: parent.width; wrapMode: Text.Wrap
-            visible: page.touchpad.message.indexOf("请先") >= 0
-            text: page.touchpad.message; color: theme.muted; font.pixelSize: 12
-        }
-        StrokeInputBox {
-            width: parent.width; height: Math.max(380, page.availableHeight - 260)
-            visible: page.section === "stroke"
-            inputVisible: visible && page.visible && page.windowActive
-            controller: page.controller
-            onHomeRequested: page.homeRequested()
-        }
-        Rectangle {
-            visible: page.section === "pointer"
-            width: parent.width
-            height: settings.implicitHeight + 44
-            radius: 16; color: theme.surface; border.color: theme.line
-            ColumnLayout {
-                id: settings
-                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                anchors.margins: 22; spacing: 22
+        GridLayout {
+            width: parent.width; columns: width >= 840 ? 2 : 1; columnSpacing: 24; rowSpacing: 20
+            Rectangle {
+                Layout.alignment: Qt.AlignTop; Layout.fillWidth: true; Layout.preferredWidth: 328; Layout.minimumWidth: 290
+                Layout.preferredHeight: settingsContent.implicitHeight + 40
+                radius: 12; color: theme.surface; border.color: theme.line
                 ColumnLayout {
-                    Layout.fillWidth: true; spacing: 5
-                    Label { text: "触摸板设置"; color: theme.text; font.pixelSize: 20; font.weight: Font.DemiBold }
-                    Label { Layout.fillWidth: true; text: "停止触摸板后调整，下次开启时生效。"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
-                }
-                SettingsFormRow {
-                    title: "指针速度"
-                    description: "根据你的操作习惯调整移动速度。"
+                    id: settingsContent
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
+                    spacing: 16
                     RowLayout {
                         Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; Layout.minimumWidth: 0; text: "光标偏好调节"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
+                        FigmaAction { text: "高级设置"; navigation: true; enabled: false; implicitWidth: 129 }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 12
+                        Label { text: "指针速度"; color: theme.text; font.pixelSize: 16 }
+                        Image { source: "../assets/figma/redesign-speed-tortoise.svg" }
                         Slider {
+                            id: gain
                             objectName: "touchpadGainSlider"
                             Layout.fillWidth: true
                             from: 0.25; to: 3; stepSize: 0.05
@@ -158,33 +76,42 @@ ScrollView {
                             enabled: !page.touchpad.active && !page.touchpad.busy
                             Accessible.name: "指针速度"
                             onMoved: page.touchpad.gain = value
+                            background: Rectangle { x: gain.leftPadding; y: (gain.height - height) / 2; width: gain.availableWidth; height: 4; radius: 2; color: theme.line; Rectangle { height: 4; radius: 2; width: gain.visualPosition * parent.width; color: theme.primary } }
+                            handle: Rectangle { x: gain.leftPadding + gain.visualPosition * (gain.availableWidth - width); y: (gain.height - height) / 2; width: 20; height: 14; radius: 7; color: "white"; border.color: gain.activeFocus ? theme.primary : theme.line }
                         }
-                        Label { text: page.touchpad.gain.toFixed(2) + "×"; color: theme.text; font.pixelSize: 13 }
+                        Image { source: "../assets/figma/redesign-speed-hare.svg" }
                     }
-                }
-                Rectangle { Layout.fillWidth: true; height: 1; color: theme.line }
-                SettingsFormRow {
-                    title: "轻触点击"
-                    description: "识别短促轻触，执行鼠标左键单击。"
-                    Switch {
-                        objectName: "touchpadClicksSwitch"
-                        Layout.alignment: Qt.AlignRight
-                        checked: page.touchpad.clicks
-                        enabled: !page.touchpad.active && !page.touchpad.busy
-                        Accessible.name: "轻触点击"
-                        onToggled: page.touchpad.clicks = checked
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; text: "轻触点击"; color: theme.text; font.pixelSize: 16 }
+                        FigmaSwitch { objectName: "touchpadClicksSwitch"; checked: page.touchpad.clicks; enabled: !page.touchpad.active && !page.touchpad.busy; Accessible.name: "轻触点击"; onToggled: page.touchpad.clicks = checked }
                     }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; text: "反转上下方向"; color: theme.text; font.pixelSize: 16 }
+                        FigmaSwitch { objectName: "touchpadInvertSwitch"; checked: page.touchpad.invertY; enabled: !page.touchpad.active && !page.touchpad.busy; Accessible.name: "反转上下方向"; onToggled: page.touchpad.invertY = checked }
+                    }
+                    Label { Layout.fillWidth: true; visible: page.touchpad.active; text: "停止触摸板后可调整，下次开启时生效。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
                 }
-                SettingsFormRow {
-                    title: "反转上下方向"
-                    description: "切换指针的垂直移动方向。"
-                    Switch {
-                        objectName: "touchpadInvertSwitch"
-                        Layout.alignment: Qt.AlignRight
-                        checked: page.touchpad.invertY
-                        enabled: !page.touchpad.active && !page.touchpad.busy
-                        Accessible.name: "反转上下方向"
-                        onToggled: page.touchpad.invertY = checked
+            }
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredWidth: 580; Layout.minimumWidth: 380
+                Layout.preferredHeight: Math.max(390, practice.implicitHeight + 80)
+                radius: 12; color: theme.surface; border.color: theme.line
+                ColumnLayout {
+                    anchors.fill: parent; anchors.margins: 20; spacing: 12
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; text: "输入模拟"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
+                        FigmaAction { text: "功能教学"; navigation: true; enabled: false }
+                    }
+                    StrokeInputBox {
+                        id: practice
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        compactPresentation: true
+                        inputVisible: page.visible && page.windowActive
+                        controller: page.controller
+                        onHomeRequested: page.homeRequested()
                     }
                 }
             }

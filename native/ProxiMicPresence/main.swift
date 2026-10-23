@@ -97,12 +97,14 @@ func configurePassword() {
 final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     var policy: PresencePolicy
     var calibration: ProximityCalibration
+    var activityCalibration = ActivityCalibration()
     var returnWake = ReturnWakePolicy()
     var returnDisplay = ReturnDisplayGate()
     var returnConfirmedAt: Double?
     let unlockSecret = UnlockSecret()
     var unlockToken = ""
     var hostGestureReady = false
+    var hostConnection = HostConnectionState()
     var hostInstalledUnlockToken = ""
     var lastHostGestureState = -100.0
     var inputBuffer = Data()
@@ -136,8 +138,31 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     /// at this Mac rather than walking around with the link still up.
     func idleSeconds() -> Double {
         let anyInput = CGEventType(rawValue: ~0)!
-        let seconds = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: anyInput)
-        return seconds.isFinite && seconds >= 0 ? seconds : .infinity
+        return [CGEventSourceStateID.hidSystemState, .combinedSessionState]
+            .map { CGEventSource.secondsSinceLastEventType($0, eventType: anyInput) }
+            .filter { $0.isFinite && $0 >= 0 }.min() ?? .infinity
+    }
+    func keyboardMouseIdleSeconds() -> Double {
+        let types: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .mouseMoved,
+            .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+            .otherMouseDown, .otherMouseUp, .leftMouseDragged, .rightMouseDragged,
+            .otherMouseDragged, .scrollWheel]
+        return [CGEventSourceStateID.hidSystemState, .combinedSessionState].flatMap { state in
+            types.map { CGEventSource.secondsSinceLastEventType(state, eventType: $0) }
+        }
+            .filter { $0.isFinite && $0 >= 0 }.min() ?? .infinity
+    }
+    var canTrackActivity: Bool {
+        !calibrating && !observing && awake && permission && !policy.failed
+        && central.state == .poweredOn && peripheral?.state == .connected
+        && lockingConnectionReady && lockedSession() == false
+        && calibration.qualified
+    }
+    var canLearnFromActivity: Bool {
+        canTrackActivity && !policy.lockPending && awaitingHost == nil
+    }
+    var locallyActive: Bool {
+        activityCalibration.preventsLock(now: now, localIdle: idleSeconds())
     }
     init(target: UUID, policy: PresencePolicy, observing: Bool = false,
          calibrating: Bool = false, baseline: Double? = nil) {
@@ -145,6 +170,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         self.calibrating = calibrating
         self.calibration = ProximityCalibration(baseline: baseline)
         self.policy.thresholdsReady = self.calibration.qualified
+        self.policy.setLockingEnabled(observing)
         super.init()
         // Keep BLE monitoring alive while the display is off. Closing the lid or
         // explicitly sleeping still suspends the Mac; process exit releases this assertion.
@@ -158,6 +184,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             if self?.calibrating == true { self?.calibrationFailed("电脑已睡眠，校准未保存，请重新校准") }
             self?.awake = false; self?.policy.suspend(); self?.awaitingHost = nil
             self?.returnWake.reset(); self?.lastRSSIAt = nil
+            self?.activityCalibration.reset(now: self?.now ?? 0)
             self?.invalidateHostGesture()
         })
         observers.append(notifications.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -179,7 +206,36 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         while let end = inputBuffer.firstIndex(of: 10) {
             let line = String(data: inputBuffer[..<end], encoding: .utf8) ?? ""
             inputBuffer.removeSubrange(...end)
-            if line == "lock-ready" { hostReady() }
+            let fields = line.split(separator: " ").map(String.init)
+            if fields.count == 4 && fields[0] == "baseline-options",
+               let revision = Int(fields[1]), revision >= activityCalibration.revision,
+               let mask = Int(fields[2]), (0...7).contains(mask),
+               let savedBaseline = Double(fields[3]), savedBaseline.isFinite, (-100 ... -20).contains(savedBaseline) {
+                activityCalibration.configure(mask: mask, revision: revision, now: now)
+                // The host's saved baseline wins over an in-flight update from
+                // an older options revision that the host has already rejected.
+                if calibration.baseline != savedBaseline {
+                    calibration = ProximityCalibration(baseline: savedBaseline)
+                    if let levels = calibration.thresholds() {
+                        policy.setThresholds(lock: levels.lockRSSI, unlock: levels.unlockRSSI)
+                    }
+                    policy.invalidateSignal(); returnWake.reset()
+                }
+                lastReportAt = -100
+            } else if fields.count == 3 && fields[0] == "baseline-activity",
+                      Int(fields[1]) == activityCalibration.revision,
+                      let source = ActivityCalibration.Source(rawValue: fields[2]), source != .keyboardMouse,
+                      canTrackActivity {
+                activityCalibration.activity(source, at: now, now: now)
+                if locallyActive {
+                    awaitingHost = nil; policy.cancelLockRequest(); lastReportAt = -100
+                }
+            } else if line == "host-connected 1" || line == "host-connected 0" {
+                hostConnection.update(connected: line.hasSuffix("1"), now: now)
+                refreshLockingAvailability()
+            } else if line == "lock-cancel" {
+                awaitingHost = nil; policy.cancelLockRequest()
+            } else if line == "lock-ready" { hostReady() }
             else if line == "gesture-ready 1" || line == "gesture-ready 0" {
                 let ready = line.hasSuffix("1")
                 let changed = ready != hostGestureReady
@@ -197,6 +253,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 if line == "gesture-unlock " + unlockToken && !unlockToken.isEmpty,
                    hostGestureReady && now - lastHostGestureState < 3,
                    hostInstalledUnlockToken == unlockToken,
+                   unlockSecret.isPrepared,
                    policy.requestGestureUnlock(now: now, locked: lockedSession(),
                     connected: peripheral?.state == .connected, permitted: permitted(), awake: awake) == .unlock {
                     unlockToken = ""
@@ -213,14 +270,23 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         hostGestureReady = false; lastHostGestureState = -100
         hostInstalledUnlockToken = ""; unlockToken = ""
     }
+    var lockingConnectionReady: Bool {
+        peripheral?.state == .connected && (observing || hostConnection.isConnected(now: now))
+    }
+    func refreshLockingAvailability() {
+        if peripheral?.state != .connected { policy.disconnected(now: now) }
+        policy.setLockingEnabled(lockingConnectionReady)
+        if !lockingConnectionReady { awaitingHost = nil }
+    }
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if central.state == .poweredOn { error = ""; discover() }
         else {
             if calibrating && central.state != .unknown && central.state != .resetting {
                 calibrationFailed("蓝牙未就绪，校准未保存")
             }
-            peripheral = nil; policy.disconnected(now: now)
+            peripheral = nil; policy.disconnected(now: now); refreshLockingAvailability()
             returnWake.reset(); lastRSSIAt = nil
+            activityCalibration.reset(now: now)
             invalidateHostGesture()
             error = central.state == .unauthorized ? "请在系统设置允许距离锁屏组件使用蓝牙" : "蓝牙未就绪，距离监测已暂停"
         }
@@ -249,6 +315,8 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connectedSince = now
+        awaitingHost = nil
+        activityCalibration.reset(now: now)
         invalidateHostGesture()
         returnWake.connectionChanged()
         policy.disconnected(now: now)
@@ -260,12 +328,16 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         if calibrating { calibrationFailed("连接失败，校准未保存，请重新校准") }
         self.peripheral = nil; connectedSince = nil; lastRSSIAt = nil; policy.disconnected(now: now)
+        refreshLockingAvailability()
+        activityCalibration.reset(now: now)
     }
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         if calibrating { calibrationFailed("校准期间戒指断连，原校准数据已保留") }
         returnWake.connectionChanged()
+        activityCalibration.reset(now: now)
         invalidateHostGesture()
         self.peripheral = nil; connectedSince = nil; lastRSSIAt = nil; policy.disconnected(now: now)
+        refreshLockingAvailability()
         discover() // Queue the OS reconnect immediately; do not wait for the next scan interval.
     }
     func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
@@ -278,6 +350,23 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         let sampleTime = now
         let previousSampleTime = lastRSSIAt
         lastRSSIAt = sampleTime
+        if canTrackActivity {
+            let idle = keyboardMouseIdleSeconds()
+            activityCalibration.activity(.keyboardMouse, at: sampleTime - idle, now: sampleTime)
+            if canLearnFromActivity,
+               let capture = activityCalibration.observe(value, now: sampleTime, eligible: true) {
+                calibration = ProximityCalibration(baseline: capture.baseline)
+                if let thresholds = calibration.thresholds() {
+                    policy.setThresholds(lock: thresholds.lockRSSI, unlock: thresholds.unlockRSSI)
+                }
+                policy.invalidateSignal(); returnWake.reset()
+                lastReportAt = -100
+                emit(["event": "baseline_updated", "device": target.uuidString.lowercased(),
+                      "revision": activityCalibration.revision, "baseline": capture.baseline,
+                      "samples": capture.readings, "duration_seconds": capture.duration,
+                      "sources": capture.sources])
+            }
+        }
         policy.sample(value, now: sampleTime)
         returnWake.sample(policy.smoothedRSSI ?? value, now: sampleTime, farThreshold: policy.lockRSSI)
         let collecting = calibrating
@@ -309,7 +398,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                                                      kIOPMUserActiveLocal, &displayActivityAssertion)
         var report: [String: Any] = ["event": "return_wake", "success": result == kIOReturnSuccess, "result": result,
               "owned": policy.ownsLock,
-              "unlock_ready": policy.awaitingGesture && hostGestureReady && now - lastHostGestureState < 3
+              "unlock_ready": policy.awaitingGesture && unlockSecret.isPrepared && hostGestureReady && now - lastHostGestureState < 3
                               && !unlockToken.isEmpty && hostInstalledUnlockToken == unlockToken]
         if let returnConfirmedAt { report["return_to_wake_ms"] = (now - returnConfirmedAt) * 1000 }
         emit(report)
@@ -345,6 +434,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         let discoveryInterval = locked == true || returnWake.awaitingReturn ? 1.0 : 10.0
         if now - lastDiscovery >= discoveryInterval { discover() }
         let connected = peripheral?.state == .connected
+        refreshLockingAvailability()
         if connected { if connectedSince == nil { connectedSince = now } } else { connectedSince = nil }
         // Request RSSI faster while locked/away; normal monitoring and manual
         // calibration request 2 Hz. Actual callback cadence can be much slower.
@@ -354,31 +444,47 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             lastRSSIRequestAt = now; peripheral?.readRSSI()
         }
         if calibrating { calibrationTick(); return }
+        if !canTrackActivity { activityCalibration.reset(now: now) }
+        else { activityCalibration.expire(now: now) }
         // Change boundaries only through the policy, which resets pending dwell.
         let learned = calibration.thresholds()
         policy.thresholdsReady = learned != nil
         if let learned { policy.setThresholds(lock: learned.lockRSSI, unlock: learned.unlockRSSI) }
         if locked != lastLock {
+            lastReportAt = -100 // Install the snap route as soon as any lock is observed.
+            if locked == true { awaitingHost = nil }
             if let locked, lastLock != nil { emit(["event": locked ? "locked" : "unlocked"]) }
-            if locked == false && lastLock == true { error = ""; unlockSecret.discard() }
+            if locked == false && lastLock == true {
+                error = ""; unlockSecret.discard(); invalidateHostGesture()
+            }
             lastLock = locked
         }
+        if locked == nil { unlockSecret.discard(); invalidateHostGesture() }
         // Turning Bluetooth off is not evidence that the wearer walked away.
         if let action = policy.step(now: now, locked: locked, connected: connected,
                                     permitted: permission && central.state == .poweredOn, awake: awake,
-                                    locallyActive: idleSeconds() < 3) {
+                                    locallyActive: locallyActive) {
             if observing { emit(["event": "would_act", "action": action == .lock ? "lock" : "unlock"]) }
             else if action == .lock {
                 awaitingHost = now; emit(["event": "prepare_lock", "reason": policy.lastLockReason,
                                          "lock": policy.lockRSSI, "unlock": policy.unlockRSSI])
             }
         }
+        if !policy.lockPending { awaitingHost = nil }
         if let pending = awaitingHost, now - pending > 2 { fail("主程序未响应，未执行锁屏；请重新开启此功能") }
         if policy.failed && error.isEmpty { fail("系统未确认锁定或解锁；请手动解锁后重新开启此功能") }
+        // Manual/idle locks have no prepare_lock handshake. Arm once while
+        // unlocked, and re-arm only after the previous lock has ended.
+        if !observing && awake && permission && locked == false && !policy.failed {
+            if !unlockSecret.prepare(locked: lockedSession(), load: { credential() }) {
+                // A lock racing this tick keeps the already prepared credential.
+                if lockedSession() == false { fail("无法准备解锁凭据，请在设置中允许访问已存密码后重新开启功能") }
+            }
+        }
         let didReturn = returnWake.step(now: now, locked: locked, connected: connected,
                            available: awake && permission && central.state == .poweredOn
                                       && policy.thresholdsReady && !policy.failed,
-                           locallyActive: idleSeconds() < 3, rawRSSI: lastRawRSSI, sampledAt: lastRSSIAt,
+                           locallyActive: locallyActive, rawRSSI: lastRawRSSI, sampledAt: lastRSSIAt,
                            weakDisconnect: policy.disconnectEvidence == "weak",
                            farThreshold: policy.lockRSSI, nearThreshold: policy.unlockRSSI,
                            awaySamples: policy.awaySamples, lostDelay: policy.lostDelay)
@@ -388,14 +494,15 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                   "signal_source": "raw", "smoothed_rssi": policy.smoothedRSSI ?? 0,
                   "threshold": policy.unlockRSSI])
         } else if !returnWake.returnConfirmed { returnConfirmedAt = nil }
-        let canOfferGesture = !observing && locked == true && policy.awaitingGesture && awake && permission
+        let canOfferGesture = !observing && locked == true && policy.awaitingGesture
+                              && unlockSecret.isPrepared && awake && permission && central.state == .poweredOn
         if canOfferGesture {
             if unlockToken.isEmpty { unlockToken = UUID().uuidString.lowercased() }
         } else { unlockToken = ""; hostInstalledUnlockToken = "" }
         let gestureReady = connected && hostGestureReady && now - lastHostGestureState < 3
         let unlockReady = canOfferGesture && gestureReady && hostInstalledUnlockToken == unlockToken
         let didWake = returnDisplay.step(returnConfirmed: returnWake.returnConfirmed, locked: locked == true,
-                              ownsLock: policy.ownsLock,
+                              requiresGesture: canOfferGesture,
                               available: awake && permission && central.state == .poweredOn && !policy.failed,
                               connected: connected, gestureReady: gestureReady,
                               token: unlockToken, installedToken: hostInstalledUnlockToken)
@@ -406,15 +513,18 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         if didReturn || didWake || now - lastReportAt >= 1 {
             lastReportAt = now
             let state = !permission ? "需要辅助功能权限" : !awake ? "电脑睡眠中" : policy.failed ? "自动操作已暂停" :
-                    locked == true ? (policy.ownsLock ? (unlockReady ? "手势已连接，请弹指（snap）解锁" :
-                        returnWake.returnConfirmed ? "已确认返回，正在恢复戒指手势连接" : "已离开锁屏，等待确认戒指返回") : "手动锁屏，请使用系统方式解锁") :
-                    !connected ? (policy.disconnectEvidence == "weak" ? "远离后断连，等待锁屏" : "近处或信号未知时断连，不自动锁屏") :
+                    locked == true ? (canOfferGesture ? (unlockReady ? "手势已连接，请弹指（snap）解锁" :
+                        "屏幕已锁定，正在恢复戒指手势连接") : "本次锁屏未准备解锁凭据，请先使用系统方式解锁") :
+                    !connected ? "戒指已断连，正在重连；远离锁屏已暂停" :
+                    !policy.lockingEnabled ? "主程序已断开，远离锁屏已暂停" :
+                    locallyActive ? "检测到近期操作，暂缓远离锁屏" :
                     policy.armed ? "正在监测距离" : "请把戒指靠近电脑，正在确认信号"
             let note = learningNote
             var report: [String: Any] = ["event": "monitor", "permission": permission,
                 "connected": connected, "armed": policy.armed, "owned": policy.ownsLock,
-                "reconnect_allowed": returnWake.returnConfirmed && policy.awaitingGesture && locked == true
-                                     && awake && permission && central.state == .poweredOn,
+                "locking_enabled": policy.lockingEnabled,
+                "reconnect_allowed": canOfferGesture,
+                "gesture_eligible": canOfferGesture,
                 "locked": locked ?? false, "lock_pending": awaitingHost != nil || policy.lockPending,
                 "unlock_token": canOfferGesture && gestureReady ? unlockToken : "",
                 "gesture_ready": gestureReady, "unlock_ready": unlockReady,
@@ -424,6 +534,9 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 "calibration_samples": calibration.samples,
                 "calibration_window": calibration.samples,
                 "calibration_active": false,
+                "activity_calibration_samples": activityCalibration.samples,
+                "activity_calibration_active": canLearnFromActivity && !activityCalibration.activeSources(now: now).isEmpty,
+                "activity_lock_protected": locallyActive,
                 "rssi_samples": rssiSamples,
                 "thresholds_ready": policy.thresholdsReady, "disconnect_evidence": policy.disconnectEvidence,
                 "awaiting_return": returnWake.awaitingReturn,
@@ -447,10 +560,12 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         return "尚未校准，请在设置中采集 10 秒基线"
     }
     func hostReady() {
+        refreshLockingAvailability()
         guard !observing, let requested = awaitingHost, now - requested <= 2,
+              policy.lockPending, lockingConnectionReady,
               lockedSession() == false, permitted(), awake else { return }
-        if idleSeconds() < 3 {
-            awaitingHost = nil; policy.cancelLockRequest(); unlockSecret.discard(); return
+        if locallyActive {
+            awaitingHost = nil; policy.cancelLockRequest(); return
         }
         awaitingHost = nil
         guard unlockSecret.prepare(locked: lockedSession(), load: { credential() }) else {
@@ -460,17 +575,17 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard lockedSession() == false, permitted(), awake else {
             fail("锁屏条件已改变，未执行锁屏"); return
         }
-        if idleSeconds() < 3 { policy.cancelLockRequest(); unlockSecret.discard(); return }
+        if locallyActive || !lockingConnectionReady { policy.cancelLockRequest(); return }
         key(12, flags: [.maskControl, .maskCommand]) // macOS Lock Screen: Control-Command-Q
     }
     func unlock() {
-        guard !observing, awake, policy.ownsLock, lockedSession() == true, permitted() else { fail("解锁条件已改变，未输入密码"); return }
+        guard !observing, awake, policy.unlockPending, lockedSession() == true, permitted() else { fail("解锁条件已改变，未输入密码"); return }
         var assertion: IOPMAssertionID = 0
         IOPMAssertionDeclareUserActivity("ProxiMic ring returned" as CFString, kIOPMUserActiveLocal, &assertion)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            guard let self, self.awake, self.policy.ownsLock, lockedSession() == true, permitted(),
+            guard let self, self.awake, self.policy.unlockPending, lockedSession() == true, permitted(),
                   self.peripheral?.state == .connected else { self?.fail("解锁条件已改变，请手动解锁"); return }
-            guard var secret = self.unlockSecret.take(locked: lockedSession(), ownsLock: self.policy.ownsLock), !secret.isEmpty,
+            guard var secret = self.unlockSecret.take(locked: lockedSession()), !secret.isEmpty,
                   let password = String(data: secret, encoding: .utf8), password.utf16.count <= 128 else {
                 self.fail("本次锁屏没有可用的解锁凭据，请手动解锁后重新开启功能"); return
             }
@@ -520,6 +635,9 @@ case "authorize":
     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     status()
 case "monitor", "observe":
+    if args.first == "monitor" && lockedSession() != false {
+        emit(["event": "error", "error": "请先使用系统方式解锁电脑，再开启响指解锁功能"]); exit(2)
+    }
     guard (args.count == 4 || args.count == 5), let uuid = UUID(uuidString: args[1]),
           let away = Int(args[2]), let lost = Int(args[3]),
           away >= 1, away <= 60, lost >= 5, lost <= 120,
@@ -530,6 +648,7 @@ case "monitor", "observe":
     }
     let monitor = Monitor(target: uuid, policy: PresencePolicy(awaySamples: away, lostDelay: Double(lost)),
                           observing: args.first == "observe", baseline: baseline)
+    monitor.tick() // Prepare before the user can lock immediately after enabling.
     withExtendedLifetime(monitor) { app.run() }
 case "calibrate":
     guard args.count == 2, let uuid = UUID(uuidString: args[1]), lockedSession() == false else {

@@ -60,6 +60,14 @@ Item {
                 box(3,3,7,7,1); box(14,3,7,7,1); box(3,14,7,7,1); box(14,14,7,7,1)
             } else if (icon.symbol === "arrow") {
                 line([4,12,20,12]); line([15,7,20,12,15,17])
+            } else if (icon.symbol === "chevron-left") {
+                line([15,6,9,12,15,18])
+            } else if (icon.symbol === "minus") {
+                c.lineWidth = 2.4
+                line([6,12,18,12])
+            } else if (icon.symbol === "trash") {
+                line([4,6,20,6]); line([9,6,9,3,15,3,15,6])
+                line([6,6,7,21,17,21,18,6]); line([10,10,10,17]); line([14,10,14,17])
             }
         }
     }

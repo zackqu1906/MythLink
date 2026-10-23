@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.mac_permissions import (MacPermissionError, PermissionState,
+from proximic_ring.platforms.macos.mac_permissions import (MacPermissionError, PermissionState,
     read_permission_state, require_post_event_access, running_identity)
 
 
@@ -64,7 +64,7 @@ def test_source_run_does_not_claim_the_packaged_app_is_responsible(monkeypatch):
 def test_monitor_updates_and_rejects_older_success_after_key_failure(monkeypatch):
     from PySide6.QtCore import QCoreApplication
     from PySide6.QtTest import QTest
-    from proximic_ring.ui.mac_permissions_controller import MacPermissionsController
+    from proximic_ring.ui.permissions.mac_permissions_controller import MacPermissionsController
     monkeypatch.setattr(sys, "platform", "darwin")
     app = QCoreApplication.instance() or QCoreApplication([])
     values = iter([PermissionState(False, False), PermissionState(True, True)])
@@ -96,7 +96,7 @@ def test_monitor_updates_and_rejects_older_success_after_key_failure(monkeypatch
 def test_background_timer_observes_grant_and_revocation_without_activation(monkeypatch):
     from PySide6.QtCore import QCoreApplication
     from PySide6.QtTest import QTest
-    from proximic_ring.ui import mac_permissions_controller as module
+    from proximic_ring.ui.permissions import mac_permissions_controller as module
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(module.MacPermissionsController, "WAITING_INTERVAL_MS", 20)
     monkeypatch.setattr(module.MacPermissionsController, "READY_INTERVAL_MS", 60)
@@ -138,7 +138,7 @@ def test_slow_permission_check_does_not_spawn_overlapping_checks(monkeypatch):
     import threading
     from PySide6.QtCore import QCoreApplication
     from PySide6.QtTest import QTest
-    from proximic_ring.ui.mac_permissions_controller import MacPermissionsController
+    from proximic_ring.ui.permissions.mac_permissions_controller import MacPermissionsController
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(MacPermissionsController, "WAITING_INTERVAL_MS", 10)
     app = QCoreApplication.instance() or QCoreApplication([])
@@ -161,7 +161,7 @@ def test_slow_permission_check_does_not_spawn_overlapping_checks(monkeypatch):
 
 def test_disabled_monitor_never_requests_macos_permissions():
     from PySide6.QtCore import QCoreApplication
-    from proximic_ring.ui.mac_permissions_controller import MacPermissionsController
+    from proximic_ring.ui.permissions.mac_permissions_controller import MacPermissionsController
     app = QCoreApplication.instance() or QCoreApplication([])
     monitor = MacPermissionsController(enabled=False, reader=lambda: pytest.fail("no macOS check"))
     monitor.refresh()
@@ -173,7 +173,7 @@ def test_disabled_monitor_never_requests_macos_permissions():
 
 def test_device_permission_notices_are_passive_and_unknown_is_not_denied(monkeypatch):
     from PySide6.QtCore import QCoreApplication, Qt
-    from proximic_ring.ui.mac_permissions_controller import MacPermissionsController
+    from proximic_ring.ui.permissions.mac_permissions_controller import MacPermissionsController
     app = QCoreApplication.instance() or QCoreApplication([])
     status = Qt.PermissionStatus.Denied
     monkeypatch.setattr(app, "checkPermission", lambda permission: status)
@@ -192,7 +192,7 @@ def test_device_permission_notices_are_passive_and_unknown_is_not_denied(monkeyp
 
 @pytest.mark.parametrize("trusted,post", [(False, False), (True, False), (True, True)])
 def test_accessibility_request_uses_native_prompt_and_skips_granted(monkeypatch, trusted, post):
-    from proximic_ring.mac_permissions import request_accessibility_access
+    from proximic_ring.platforms.macos.mac_permissions import request_accessibility_access
     calls = []
     monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(
         AXIsProcessTrusted=lambda: trusted, kAXTrustedCheckOptionPrompt="prompt",
@@ -209,7 +209,7 @@ def test_native_request_is_separate_from_opening_settings_and_never_grants_from_
     import threading
     from PySide6.QtCore import QCoreApplication
     from PySide6.QtTest import QTest
-    from proximic_ring.ui import mac_permissions_controller as module
+    from proximic_ring.ui.permissions import mac_permissions_controller as module
     app = QCoreApplication.instance() or QCoreApplication([])
     release = threading.Event()
     calls, finished = [], []
@@ -251,7 +251,7 @@ def test_closed_monitor_discards_native_request_completion(monkeypatch):
     import threading
     from PySide6.QtCore import QCoreApplication
     from PySide6.QtTest import QTest
-    from proximic_ring.ui import mac_permissions_controller as module
+    from proximic_ring.ui.permissions import mac_permissions_controller as module
     app = QCoreApplication.instance() or QCoreApplication([])
     release = threading.Event()
     finished = []
@@ -273,7 +273,7 @@ def test_closed_monitor_discards_native_request_completion(monkeypatch):
 
 
 def test_permission_scope_separates_source_installed_copies_and_adhoc_updates(monkeypatch, tmp_path):
-    import proximic_ring.mac_permissions as module
+    import proximic_ring.platforms.macos.mac_permissions as module
     executable = tmp_path / 'Mythlink.app/Contents/MacOS/Mythlink'
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b'code')
@@ -298,7 +298,7 @@ def test_permission_scope_separates_source_installed_copies_and_adhoc_updates(mo
 
 @pytest.mark.parametrize('missing_backend', [False, True])
 def test_permission_status_report_is_read_only_and_detects_missing_qt_backend(monkeypatch, tmp_path, missing_backend):
-    import proximic_ring.mac_permissions as module
+    import proximic_ring.platforms.macos.mac_permissions as module
     from PySide6 import QtCore
     settings = QtCore.QSettings(str(tmp_path / 'report.ini'), QtCore.QSettings.IniFormat)
     settings.setValue('onboarding/nativePermissionsV2Attempted', ['bluetooth'])

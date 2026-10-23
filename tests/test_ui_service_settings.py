@@ -52,7 +52,7 @@ def screenshot(root, tmp_path, name):
     assert root.grabWindow().save(str(shots / name))
 
 
-@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
 def test_service_navigation_preserves_custom_profiles_and_live_voice(inline_ui, tmp_path, size):
     from PySide6.QtCore import QPointF
     from PySide6.QtTest import QTest

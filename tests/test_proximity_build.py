@@ -13,6 +13,7 @@ def test_unchanged_helper_is_not_resigned(tmp_path):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     shutil.copyfile(repo / "scripts/build-proximity.sh", scripts / "build-proximity.sh")
+    shutil.copyfile(repo / "scripts/macos-signing-env.sh", scripts / "macos-signing-env.sh")
     native = tmp_path / "native/ProxiMicPresence"
     native.mkdir(parents=True)
     for name in ("Policy.swift", "Calibration.swift", "UnlockSecret.swift", "ReturnWakePolicy.swift", "main.swift", "Info.plist"):
@@ -35,7 +36,9 @@ exit 0
 ''')
     for tool in bin_dir.iterdir(): tool.chmod(0o755)
     calls = tmp_path / "calls"
-    env = {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"], "BUILD_CALLS": str(calls)}
+    env = {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+           "BUILD_CALLS": str(calls), "PROXIMIC_ALLOW_ADHOC_SIGNING": "1",
+           "APPLE_SIGNING_IDENTITY": "-"}
     def run(path):
         return subprocess.run(["/bin/zsh", str(path)], cwd=tmp_path, env=env,
                               text=True, capture_output=True, check=True).stdout

@@ -2,8 +2,8 @@
 from types import SimpleNamespace
 import pytest
 
-from proximic_ring.scenes.recognition.focus import inspect_focus
-from proximic_ring.scene_diagnostics import SceneActionError
+from proximic_ring.scenes.recognition.focus import inspect_focus, MAX_FOCUS_DEPTH
+from proximic_ring.diagnostics.scene_diagnostics import SceneActionError
 from test_activity_scenes import metadata
 from test_presentation_portability import native_backend
 from test_app_shortcuts import desktop
@@ -67,7 +67,7 @@ def test_unfocused_web_root_never_bypasses_real_blockers_or_incomplete_ownership
     if state == 'cycle': web['AXParent'] = web
     if state == 'depth':
         parent=window
-        for _ in range(25): parent=dict(AXRole='AXGroup', AXParent=parent)
+        for _ in range(MAX_FOCUS_DEPTH): parent=dict(AXRole='AXGroup', AXParent=parent)
         web['AXParent']=parent
     if state == 'disabled_window': window['AXEnabled'] = False
     assert inspect_focus(window, web, metadata, window_shortcut=True).blocked
@@ -100,7 +100,7 @@ def test_repeated_tab_navigation_posts_after_leaving_text_field_in_all_browsers(
 
 @pytest.mark.parametrize('change', ['app', 'pid', 'window', 'menu', 'disabled', 'missing_parent'])
 def test_switch_between_capture_and_post_still_cancels_without_posting(monkeypatch, desktop, change):
-    import proximic_ring.mac_workspace as workspace
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     _, state, _ = desktop
     window, web = document_window()
     backend, root, _ = native_backend(monkeypatch, window, web, bundle='com.apple.Safari')

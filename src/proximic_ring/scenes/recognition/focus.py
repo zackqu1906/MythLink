@@ -2,6 +2,9 @@
 from dataclasses import dataclass, field
 
 TEXT_ROLES = {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"}
+# Electron composers can have 30 ancestors (observed in Codex). Keep the full
+# ownership walk bounded while allowing those real trees to reach their window.
+MAX_FOCUS_DEPTH = 64
 SAFE_ROLES = {"AXWindow", "AXButton", "AXImage", "AXGroup", "AXLayoutArea", "AXScrollArea",
               "AXStaticText", "AXToolbar", "AXSplitGroup", "AXSlider", "AXValueIndicator",
               "AXTable", "AXRow", "AXList", "AXOutline", "AXGrid", "AXCheckBox", "AXRadioButton",
@@ -51,7 +54,7 @@ def inspect_focus(window, focus, read, *, window_reference=True, window_shortcut
     node, ancestors, context = focus, [], "nontext"
     reason = "nontext"
     disabled_containers, unfocused_containers = [], []
-    for _ in range(24):
+    for _ in range(MAX_FOCUS_DEPTH):
         if node is None or any(node is previous for previous in ancestors):
             return FocusSnapshot(blocked=bool(disabled_containers or unfocused_containers), reason="focus_chain_incomplete")
         ancestors.append(node)

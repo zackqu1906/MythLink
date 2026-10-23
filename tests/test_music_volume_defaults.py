@@ -5,7 +5,7 @@ import json
 import pytest
 from PySide6.QtCore import QCoreApplication
 from proximic_ring.scene_defaults import scene_defaults, resolve_action, migrate_music_volume_defaults
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
 from test_gesture_scenes import presentation
 from test_scene_defaults import add, menu

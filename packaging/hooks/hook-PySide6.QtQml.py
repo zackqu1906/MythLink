@@ -15,12 +15,15 @@ _ROOTS = {
     "PySide6/Qt/qml/QtCore",
     "PySide6/Qt/qml/QtQml",
     "PySide6/Qt/qml/QtQuick",
+    "PySide6/Qt/qml/QtWebEngine",
+    "PySide6/Qt/qml/QtWebChannel",
 }
 
 _EXCLUDED_QML_SUBTREES = {
     "PySide6/Qt/qml/QtQml/StateMachine",
     "PySide6/Qt/qml/QtQml/XmlListModel",
-    # The UI imports QtQuick, Window, Layouts and Material Controls only.
+    # Keep Shapes for the Agent's vector action icons, alongside QtQuick,
+    # Window, Layouts and Material Controls.
     # These optional modules pull in sizeable, otherwise unused Qt frameworks.
     "PySide6/Qt/qml/QtQuick/Dialogs",
     "PySide6/Qt/qml/QtQuick/Effects",
@@ -30,7 +33,6 @@ _EXCLUDED_QML_SUBTREES = {
     "PySide6/Qt/qml/QtQuick/Pdf",
     "PySide6/Qt/qml/QtQuick/Scene2D",
     "PySide6/Qt/qml/QtQuick/Scene3D",
-    "PySide6/Qt/qml/QtQuick/Shapes",
     "PySide6/Qt/qml/QtQuick/Timeline",
     "PySide6/Qt/qml/QtQuick/VectorImage",
     "PySide6/Qt/qml/QtQuick/VirtualKeyboard",

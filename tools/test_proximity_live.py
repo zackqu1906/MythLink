@@ -30,11 +30,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from proximic_ring.audio import RingAudioSource  # noqa: E402
-from proximic_ring.config import DetectorConfig  # noqa: E402
-from proximic_ring.detector import ProxiMicDetector  # noqa: E402
-from proximic_ring.events import Stage1Event, Stage2Event  # noqa: E402
-from proximic_ring.model import ProxiMicModel  # noqa: E402
-from proximic_ring.pipeline import LegacyInferencePipeline  # noqa: E402
+from proximic_ring.voice.detection.config import DetectorConfig  # noqa: E402
+from proximic_ring.voice.detection.detector import ProxiMicDetector  # noqa: E402
+from proximic_ring.voice.detection.events import Stage1Event, Stage2Event  # noqa: E402
+from proximic_ring.voice.detection.model import ProxiMicModel  # noqa: E402
+from proximic_ring.voice.detection.pipeline import LegacyInferencePipeline  # noqa: E402
 
 
 DEFAULT_MODEL_PATH = SRC_ROOT / "proximic_ring" / "assets" / "ringo-near-v2.model"

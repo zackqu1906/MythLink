@@ -1,4 +1,4 @@
-from proximic_ring.push_to_talk import PushToTalkState
+from proximic_ring.platforms.windows.push_to_talk import PushToTalkState
 
 
 def test_push_to_talk_state_reports_only_real_transitions():

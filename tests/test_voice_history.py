@@ -7,7 +7,7 @@ import wave
 
 import numpy as np
 
-from proximic_ring.voice_history import VoiceHistoryStore
+from proximic_ring.voice.voice_history import VoiceHistoryStore
 
 
 def _final(session_id: int, text: str):

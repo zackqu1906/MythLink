@@ -1,0 +1,17 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="48" height="28" viewBox="0 0 48 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Field/Switch v2" filter="url(#filter0_d_0_22)">
+<path d="M2 14C2 7.37258 7.37258 2 14 2H34C40.6274 2 46 7.37258 46 14V14C46 20.6274 40.6274 26 34 26H14C7.37258 26 2 20.6274 2 14V14Z" fill="#0225BA"/>
+<circle id="Ellipse" cx="34" cy="14" r="10" fill="white"/>
+</g>
+<defs>
+<filter id="filter0_d_0_22" x="0" y="0" width="48" height="28" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feMorphology radius="2" operator="dilate" in="SourceAlpha" result="effect1_dropShadow_0_22"/>
+<feOffset/>
+<feColorMatrix type="matrix" values="0 0 0 0 0.00784314 0 0 0 0 0.145098 0 0 0 0 0.729412 0 0 0 1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_0_22"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_0_22" result="shape"/>
+</filter>
+</defs>
+</svg>

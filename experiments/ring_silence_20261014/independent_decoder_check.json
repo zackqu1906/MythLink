@@ -1,0 +1,74 @@
+[
+  {
+    "time": "2026-10-14T13:36:38.179+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_133632/ring_audio.wav",
+    "sequence": 29,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  },
+  {
+    "time": "2026-10-14T13:37:08.254+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_133632/ring_audio.wav",
+    "sequence": 330,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  },
+  {
+    "time": "2026-10-14T13:37:38.342+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_133632/ring_audio.wav",
+    "sequence": 631,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  },
+  {
+    "time": "2026-10-14T13:50:09.116+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_135003/ring_audio.wav",
+    "sequence": 29,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  },
+  {
+    "time": "2026-10-14T13:50:39.236+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_135003/ring_audio.wav",
+    "sequence": 331,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  },
+  {
+    "time": "2026-10-14T13:51:16.256+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_135110/ring_audio.wav",
+    "sequence": 29,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  },
+  {
+    "time": "2026-10-14T13:51:46.257+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_135110/ring_audio.wav",
+    "sequence": 330,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  },
+  {
+    "time": "2026-10-14T13:52:16.274+08:00",
+    "capture": "/Users/admin/Downloads/ProximicVoice-main/data/session/20261014_135110/ring_audio.wav",
+    "sequence": 631,
+    "encoded_sha256": "f3078e65d24621624a2b6aa0dd96b8baf4b9d8365245898a34fc9da9841cb3fd",
+    "decoded_matches_sdk": true,
+    "independent_pcm_sha256": "5a312281df4bd8dfbb4d4a94ad0bf44d01bb8cfced1206b90e21b4ca0568cdb1",
+    "nonzero_bytes": 0
+  }
+]

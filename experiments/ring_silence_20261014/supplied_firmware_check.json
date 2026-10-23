@@ -1,0 +1,34 @@
+{
+  "supplied_path": "/Users/admin/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_b2bywlovxi4412_b258/msg/file/2026-10/dfu_application.zip",
+  "archive_sha256": "fdf1187a83601bc15e2553d50ba3d26a113ee677e8f825b72b68093fb557d686",
+  "identical_to_existing_archive": true,
+  "manifest": {
+    "format-version": 1,
+    "time": 1790153764,
+    "files": [
+      {
+        "type": "application",
+        "board": "nrf54l15dk",
+        "soc": "nrf54l15",
+        "load_address": 57344,
+        "image_index": "0",
+        "slot_index_primary": "1",
+        "slot_index_secondary": "2",
+        "version_MCUBOOT": "1.2.133+0",
+        "size": 552392,
+        "file": "ring-firmware.signed.bin",
+        "modtime": 1790153763
+      }
+    ],
+    "name": "ring-firmware"
+  },
+  "binary_sha256": "6977f823b1552544cda8753870028373bf9494ff334474b54c5cb1b0ed85966c",
+  "files": [
+    "ring-firmware.signed.bin",
+    "manifest.json"
+  ],
+  "source_or_debug_symbol_files_present": false,
+  "same_version_as_connected_device": true,
+  "device_binary_identity_verified": false,
+  "flashed": false
+}

@@ -1,0 +1,177 @@
+{
+  "device": {
+    "name": "Ringo8F56",
+    "address": "C23BC3B9-2293-AE6A-CD46-F03111E6EC4D",
+    "firmware": "1.2.133",
+    "transport": "ADPCM",
+    "decoded_audio": "PCM16LE / 16000 Hz / mono"
+  },
+  "user_observations": [
+    "Fault occurs worn and on desk, not charging.",
+    "Pause/start recognition has often appeared to restore recognition."
+  ],
+  "confirmed": [
+    "Mic-only capture reproduced sustained zero decoded samples before gestures or quaternion were started.",
+    "The same ADPCM MIC START as the local Android SDK reference is used: 20 00 01 80 80.",
+    "Repeated MIC OFF / 0.75 second pause / MIC ON did not restore audio during the faulty capture.",
+    "Explicit hardware/software 0 dB did not restore audio.",
+    "8 anomalous encoded blocks decoded independently with stdlib audioop; all PCM hashes matched SDK and were entirely zero.",
+    "Most faulty captures have identical first-second decoded bytes (SHA256 prefix af9bc0960f58dbd3) then entirely zero samples.",
+    "GUI recognition toggle resets recognition/IME state; it does not issue MIC commands or disconnect BLE.",
+    "2026-10-14 13:50:20 pause / 13:50:21 start was followed by another entirely zero 6.82s utterance.",
+    "Second start at 13:50:33.920; incoming ADPCM began decoding nonzero at 13:50:44.096, about 10.2s later.",
+    "Following utterances at 13:50:47 and 13:50:57 had nonzero audio and final text committed to the input client."
+  ],
+  "inconclusive": [
+    "Raw PCM transport returned no audio blocks; this cannot distinguish capture from encoder failure.",
+    "Software reboot request returned no success acknowledgement and uptime advanced from 10039139 to 10053007 ms; reboot was NOT confirmed. Original reboot.log phase labels describe an attempted reboot, not success.",
+    "Device-side capture, encoder, firmware state, and intermittent hardware faults are not yet separated.",
+    "No root-cause repair or reliable recovery has been verified."
+  ],
+  "firmware_source_available": false,
+  "captures": {
+    ".": {
+      "mic_only_default": {
+        "blocks": 59,
+        "zero_blocks": 0,
+        "tail_nonzero_samples": 31949
+      },
+      "mic_restart_default": {
+        "blocks": 58,
+        "zero_blocks": 0,
+        "tail_nonzero_samples": 31943
+      },
+      "mic_with_gestures": {
+        "blocks": 60,
+        "zero_blocks": 0,
+        "tail_nonzero_samples": 31942
+      },
+      "mic_with_gestures_and_quaternion": {
+        "blocks": 62,
+        "zero_blocks": 0,
+        "tail_nonzero_samples": 31945
+      },
+      "mic_explicit_zero_db": {
+        "blocks": 59,
+        "zero_blocks": 0,
+        "tail_nonzero_samples": 29677
+      },
+      "mic_restored_default": {
+        "blocks": 59,
+        "zero_blocks": 0,
+        "tail_nonzero_samples": 31936
+      }
+    },
+    "repeat": {
+      "mic_only_default": {
+        "blocks": 39,
+        "zero_blocks": 32,
+        "tail_nonzero_samples": 0
+      },
+      "mic_restart_default": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      },
+      "mic_with_gestures": {
+        "blocks": 41,
+        "zero_blocks": 41,
+        "tail_nonzero_samples": 0
+      },
+      "mic_with_gestures_and_quaternion": {
+        "blocks": 41,
+        "zero_blocks": 41,
+        "tail_nonzero_samples": 0
+      },
+      "mic_explicit_zero_db": {
+        "blocks": 37,
+        "zero_blocks": 27,
+        "tail_nonzero_samples": 0
+      },
+      "mic_restored_default": {
+        "blocks": 37,
+        "zero_blocks": 30,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_1": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_2": {
+        "blocks": 36,
+        "zero_blocks": 29,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_3": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_4": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_5": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_6": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_7": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      },
+      "repeated_start_8": {
+        "blocks": 38,
+        "zero_blocks": 31,
+        "tail_nonzero_samples": 0
+      }
+    },
+    "codecs": {
+      "codec_adpcm": {
+        "blocks": 116,
+        "zero_blocks": 102,
+        "tail_nonzero_samples": 0
+      }
+    },
+    "reboot": {
+      "before_reboot": {
+        "blocks": 59,
+        "zero_blocks": 0,
+        "tail_nonzero_samples": 31930
+      },
+      "after_reboot": {
+        "blocks": 59,
+        "zero_blocks": 52,
+        "tail_nonzero_samples": 0
+      },
+      "after_reboot_restart_1": {
+        "blocks": 58,
+        "zero_blocks": 51,
+        "tail_nonzero_samples": 0
+      },
+      "after_reboot_restart_2": {
+        "blocks": 58,
+        "zero_blocks": 51,
+        "tail_nonzero_samples": 0
+      },
+      "after_reboot_restart_3": {
+        "blocks": 58,
+        "zero_blocks": 51,
+        "tail_nonzero_samples": 0
+      },
+      "after_reboot_restart_4": {
+        "blocks": 58,
+        "zero_blocks": 51,
+        "tail_nonzero_samples": 0
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import numpy as np
 
-from proximic_ring.pcm import decode_pcm16le
+from proximic_ring.audio.pcm import decode_pcm16le
 
 
 def test_standard_pcm16le_decoder():

@@ -17,6 +17,9 @@ class IMKInputController: NSObject {
     func client() -> IMKTextInput? { nil }
 }
 final class ActionPanel {
+    static var sentCount = 0
+    func showSent() { Self.sentCount += 1 }
+    func showNotice(_ text: String) {}
     static var displayedHints = VoiceHudBindings()
     static var displayedAppearance = VoiceHudAppearance()
     var onCancel: (() -> Void)?
@@ -27,6 +30,7 @@ final class ActionPanel {
     func configureGestureHints(_ hints: VoiceHudBindings) { Self.displayedHints = hints }
     func configureAppearance(_ value: VoiceHudAppearance) { Self.displayedAppearance = value }
     func update(_ session: CompositionSession, historyDepth: Int) {}
+    func showLearnedHotwords(_ words: [String]) {}
     func position(caret: NSRect?, clientLevel: Int32) {}
 }
 final class StrokeCandidatePanel {
@@ -51,7 +55,8 @@ final class LocalClient: NSObject, IMKTextInput {
     var text = ""
     var selection = NSRange(location: 0, length: 0)
     var marked = unspecifiedRange
-    func bundleIdentifier() -> String! { let f = onBundle; onBundle = nil; f?(); return "test.activation" }
+    var bundle = "test.activation"
+    func bundleIdentifier() -> String! { let f = onBundle; onBundle = nil; f?(); return bundle }
     func selectedRange() -> NSRange { reads += 1; let f = onRead; onRead = nil; f?(); return selection }
     func markedRange() -> NSRange { markedReads += 1; return marked }
     func length() -> Int { (text as NSString).length }
@@ -100,6 +105,49 @@ func firstSentence(_ controller: ProxiMicInputController, _ client: LocalClient)
     controller.receive(["type": "update", "client_id": id, "utterance_id": "first", "seq": 2, "text": "第一", "final": false])
     controller.receive(["type": "update", "client_id": id, "utterance_id": "first", "seq": 3, "text": "第一句话", "final": true])
     check(client.text == "第一句话" && !isValidRange(client.marked), "first Tap did not stream and commit")
+}
+
+func currentSession(_ controller: ProxiMicInputController) -> CompositionSession? {
+    (Mirror(reflecting: controller).children.first { $0.label == "sessionLifetime" }!.value as! CompositionSessionLifetime).current
+}
+
+// Source-launched Mythlink has an empty bundle ID. Committed undo must use
+// the same verified native selection/delete protocol as bundled clients.
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    client.bundle = ""
+    controller.activateServer(client); drainActivation()
+    firstSentence(controller, client)
+    let writes = client.writes
+    controller.receive(["type": "cancel", "client_id": currentClientID(controller), "utterance_id": "first", "seq": 4])
+    let adapter = Mirror(reflecting: controller).children.first { $0.label == "adapter" }!.value as! NativeInputClient?
+    check(adapter?.clientOperationPending == true, "unbundled undo skipped native key delivery")
+    check(client.writes == writes && client.text == "第一句话", "unbundled undo used an unreliable IMK replacement")
+    controller.deactivateServer(client)
+    print("PASS unbundled committed undo uses verified native selection before deletion")
+}
+
+for outcome in ["sent", "replaced"] {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation()
+    firstSentence(controller, client)
+    let id = currentClientID(controller)
+    let writes = client.writes, sentCount = ActionPanel.sentCount
+    controller.receive(["type": "end_input", "outcome": outcome, "client_id": id, "utterance_id": "first", "seq": 4])
+    check(currentSession(controller) == nil, "old session survived \(outcome)")
+    check(client.writes == writes && client.text == "第一句话", "retiring input changed submitted text")
+    check(ActionPanel.sentCount == sentCount + (outcome == "sent" ? 1 : 0), "wrong submitted feedback")
+    client.text = ""; client.selection = NSRange(location: 0, length: 0)
+    controller.receive(["type": "begin", "client_id": id, "utterance_id": "new-answer", "seq": 1])
+    controller.receive(["type": "end_input", "outcome": "sent", "client_id": id, "utterance_id": "first", "seq": 90])
+    controller.receive(["type": "update", "client_id": id, "utterance_id": "first", "seq": 91, "text": "旧结果", "final": true])
+    check(currentSession(controller)?.utteranceID == "new-answer" && client.text.isEmpty, "late completion replaced a new answer")
+    controller.receive(["type": "end_input", "outcome": "sent", "client_id": id, "utterance_id": "new-answer", "seq": 2])
+    check(currentSession(controller)?.phase == .listening, "unfinished input was reported as sent")
+    controller.receive(["type": "update", "client_id": id, "utterance_id": "new-answer", "seq": 3, "text": "新回答", "final": true])
+    check(client.text == "新回答", "next answer failed after retirement")
+    controller.deactivateServer(client)
+    print("PASS \(outcome) retires native input without writes, fences late replies, and starts a fresh answer")
 }
 
 for point in ["super", "bundle", "configure", "snapshot"] {

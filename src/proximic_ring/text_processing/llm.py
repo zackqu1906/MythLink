@@ -40,6 +40,8 @@ from .prompts import (
     EDIT_PROMPT,
     EDIT_TOOL_REQUIRED_PROMPT,
     INPUT_MODE_ROUTER_PROMPT,
+    POLISH_PROMPT,
+    HOTWORD_EXTRACTION_PROMPT,
 )
 
 
@@ -90,6 +92,48 @@ class OpenAICompatibleTextProcessor:
             tuple[str, str, str, str, int, str], LocalModelServer
         ] = {}
         self._local_server_lock = threading.RLock()
+
+    def extract_hotwords(self, before: str, instruction: str, after: str,
+                         settings: LLMSettings) -> list[str]:
+        """Background vocabulary learning, separate from all editing prompts/tools."""
+        from ..voice.hotwords import validated_hotwords
+        settings = replace(settings, enabled=True, timeout_s=min(settings.timeout_s, 10.0))
+        settings.validate()
+        if not before or not instruction or before == after:
+            return []
+        if normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL and settings.local_auto_start:
+            self._ensure_local_server(settings)
+        response = self._request_chat(
+            settings, system_prompt=HOTWORD_EXTRACTION_PROMPT,
+            user_content=json.dumps(dict(before=before, instruction=instruction, after=after), ensure_ascii=False),
+            temperature=0.0, max_tokens=1024, edit_tool=None,
+        )
+        if not isinstance(response, str):
+            raise ValueError("热词提取未返回 JSON 数组")
+        content = response.strip()
+        if content.startswith("```") and content.endswith("```"):
+            content = "\n".join(content.splitlines()[1:-1])
+        return validated_hotwords(json.loads(content), before, after)
+
+    def polish_with_trace(self, text: str, settings: LLMSettings) -> tuple[str, str]:
+        """Polish only this utterance; never enter instruction editing/racing."""
+        settings.validate()
+        if not settings.enabled:
+            raise ValueError("润色需要启用大模型")
+        raw_text = str(text or "").strip()
+        if not raw_text:
+            raise ValueError("本句没有可润色的文字")
+        if normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL and settings.local_auto_start:
+            self._ensure_local_server(settings)
+        response = self._request_chat(
+            settings, system_prompt=POLISH_PROMPT,
+            user_content=f"<语音转写>\n{raw_text}\n</语音转写>",
+            temperature=0.2, max_tokens=_text_output_budget(settings), edit_tool=None,
+        )
+        output = self._model_output_text(response)
+        if not isinstance(response, str) or not response.strip():
+            raise LLMResponseProcessingError("润色未返回正文，已保留听写", output)
+        return response.strip(), output
 
     def process(
         self,

@@ -24,10 +24,11 @@
     "sha256": "85b513ee297c5d3b47f04fd60a07f8b0113bcde31cf6dccd23fc6084329fddd0"
   },
   "gesture-swipe-down": {
-    "node": "I862:9086;135:1888",
-    "width": "16",
-    "height": "16",
-    "sha256": "eb8651678d53ae359eb94c1e736da5dc66776f5ec2ff978333127f206cba45e8"
+    "source": "gesture-swipe-right rotated 90 degrees clockwise",
+    "source_node": "I503:1776;2131:1922",
+    "width": "20",
+    "height": "20",
+    "sha256": "d95eb1cdfadbc1cfcd9369d34e3536eb7e0eb7b78d4887e4860edcef8744bd18"
   },
   "gesture-circle-counterclockwise": {
     "node": "I862:9091;135:1960",

@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.ime_bridge import IMEBridge
-from proximic_ring.stroke_context import StrokeContext
+from proximic_ring.voice.ime.ime_bridge import IMEBridge
+from proximic_ring.touchpad.stroke.stroke_context import StrokeContext
 from test_inline_ui import inline_ui
 from test_stroke_session import stroke, until
 

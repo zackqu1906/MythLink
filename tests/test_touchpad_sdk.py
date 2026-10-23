@@ -307,7 +307,7 @@ def test_windows_timer_cadence_preserves_touchpad_movement():
 
 @pytest.mark.parametrize('start,end,speed,is_click', [(225,240,.1,True), (225,240,.4,False), (225,275,.1,False)])
 def test_stroke_contact_tracks_each_frame_across_packet_boundaries(start, end, speed, is_click):
-    from proximic_ring.stroke_input import StrokeCollector
+    from proximic_ring.touchpad.stroke.stroke_input import StrokeCollector
     from ring_python_sdk.touchpad import TouchpadContact, TouchpadClickVerdict
 
     class ContactBackbone(Backbone):

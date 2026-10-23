@@ -3,7 +3,7 @@ import weakref
 
 import pytest
 
-from proximic_ring.ui.menu_bar import MacMenuBar, connection_title
+from proximic_ring.ui.shared.menu_bar import MacMenuBar, connection_title
 
 
 @pytest.mark.parametrize("connected,available,value,charging,expected", [
@@ -48,7 +48,7 @@ def test_changed_values_only_and_disconnect_clears_battery():
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS native callback")
 def test_native_callback_does_not_dispatch_disabled_or_released_actions():
     from Foundation import NSObject
-    from proximic_ring.ui.menu_bar import _menu_target_class
+    from proximic_ring.ui.shared.menu_bar import _menu_target_class
 
     class Action:
         enabled = True

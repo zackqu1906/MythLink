@@ -13,8 +13,8 @@ import pytest
 def test_click_reaches_foreign_window_without_moving_pointer_or_typing():
     import AppKit
     import Quartz
-    from proximic_ring.mac_permissions import read_permission_state
-    from proximic_ring.text_focus import TextFocusSession
+    from proximic_ring.platforms.macos.mac_permissions import read_permission_state
+    from proximic_ring.desktop.text_focus import TextFocusSession
     if not read_permission_state().ready:
         pytest.skip("Native validation requires existing Accessibility and event-posting access")
     foreground = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()

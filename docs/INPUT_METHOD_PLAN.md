@@ -124,10 +124,10 @@ flowchart LR
 | --- | --- |
 | `src/proximic_ring/macos_inline.py` | 删除，包含 AX 探测、Codex 特殊写入、剪贴板／CGEvent、字符几何与伪下划线 |
 | `src/proximic_ring/ui/qml/InlineOverlay.qml` | 删除，改用原生 marked text 与组件内操作条 |
-| `src/proximic_ring/ui/inline_controller.py` | 替换为主程序 IME bridge，去除 AX 工作者、全局键鼠监听和外部 UI 轮询 |
+| `src/proximic_ring/ui/voice/inline_controller.py` | 替换为主程序 IME bridge，去除 AX 工作者、全局键鼠监听和外部 UI 轮询 |
 | `src/proximic_ring/inline_dictation.py` | 业务语义迁至组件事务层；删除旧 adapter／Python 范围写入实现，避免两套状态机 |
 | `src/proximic_ring/ui/controller.py` | 替换起句目标捕获、输入路由、手势、编辑结果、撤销、退出和组件健康状态；去掉新路径的 AX 授权前置条件 |
-| `src/proximic_ring/app_runtime.py` | ASR context 改接 IME 快照；保留音频链路和主动结束本句通道 |
+| `src/proximic_ring/voice/app_runtime.py` | ASR context 改接 IME 快照；保留音频链路和主动结束本句通道 |
 | `src/proximic_ring/asr/controller.py` | 保留 `request_user_end()` 及其测试 |
 | `src/proximic_ring/ui/qml/Main.qml` | macOS 继续停用底部转写浮窗、旧操作浮窗、自动分类和听写润色入口 |
 | `desktop_target.py`／`desktop_output.py` | 清理本功能不再可达的 macOS 输出路径；先核对其他调用，再拆公共类型；保留 Windows 和其他仍在用的功能 |

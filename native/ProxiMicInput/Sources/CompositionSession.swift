@@ -44,6 +44,8 @@ struct CompositionUndoRecord {
     let editedText: String?
     let retainedUnits: Int
     var committedRange: NSRange? = nil
+    var polishOriginal: String? = nil
+    var polished = false
 }
 
 /// A new ASR host never inherits an old host's transaction identifier or work.
@@ -138,7 +140,7 @@ enum CompositionError: Error, LocalizedError {
 /// Its client is only called on the input method's main thread.
 final class CompositionSession {
     enum Phase: String {
-        case listening, finishing, dictated, editing, edited, undone, interrupted, error
+        case listening, finishing, dictated, polishing, editing, edited, undone, interrupted, error
     }
     let utteranceID: String
     private(set) var original: EditorSnapshot
@@ -159,6 +161,10 @@ final class CompositionSession {
     private var expectedEditText: String?
     private var freshEditContext = false
     private var nativeUndoEligible = true
+    private(set) var polished = false
+    private var polishOriginal: String?
+    private var polishRestoresRaw = false
+    var canRestorePolish: Bool { polishOriginal != nil }
     private(set) var expectedSelection: NSRange
     private(set) var expectedText: String?
     private(set) var expectedMarked: NSRange = unspecifiedRange
@@ -196,6 +202,7 @@ final class CompositionSession {
     private(set) var readbackDiagnostics: [String: Any] = [:]
     var onFinishAudio: (() -> Void)?
     var onEdit: ((_ original: String, _ instruction: String, _ revision: Int) -> Void)?
+    var onPolish: ((_ text: String, _ revision: Int) -> Void)?
     var onInterrupted: ((String) -> Void)?
     var onSettled: ((_ phase: String, _ text: String) -> Void)?
     var onChanged: (() -> Void)?
@@ -238,6 +245,8 @@ final class CompositionSession {
         replacementVerified = record.editedText != nil
         instructionRemoved = record.editedText != nil
         nativeUndoEligible = false
+        polished = record.polished
+        polishOriginal = record.polishOriginal
     }
 
     func undoRecord(sourceUtteranceID: String? = nil) -> CompositionUndoRecord? {
@@ -252,10 +261,12 @@ final class CompositionSession {
                                      markedRange: unspecifiedRange, selectedText: original.selectedText,
                                      documentAccess: true, readableContext: context)
         let units = (raw as NSString).length + ((original.selectedText ?? "") as NSString).length +
-            ((edited ?? "") as NSString).length + (context?.range.length ?? 0)
+            ((edited ?? "") as NSString).length + (context?.range.length ?? 0) +
+            ((polishOriginal ?? "") as NSString).length
         return CompositionUndoRecord(sourceUtteranceID: sourceUtteranceID ?? utteranceID,
                                      original: compact, raw: raw, selection: expectedSelection,
-                                     editedText: edited, retainedUnits: units, committedRange: edited == nil ? committedRange : nil)
+                                     editedText: edited, retainedUnits: units, committedRange: edited == nil ? committedRange : nil,
+                                     polishOriginal: polishOriginal, polished: polished)
     }
 
     var active: Bool { ![.undone, .interrupted, .error].contains(phase) }
@@ -293,7 +304,8 @@ final class CompositionSession {
     }
     var cancelLabel: String {
         switch phase {
-        case .listening, .finishing, .editing: return "取消"
+        case .listening, .finishing, .editing, .polishing: return "取消"
+        case .dictated where canRestorePolish: return "还原听写"
         case .edited: return "还原听写"
         default: return "撤销"
         }
@@ -301,7 +313,7 @@ final class CompositionSession {
 
     var canCancel: Bool {
         guard active else { return false }
-        if [.finishing, .editing, .edited].contains(phase), editRequested || phase != .finishing { return true }
+        if [.finishing, .editing, .edited, .polishing].contains(phase), editRequested || phase != .finishing { return true }
         return !hasComposition ? (!hasModifiedText || canReplace || committedRangeVerified) : original.selectedText != nil
     }
     var canReplace: Bool { original.complete && original.documentAccess && documentVerified }
@@ -1035,6 +1047,108 @@ final class CompositionSession {
         }
     }
 
+    var canPolish: Bool {
+        phase == .dictated && !polished && !editRequested && !hasComposition &&
+            !awaitingReadback && !client.clientOperationPending && !raw.isEmpty &&
+            (committedRangeVerified || canReplace)
+    }
+
+    func polish(restoringRawOnUndo: Bool) {
+        guard canPolish else {
+            if phase == .dictated && !polished {
+                error = "当前输入框无法校验本句文字，暂不能润色"
+                onChanged?()
+            }
+            return
+        }
+        revision += 1
+        error = ""
+        phase = .polishing
+        polishRestoresRaw = restoringRawOnUndo
+        onChanged?()
+        withSentenceOwnership { [unowned self] in onPolish?(raw, revision) }
+    }
+
+    private var sentenceRange: NSRange {
+        committedRange ?? NSRange(location: original.selection.location, length: (raw as NSString).length)
+    }
+
+    private func withSentenceOwnership(_ continuation: @escaping () -> Void) {
+        let range = sentenceRange
+        awaitReadback("polish_ownership", check: { [unowned self] in
+            let probe = client.probe()
+            guard probe.selection == expectedSelection,
+                  !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
+                  client.readText(in: range) == raw else {
+                throw CompositionError.interrupted("本句文字或光标已变化，未执行润色")
+            }
+            if expectedText != nil { try assertOwnership() }
+        }, then: continuation)
+    }
+
+    func applyPolish(text: String, revision incomingRevision: Int, error incomingError: String?) {
+        guard phase == .polishing, revision == incomingRevision, !cancelPending, !awaitingReadback else { return }
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let incomingError, !incomingError.isEmpty {
+            finishPolish(error: incomingError)
+            return
+        }
+        guard !text.isEmpty else { finishPolish(error: "润色未返回正文，已保留听写"); return }
+        let before = raw
+        let complete = { [unowned self] in
+            polishOriginal = polishRestoresRaw ? before : nil
+            polished = true
+            finishPolish()
+        }
+        if before == text { withSentenceOwnership(complete) }
+        else { replaceSentence(with: text, then: complete) }
+    }
+
+    private func replaceSentence(with text: String, then continuation: @escaping () -> Void) {
+        withSentenceOwnership { [unowned self] in
+            let range = sentenceRange
+            let before = raw
+            let generation = workGeneration
+            let result = NSRange(location: range.location, length: (text as NSString).length)
+            let nextDocument = expectedText.flatMap { document in
+                isValidRange(range, length: (document as NSString).length)
+                    ? (document as NSString).replacingCharacters(in: range, with: text) : nil
+            }
+            sendNativeWrite { client.replaceEditing(range, with: text, restoringCaret: NSMaxRange(result), expected: before) }
+            guard active, workGeneration == generation else { return }
+            awaitReadback("replace", check: { [unowned self] in
+                let probe = client.probe()
+                let receipt = client.verifiedReplacement
+                let verified = receipt?.range == result && receipt?.text == text
+                guard probe.selection == NSRange(location: NSMaxRange(result), length: 0),
+                      !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
+                      verified || client.readText(in: result) == text else {
+                    throw CompositionError.unconfirmed("输入框尚未确认润色结果")
+                }
+                if let nextDocument, !verified, try client.snapshot().text != nextDocument {
+                    throw CompositionError.unconfirmed("输入框尚未确认润色后的完整内容")
+                }
+                raw = text
+                expectedText = nextDocument
+                expectedSelection = probe.selection
+                expectedMarked = unspecifiedRange
+                committedRange = result
+                committedRangeVerified = true
+                documentVerified = false // Undo only the confirmed sentence range.
+                nativeUndoEligible = false
+            }, then: continuation)
+        }
+    }
+
+    private func finishPolish(error message: String = "") {
+        phase = .dictated
+        revision += 1
+        error = message
+        if !cancelPending { onSettled?(phase.rawValue, raw) }
+        onChanged?()
+        drainDeferredCommands()
+    }
+
     func applyEdit(text: String, revision incomingRevision: Int, error incomingError: String?) {
         guard phase == .editing, revision == incomingRevision, !cancelPending else { return }
         if pendingReadback != nil {
@@ -1094,6 +1208,11 @@ final class CompositionSession {
 
     func cancel() {
         guard active else { return }
+        if phase == .polishing, pendingReadback == nil || readbackStage == "polish_ownership" {
+            clearDeferredWork()
+            finishPolish()
+            return
+        }
         if phase == .dictated, hasModifiedText, !canReplace, !committedRangeVerified {
             error = "当前输入框无法校验本句文字，暂不能撤销"
             onChanged?()
@@ -1129,6 +1248,18 @@ final class CompositionSession {
 
     private func performCancel() {
         guard active else { return }
+        if phase == .dictated, let before = polishOriginal {
+            phase = .polishing
+            onChanged?()
+            let complete = { [unowned self] in
+                polishOriginal = nil
+                polished = false
+                finishPolish()
+            }
+            if before == raw { withSentenceOwnership(complete) }
+            else { replaceSentence(with: before, then: complete) }
+            return
+        }
         if phase == .editing || phase == .edited {
             revision += 1
             editRequested = false

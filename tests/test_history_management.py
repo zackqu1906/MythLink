@@ -7,7 +7,7 @@ import threading
 import numpy as np
 import pytest
 
-from proximic_ring.modification_dataset import ModificationDatasetCollector
+from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
 from proximic_ring.text_processing import LLMSettings, TextProcessingRequest
 
 
@@ -122,7 +122,7 @@ def test_metadata_failure_restores_record_and_related_memberships(tmp_path, monk
 
 
 def test_cleanup_failure_stays_hidden_and_can_retry(tmp_path, monkeypatch):
-    import proximic_ring.modification_dataset as module
+    import proximic_ring.voice.modification_dataset as module
     store = ModificationDatasetCollector(tmp_path, "test")
     identity = add_record(store, 1)
     assert len(store.load_entries()) == 1

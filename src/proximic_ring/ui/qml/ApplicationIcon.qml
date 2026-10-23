@@ -10,10 +10,10 @@ Item {
     implicitWidth: 44
     implicitHeight: 44
     Rectangle {
-        anchors.fill: parent; anchors.margins: 4; radius: 10
+        anchors.fill: parent; anchors.margins: appIcon.width <= 24 ? 1 : 4; radius: appIcon.width <= 24 ? 4 : 10
         visible: !appIcon.ready
         color: "#EEF1FA"
-        Label { anchors.centerIn: parent; text: appIcon.label.slice(0, 1); color: "#687286"; font.pixelSize: 20 }
+        Label { anchors.centerIn: parent; text: appIcon.label.slice(0, 1); color: "#687286"; font.pixelSize: Math.min(20, appIcon.width / 2) }
     }
     Image {
         id: nativeIcon

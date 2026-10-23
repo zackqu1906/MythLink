@@ -237,7 +237,7 @@ def pipeline_factory(tmp_path, monkeypatch):
     from PySide6.QtCore import QCoreApplication, QSettings, QObject, QTimer, Signal
     from PySide6.QtWidgets import QApplication
     import proximic_ring.ui.controller as host_module
-    import proximic_ring.ui.inline_controller as inline_module
+    import proximic_ring.ui.voice.inline_controller as inline_module
 
     app = QCoreApplication.instance() or QApplication(["inline-pipeline", "-platform", "offscreen"])
     monkeypatch.setattr(host_module, "app_data_root", lambda: tmp_path)
@@ -288,6 +288,29 @@ def test_consecutive_empty_finals_restore_gate_and_next_tap_dictates(pipeline_fa
     pipeline.settled(3)
     assert [entry[1] for entry in pipeline.peer.commits] == ["", "", "下一句成功"]
     assert [update.session_id for update in pipeline.updates if update.is_final] == [1, 2, 3]
+
+
+@pytest.mark.parametrize('failure', ['preflight', 'startup', 'disconnect', 'reconnect'])
+def test_completed_history_is_not_failed_by_a_later_input_attempt(pipeline_factory, failure):
+    pipeline = pipeline_factory([Reply(text='已经成功完成的输入')])
+    pipeline.start(); pipeline.end(); pipeline.settled(1)
+    host, inline = pipeline.host, pipeline.host._inline_input
+    for session_id, audio in pipeline.audio:
+        host._record_raw_interaction_audio(session_id, audio)
+    before = host._voice_history.load_entries()
+    assert before[0]['outcome'] == 'applied'
+    if failure == 'preflight':
+        inline._transport_error = '输入法不可用'
+        assert not inline.begin(auto_select=True)
+    elif failure == 'startup':
+        assert inline.begin(auto_select=True)
+        inline._transport_failed('输入法未连接到当前文本框，请重新点入文本框')
+    elif failure == 'disconnect':
+        inline._accept(dict(type='disconnected', epoch=inline._epoch))
+    else:
+        inline._accept(dict(type='connected', epoch='new-epoch'))
+    pipeline.app.processEvents()
+    assert host._voice_history.load_entries() == before
 
 
 def test_cancel_after_end_discards_late_final_and_next_sentence_survives(pipeline_factory):

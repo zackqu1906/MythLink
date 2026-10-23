@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import QObject, QMetaObject, Q_ARG
 from PySide6.QtTest import QTest
 
-from proximic_ring.live_audio_settings import AudioConfiguration, LiveAudioSettings
+from proximic_ring.audio.live_audio_settings import AudioConfiguration, LiveAudioSettings
 from test_inline_ui import inline_ui
 
 

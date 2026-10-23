@@ -6,14 +6,33 @@ ColumnLayout {
     id: pane
     required property var controller
     required property var settingsDialog
-    signal inputMethodSetupRequested()
+    property string expandedSection: ""
+    signal resetScrollRequested()
+    onExpandedSectionChanged: resetScrollRequested()
+    readonly property real permissionsPosition: overview.y + overview.permissionsPosition
     signal detailRequested(int page)
     signal advancedSettingsRequested()
-    spacing: 36
-    UiTheme { id: theme }
+    signal logRequested()
+    spacing: 18
+    FigmaTheme { id: theme }
+    FigmaAction { objectName: "settingsOverviewBackButton"; visible: pane.expandedSection.length > 0; text: "返回所有设置"; navigation: true; onClicked: pane.expandedSection = "" }
+    PreferencesOverview {
+        id: overview
+        visible: pane.expandedSection.length === 0
+        Layout.fillWidth: true
+        controller: pane.controller
+        onAudioRequested: pane.expandedSection = "audio"
+        onGesturesRequested: pane.detailRequested(12)
+        onGeneralRequested: pane.expandedSection = "general"
+        onAgentRequested: pane.expandedSection = "agent"
+        onAdvancedRequested: pane.advancedSettingsRequested()
+        onLogRequested: pane.logRequested()
+    }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
+        flat: true
         objectName: "settingsAudioGroup"
+        visible: pane.expandedSection === "audio"
         title: "麦克风与语音"; symbol: "microphone"
         description: "连接期间可修改；正在进行的语音处理完成后，再应用新的音频来源与启停方式。"
         UiNotice {
@@ -24,12 +43,13 @@ ColumnLayout {
             warning: pane.controller.audioSettingsError
             font.pixelSize: 13; wrapMode: Text.Wrap
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             title: "音频来源"
             description: pane.controller.microphoneDevicesError.length > 0
                 ? pane.controller.microphoneDevicesError
                 : "直接选择 Ring 或已检测到的音频输入设备。"
-            SettingsSelect {
+            FigmaSelect {
                 id: audioInputCombo
                 objectName: "audioSourceCombo"
                 Layout.fillWidth: true
@@ -50,7 +70,7 @@ ColumnLayout {
                     function onAboutToShow() { pane.controller.refreshMicrophones() }
                 }
             }
-            UiAction {
+            FigmaAction {
                 objectName: "refreshMicrophonesButton"
                 Layout.alignment: Qt.AlignRight
                 text: pane.controller.microphoneScanBusy ? "检测中…" : "刷新设备"
@@ -59,21 +79,15 @@ ColumnLayout {
                 onClicked: pane.controller.refreshMicrophones()
             }
         }
-        PermissionNotice {
-            objectName: "microphoneSettingsPermissionNotice"
-            Layout.fillWidth: true
-            readonly property var warning: pane.controller.inlineInput.permissions.essentialWarnings.filter(function(item) { return item.kind === "microphone" })[0]
-            message: pane.controller.audioSettings.audio_source === "microphone" && warning ? warning.text : ""
-            onActivated: pane.controller.inlineInput.permissions.openPermissionSettings("microphone")
-        }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             title: "语音启停方式"
             descriptionObjectName: "speechControlModeHint"
             description: (pane.controller.audioSettings.speech_control_mode === "gesture"
-                ? "开启语音识别后，" + pane.controller.confirmGestureHint + " 开始，再做一次结束。"
-                : "靠近说话开始，" + pane.controller.confirmGestureHint + " 结束。"
+                ? "开启语音识别后，" + pane.controller.confirmGestureHint + " 开始，" + pane.controller.endGestureHint + " 结束。"
+                : "靠近说话开始，" + pane.controller.endGestureHint + " 结束。"
                   + (pane.controller.audioSettings.audio_source === "microphone" ? "使用选定麦克风检测靠近。" : ""))
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "speechControlModeCombo"
                 Layout.fillWidth: true
                 Accessible.name: "语音启停方式"
@@ -83,7 +97,8 @@ ColumnLayout {
                 onActivated: pane.controller.speechControlMode = currentIndex === 1 ? "gesture" : "proximity"
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             objectName: "inputEnhancementRow"
             title: "输入增强"
             description: "声音较小时可提高音量，立即生效；不影响靠近检测。"
@@ -101,7 +116,8 @@ ColumnLayout {
                 color: theme.muted; font.pixelSize: 12
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             objectName: "voiceSensitivityRow"
             visible: pane.controller.speechControlMode === "proximity"
             title: "声音触发灵敏度"
@@ -124,14 +140,17 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
+        flat: true
         objectName: "settingsInputGroup"
+        visible: pane.expandedSection === "audio"
         title: "输入与控制"; symbol: "pointer"
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             visible: pane.controller.inlineInput.enabled
             title: "多次撤销"
             description: "逐次撤回当前输入框内的听写和编辑；关闭时只保留最近一次操作。"
-            SettingsSwitch {
+            PreferenceSwitch {
                 objectName: "multiUndoSwitch"
                 Layout.alignment: Qt.AlignRight
                 Accessible.name: "多次撤销"
@@ -139,10 +158,11 @@ ColumnLayout {
                 onClicked: pane.controller.multiUndoEnabled = checked
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             title: "类型转换按键"
             description: "仅在当前语音结果可以转换时生效，连接期间也可修改。"
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "modeCorrectionShortcutCombo"
                 Layout.fillWidth: true
                 Accessible.name: "类型转换按键"
@@ -151,13 +171,14 @@ ColumnLayout {
                 onActivated: pane.controller.modeCorrectionShortcut = pane.controller.modeCorrectionShortcutOptions[currentIndex]
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             visible: !pane.controller.inlineInput.enabled
             title: "听写与指令识别"
             description: pane.controller.inputRoutingMode === "auto"
                 ? "语音结束后自动判断听写或编辑指令。"
                 : "沿用当前选择的听写或编辑模式。"
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "inputRoutingModeCombo"
                 Layout.fillWidth: true
                 Accessible.name: "听写与指令识别"
@@ -166,11 +187,12 @@ ColumnLayout {
                 onActivated: pane.controller.inputRoutingMode = currentIndex === 0 ? "auto" : "manual"
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             visible: !pane.controller.inlineInput.enabled
             title: "整理听写文本"
             description: "关闭后直接使用识别结果；编辑指令仍会使用文本模型。"
-            SettingsSwitch {
+            PreferenceSwitch {
                 objectName: "dictationLlmSwitch"
                 Layout.alignment: Qt.AlignRight
                 Accessible.name: "使用大模型整理听写文本"
@@ -178,11 +200,12 @@ ColumnLayout {
                 onClicked: pane.controller.llmEnabled = checked
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             visible: Qt.platform.os === "windows" || Qt.platform.os === "osx"
             title: "输入到当前光标"
             description: "识别完成后，将结果输入到当前文本框。"
-            SettingsSwitch {
+            PreferenceSwitch {
                 objectName: "desktopOutputSwitch"
                 Layout.alignment: Qt.AlignRight
                 Accessible.name: "识别完成后输入到当前光标"
@@ -190,11 +213,12 @@ ColumnLayout {
                 onClicked: pane.controller.desktopOutputEnabled = checked
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             visible: Qt.platform.os === "windows" && pane.controller.speechControlMode !== "gesture"
             title: "右 Alt 按住说话"
             description: "识别开启时，按键优先于自动靠近检测。"
-            SettingsSwitch {
+            PreferenceSwitch {
                 objectName: "pushToTalkSwitch"
                 Layout.alignment: Qt.AlignRight
                 Accessible.name: "启用右 Alt 按住说话"
@@ -205,13 +229,29 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
+        flat: true
+        objectName: "settingsAgentGroup"
+        visible: pane.expandedSection === "agent"
+        title: "Agent"; symbol: "operation"
+        AgentSetupRows { agent: pane.controller.agent }
+    }
+
+    BrowserExtensionSettings {
+        visible: pane.expandedSection === "agent"
+        bridge: pane.controller.browserExtensions
+    }
+
+    FigmaFormGroup {
+        flat: true
         objectName: "settingsAppearanceGroup"
+        visible: pane.expandedSection === "general"
         title: "界面显示"; symbol: "settings"
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             title: "手势触发提示"
             description: "识别到手势（含 click 和 double-click）时，在屏幕右下角显示提示；新提示将旧提示向上推，每条独立显示 1 秒。"
-            SettingsSwitch {
+            PreferenceSwitch {
                 objectName: "gestureTriggerHintsSwitch"
                 Layout.alignment: Qt.AlignRight
                 Accessible.name: "手势触发提示"
@@ -219,7 +259,8 @@ ColumnLayout {
                 onClicked: pane.controller.gestureTrigger.enabled = checked
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             visible: pane.controller.inlineInput.enabled
             title: "输入法浮窗大小"
             description: "默认使用小浮窗，调整后立即生效。"
@@ -239,7 +280,7 @@ ColumnLayout {
                     text: pane.controller.voiceHudScale + "%" + (pane.controller.voiceHudScale === 80 ? "（默认）" : "")
                     color: theme.muted; font.pixelSize: 12
                 }
-                UiAction {
+                FigmaAction {
                     objectName: "resetVoiceHudScaleButton"
                     text: "恢复默认"; quiet: true
                     enabled: pane.controller.voiceHudScale !== 80
@@ -249,67 +290,23 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
-        objectName: "settingsPermissionsGroup"
-        title: "系统与权限"; symbol: "tool"
-        visible: Qt.platform.os === "osx"
-        description: "管理语音输入与手势控制所需的权限。"
-        SettingsFormRow {
-            title: "系统授权"
-            description: "直接显示 macOS 授权提示，已开启的自动跳过。"
-            UiAction {
-                objectName: "permissionSetupButton"
-                Layout.alignment: Qt.AlignRight
-                text: pane.controller.permissionSetup.active ? "继续授权" : "请求权限"
-                enabled: !pane.controller.permissionSetup.busy
-                onClicked: pane.controller.permissionSetup.open()
-            }
-        }
-        SettingsFormRow {
-            title: "辅助功能"
-            description: pane.controller.inlineInput.permissions.accessibilityWarningText
-                || (pane.controller.inlineInput.permissions.accessibilityGranted ? "已开启" : "用于语音编辑与手势控制。")
-            descriptionWarning: pane.controller.inlineInput.permissions.accessibilityWarningText.length > 0
-            UiAction {
-                objectName: "settingsAccessibilityButton"
-                Layout.alignment: Qt.AlignRight
-                text: "去系统设置"
-                onClicked: pane.controller.inlineInput.permissions.openSettings()
-            }
-        }
-        SettingsFormRow {
-            visible: pane.controller.inlineInput.enabled
-            title: "语音输入法"
-            description: pane.controller.inlineInput.connectionStatus
-            UiAction {
-                objectName: "settingsInputMethodButton"
-                Layout.alignment: Qt.AlignRight
-                text: "安装与管理"
-                onClicked: pane.inputMethodSetupRequested()
-            }
-        }
-        SettingsFormRow {
-            title: "窗口实时预览"
-            description: pane.controller.inlineInput.permissions.screenRecordingWarning ? "未开启屏幕录制权限，无法显示窗口预览。"
-                : pane.controller.inlineInput.permissions.screenRecordingGranted ? "已开启" : "用于显示窗口实时画面。"
-            descriptionWarning: pane.controller.inlineInput.permissions.screenRecordingWarning
-            UiAction {
-                objectName: "settingsCategory6"
-                Layout.alignment: Qt.AlignRight
-                text: "管理"
-                onClicked: pane.detailRequested(6)
-            }
-        }
-    }
-
-    SettingsFormGroup {
+    FigmaFormGroup {
+        flat: true
         objectName: "settingsGeneralGroup"
+        visible: pane.expandedSection === "general"
         title: "通用"
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
+            title: "应用版本"
+            descriptionObjectName: "settingsAppVersion"
+            description: pane.controller.appVersion
+        }
+        FigmaFormRow {
+            preferenceStyle: true
             visible: Qt.platform.os === "osx"
             title: "菜单栏状态"
             description: "显示连接状态和电量，关闭后只保留应用图标。"
-            SettingsSwitch {
+            PreferenceSwitch {
                 objectName: "menuBarStatusInfoSwitch"
                 Layout.alignment: Qt.AlignRight
                 Accessible.name: "显示菜单栏连接状态和电量"
@@ -317,22 +314,27 @@ ColumnLayout {
                 onClicked: pane.controller.menuBarStatusInfo = checked
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             visible: Qt.platform.os === "osx"
             title: "离开锁屏"
-            description: "戒指远离时锁定电脑，返回后弹指解锁。"
-            UiAction {
-                objectName: "settingsCategory9"
-                Layout.alignment: Qt.AlignRight
-                text: pane.controller.proximity.enabled ? "已开启 · 管理" : "设置"
+            description: "戒指远离时锁屏，也支持手动锁屏后弹指解锁。"
+            SettingsStatusAction {
+                preferenceStyle: true
+                statusObjectName: "proximityOverviewStatus"
+                statusText: pane.controller.proximity.enabled ? "已开启" : "未开启"
+                statusReady: pane.controller.proximity.enabled
+                buttonObjectName: "settingsCategory9"
+                text: "设置"
                 onClicked: pane.detailRequested(9)
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
+            preferenceStyle: true
             title: "高级设置"
             description: "识别服务、文本模型与性能"
-            UiAction {
-                objectName: "advancedSettingsButton"
+            FigmaAction {
+                objectName: "generalAdvancedSettingsButton"
                 Layout.alignment: Qt.AlignRight
                 text: "高级设置"
                 onClicked: pane.advancedSettingsRequested()

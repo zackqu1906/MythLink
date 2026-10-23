@@ -1,4 +1,4 @@
-"""Voice-group ownership and user-configured global reservations."""
+"""Input focus wins shared gestures; independent app/global gestures stay usable."""
 from dataclasses import replace
 from types import SimpleNamespace
 import json
@@ -6,265 +6,250 @@ import json
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring.gesture_settings import GlobalGestureBindings, GLOBAL_BINDINGS_KEY, VOICE_GESTURE_GROUP
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.gestures.gesture_settings import GlobalGestureBindings, GLOBAL_BINDINGS_KEY, GESTURE_LABELS
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
 from test_app_gestures import route
 from test_application_menus import configure, BUNDLE, ACTION
-from test_ring_gestures import request
-from test_gesture_scenes import presentation, POWERPOINT, PRESENTATION
+from test_ring_gestures import request, deliver_gestures
 
 
-@pytest.mark.parametrize("mode", ["input", "operation"])
-@pytest.mark.parametrize("gesture", sorted(VOICE_GESTURE_GROUP))
-def test_one_override_claims_whole_group_only_in_that_foreground_app(route, monkeypatch, mode, gesture):
+def outside(backend, bundle=BUNDLE):
+    backend.target = replace(backend.target, bundle=bundle, profile=bundle,
+                             focus="page", role="AXGroup", input_context="nontext")
+
+
+@pytest.mark.parametrize("gesture", list(GESTURE_LABELS))
+def test_app_binding_can_share_every_input_or_global_gesture_without_disabling_voice(route, monkeypatch, gesture):
     c, service, inline, backend, sent, messages, _ = route
     catalog = configure(service, monkeypatch)
-    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
-    before_voice, before_view = c.gestureBindings, dict(inline._view)
+    before_voice = c.gestureBindings
     assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
-    c.ringGestures._mode = mode
-    for name in sorted(VOICE_GESTURE_GROUP):
-        assert not request(c, name)  # Consumed ahead of audio, Enter and field selection.
+    outside(backend)
+    assert not request(c, gesture)
     assert sent == [(BUNDLE, "Ctrl+Tab")]
-    assert not messages and inline._view == before_view and c.gestureBindings == before_voice
-    assert not c.ringGestures._fields.picker.active.is_set()
-    assert catalog.voice_overridden(BUNDLE) and "无法使用手势语音输入" in catalog.voiceOverrideNotice
-    backend.target = replace(backend.target, bundle="test.other.app", profile="other")
-    c.ringGestures._mode = "input"
-    assert request(c, "tap")
-    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
-    assert catalog.setBinding(BUNDLE, gesture, "")
-    assert request(c, "tap") and not catalog.voiceOverrideNotice
+    assert not messages and c.gestureBindings == before_voice
+    assert not catalog.voice_overridden(BUNDLE) and not catalog.voice_disabled_bundles()
+    assert not catalog.voiceOverrideNotice
+    backend.target = replace(backend.target, focus="composer", role="AXTextArea", input_context="text")
+    assert request(c, "double-tap")
+    assert len(sent) == 1
 
 
-def test_group_is_restored_only_after_last_override_is_removed_and_survives_reload(route, monkeypatch):
-    _, service, _, _, _, _, _ = route
+@pytest.mark.parametrize("gesture", ["swipe-left", "swipe-right"])
+def test_text_focus_does_not_fall_through_even_when_input_action_is_unavailable(route, monkeypatch, gesture):
+    c, service, _, backend, sent, _, _ = route
     catalog = configure(service, monkeypatch)
-    assert catalog.setBinding(BUNDLE, "tap", ACTION["id"])
-    assert catalog.setBinding(BUNDLE, "swipe-left", ACTION["id"])
-    assert catalog.setBinding(BUNDLE, "tap", "")
-    assert catalog.voice_overridden(BUNDLE)
-    restored = ApplicationMappingController(service)
-    try:
-        assert restored.voice_overridden(BUNDLE)
-        assert restored.regularBindings == catalog.regularBindings
-    finally:
-        restored.close()
-    assert catalog.removeApplication(BUNDLE)
-    assert not catalog.voice_overridden(BUNDLE)
+    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
+    assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
+    calls = []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *a: calls.append(True))
+    request(c, gesture)
+    assert not sent and not calls
 
 
-@pytest.mark.parametrize("change", ["app", "pid", "window", "settings", "global", "mode", "disconnect", "busy", "capture_failure"])
-def test_claimed_override_never_falls_back_or_posts_to_stale_context(route, monkeypatch, change):
+@pytest.mark.parametrize("context", ["text", "nontext", "unknown"])
+@pytest.mark.parametrize("scope", ["application", "global"])
+@pytest.mark.parametrize("gesture", ["circle-clockwise", "clench", "index-pinch"])
+def test_independent_gestures_ignore_input_focus_for_application_and_global_actions(route, monkeypatch, context, scope, gesture):
+    c, service, _, backend, sent, messages, _ = route
+    catalog = configure(service, monkeypatch)
+    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE, input_context=context)
+    if gesture == "index-pinch":
+        assert c.ringGestures.setGlobalBinding("show_menu", "")
+    assert c.ringGestures.setGlobalBinding("window_selector", gesture)
+    if scope == "application":
+        assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
+    starts, captures = [], []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
+    capture = backend.capture
+    def record_capture(**options):
+        captures.append(options)
+        return capture(**options)
+    monkeypatch.setattr(backend, "capture", record_capture)
+    request(c, gesture)
+    assert bool(sent) == (scope == "application") and bool(starts) == (scope == "global")
+    assert captures == [dict(menu_action=True, focus_sensitive=False)] and not messages
+
+
+@pytest.mark.parametrize("slot", [0, 1])
+def test_input_conflicts_follow_primary_and_alternate_bindings(route, monkeypatch, slot):
+    c, service, _, backend, sent, _, _ = route
+    catalog = configure(service, monkeypatch)
+    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
+    for gesture in ("swipe-left", "snap"):
+        assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
+    assert c.setGestureBinding("undo", slot, "snap")
+    assert "snap" in catalog.voiceGestures
+    request(c, "snap")  # Current input binding wins even when undo is unavailable.
+    assert not sent
+    request(c, "swipe-left")
+    assert len(sent) == (1 if slot == 0 else 0)
+    c.resetGestureBindings()
+    service._last_dispatch = None
+    assert "snap" not in catalog.voiceGestures
+    request(c, "snap")
+    assert len(sent) == (2 if slot == 0 else 1)
+
+
+def test_left_swipe_undo_with_focus_and_application_action_after_blur(route, monkeypatch):
     c, service, inline, backend, sent, messages, _ = route
     catalog = configure(service, monkeypatch)
     backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
-    assert catalog.setBinding(BUNDLE, "tap", ACTION["id"])
-    if change == "capture_failure":
-        monkeypatch.setattr(backend, "capture", lambda **kw: None)
-    assert not request(c, "tap", deliver=False)
+    inline._view.update(application=BUNDLE, phase="dictated")
+    assert catalog.setBinding(BUNDLE, "swipe-left", ACTION["id"])
+    request(c, "swipe-left")
+    assert messages and not sent
+    messages.clear()
+    inline._action_pending = False
+    inline._view.update(phase="dictated", awaiting_readback=False)
+    outside(backend)
+    request(c, "swipe-left")
+    assert sent == [(BUNDLE, "Ctrl+Tab")] and not messages
+
+
+def test_app_wins_global_then_removal_restores_global_with_no_setting_loss(route, monkeypatch):
+    c, service, _, backend, sent, _, _ = route
+    catalog = configure(service, monkeypatch)
+    outside(backend)
+    assert catalog.setBinding(BUNDLE, "swipe-left", ACTION["id"])
+    stored = c._settings.value(SETTINGS_KEY)
+    assert c.ringGestures.setGlobalBinding("window_selector", "swipe-left")
+    assert catalog.canBind("swipe-left") and c._settings.value(SETTINGS_KEY) == stored
+    assert "应用绑定优先" in catalog.globalConflictNotice
+    starts = []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda req, conn: starts.append(req.name))
+    request(c, "swipe-left")
+    assert sent == [(BUNDLE, "Ctrl+Tab")] and starts == []
+    assert catalog.setBinding(BUNDLE, "swipe-left", "")
+    request(c, "swipe-left")
+    assert starts == ["clench"]
+    assert GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY)).window_selector == "swipe-left"
+
+
+@pytest.mark.parametrize("bundle,profile", [("com.openai.codex", "codex"),
+    ("com.tencent.xinWeChat", "wechat"), ("vendor.WorkBuddy", "workbuddy"), (BUNDLE, "")])
+def test_unconfigured_app_uses_global_even_with_saved_legacy_profiles(route, monkeypatch, bundle, profile):
+    c, service, _, backend, sent, _, _ = route
+    outside(backend, bundle)
+    backend.target = replace(backend.target, profile=profile)
+    assert service._legacy_configured and not service.catalog.owns(bundle)
+    assert c.ringGestures.setGlobalBinding("window_selector", "circle-clockwise")
+    starts = []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
+    request(c, "circle-clockwise")
+    assert starts == [True] and not sent
+    catalog = configure(service, monkeypatch, bundle)
+    assert catalog.setBinding(bundle, "circle-clockwise", ACTION["id"])
+    request(c, "circle-clockwise")
+    assert sent == [(profile, "Ctrl+Tab")] and len(starts) == 1
+    catalog.removeApplication(bundle)
+    request(c, "circle-clockwise")
+    assert len(starts) == 2 and len(sent) == 1
+
+
+@pytest.mark.parametrize("change", ["app", "pid", "window", "focus", "settings", "global", "generation", "disconnect", "busy", "capture_failure"])
+@pytest.mark.parametrize("scope", ["application", "global"])
+@pytest.mark.parametrize("gesture", ["clench", "swipe-left"])
+def test_queued_actions_recheck_focus_only_for_input_conflicts(route, monkeypatch, scope, change, gesture):
+    c, service, inline, backend, sent, messages, _ = route
+    catalog = configure(service, monkeypatch)
+    outside(backend)
+    starts = []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
+    assert c.ringGestures.setGlobalBinding("window_selector", gesture)
+    if scope == "application": assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
+    if change == "capture_failure": monkeypatch.setattr(backend, "capture", lambda **kw: None)
+    assert not request(c, gesture, deliver=False)
     if change == "app": backend.target = replace(backend.target, bundle="other")
     if change == "pid": backend.target = replace(backend.target, pid=43)
     if change == "window": backend.target = replace(backend.target, window="other")
+    if change == "focus": backend.target = replace(backend.target, input_context="text", focus="composer")
     if change == "settings": catalog.clearApplicationBindings(BUNDLE)
     if change == "global": assert c.ringGestures.setGlobalBinding("window_selector", "snap")
-    if change == "mode": c.ringGestures._generation += 1
+    if change == "generation": c.ringGestures._generation += 1
     if change == "disconnect": c._disconnect_event.set()
     if change == "busy": inline._view["phase"] = "listening"
-    QCoreApplication.processEvents()
-    assert sent == [] and messages == []
+    deliver_gestures(c)
+    if change == "focus" and gesture == "clench":
+        assert bool(sent) == (scope == "application") and bool(starts) == (scope == "global")
+    else:
+        assert not sent and not starts
+    assert not messages
 
 
-def test_audio_busy_is_consumed_without_posting_override(route, monkeypatch):
-    c, service, _, backend, sent, _, _ = route
+@pytest.mark.parametrize("phase", ["listening", "finishing", "editing", "polishing"])
+def test_busy_sentence_owns_left_swipe_after_focus_loss(route, monkeypatch, phase):
+    c, service, inline, backend, sent, _, _ = route
     catalog = configure(service, monkeypatch)
-    backend.target = replace(backend.target, bundle=BUNDLE)
-    assert catalog.setBinding(BUNDLE, "tap", ACTION["id"])
-    assert not request(c, "tap", busy=True)
-    assert not sent
+    outside(backend)
+    assert catalog.setBinding(BUNDLE, "swipe-left", ACTION["id"])
+    inline._view.update(phase=phase)
+    cancels = []
+    monkeypatch.setattr(inline, "cancel", lambda: cancels.append(True))
+    request(c, "swipe-left")
+    assert cancels == [True] and not sent
+    inline._view.update(phase="dictated")
+    request(c, "swipe-left")
+    assert sent == [(BUNDLE, "Ctrl+Tab")]
 
 
-def test_old_field_picker_cannot_start_voice_after_switch_to_overridden_app(route, monkeypatch):
-    c, service, _, backend, sent, messages, _ = route
+def test_input_event_cannot_turn_into_application_action_when_focus_is_lost_in_queue(route, monkeypatch):
+    c, service, inline, backend, sent, messages, _ = route
     catalog = configure(service, monkeypatch)
     assert catalog.setBinding(BUNDLE, "swipe-left", ACTION["id"])
-    c.ringGestures._fields.picker.active.set()
     backend.target = replace(backend.target, bundle=BUNDLE)
-    assert not request(c, "tap")
+    inline._view.update(phase="dictated")
+    request(c, "swipe-left", deliver=False)
+    outside(backend)
+    QCoreApplication.processEvents()
     assert not sent and not messages
 
 
-def test_global_reassignment_releases_old_gesture_and_preserves_suspended_binding(route, monkeypatch):
+def test_audio_busy_snapshot_never_replays_as_app_action_after_finalization(route, monkeypatch):
     c, service, _, backend, sent, _, _ = route
-    catalog = configure(service, monkeypatch)
-    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
-    assert catalog.setBinding(BUNDLE, "snap", ACTION["id"])
-    stored = c._settings.value(SETTINGS_KEY)
-    assert c.ringGestures.setGlobalBinding("window_selector", "snap")
-    assert not catalog.canBind("snap") and catalog.canBind("clench")
-    assert catalog.for_target(BUNDLE) == {} and "弹指" in catalog.globalConflictNotice
-    assert c._settings.value(SETTINGS_KEY) == stored
-    starts = []
-    monkeypatch.setattr(c.ringGestures._selector, "start", lambda request, conn: starts.append(request.name))
-    assert not request(c, "snap") and starts == ["clench"] and not sent
-    assert catalog.setBinding(BUNDLE, "clench", ACTION["id"])
-    event = c.ringGestures.envelope(SimpleNamespace(name="clench"))
-    c._apply_gesture(event, c._disconnect_event)
-    assert sent == [(BUNDLE, "Ctrl+Tab")] and starts == ["clench"]
-    restored = GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY))
-    assert restored.window_selector == "snap"
-    assert c.ringGestures.setGlobalBinding("window_selector", "clench")
-    assert catalog.canBind("snap") and not catalog.canBind("clench")
-    assert "menu:snap" in catalog.for_target(BUNDLE) and "menu:clench" not in catalog.for_target(BUNDLE)
-    assert json.loads(c._settings.value(SETTINGS_KEY))[BUNDLE]["bindings"]["clench"]
+    configure(service, monkeypatch).setBinding(BUNDLE, "clench", ACTION["id"])
+    outside(backend)
+    request(c, "clench", busy=True, deliver=False)
+    QCoreApplication.processEvents()
+    assert not sent
 
 
-@pytest.mark.parametrize("action,old,new", [("show_menu", "index-pinch", "snap"), ("switch_mode", "middle-pinch", "circle-clockwise")])
-def test_remapped_hint_and_mode_actions_run_on_new_physical_gesture(route, monkeypatch, action, old, new):
-    from PySide6.QtTest import QTest
-    c, service, _, backend, _, _, _ = route
-    catalog = configure(service, monkeypatch)
-    monkeypatch.setattr(backend, "capture", lambda **kwargs: backend.target)
-    assert c.ringGestures.setGlobalBinding(action, new)
-    assert catalog.canBind(old) and not catalog.canBind(new)
-    shown = []
-    c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
-    assert request(c, old)  # Old physical gesture is no longer a global command.
-    assert not request(c, new)
-    if action == "show_menu":
-        # Hints now resolve the current app asynchronously even without scenes.
-        for _ in range(40):
-            if shown: break
-            QTest.qWait(25)
-        assert shown == [("input", "")]
-    else: assert c.ringGestures.mode == "operation"
+@pytest.mark.parametrize("context", ["unknown", "blocked", "missing"])
+def test_unavailable_imk_focus_blocks_shared_start_without_dispatching_shortcuts(route, context):
+    c, _, _, backend, sent, _, _ = route
+    backend.target = (None if context == "missing" else replace(backend.target,
+                      input_context="unknown", blocked=context == "blocked"))
+    assert not request(c, "circle-clockwise")
+    assert not sent
+    assert not request(c, "double-tap")
 
 
-def test_global_actions_reject_voice_group_duplicate_and_active_sentence(route):
-    c, _, inline, _, _, _, _ = route
-    before = c.ringGestures.globalBindings
-    for gesture in VOICE_GESTURE_GROUP | {"middle-pinch"}:
-        assert not c.ringGestures.setGlobalBinding("show_menu", gesture)
-    inline._view["phase"] = "listening"
-    assert not c.ringGestures.setGlobalBinding("show_menu", "snap")
-    assert c.ringGestures.globalBindings == before
-    assert not c._settings.contains(GLOBAL_BINDINGS_KEY)
-
-
-def test_gesture_first_global_editor_swaps_atomically_and_persists(route, monkeypatch):
-    c, service, _, _, _, _, _ = route
-    catalog = configure(service, monkeypatch)
-    before_voice = c.gestureBindings
-    snapshots = []
-    c.ringGestures.changed.connect(lambda: snapshots.append(c.ringGestures.globalBindings))
-    assert c.ringGestures.setGlobalGestureAction("clench", "show_menu")
-    expected = dict(show_menu="clench", switch_mode="middle-pinch", window_selector="index-pinch")
-    assert snapshots == [expected]
-    assert GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY)).as_dict() == expected
-    assert catalog.globalOccupancy["clench"] == "手势提示"
-    assert catalog.globalOccupancy["index-pinch"] == "窗口选择"
-    assert c.ringGestures.setGlobalGestureAction("clench", "show_menu")
-    assert len(snapshots) == 1  # Saving the same assignment is a no-op.
-    assert c.ringGestures.setGlobalGestureAction("snap", "window_selector")
-    assert catalog.canBind("index-pinch") and not catalog.canBind("snap")
-    assert c.gestureBindings == before_voice
-
-
-@pytest.mark.parametrize("busy", ["voice", "fields", "scroll"])
-def test_gesture_first_global_editor_rejects_reserved_gestures_and_busy_swap(route, busy):
-    c, _, inline, _, _, _, _ = route
-    before = c.ringGestures.globalBindings
-    for key in VOICE_GESTURE_GROUP | {"unknown"}:
-        assert not c.ringGestures.globalActionOptions(key)
-        assert not c.ringGestures.setGlobalGestureAction(key, "show_menu")
-    assert not c.ringGestures.setGlobalGestureAction("clench", "unknown")
-    if busy == "voice": inline._view["phase"] = "listening"
-    elif busy == "fields": c.ringGestures._fields.applying.set()
-    else: c.ringGestures._scroll.applying.set()
-    try:
-        assert not c.ringGestures.setGlobalGestureAction("clench", "show_menu")
-        assert c.ringGestures.globalBindings == before
-        assert not c._settings.contains(GLOBAL_BINDINGS_KEY)
-    finally:
-        c.ringGestures._fields.applying.clear()
-        c.ringGestures._scroll.applying.clear()
-
-
-def test_regular_and_scene_ownership_are_independent_and_unassigned_scene_gestures_stay_silent(presentation):
-    c, service, _, backend, catalog, sent, _ = presentation
-    catalog.selectScene("regular")
-    assert catalog.setCustomBinding(POWERPOINT, "swipe-left", "常规上一项", "Cmd+Left")
-    backend.target = replace(backend.target, scene="", input_context="text")
-    assert not request(c, "swipe-left") and sent[-1] == (POWERPOINT, "Cmd+Left")
-    assert not request(c, "tap") and len(sent) == 1
-    backend.target = replace(backend.target, scene=PRESENTATION, input_context="nontext")
-    assert not request(c, "swipe-left") and sent[-1] == (POWERPOINT, "Left")
-    catalog.selectScene(PRESENTATION)
-    assert catalog.setBinding(POWERPOINT, "swipe-left", "")
-    assert not request(c, "swipe-left") and len(sent) == 2  # No regular fallback inside the scene.
-    catalog.selectScene("regular")
-    assert catalog.setBinding(POWERPOINT, "swipe-left", "")
-    assert not request(c, "swipe-left") and not catalog.voice_overridden(POWERPOINT)
-    backend.target = replace(backend.target, scene="", input_context="text")
-    assert request(c, "tap")
-
-
-@pytest.mark.parametrize("operation", ["focus_probe", "focus_plan", "focus_apply", "focus_selection"])
-def test_native_worker_does_not_focus_fields_in_voice_overridden_app(monkeypatch, operation):
-    from proximic_ring import native_access_worker as worker
-    from proximic_ring.mac_permissions import PermissionState
-    from proximic_ring.app_shortcuts import ShortcutTarget
-    monkeypatch.setattr(worker, "read_permission_state", lambda: PermissionState(True, False))
-    dispatcher = worker.Dispatcher()
-    dispatcher.shortcuts = SimpleNamespace(capture=lambda **kw: ShortcutTarget(BUNDLE, 42, BUNDLE))
-    dispatcher.text_focus = SimpleNamespace(plans={"old": object()},
-        handle=lambda *a, **kw: pytest.fail("Voice overrides cannot change text focus"))
-    result = dispatcher.handle(dict(operation=operation, voice_disabled_apps=[BUNDLE], plan="old"))
-    assert result["result"]["status"] == "voice_overridden"
-    if operation == "focus_apply": assert dispatcher.text_focus.plans == {}
-
-
-def test_global_none_releases_occupancy_persists_and_does_not_trigger_old_command(route, monkeypatch):
-    c, service, _, backend, sent, _, _ = route
-    catalog = configure(service, monkeypatch)
-    backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
-    ring = c.ringGestures
-    assert ring.globalActionOptions('clench')[0]['id'] == ''
-    assert ring.setGlobalGestureAction('clench', '')
-    assert ring.globalBindings['window_selector'] == ''
-    assert 'clench' not in catalog.globalOccupancy and '' not in catalog.globalOccupancy
-    assert catalog.canBind('clench') and '' not in c._global_gesture_bindings.reserved
-    c._settings.sync()
-    assert GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY)).window_selector == ''
-    starts = []
-    monkeypatch.setattr(ring._selector, 'start', lambda *args: starts.append(True))
-    assert catalog.setBinding(BUNDLE, 'clench', ACTION['id'])
-    assert request(c, 'clench')
-    c._apply_gesture(ring.envelope(SimpleNamespace(name='clench')), c._disconnect_event)
-    assert not starts and sent == [(BUNDLE, 'Ctrl+Tab')]
-    assert ring.setGlobalGestureAction('clench', 'window_selector')
-    assert not catalog.canBind('clench') and catalog.for_target(BUNDLE) == {}
-
-
-def test_all_global_actions_can_be_disabled_and_hints_do_not_invent_gestures(route):
-    from proximic_ring.ui.gesture_hud_model import hint_view
+def test_global_editor_allows_shared_gestures_swaps_and_reloads_without_mode_toggle(route):
     c, _, _, _, _, _, _ = route
     ring = c.ringGestures
-    for action in ring.globalBindings:
-        assert ring.globalGestureOptions(action)[0] == dict(value='', label='无')
-        assert ring.setGlobalBinding(action, '')
-    assert not c._global_gesture_bindings.reserved
-    assert c._global_gesture_bindings.action_for('') == ''
-    assert ring.windowSelector.globalLabels == dict(show_menu='', switch_mode='', window_selector='')
-    assert all(row['key'] and row['scope'] != 'global' for row in hint_view('input', global_bindings=ring.globalBindings)['orbs'])
+    assert "switch_mode" not in ring.globalBindings
+    for gesture in GESTURE_LABELS:
+        assert ring.globalActionOptions(gesture)
+    assert ring.setGlobalGestureAction("clench", "show_menu")
+    assert ring.globalBindings["show_menu"] == "clench"
+    assert ring.globalBindings["window_selector"] == "index-pinch"
+    assert ring.setGlobalGestureAction("swipe-left", "window_selector")
+    assert ring.setGlobalGestureAction("swipe-up", "scroll_up")
     assert GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY)) == c._global_gesture_bindings
-    assert ring.setGlobalGestureAction('snap', 'show_menu')
-    assert ring.setGlobalGestureAction('snap', 'window_selector')
-    assert ring.globalBindings == dict(show_menu='', switch_mode='', window_selector='snap')
-    assert len(ring.globalActionOptions('clench')) == 4
+    assert not ring.setGlobalBinding("switch_mode", "middle-pinch")
+    assert not ring.setGlobalGestureAction("unknown", "show_menu")
+    migrated = GlobalGestureBindings.from_json(json.dumps(dict(show_menu="snap", switch_mode="middle-pinch", window_selector="clench")))
+    assert migrated.show_menu == "snap" and not migrated.action_for("middle-pinch")
 
 
-@pytest.mark.parametrize('value', [None, 42, False, [], 'unknown', 'tap'])
-def test_global_none_does_not_accept_invalid_or_voice_assignments(value):
-    with pytest.raises(ValueError):
-        GlobalGestureBindings(show_menu=value)
+def test_app_configuration_roundtrip_keeps_shared_global_and_voice_bindings(route, monkeypatch):
+    _, service, _, _, _, _, _ = route
+    catalog = configure(service, monkeypatch)
+    assert catalog.setBinding(BUNDLE, "clench", ACTION["id"])
+    assert catalog.setBinding(BUNDLE, "double-tap", ACTION["id"])
+    restored = ApplicationMappingController(service)
+    try:
+        assert restored.regularBindings == catalog.regularBindings
+        assert not restored.voice_disabled_bundles()
+    finally:
+        restored.close()

@@ -1,0 +1,4 @@
+# Optional source-only legacy encoder environment; no longer a DMG requirement.
+transformers==5.15.0
+torch==2.11.0
+numpy==1.26.4

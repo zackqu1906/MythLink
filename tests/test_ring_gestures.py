@@ -1,143 +1,130 @@
 import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from PySide6.QtCore import QCoreApplication
 
-from proximic_ring import app_runtime
-from proximic_ring.app_gestures import AppBinding, default_profiles, profiles_to_json
+from proximic_ring.voice import app_runtime
+from proximic_ring.gestures.app_gestures import AppBinding, default_profiles, profiles_to_json
 from proximic_ring.asr.controller import ProximitySessionController
-from proximic_ring.gesture_settings import GestureBindings, RING_RESERVED_GESTURES, reserve_ring_gestures
+from proximic_ring.gestures.gesture_settings import GestureBindings, RING_RESERVED_GESTURES, reserve_ring_gestures
 from test_app_gestures import route
+
+
+def deliver_gestures(controller):
+    QCoreApplication.processEvents()
+    deadline = time.monotonic() + 2
+    while controller.ringGestures._pending_global is not None and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(.001)
+    assert controller.ringGestures._pending_global is None
 
 
 def request(controller, name, *, busy=False, deliver=True, connection=None):
     result = controller.ringGestures.filter(SimpleNamespace(name=name), busy,
                                            connection or controller._disconnect_event)
     if deliver:
-        QCoreApplication.processEvents()
+        deliver_gestures(controller)
     return result
 
 
-def test_modes_gate_legacy_actions_and_preview_does_not_change_mode(route):
-    c, apps, _, _, sent, _, _ = route
-    service = c.ringGestures
-    shown = []
-    service.showRequested.connect(lambda *args: shown.append(args))
-    assert service.mode == "input"
-    request(c, "index-pinch")
-    request(c, "index-pinch")
-    assert shown == [("input", ""), ("input", "")]
-    queued = service.envelope(SimpleNamespace(name="circle-clockwise"))
-    request(c, "middle-pinch", deliver=False)
-    assert not request(c, "tap", deliver=False)  # Before Qt commits the switch.
-    assert not service.accepts(queued)
-    QCoreApplication.processEvents()
-    assert service.mode == "operation" and shown[-1] == ("operation", "")
-    for name in ("tap", "snap", "swipe-left", "swipe-right", "circle-clockwise", "circle-counterclockwise"):
-        assert not request(c, name)
-    c._apply_gesture(queued, c._disconnect_event)
-    assert not sent
-    service.showMenu()
-    assert service.mode == "operation"
-    request(c, "middle-pinch")
-    assert service.mode == "input" and request(c, "tap")
-    c._apply_gesture(queued, c._disconnect_event)  # Old actions stay stale after switching back.
-    assert not sent
-    fresh = service.envelope(SimpleNamespace(name="circle-clockwise"))
-    c._apply_gesture(fresh, c._disconnect_event)
-    assert sent == [("codex", "Cmd+Shift+]")]
-    assert all(not rows["new"].enabled and rows["new"].gesture == ""
-               for app, rows in apps._profiles.items() if app != "wechat")
+def test_retired_mode_gesture_never_toggles_or_blocks_native_start(route):
+    c, _, _, _, sent, _, _ = route
+    for _ in range(2):
+        assert not request(c, "middle-pinch")
+        assert request(c, "double-tap")
+    assert not sent and "switch_mode" not in c.ringGestures.globalBindings
 
 
-@pytest.mark.parametrize("phase", ["starting", "listening", "finishing", "editing"])
-@pytest.mark.parametrize("name", ["middle-pinch", "clench", "swipe-down"])
-def test_busy_commands_are_discarded_at_recognition_not_replayed(route, phase, name):
+@pytest.mark.parametrize("phase", ["starting", "listening", "finishing", "editing", "polishing"])
+def test_busy_global_commands_are_discarded_at_recognition_not_replayed(route, phase, monkeypatch):
     c, _, inline, _, sent, _, _ = route
-    shown = []
-    c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
+    starts = []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *a: starts.append(True))
     inline._view.update(phase=phase)
-    request(c, name, deliver=False)
-    inline._view.update(phase="dictated")  # Finishes before Qt delivery.
+    request(c, "clench", deliver=False)
+    inline._view.update(phase="dictated")
     QCoreApplication.processEvents()
-    assert c.ringGestures.mode == "input"
-    assert shown[-1] == ("input", "请先结束本句")
-    inline.settled.emit("dictated", "done")
-    QCoreApplication.processEvents()
-    assert c.ringGestures.mode == "input" and not sent
+    assert not starts and not sent
 
 
-def test_audio_preparation_and_gui_writeback_both_block_switch_but_allow_hints(route):
-    c, _, inline, _, _, _, _ = route
-    shown = []
-    c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
-    request(c, "middle-pinch", busy=True)
-    assert shown[-1] == ("input", "请先结束本句")
-    request(c, "index-pinch", busy=True)
-    assert shown[-1] == ("input", "")
-    request(c, "middle-pinch", deliver=False)
-    inline._view.update(awaiting_readback=True)
-    QCoreApplication.processEvents()
-    assert c.ringGestures.mode == "input" and shown[-1][1] == "请先结束本句"
-    inline._view.update(awaiting_readback=False, phase="edited")
-    request(c, "middle-pinch")
-    assert c.ringGestures.mode == "operation"
-
-
-def test_disconnect_stale_and_expired_requests_cannot_change_mode(route, monkeypatch):
-    from proximic_ring.ui import ring_gesture_controller as module
+def test_audio_preparation_keeps_start_end_but_suppresses_global_actions(route):
     c, _, _, _, _, _, _ = route
-    hidden = []
-    c.ringGestures.hideRequested.connect(lambda: hidden.append(True))
-    token = c._disconnect_event
-    request(c, "middle-pinch", deliver=False)
-    token.set()
-    c._connected = False
-    c.connectedChanged.emit()
-    c._disconnect_event = threading.Event()
-    c._connected = True
-    c.connectedChanged.emit()
-    QCoreApplication.processEvents()
-    assert c.ringGestures.mode == "input" and hidden
-    assert not request(c, "middle-pinch", connection=token)
-    request(c, "middle-pinch", deliver=False)
-    now = module.time.monotonic()
-    monkeypatch.setattr(module.time, "monotonic", lambda: now + 2)
-    QCoreApplication.processEvents()
-    assert c.ringGestures.mode == "input"
-    assert request(c, "tap")  # A discarded request released the transition gate.
+    assert request(c, "tap", busy=True)
+    assert not request(c, "clench", busy=True)
 
 
-def test_saved_bindings_release_global_gestures_and_preserve_custom_actions(route):
-    from proximic_ring.ui.app_gesture_controller import AppGestureController
-    c, _, _, _, _, _, _ = route
-    old = GestureBindings(confirm=("middle-pinch", "index-pinch"), undo=("tap", "snap"),
-                          switch_mode=("swipe-down", "swipe-right"))
-    assert reserve_ring_gestures(old) == GestureBindings(
-        undo=("", "snap"), switch_mode=("", "swipe-right"))
-    profiles = default_profiles()
-    profiles["codex"]["new"] = AppBinding("middle-pinch", "Cmd+Alt+N")
-    profiles["workbuddy"]["new"] = AppBinding("snap", "Cmd+N")
-    c._settings.setValue("gestures/appProfiles", profiles_to_json(profiles))
-    c._settings.setValue("gestures/inputSourceGesture", "index-pinch")
-    restored = AppGestureController(c)
-    assert restored._profiles["codex"]["new"] == AppBinding("", "Cmd+Alt+N", False)
-    assert restored._profiles["workbuddy"]["new"] == profiles["workbuddy"]["new"]
-    assert restored.inputSourceGesture == ""
-    for gesture in RING_RESERVED_GESTURES:
-        assert not c.setGestureBinding("confirm", 1, gesture)
-        assert not restored.setBinding("codex", "new", gesture, "Cmd+N", True)
-        assert not restored.setInputSourceGesture(gesture)
-    restored.resetApp("codex")
-    assert restored._profiles["codex"]["new"] == AppBinding("", "Cmd+N", False)
+def test_disabled_recommendation_input_keeps_firmware_worker_alive(route):
+    from proximic_ring.gestures.firmware_gestures import FirmwareGestureWorker
+
+    c, _, _, _, sent, _, _ = route
+    assert c.agent.recommendations.input is None
+    assert not c.agent.owns_input_focus()
+    c._gesture_bindings = GestureBindings(confirm=("snap", "double-tap"), end=("tap", ""))
+    accepted = []
+
+    def dispatch(event):
+        accepted.append((event.name, c.ringGestures.filter(
+            event, True, c._disconnect_event)))
+
+    worker = FirmwareGestureWorker(on_gesture=dispatch)
+    worker.start()
+    try:
+        # Exercise immediate delivery and the pending single-tap timeout from
+        # the reported traceback, then prove the next event still arrives.
+        for seq, (class_id, name) in enumerate(((6, "snap"), (5, "tap"), (6, "snap")), 1):
+            worker.submit(SimpleNamespace(kind="trigger", protocol_version=2,
+                class_id=class_id, name=name, confidence=.99, seq=seq,
+                center_uptime_ms=seq * 1000, uptime_ms=seq * 1000))
+            deadline = time.monotonic() + 2
+            while (worker.snapshot()["processed_events"] < seq
+                   and worker.error is None and time.monotonic() < deadline):
+                time.sleep(.005)
+            assert worker.error is None
+            assert worker.snapshot()["processed_events"] == seq
+            assert worker._thread.is_alive()
+        assert accepted == [("snap", True), ("tap", True), ("snap", True)]
+        assert not c._disconnect_event.is_set() and not sent
+    finally:
+        worker.close()
+
+
+@pytest.mark.parametrize("owner_focus", ["none", "agent", "recommendation"])
+def test_optional_editor_focus_preserves_endpoint_arbitration(route, monkeypatch, owner_focus):
+    c, service, _, _, sent, _, _ = route
+    from proximic_ring.agent_workflow import pipeline_policy
+    monkeypatch.setattr(pipeline_policy, "LEGACY_WORKFLOW_ENABLED", owner_focus == "recommendation")
+    monkeypatch.setattr(c.agent, "owns_input_focus", lambda: owner_focus == "agent")
+    if owner_focus == "recommendation":
+        c.agent.recommendations.input = SimpleNamespace(
+            owns_input_focus=lambda: True, filter_gesture=lambda *args: False,
+            close=lambda: None)
+    routed = []
+    envelope = service.envelope
+    monkeypatch.setattr(service, "envelope", lambda *args, **kwargs:
+                        routed.append(True) or envelope(*args, **kwargs))
+    assert request(c, "tap")
+    assert bool(routed) is (owner_focus == "none")
+    assert not sent
+
+
+def test_lock_consumes_start_end_and_app_gestures_before_target_reads(route, monkeypatch):
+    c, apps, _, _, sent, _, _ = route
+    c._proximity._gesture_state = (True, "")
+    c._proximity.changed.emit()
+    monkeypatch.setattr(c.ringGestures, "session_blocked", lambda: True)
+    monkeypatch.setattr(apps.backend, "capture", lambda **kw: pytest.fail("locked capture"))
+    for name in ("tap", "double-tap", "swipe-left", "swipe-up", "clench", "index-pinch"):
+        assert not request(c, name)
+    assert not sent
 
 
 @pytest.mark.parametrize("app_mapping", [False, True])
 @pytest.mark.parametrize("voice_override", [False, True])
-def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(route, monkeypatch, app_mapping, voice_override):
-    import proximic_ring.firmware_gestures as host
+def test_real_runtime_gates_confirm_before_audio_and_keeps_input_double_tap_endpoint(route, monkeypatch, app_mapping, voice_override):
+    import proximic_ring.gestures.firmware_gestures as host
     c, _, inline, _, _, _, _ = route
     if app_mapping:
         from test_application_menus import ACTION, configure
@@ -190,36 +177,22 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(ro
             self.reads += 1
             gate = state["gate"]
             if self.reads == 1:
-                gesture("middle-pinch")
-                gesture("tap")  # Pending GUI transition also blocks the audio endpoint.
-                QCoreApplication.processEvents()
-                assert c.ringGestures.mode == "operation" and not gate.gesture_busy
-                for name in ("tap", "swipe-left", "swipe-right", "circle-clockwise"):
-                    gesture(name)
-                assert not gate.gesture_busy
-                assert [event.name for event in actions] == (["circle-clockwise"] if app_mapping else [])
-            elif self.reads == 2:
-                gesture("middle-pinch")
-                QCoreApplication.processEvents()
-                assert c.ringGestures.mode == "input"
-                if voice_override:
-                    gesture("tap")
-                    assert not gate.gesture_busy and not gate.active
-                    assert catalog.setBinding("com.openai.codex", "swipe-left", "")
-                gesture("tap")
+                # IMK confirms a text client even when AX exposes only a page.
+                from dataclasses import replace
+                service = c.appGestures
+                service.backend.target = replace(service.backend.target, input_context="nontext", focus="page")
+                from proximic_ring.voice.ime.focus_probe import InputFocus
+                monkeypatch.setattr(c._inline_input, 'capture_start_focus', lambda: InputFocus('text',
+                    ('e', 'c', '', service.backend.target.bundle, service.backend.target.pid, (0, 0))))
+                gesture("middle-pinch")  # Retired mode switch does nothing.
+                gesture("double-tap")
                 assert gate.gesture_busy and not gate.active
-                gesture("middle-pinch")  # Start queued, no GUI listening status yet.
-                gesture("index-pinch")
                 QCoreApplication.processEvents()
-                assert c.ringGestures.mode == "input"
-                assert ("input", "请先结束本句") in shown
-            elif self.reads == 3:
+            elif self.reads == 2:
                 assert gate.active and len(started) == 1
-                gesture("swipe-right")
+                gesture("circle-clockwise")  # Busy audio never navigates.
                 gesture("tap")
-                gesture("middle-pinch")
                 QCoreApplication.processEvents()
-                assert c.ringGestures.mode == "input"
             else:
                 assert len(finals) == 1 and not gate.active
                 disconnect.set()
@@ -235,34 +208,17 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_tap_endpoint(ro
     monkeypatch.setattr(host, "FirmwareGestureWorker", Dispatcher)
     monkeypatch.setattr(app_runtime, "RingAudioSource", Source)
     monkeypatch.setattr(app_runtime, "_build_session_controller", build)
+    def route_after_feedback(event, busy):
+        # Scene/focus IO can block here. Recognition must already be published,
+        # including when its optional observer raises an exception.
+        assert detected[-1] == event.name
+        return c.ringGestures.filter(event, busy, disconnect)
     app_runtime.RecognitionRuntime(app_runtime.RuntimeSettings(speech_control_mode="gesture")).run(
         disconnect, recognition, on_update=lambda _: None, on_state=lambda _: None,
         on_connected=lambda: None, on_disconnected=lambda: None, on_started=lambda: None,
         on_gesture=actions.append,
         on_gesture_detected=feedback,
-        gesture_filter=lambda event, busy: c.ringGestures.filter(event, busy, disconnect))
-    assert [event.name for event in actions] == (["circle-clockwise"] if app_mapping else []) + ["swipe-right"]
+        gesture_filter=route_after_feedback)
+    assert actions == []  # Focus routing queues non-endpoint gestures itself.
     assert len(finals) == len(started) == 1
-    assert detected == (["middle-pinch", "tap", "tap", "swipe-left", "swipe-right", "circle-clockwise",
-                         "middle-pinch"] + (["tap"] if voice_override else [])
-                        + ["tap", "middle-pinch", "index-pinch", "swipe-right", "tap", "middle-pinch"])
-
-
-def test_lock_consumes_gestures_before_voice_focus_scroll_and_menu(route):
-    c, _, _, _, sent, _, _ = route
-    ring = c.ringGestures
-    shown = []
-    ring.showRequested.connect(lambda *args: shown.append(args))
-    queued = ring.envelope(SimpleNamespace(name="swipe-up"))
-    request(c, "middle-pinch", deliver=False)
-    c._proximity._gesture_state = (True, "")
-    c._proximity.changed.emit()
-    for name in ["snap", "swipe-up", "tap", "swipe-down", "index-pinch", "clench", "middle-pinch"]:
-        assert not request(c, name)
-    ring.showMenu()
-    assert not ring.accepts(queued)
-    assert not shown and not sent and ring.mode == "input"
-    c._proximity._gesture_state = (False, "")
-    c._proximity.changed.emit()
-    assert not ring.accepts(queued)  # Pre-lock actions remain stale after unlock.
-    assert request(c, "tap")
+    assert detected == ["middle-pinch", "double-tap", "circle-clockwise", "tap"]

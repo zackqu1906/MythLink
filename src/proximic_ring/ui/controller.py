@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..live_audio_settings import AudioConfiguration, LiveAudioSettings
+from ..audio.live_audio_settings import AudioConfiguration, LiveAudioSettings
 
 import asyncio
 from collections import deque
@@ -37,7 +37,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..asr import ASRBackendCache
 from ..audio.microphone import input_device_choices
-from ..app_runtime import (
+from ..voice.app_runtime import (
     ASR_GAIN_DB_DEFAULT,
     ASR_GAIN_DB_MAX,
     ASR_GAIN_DB_MIN,
@@ -47,23 +47,23 @@ from ..app_runtime import (
     RuntimeSettings,
     normalize_funasr_nano_hotwords,
 )
-from ..desktop_target import (
+from ..desktop.desktop_target import (
     DesktopTargetRef,
     DesktopTextSnapshot,
     macos_texts_equivalent,
 )
-from ..diagnostic_log import RotatingDiagnosticLog, diagnostic_log_path, diagnostic_run_id, format_record
-from ..gesture_settings import (
+from ..diagnostics.diagnostic_log import RotatingDiagnosticLog, diagnostic_log_path, diagnostic_run_id, format_record
+from ..gestures.gesture_settings import (
     BoundGestureEvent, GestureBindings, GESTURE_LABELS,
     reserve_ring_gestures, GlobalGestureBindings, GLOBAL_BINDINGS_KEY,
 )
-from ..app_gestures import migrate_voice_defaults
-from .app_gesture_controller import AppGestureController, AppGestureEvent, InputSourceGestureEvent
-from .voice_history_filter import VoiceHistoryFilter
-from .home_statistics import HomeStatistics
-from .ring_gesture_controller import ModeGestureEvent, RingGestureController
-from ..model_packages import install_default_local_model
-from ..interaction_associations import (
+from ..gestures.app_gestures import migrate_voice_defaults
+from .gestures.app_gesture_controller import AppGestureController, AppGestureEvent, InputSourceGestureEvent
+from .voice.voice_history_filter import VoiceHistoryFilter
+from .voice.home_statistics import HomeStatistics
+from .gestures.ring_gesture_controller import ModeGestureEvent, RingGestureController
+from ..text_processing.model_packages import install_default_local_model
+from ..voice.interaction_associations import (
     ASSOCIATION_ASR,
     ASSOCIATION_LLM,
     ASR_DICTATION_RETRY,
@@ -73,8 +73,9 @@ from ..interaction_associations import (
     AssociationRecommendation,
     RecentFailureCoordinator,
 )
-from ..modification_dataset import ModificationDatasetCollector
+from ..voice.modification_dataset import ModificationDatasetCollector
 from ..runtime_paths import app_data_root, is_frozen, resource_root
+from ..text_processing.model import TEXT_MODE_POLISH
 from ..text_processing import (
     DEFAULT_ARK_API_KEY_ENV,
     DEFAULT_ARK_BASE_URL,
@@ -105,7 +106,7 @@ from ..text_processing import (
     normalize_llm_provider,
     validate_edit_target_text,
 )
-from ..voice_actions import (
+from ..voice.voice_actions import (
     ACTION_CANCEL,
     ACTION_EDIT,
     ACTION_INPUT,
@@ -371,14 +372,14 @@ class AppController(QObject):
 
     _runtimeStatus = Signal(str)
     _runtimeGestureHealth = Signal(object, bool)
-    _runtimeConnected = Signal()
+    _runtimeConnected = Signal(object)
     _runtimeBatteryChanged = Signal(int, int, int)
-    _runtimeDisconnected = Signal()
+    _runtimeDisconnected = Signal(object)
     _runtimeStopping = Signal(object)
-    _runtimeStarted = Signal()
+    _runtimeStarted = Signal(object)
     _runtimeSessionStarted = Signal(int)
     _runtimeUpdate = Signal(str, bool, str, int)
-    _runtimeFinished = Signal(str)
+    _runtimeFinished = Signal(str, object)
     _pushToTalkChanged = Signal(bool)
     _scanFinished = Signal(object, str)
     _textProcessed = Signal(object)
@@ -399,6 +400,10 @@ class AppController(QObject):
     def __init__(self, *, inline_input_enabled: bool | None = None) -> None:
         super().__init__()
         self._settings = QSettings("ProxiMic", "ProxiMic Voice")
+        from .shared.local_profile import LocalProfile
+        self._local_profile = LocalProfile(self._settings, self)
+        from .shared.startup import StartupController
+        self._startup = StartupController(self)
         self._menu_bar_status_info = self._settings.value("ui/menuBarStatusInfo", True, type=bool)
         self._connected = False
         self._battery_percentage = -1
@@ -406,6 +411,10 @@ class AppController(QObject):
         self._battery_charge_status = -1
         self._battery_query_complete = False
         self._recognition_enabled = False
+        self._input_restore_connection = None
+        self._input_restore_pending: set[str] = set()
+        self._input_paused_for_lock = False
+        self._input_suspending_for_lock = False
         self._interaction_recognition_suspended = False
         self._busy = False
         self._scan_busy = False
@@ -529,6 +538,11 @@ class AppController(QObject):
                 self._gesture_bindings = migrate_voice_defaults(self._gesture_bindings)
                 self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
                 self._settings.setValue("gestures/appDefaultsMigrated", True)
+            if not self._bool_setting("gestures/doubleTapDefaultMigrated", False):
+                if self._gesture_bindings.confirm == ("tap", ""):
+                    self._gesture_bindings = replace(self._gesture_bindings, confirm=("double-tap", ""))
+                    self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
+                self._settings.setValue("gestures/doubleTapDefaultMigrated", True)
         except (ValueError, TypeError):
             self._gesture_bindings = GestureBindings()
             self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
@@ -539,11 +553,11 @@ class AppController(QObject):
         except (ValueError, TypeError):
             self._global_gesture_bindings = GlobalGestureBindings()
         reserved = reserve_ring_gestures(self._gesture_bindings,
-                                        self._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
+                                        {"swipe-up", "swipe-down"})
         if reserved != self._gesture_bindings:
             self._gesture_bindings = reserved
             self._settings.setValue("input/gestureBindings", reserved.to_json())
-            self._gesture_settings_error = "食指／中指捏合、握拳和下滑已保留给全局菜单；冲突绑定已解除"
+            self._gesture_settings_error = "输入状态的上下滑固定用于发送和润色；冲突绑定已解除"
         # This switch controls only optional post-processing for dictation.
         # Edit mode always needs the selected text model.
         self._llm_enabled = self._bool_setting("llm/enabled", True)
@@ -647,10 +661,6 @@ class AppController(QObject):
         self._device_search = "Ringo"
         self._discovery_active = False
         self._pending_device_connection = False
-        # A persisted selector is only a convenience for settings.  "Reconnect"
-        # becomes available after the user has selected/attempted a device in
-        # this application session, never merely because the app just opened.
-        self._can_reconnect = False
         self._scan_message = "打开设备列表后会扫描附近的蓝牙设备"
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
@@ -674,6 +684,11 @@ class AppController(QObject):
             anonymous_user_id,
             on_saved=self._voiceHistorySaved.emit,
         )
+        from .voice.hotword_controller import HotwordController
+        self._hotwords = HotwordController(app_data_root() / "data" / "hotwords.json", self)
+        from .voice.practice_controller import VoicePracticeController
+        self._voice_practice = VoicePracticeController(self._practice_configuration, self)
+        self._hotword_legacy_epoch = uuid.uuid4().hex
         # Voice History is now a projection of the same InteractionRecords
         # used for ASR/LLM/feedback training data. Keep the old attribute so
         # the QML and playback code remain stable.
@@ -695,6 +710,8 @@ class AppController(QObject):
         default_funasr_repo = project_root / "third_party" / "Fun-ASR"
         self._device_name = str(self._settings.value("ring/name", "Ringo"))
         self._selector = str(self._settings.value("ring/selector", ""))
+        # Restore the reconnect action without starting a connection automatically.
+        self._can_reconnect = bool(self._selector.strip())
         # Public firmware 1.2.133 uses ADPCM. Migrate old saved Opus/PCM
         # choices instead of silently reconnecting with an unsupported codec.
         self._audio_encoding = "adpcm"
@@ -873,9 +890,11 @@ class AppController(QObject):
                 error or "", latency
             ),
         )
-        from .inline_controller import InlineInputController
+        from .voice.inline_controller import InlineInputController
         self._inline_input = InlineInputController(self, enabled=inline_input_enabled)
-        from .permission_setup_controller import PermissionSetupController
+        from .voice.tutorial_controller import VoiceTutorialController
+        self._voice_tutorial = VoiceTutorialController(self._inline_input, self)
+        from .permissions.permission_setup_controller import PermissionSetupController
         self._permission_setup = PermissionSetupController(
             self._inline_input.permissions, self._settings, self,
         )
@@ -884,11 +903,15 @@ class AppController(QObject):
         self._inline_unsettled_edits: set[int] = set()
         self._inline_interruption_logged = False
         self._inline_input.began.connect(self._inline_gesture_start_ready)
+        self._inline_input.began.connect(self._capture_inline_history_target)
         self._inline_input.editIntentConfirmed.connect(self._record_inline_edit_intent)
         self._inline_input.editRequested.connect(self._submit_inline_edit)
+        self._inline_input.polishRequested.connect(self._submit_inline_polish)
         self._inline_input.audioEndRequested.connect(self._finish_utterance_event.set)
         self._inline_input.interrupted.connect(self._interrupt_inline_audio)
         self._inline_input.settled.connect(self._settle_inline_input)
+        self._inline_input.transactionSettled.connect(self._hotwords.settle)
+        self._hotwords.learned.connect(self._inline_input.notify_hotwords_learned)
         self._inline_input.changed.connect(self.interactionChanged)
         self._inline_input.changed.connect(self._refresh_inline_status)
         self._inline_input.diagnostic.connect(self._log_inline_diagnostic)
@@ -897,20 +920,27 @@ class AppController(QObject):
         self._inline_input.set_gesture_hints(self.gestureBindings)
         self._inline_input.set_hud_scale(self._voice_hud_scale)
         self.gestureSettingsChanged.connect(lambda: self._inline_input.set_gesture_hints(self.gestureBindings))
+        from .desktop.browser_extension_controller import BrowserExtensionController
+        self._browser_extensions = BrowserExtensionController(self)
         self._app_gestures = AppGestureController(self)
+        self._browser_extensions.setupRequested.connect(self._app_gestures.catalog.setupBrowser)
         self._ring_gestures = RingGestureController(self)
-        from .gesture_trigger_controller import GestureTriggerController
+        from .gestures.gesture_trigger_controller import GestureTriggerController
         self._gesture_trigger = GestureTriggerController(self)
-        from .touchpad_controller import TouchpadController
+        from .touchpad.touchpad_controller import TouchpadController
         self._touchpad = TouchpadController(self)
-        from .proximity_controller import ProximityController
+        from proximic_ring.agent_workflow.ui.agent_controller import AgentController
+        self._agent = AgentController(self)
+        from .proximity.proximity_controller import ProximityController
         self._proximity = ProximityController(self, settings=self._settings)
         self._proximity.diagnostic.connect(lambda info: self._event_log("PROXIMITY", **info))
-        self._proximity.lockPreparing.connect(self.pauseRecognition)
-        self._proximity.lockPreparing.connect(self._touchpad.stop)
-        self._proximity.locked.connect(self.pauseRecognition)
+        self._proximity.lockPreparing.connect(self._pause_inputs_for_lock)
+        self._proximity.locked.connect(self._pause_inputs_for_lock)
+        self._proximity.changed.connect(self._restore_input_preferences)
+        self._touchpad.changed.connect(self._restore_input_preferences)
         self._proximity.changed.connect(self._ring_gestures.lock_state_changed)
         self._proximity.reconnectRequested.connect(self._reconnect_for_proximity)
+        self.connectedChanged.connect(self._proximity.syncConnectionState)
         self._inline_input.settled.connect(self._app_gestures.settled)
         self._inline_input.changed.connect(self._app_gestures.state_changed)
         self._inline_input.interrupted.connect(self._app_gestures.cancel_pending)
@@ -1002,6 +1032,11 @@ class AppController(QObject):
         return bool(value)
 
     # Runtime state -------------------------------------------------------------
+    @Property(str, constant=True)
+    def appVersion(self):
+        from ..version import app_version
+        return app_version()
+
     @Property(bool, notify=runningChanged)
     def running(self) -> bool:
         """Backward-compatible alias for recognitionEnabled."""
@@ -1154,12 +1189,36 @@ class AppController(QObject):
         return self._inline_input
 
     @Property(QObject, constant=True)
+    def browserExtensions(self) -> QObject:
+        return self._browser_extensions
+
+    @Property(QObject, constant=True)
+    def startup(self) -> QObject:
+        return self._startup
+
+    @Property(QObject, constant=True)
+    def localProfile(self) -> QObject:
+        return self._local_profile
+
+    @Property(QObject, constant=True)
+    def voicePractice(self) -> QObject:
+        return self._voice_practice
+
+    @Property(QObject, constant=True)
+    def voiceTutorial(self) -> QObject:
+        return self._voice_tutorial
+
+    @Property(QObject, constant=True)
     def appGestures(self) -> QObject:
         return self._app_gestures
 
     @Property(QObject, constant=True)
     def ringGestures(self) -> QObject:
         return self._ring_gestures
+
+    @Property(QObject, constant=True)
+    def agent(self) -> QObject:
+        return self._agent
 
     @Property(QObject, constant=True)
     def gestureTrigger(self) -> QObject:
@@ -1204,13 +1263,17 @@ class AppController(QObject):
         if phase == "error":
             self._set_status("听写未完成", inline.error or inline.connectionStatus, "error")
         elif phase == "starting" and self._recognition_enabled:
-            self._set_status("正在准备", "正在连接输入法，就绪后开始收音；再次 tap 取消", "starting")
+            self._set_status("正在准备", f"正在连接输入法，就绪后开始收音；{self.endGestureHint}取消", "starting")
         elif phase == "listening" and self._recognition_enabled:
-            self._set_status("听写 · 可以说话", f"{self.confirmGestureHint} 结束本句，Esc 可取消", "listening")
+            self._set_status("听写 · 可以说话", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
         elif phase == "finishing" and self._recognition_enabled:
             self._set_status("正在定稿", "正在等待本句识别结果", "processing")
+        elif phase == "polishing" and self._recognition_enabled:
+            self._set_status("正在润色", "正在润色本句听写，左滑可取消", "processing")
         elif phase in {"dictated", "edited"} and self._recognition_enabled:
             title = ("已听写" if inline._view.get("raw") else "未识别到语音") if phase == "dictated" else "已编辑"
+            if phase == "dictated" and inline._view.get("polished"):
+                title = "已润色"
             self._set_status(title,
                              inline.error or f"{self.confirmGestureHint} 开始下一句", "running")
 
@@ -1232,6 +1295,7 @@ class AppController(QObject):
                 self._append_log(f"编辑中断状态保存失败：{exc}")
 
     def _cancel_inline_requests(self, reason: str, *, failed: bool = False) -> None:
+        self._hotwords.discard_pending()
         for request_id in tuple(self._inline_requests):
             self._text_processing_worker.cancel_request(request_id)
             self._pending_text_requests.discard(request_id)
@@ -1249,6 +1313,17 @@ class AppController(QObject):
             instruction, self._latest_asr_session_id, INPUT_MODE_EDIT,
             target_text=original, target=target,
             snapshot=DesktopTextSnapshot(target, original), update_interaction=False,
+        )
+        self._inline_requests[self._text_request_id] = key
+        if self._asr_backend == "volcengine":
+            self._hotwords.prepare(key, instruction, original, self._voice_llm_settings(INPUT_MODE_EDIT))
+        self._set_interaction_state("processing")
+
+    def _submit_inline_polish(self, key, text, target) -> None:
+        self._suspend_recognition_for_interaction()
+        self._submit_text_processing(
+            text, self._latest_asr_session_id, TEXT_MODE_POLISH,
+            target=target, update_interaction=False,
         )
         self._inline_requests[self._text_request_id] = key
         self._set_interaction_state("processing")
@@ -1329,8 +1404,9 @@ class AppController(QObject):
 
     def _settle_inline_input(self, phase: str, text: str) -> None:
         source_session_id = self._inline_input.settled_session_id
-        if source_session_id is None:
-            source_session_id = self._latest_asr_session_id
+        # A source-activation failure can happen before audio START. It has no
+        # ASR session, and must never overwrite the preceding history record.
+        source_session_id = int(source_session_id or 0)
         self._inline_unsettled_edits.discard(source_session_id)
         if phase == "undone":
             # Cancelling dictation discards the rest of the audio. Ending it
@@ -1347,7 +1423,8 @@ class AppController(QObject):
         self.transcriptChanged.emit()
         self._resume_recognition_after_interaction()
         if phase in {"dictated", "edited"}:
-            self._record_history("听写 · 已定稿" if phase == "dictated" else "修改 · 已应用", raw=text)
+            label = ("润色 · 已应用" if self._inline_input._view.get("polished") else "听写 · 已定稿") if phase == "dictated" else "修改 · 已应用"
+            self._record_history(label, raw=text)
         if phase == "error":
             self._cancel_utterance_event.set()
             self._ignore_asr_updates_until_next_start = True
@@ -1360,7 +1437,7 @@ class AppController(QObject):
                 action={"dictated": "applied", "edited": "applied", "undone": "undone", "error": "apply_failed"}.get(phase, phase),
                 session_id=source_session_id,
                 mode=INPUT_MODE_EDIT if phase == "edited" else INPUT_MODE_DICTATION,
-                application=target.process_name if target is not None else "",
+                application=self._inline_input.history_application(),
                 target_key=target.accessibility_id if target is not None else "",
                 final_text=text, method="input_method",
                 error=self._inline_input.error or None,
@@ -1376,6 +1453,11 @@ class AppController(QObject):
     @Property("QVariantList", notify=voiceHistoryChanged)
     def voiceHistoryEntries(self) -> list[dict[str, object]]:
         return list(self._voice_history_entries)
+
+    @Slot(str, result="QVariantMap")
+    def historyApplication(self, identity: str) -> dict:
+        from .desktop.application_identity import application_presentation
+        return application_presentation(identity)
 
     @Property(QObject, constant=True)
     def voiceHistoryModel(self) -> QObject:
@@ -2653,6 +2735,7 @@ class AppController(QObject):
         return self._audio_settings_error
 
     def _select_audio_configuration(self, **values):
+        self._voice_practice.cancel()
         if self._busy or self._quitting:
             return
         if self._runtime_active or self._connected:
@@ -2734,8 +2817,8 @@ class AppController(QObject):
             self.settingsChanged.emit()
             self.microphoneDevicesChanged.emit()
             if self._recognition_enabled:
-                detail = (f"{self.confirmGestureHint} 开始，再做一次结束本句" if self._speech_control_mode == "gesture"
-                          else f"靠近说话，{self.confirmGestureHint} 手势结束本句")
+                detail = (f"{self.confirmGestureHint} 开始，{self.endGestureHint} 结束本句" if self._speech_control_mode == "gesture"
+                          else f"靠近说话，{self.endGestureHint} 手势结束本句")
                 self._set_status("自动监听中", detail, "running")
         else:
             self._audio_settings_message = "切换未完成，已恢复原配置：" + error
@@ -2817,9 +2900,13 @@ class AppController(QObject):
     def confirmGestureHint(self) -> str:
         return self._gesture_bindings.confirm_hint
 
+    @Property(str, notify=gestureSettingsChanged)
+    def endGestureHint(self) -> str:
+        return self._gesture_bindings.end_hint
+
     @Property("QVariantMap", notify=gestureSettingsChanged)
     def gestureButtonHints(self) -> dict[str, str]:
-        labels = {**GESTURE_LABELS, "tap": "轻点", "snap": "弹指"}
+        labels = {**GESTURE_LABELS, "tap": "轻点", "double-tap": "双击 tap", "snap": "弹指"}
         return {
             action: "/".join(labels[name] for name in names if name)
             for action, names in self._gesture_bindings.as_dict().items()
@@ -2831,9 +2918,10 @@ class AppController(QObject):
             name for key, values in self._gesture_bindings.as_dict().items()
             for index, name in enumerate(values)
             if name and (key != action or index != slot)
+            and {key, action} != {"confirm", "end"}
         }
         used.add(self._app_gestures.inputSourceGesture)
-        used.update(self._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"})
+        used.update({"swipe-up", "swipe-down"})
         return [{"value": "", "label": "未设置"}] + [
             {"value": name, "label": label}
             for name, label in GESTURE_LABELS.items() if name not in used
@@ -2844,22 +2932,22 @@ class AppController(QObject):
         self._settings.setValue("input/gestureBindings", bindings.to_json())
         self._gesture_bindings = bindings
         self._app_gestures._generation += 1
-        self._app_gestures.cancel_pending("手势设置已变化，请重新上滑发送")
+        self._app_gestures.cancel_pending("手势设置已变化，请重新触发手势")
         self._gesture_settings_error = ""
         self.gestureSettingsChanged.emit()
         self._app_gestures.changed.emit()
         self._app_gestures.catalog.changed.emit()
         if self._interaction_state == "listening":
-            self._transcript_text = f"正在收听语音 · {self.confirmGestureHint} 结束"
+            self._transcript_text = f"正在收听语音 · {self.endGestureHint} 结束"
             self.transcriptChanged.emit()
-            self._set_status("正在聆听", f"{self.confirmGestureHint} 结束本句，Esc 可取消", "listening")
+            self._set_status("正在聆听", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
         self._event_log("USER_SETTING", setting="gesture_bindings", value=bindings.as_dict())
 
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
-            if name in self._global_gesture_bindings.reserved | {"swipe-up", "swipe-down"}:
-                raise ValueError("该手势已保留给 Ring 全局菜单")
+            if name in {"swipe-up", "swipe-down"}:
+                raise ValueError("输入状态的上下滑固定用于发送和润色")
             bindings = self._gesture_bindings.with_slot(action, slot, name)
             self._app_gestures.validate_voice(bindings)
         except ValueError as exc:
@@ -3116,6 +3204,10 @@ class AppController(QObject):
             "asr/funasrNanoHotwords",
         )
 
+    @Property(QObject, constant=True)
+    def hotwords(self):
+        return self._hotwords
+
     @Property(bool, notify=settingsChanged)
     def desktopOutputEnabled(self) -> bool:
         return self._desktop_output
@@ -3345,6 +3437,12 @@ class AppController(QObject):
         self._start_selected_device()
 
     @property
+    def proximity_lock_connected(self) -> bool:
+        return bool(self._connected and not self._disconnect_event.is_set()
+                    and not self._quitting and not self._proximity_reconnect_cancelled
+                    and str(self._selector).lower() == self._proximity._target)
+
+    @property
     def proximity_gesture_ready(self) -> bool:
         return bool(self._connected and self._runtime_active and not self._disconnect_event.is_set()
                     and str(self._selector).lower() == self._proximity._target
@@ -3360,7 +3458,7 @@ class AppController(QObject):
 
     @Slot(str)
     def _reconnect_for_proximity(self, target):
-        # Only a live, owned lock may recover the selected ring in the background.
+        # Any live lock with a prepared snap-unlock route may recover this ring.
         # The native monitor remains alive throughout, retaining its one-lock token.
         if (not target or target != self._proximity.reconnect_target
                 or target != str(self._selector).lower() or self._quitting
@@ -3555,6 +3653,8 @@ class AppController(QObject):
             asr_backend_cache=self._asr_backend_cache,
         )
         gesture_connection = self._disconnect_event
+        from proximic_ring.voice.utterance_commands import UtteranceCommands
+        self._utterance_commands = utterance_commands = UtteranceCommands(gesture_connection)
         self._gesture_input_preparation_enabled = self._inline_enabled() and self._desktop_output
 
         def worker_main() -> None:
@@ -3565,12 +3665,12 @@ class AppController(QObject):
                     self._recognition_event,
                     cancel_utterance_event=self._cancel_utterance_event,
                     finish_utterance_event=self._finish_utterance_event,
-                    on_update=self._publish_update,
+                    on_update=lambda update: self._publish_update(update, connection=gesture_connection),
                     on_state=self._runtimeStatus.emit,
-                    on_connected=self._runtimeConnected.emit,
-                    on_disconnected=self._runtimeDisconnected.emit,
+                    on_connected=lambda: self._runtimeConnected.emit(gesture_connection),
+                    on_disconnected=lambda: self._runtimeDisconnected.emit(gesture_connection),
                     on_stopping=lambda: self._runtimeStopping.emit(gesture_connection),
-                    on_started=self._runtimeStarted.emit,
+                    on_started=lambda: self._runtimeStarted.emit(gesture_connection),
                     on_session_started=self._runtimeSessionStarted.emit,
                     on_session_ended=self._suspend_recognition_for_interaction,
                     on_push_to_talk=self._pushToTalkChanged.emit,
@@ -3581,12 +3681,19 @@ class AppController(QObject):
                         self._ring_gestures.envelope(event), gesture_connection
                     ),
                     on_gesture_health=lambda healthy: self._runtimeGestureHealth.emit(gesture_connection, healthy),
-                    on_gesture_detected=lambda event: self._gesture_trigger.submit(event.name, gesture_connection),
-                    gesture_filter=lambda event, busy: self._ring_gestures.filter(
-                        event, busy, gesture_connection
+                    on_gesture_detected=lambda event: (
+                        None if self._voice_practice.active else self._gesture_trigger.submit(event.name, gesture_connection)
                     ),
+                    utterance_commands=utterance_commands,
+                    gesture_filter=lambda event, busy: (
+                        False if self._voice_practice.consume_gesture(event)
+                        else self._ring_gestures.filter(event, busy, gesture_connection)
+                    ),
+                    practice_active=lambda: self._voice_practice.active,
+                    practice_audio_consumer=self._voice_practice.consume_audio,
                     on_battery=self._publish_battery_status,
                     ime_context_provider=(self._inline_input.context_provider if self._inline_enabled() else None),
+                    asr_hotwords_provider=self._hotwords.store.snapshot,
                     prepare_gesture_start=(
                         lambda completion: self._prepareGestureStart.emit(completion, gesture_connection)
                     ) if self._gesture_input_preparation_enabled else None,
@@ -3606,7 +3713,7 @@ class AppController(QObject):
                 )
                 print(f"[runtime] {error}")
                 traceback.print_exc()
-            self._runtimeFinished.emit(error)
+            self._runtimeFinished.emit(error, gesture_connection)
 
         self._worker = threading.Thread(
             target=worker_main,
@@ -3674,8 +3781,30 @@ class AppController(QObject):
         )
         try:
             self._modification_dataset.begin_session(normalized)
+            if self._inline_enabled() and self._desktop_output:
+                self._capture_inline_history_target()
+            else:
+                target = self._speech_start_target
+                application = (target.process_name or target.window_title) if target else ""
+                self._modification_dataset.record_target(
+                    normalized, application=application,
+                    target_key=self._association_target_key(target))
         except BaseException as exc:
             self._append_log(f"语音会话记录初始化失败：{exc}")
+
+    def _capture_inline_history_target(self) -> None:
+        # Audio START and the native BEGIN acknowledgment can arrive in either
+        # order. Capture only their bound session, never the latest foreground app.
+        inline = self._inline_input
+        if (not inline._session_id or self._ignore_asr_updates_until_next_start
+                or inline._begin_origin is not None or inline._reply_stage in {"ready", "begin"}):
+            return
+        try:
+            self._modification_dataset.record_target(
+                inline._session_id, application=inline.history_application(),
+                target_key=self._association_target_key(inline.target_reference()))
+        except Exception as exc:
+            self._append_log(f"语音应用归属记录失败：{exc}")
 
     def _record_raw_imu_samples(
         self,
@@ -3700,7 +3829,7 @@ class AppController(QObject):
             print(f"[dataset] utterance IMU was not saved: {exc}")
 
     @Slot()
-    def startRecognition(self) -> None:
+    def startRecognition(self, *, remember: bool = True) -> None:
         accepted = bool(
             self._connected and not self._busy and not self._recognition_enabled
             and not self._proximity.gestures_blocked
@@ -3708,12 +3837,15 @@ class AppController(QObject):
         self._event_log(
             "USER_ACTION",
             action="start_recognition",
+            source="user" if remember else "saved_configuration",
             accepted=accepted,
             connected=self._connected,
             busy=self._busy,
         )
         if not accepted:
             return
+        if remember:
+            self._remember_input_setting("input/voiceEnabled", True)
         self._interaction_recognition_suspended = False
         if not self._touchpad.blocksVoice:
             self._recognition_event.set()
@@ -3725,9 +3857,9 @@ class AppController(QObject):
             self._append_log("语音识别已启用，等待笔画输入结束")
             return
         detail = (
-            f"{self.confirmGestureHint} 开始，再做一次结束本句"
+            f"{self.confirmGestureHint} 开始，{self.endGestureHint} 结束本句"
             if self._speech_control_mode == "gesture"
-            else f"靠近说话，{self.confirmGestureHint} 手势结束本句"
+            else f"靠近说话，{self.endGestureHint} 手势结束本句"
         )
         if self._push_to_talk and self._speech_control_mode != "gesture":
             detail += "，或按住右 Alt"
@@ -3756,16 +3888,19 @@ class AppController(QObject):
             self._append_log("当前语句处理完成，已恢复下一段语音识别")
 
     @Slot()
-    def pauseRecognition(self) -> None:
+    def pauseRecognition(self, *, remember: bool = True) -> None:
         accepted = bool(self._connected and self._recognition_enabled)
         self._event_log(
             "USER_ACTION",
             action="pause_recognition",
+            source="user" if remember else "proximity_lock",
             accepted=accepted,
             connected=self._connected,
         )
         if not self._connected or not self._recognition_enabled:
             return
+        if remember:
+            self._remember_input_setting("input/voiceEnabled", False)
         self._recognition_event.clear()
         self._interaction_recognition_suspended = False
         self._session_input_modes.clear()
@@ -3787,9 +3922,69 @@ class AppController(QObject):
         else:
             self.startRecognition()
 
+    def _remember_input_setting(self, key: str, enabled: bool) -> None:
+        """Persist user choices, never the temporary shutdown/lock state."""
+        self._input_restore_pending.discard(key)
+        self._settings.setValue(key, enabled)
+        self._settings.sync()
+        self._event_log("INPUT_PREFERENCE", setting=key, enabled=enabled)
+
+    @Slot()
+    def _pause_inputs_for_lock(self) -> None:
+        if (self._input_suspending_for_lock
+                or (self._input_paused_for_lock and not self._recognition_enabled and not self._touchpad.active)):
+            return
+        # Suspend first: stopping touchpad emits signals that may reenter restore.
+        self._input_paused_for_lock = True
+        if (self._connected and not self._disconnect_event.is_set()
+                and self._input_restore_connection is self._disconnect_event):
+            self._input_restore_pending.update({"input/voiceEnabled", "touchpad/enabled"})
+        self._input_suspending_for_lock = True
+        try:
+            self.pauseRecognition(remember=False)
+            self._touchpad.stop("屏幕已锁定")
+        finally:
+            self._input_suspending_for_lock = False
+        self._event_log("INPUT_PREFERENCES_SUSPEND", reason="screen_lock")
+
+    @Slot()
+    def _restore_input_preferences(self) -> None:
+        if self._proximity.gestures_blocked:
+            self._pause_inputs_for_lock()
+            return
+        if self._input_paused_for_lock:
+            # A stopped/failed helper clears its gesture route, which by itself
+            # is not evidence that the system has actually unlocked.
+            if not self._proximity.input_resume_allowed:
+                return
+            self._input_paused_for_lock = False
+            self._event_log("INPUT_PREFERENCES_RESUME", reason="screen_unlocked",
+                            voice_enabled=self._bool_setting("input/voiceEnabled", True),
+                            touchpad_enabled=self._bool_setting("touchpad/enabled", True))
+        if (not self._input_restore_pending or self._input_restore_connection is not self._disconnect_event
+                or not self._connected or self._busy or self._quitting
+                or self._disconnect_event.is_set() or self._proximity.gestures_blocked):
+            return
+        if "input/voiceEnabled" in self._input_restore_pending:
+            self._input_restore_pending.remove("input/voiceEnabled")
+            if self._bool_setting("input/voiceEnabled", True):
+                self.startRecognition(remember=False)
+        if "touchpad/enabled" in self._input_restore_pending:
+            enabled = self._bool_setting("touchpad/enabled", True)
+            if (not enabled or not self._touchpad.supported
+                    or (self._touchpad.available and not self._touchpad.busy)):
+                # Retire before starting: state signals may reenter this slot.
+                self._input_restore_pending.remove("touchpad/enabled")
+                if enabled and self._touchpad.available and not self._touchpad.active:
+                    self._touchpad.setInputMode("pointer")
+                    self._touchpad.start()
+
     @Slot()
     def disconnectDevice(self) -> None:
+        self._voice_practice.cancel()
         self._proximity_reconnect_cancelled = True
+        self._input_restore_pending.clear()
+        self._proximity.pauseForDisconnect()
         worker = self._worker
         self._event_log(
             "USER_ACTION",
@@ -4183,6 +4378,8 @@ class AppController(QObject):
 
     @Slot()
     def requestQuit(self) -> None:
+        self._voice_practice.cancel()
+        self._input_restore_pending.clear()
         self._audio_settings_timer.stop()
         self._permission_setup.close()
         self._proximity.close()
@@ -4206,6 +4403,7 @@ class AppController(QObject):
         self.dismissRingDisconnectNotice()
         self._cancel_pending_text_processing()
         self._text_processing_worker.close(wait=False)
+        self._hotwords.close()
         self._quit_wait_ticks = 0
         self.disconnectDevice()
         if self._worker is not None and self._worker.is_alive():
@@ -4237,10 +4435,13 @@ class AppController(QObject):
         if self._voice_history_closed:
             return
         self._voice_history_closed = True
+        self._hotwords.close()
         self._home_statistics.close()
         self._cancel_inline_requests("主程序已退出")
         self._record_interrupted_inline_edits("主程序已退出")
         self._app_gestures.close()
+        if getattr(self, '_browser_extensions', None): self._browser_extensions.close()
+        if getattr(self, '_agent', None): self._agent.close()
         self._touchpad.close()
         self._ring_gestures.close()
         self._gesture_trigger.close()
@@ -4343,14 +4544,17 @@ class AppController(QObject):
         self._scan_message = message
 
     # Worker event application --------------------------------------------------
-    def _publish_update(self, update) -> None:
+    def _publish_update(self, update, *, connection=None) -> None:
+        connection = self._disconnect_event if connection is None else connection
         session_id = int(getattr(update, "session_id", 0))
         if (
-            self._disconnect_event.is_set()
+            connection is not self._disconnect_event or connection.is_set()
             or self._ignore_asr_updates_until_next_start
             or session_id in self._cancelled_asr_session_ids
         ):
             return
+        if not getattr(update, "error", None):
+            self._proximity.record_voice_activity(getattr(update, "text", ""), session_id, connection)
         if bool(getattr(update, "is_final", False)) and not self._inline_enabled():
             # Native input confirms each final once on the Qt thread. A stale
             # duplicate must not close the next-sentence recognition gate.
@@ -4513,7 +4717,7 @@ class AppController(QObject):
                 self._inline_audio_prepared = ""
                 if (summary.startswith("[ASR] START gesture") and self._gesture_input_preparation_enabled
                         and not prepared):
-                    self._interrupt_inline_audio("输入法连接已变化，本句已取消，请再次 tap")
+                    self._interrupt_inline_audio(f"输入法连接已变化，本句已取消，请再次{self.confirmGestureHint}")
                     return
                 if not prepared and not self._inline_input.begin(auto_select=summary.startswith("[ASR] START gesture")):
                     return
@@ -4523,7 +4727,7 @@ class AppController(QObject):
             if speech_target_key in self._operation_stacks:
                 self._active_operation_target_key = speech_target_key
             self._transcript_primary_text = ""
-            self._transcript_text = f"正在收听语音 · {self.confirmGestureHint} 结束"
+            self._transcript_text = f"正在收听语音 · {self.endGestureHint} 结束"
             self._transcript_mode = ""
             self._transcript_final = False
             self._transcript_active = True
@@ -4534,7 +4738,7 @@ class AppController(QObject):
                 if self._inline_enabled() and self._desktop_output:
                     self._refresh_inline_status()
                 else:
-                    self._set_status("正在聆听", f"{self.confirmGestureHint} 结束本句，Esc 可取消", "listening")
+                    self._set_status("正在聆听", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
             return
         if summary.startswith("[ASR] CANCELLED"):
             if self._ignore_asr_updates_until_next_start:
@@ -4586,9 +4790,10 @@ class AppController(QObject):
             self._status_detail = summary
             self.statusChanged.emit()
 
-    @Slot()
-    def _apply_runtime_connected(self) -> None:
-        if self._disconnect_event.is_set():
+    @Slot(object)
+    def _apply_runtime_connected(self, connection=None) -> None:
+        if ((connection is not None and connection is not self._disconnect_event)
+                or self._disconnect_event.is_set() or self._proximity_reconnect_cancelled):
             return
         self._connected = True
         self._runtime_had_connection = True
@@ -4734,6 +4939,8 @@ class AppController(QObject):
             self.associationChanged.emit()
 
     def _stop_device_interaction(self) -> None:
+        self._voice_practice.cancel()
+        self._input_restore_pending.clear()
         self._touchpad.stop("设备连接已停止")
         if self._device_stop_handled:
             return
@@ -4790,9 +4997,9 @@ class AppController(QObject):
         self.busyChanged.emit()
         self._set_status("设备连接已停止", "语音和手势交互已停止，正在释放设备资源", "stopping")
 
-    @Slot()
-    def _apply_runtime_disconnected(self) -> None:
-        if not self._runtime_active:
+    @Slot(object)
+    def _apply_runtime_disconnected(self, connection=None) -> None:
+        if (connection is not None and connection is not self._disconnect_event) or not self._runtime_active:
             return
         was_recognizing = self._recognition_enabled
         self._stop_device_interaction()
@@ -4818,9 +5025,12 @@ class AppController(QObject):
             user_requested=self._disconnect_requested_by_user,
         )
 
-    @Slot()
-    def _apply_runtime_started(self) -> None:
-        if self._disconnect_event.is_set():
+    @Slot(object)
+    def _apply_runtime_started(self, connection=None) -> None:
+        if ((connection is not None and connection is not self._disconnect_event)
+                or self._disconnect_event.is_set() or self._quitting
+                or self._proximity_reconnect_cancelled
+                or self._input_restore_connection is self._disconnect_event):
             return
         if not self._connected:
             self._connected = True
@@ -4828,8 +5038,14 @@ class AppController(QObject):
         self._busy = False
         self.busyChanged.emit()
         self._set_status("准备就绪", "设备已连接，点击“开启语音识别”开始", "paused")
-        self._append_log("设备和识别组件已就绪；识别当前暂停")
+        self._append_log("设备和识别组件已就绪")
         self._event_log("RUNTIME_READY", device_name=self._device_name)
+        self._input_restore_connection = self._disconnect_event
+        self._input_restore_pending = {"input/voiceEnabled", "touchpad/enabled"}
+        self._event_log("INPUT_PREFERENCES_RESTORE",
+                        voice_enabled=self._bool_setting("input/voiceEnabled", True),
+                        touchpad_enabled=self._bool_setting("touchpad/enabled", True))
+        self._restore_input_preferences()
 
     @Slot(str, bool, str, int)
     def _apply_runtime_update(
@@ -4984,7 +5200,7 @@ class AppController(QObject):
         self._transcript_primary_text = text
         if not is_final:
             self._transcript_mode = ""
-            self._transcript_text = f"正在收听语音 · {self.confirmGestureHint} 结束"
+            self._transcript_text = f"正在收听语音 · {self.endGestureHint} 结束"
             self._transcript_final = False
             self._transcript_active = True
             self._set_interaction_state("listening")
@@ -5308,8 +5524,8 @@ class AppController(QObject):
         auto_route_id: int = 0,
         update_interaction: bool = True,
     ) -> None:
-        normalized_mode = normalize_input_mode(mode)
-        if normalized_mode != INPUT_MODE_EDIT and not self._llm_enabled:
+        normalized_mode = TEXT_MODE_POLISH if mode == TEXT_MODE_POLISH else normalize_input_mode(mode)
+        if normalized_mode not in {INPUT_MODE_EDIT, TEXT_MODE_POLISH} and not self._llm_enabled:
             self._append_log("输入模式已跳过文本大模型，直接采用 ASR 最终结果")
             immediate_result = TextProcessingResult(
                     request_id=0,
@@ -5352,7 +5568,7 @@ class AppController(QObject):
         if not was_processing:
             self.textProcessingChanged.emit()
         self.llmTextProcessingChanged.emit()
-        label = "修改" if normalized_mode == INPUT_MODE_EDIT else "输入"
+        label = "润色" if normalized_mode == TEXT_MODE_POLISH else "修改" if normalized_mode == INPUT_MODE_EDIT else "输入"
         if update_interaction:
             self._transcript_text = self._processing_status_text(
                 normalized_mode, text
@@ -5392,7 +5608,11 @@ class AppController(QObject):
                     self._refresh_voice_history_entries()
                 except BaseException as exc:
                     self._append_log(f"输入法编辑结果保存失败：{exc}")
-                self._inline_input.apply_edit(key, result.final_text, result.error or "")
+                if result.mode == TEXT_MODE_POLISH:
+                    self._inline_input.apply_polish(key, result.final_text, result.error or "")
+                else:
+                    self._hotwords.expect_result(key, result.final_text, result.error or "")
+                    self._inline_input.apply_edit(key, result.final_text, result.error or "")
             return
         if result.request_id not in self._pending_text_requests:
             return
@@ -6323,6 +6543,8 @@ class AppController(QObject):
             )
             return
         self._active_operation_target_key = selected_key
+        self._hotwords.settle(self._legacy_hotword_key(operation), "undone", "")
+        self._learn_applied_hotwords(replacement)
         self._finalize_mode_switch_history(
             session_id=interaction.session_id,
             previous_mode=previous_mode,
@@ -6570,7 +6792,7 @@ class AppController(QObject):
         """Keep every committed dictation available for manual paste."""
         value = str(text or "")
         try:
-            from .clipboard import QtClipboardBridge
+            from .shared.clipboard import QtClipboardBridge
 
             clipboard = QtClipboardBridge()
             last_error: BaseException | None = None
@@ -6901,36 +7123,27 @@ class AppController(QObject):
                 _live_message="",
             )
             return
-        if app_event is not None and app_event.exclusive:
-            self._app_gestures.handle_override(app_event)
-            return
-        if app_event is not None and app_event.scene:
-            self._app_gestures.handle_scene(app_event)
-            return
-        if self._ring_gestures.mode == "operation":
-            # accepts() allows only fresh, explicitly bound menu events here.
-            # Never let an operation-mode shortcut fall through to voice undo,
-            # correction, input-source switching, or the input-mode Enter action.
-            if app_event is not None and not self._ring_gestures.speech_busy():
-                self._app_gestures.handle(app_event)
-            elif app_event is not None:
-                self._app_gestures._stop_trace(app_event, "speech_busy")
-            return
-        # Also protect direct GUI dispatchers; the normal runtime reserves
-        # these gestures before confirmation and before native target capture.
-        if name in self._global_gesture_bindings.reserved:
-            self._ring_gestures.filter(event, False, connection)
-            return
-        if name == "swipe-up":
-            # Mode/selection/lock boundaries have already accepted this event.
-            # This fixed action precedes all configurable voice/app bindings.
-            self._app_gestures.handle(app_event or self._app_gestures.envelope(event))
-            return
-        if name == "swipe-down":
-            self._ring_gestures.filter(event, False, connection)
-            return
         if source_event is not None:
             self._app_gestures.handle_input_source(source_event)
+            return
+        if app_event is None:
+            app_event = self._app_gestures.envelope(event)
+            if isinstance(app_event, InputSourceGestureEvent):
+                self._app_gestures.handle_input_source(app_event)
+                return
+        if app_event.route != "input":
+            self._ring_gestures.handle_outside(app_event, connection)
+            return
+        if not self._app_gestures.input_event_valid(app_event):
+            return
+        if name in {"swipe-up", "swipe-down"}:
+            self._app_gestures.handle(app_event)
+            return
+        if name and name == self._app_gestures.inputSourceGesture:
+            target = app_event.target
+            if target is not None:
+                self._app_gestures.handle_input_source(InputSourceGestureEvent(
+                    event, app_event.generation, app_event.created, target.pid))
             return
         can_cancel = self.interactionCanCancel
         can_switch = self.modeCorrectionHotkeyAvailable or self.processingModeCorrectionAvailable
@@ -6949,10 +7162,8 @@ class AppController(QObject):
                     or app_event.generation != self._app_gestures._generation
                     or time.monotonic() - app_event.created > 1.0):
                 return
-        # Voice actions own their active sentence/undo first. The same gesture
-        # may serve an app action only when its voice action is unavailable.
-        if action is None and app_event is not None and self._app_gestures.handle(app_event):
-            return
+        # Text focus owns the whole input context. An unavailable input action
+        # must never fall through to an application or global shortcut.
         reason = "dispatched"
         if action is None:
             if not name or name not in (*self._gesture_bindings.undo, *self._gesture_bindings.switch_mode):
@@ -7034,6 +7245,19 @@ class AppController(QObject):
         if self._recognition_enabled:
             self._set_status("自动监听中", message, "running")
         self._resume_recognition_after_interaction()
+
+    def _legacy_hotword_key(self, interaction):
+        return (self._hotword_legacy_epoch, "desktop", str(interaction.request_id), 0)
+
+    def _learn_applied_hotwords(self, interaction):
+        if (self._asr_backend != "volcengine" or interaction is None
+                or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None):
+            return
+        key = self._legacy_hotword_key(interaction)
+        self._hotwords.prepare(key, interaction.raw_text, interaction.original_snapshot.text,
+                               self._voice_llm_settings(INPUT_MODE_EDIT))
+        self._hotwords.expect_result(key, interaction.applied_text)
+        self._hotwords.settle(key, "edited", interaction.applied_text)
 
     def _register_applied_interaction(
         self,
@@ -7124,6 +7348,7 @@ class AppController(QObject):
         self.interactionChanged.emit()
         if not is_mode_switch:
             self._refresh_voice_history_entries()
+            self._learn_applied_hotwords(interaction)
         self._event_log(
             "UNDO_STACK_CHANGE",
             action="replace" if is_mode_switch else "push",
@@ -7713,6 +7938,9 @@ class AppController(QObject):
                 self._undo_queue.clear()
                 return
             stack.pop()
+            # This route only acknowledges posting the undo shortcut. Retract
+            # its learning conservatively, without claiming the editor restored it.
+            self._hotwords.settle(self._legacy_hotword_key(interaction), "undone", "")
             if not stack:
                 self._operation_stacks.pop(target_key, None)
             self._retract_applied_recommendations(interaction)
@@ -7900,8 +8128,8 @@ class AppController(QObject):
             if sys.platform == "darwin":
                 raise RuntimeError("macOS 文字输入仅支持已选中的 Mythlink 输入法组件")
             else:
-                from ..desktop_target import WindowsDesktopTextTarget
-                from .clipboard import QtClipboardBridge
+                from ..desktop.desktop_target import WindowsDesktopTextTarget
+                from .shared.clipboard import QtClipboardBridge
 
                 self._desktop_target = WindowsDesktopTextTarget(QtClipboardBridge())
         return self._desktop_target
@@ -7994,8 +8222,10 @@ class AppController(QObject):
             self._set_interaction_state("idle")
             self.interactionChanged.emit()
 
-    @Slot(str)
-    def _apply_runtime_finished(self, error: str) -> None:
+    @Slot(str, object)
+    def _apply_runtime_finished(self, error: str, connection=None) -> None:
+        if connection is not None and connection is not self._disconnect_event:
+            return
         had_connection = self._runtime_had_connection
         # Fallback for errors before source creation and failures during close.
         self._stop_device_interaction()
@@ -8237,6 +8467,36 @@ class AppController(QObject):
             push_to_talk=self._push_to_talk,
         )
 
+    def _practice_configuration(self):
+        from ..asr.factory import ASRBackendSettings
+        from .voice.practice_controller import PracticeConfiguration
+
+        audio_change = self._audio_settings_changes
+        if self._busy or self._scan_busy or (audio_change is not None and (audio_change.pending or audio_change.applying)):
+            raise ValueError("请等待设备准备完成，再开始练习")
+        if self._interaction_state in {"listening", "processing"} or self._inline_input.active:
+            raise ValueError("请先结束当前输入，再开始练习")
+        if self._audio_source == "ring" and not self._connected:
+            raise ValueError("请先在首页连接 Ring，或选择电脑麦克风")
+        if self._runtime_active and not self._connected:
+            raise ValueError("设备正在连接，请稍后再试")
+        options = {}
+        if self._asr_backend == "volcengine":
+            options["api_key"] = self._asr_api_key.strip()
+        elif self._asr_backend == "streaming_sensevoice":
+            options = {"repo": self._streaming_repo, "final_redecode": "false"}
+        elif self._asr_backend == "funasr_nano":
+            options = {"repo": self._funasr_repo, "final_redecode": "false",
+                       "hotwords": ",".join(normalize_funasr_nano_hotwords(self._funasr_hotwords))}
+        return PracticeConfiguration(
+            source=self._audio_source, microphone=self._microphone_device,
+            shared=self._runtime_active, backend=self._asr_backend,
+            asr=ASRBackendSettings(model=self._asr_model.strip() or None, device=self._asr_device,
+                                   language=self._asr_language, options=options),
+            llm=self._llm_settings(), bindings=self._gesture_bindings, gain_db=self._asr_gain_db,
+            hotwords=tuple(self._hotwords.store.snapshot()),
+        )
+
     def _llm_settings(self) -> LLMSettings:
         local_selected = self._llm_provider == LLM_PROVIDER_LOCAL
         return LLMSettings(
@@ -8269,7 +8529,7 @@ class AppController(QObject):
         """Use optional post-processing for input and mandatory LLM for edits."""
 
         enabled = (
-            normalize_input_mode(mode) == INPUT_MODE_EDIT
+            mode == TEXT_MODE_POLISH or normalize_input_mode(mode) == INPUT_MODE_EDIT
             or self._llm_enabled
         )
         return replace(self._llm_settings(), enabled=enabled)

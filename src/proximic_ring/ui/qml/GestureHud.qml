@@ -6,9 +6,7 @@ Item {
     property string mode: "input"
     property string notice: ""
     property bool preview: false
-    property var globalLabels: ({show_menu: "食指捏合", switch_mode: "中指捏合", window_selector: "握拳"})
-    property bool inputFieldsAvailable: true
-    property string inputFieldsHint: "当前窗口未提供文本框"
+    property var globalLabels: ({show_menu: "食指捏合", window_selector: "握拳"})
     property real entranceTime: 0
     readonly property bool animationRunning: entrance.running
     readonly property bool inputMode: sceneActive || mode === "input"
@@ -24,9 +22,8 @@ Item {
     property string contextLabel: ""
     property bool voiceDisabled: false
     property bool sceneActive: false
-    property string modeTitle: "输入模式"
+    property string modeTitle: "输入中"
     readonly property var satellites: orbs
-    readonly property string fieldHint: !sceneActive && orbs.some(function(orb) { return orb.inputField }) ? inputFieldsHint : ""
 
     function clamp(value) { return Math.max(0, Math.min(1, value)) }
     function progress(delay, duration) { return clamp((entranceTime - delay) / duration) }
@@ -147,7 +144,6 @@ Item {
                 }
                 // Text waits until the spiral is almost at its resting radius.
                 labelOpacity: root.clamp((t-0.68)/0.32)
-                available: !modelData.inputField || root.inputFieldsAvailable
             }
         }
     }
@@ -166,21 +162,19 @@ Item {
     Text {
         objectName: "gestureHudOverflow"
         x: 12; y: 330; width: parent.width - 24; height: 14
-        text: root.notice || ((root.overflow ? "另有 " + root.overflow + " 项手势 · " : "") +
-                             (root.fieldHint || (root.overflow ? "可在场景与手势中查看" : "")))
+        text: root.notice || (root.overflow ? "另有 " + root.overflow + " 项手势 · 可在场景与手势中查看" : "")
         font.pixelSize: 10; color: root.notice ? "#9C651D" : "#40536B"
         horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
         style: Text.Outline; styleColor: "#F6F9FC"
     }
     Rectangle {
         objectName: "gestureHudGlobalShortcuts"
-        visible: !root.sceneActive
+        visible: root.mode !== "input" && !root.sceneActive
         x: 6; y: 346; width: parent.width - 12; height: 14; radius: 7
         color: "#F5F8FC"
         Text {
             anchors.fill: parent
             text: [root.globalLabels.show_menu ? root.globalLabels.show_menu + " 提示" : "",
-                   root.globalLabels.switch_mode ? root.globalLabels.switch_mode + " 切换" : "",
                    root.globalLabels.window_selector ? root.globalLabels.window_selector + " 窗口" : ""].filter(function(label) { return label.length > 0 }).join(" · ")
             color: "#334760"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight

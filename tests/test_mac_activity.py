@@ -7,13 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.mac_activity import MacActivity
+from proximic_ring.platforms.macos.mac_activity import MacActivity
 from proximic_ring.audio.ring import RingAudioSource
 
 
 @pytest.fixture
 def foundation(monkeypatch):
-    import proximic_ring.mac_activity as activity
+    import proximic_ring.platforms.macos.mac_activity as activity
     calls = []
     def begin(options, reason):
         token = object()
@@ -48,7 +48,7 @@ def test_concurrent_start_close_balance_and_do_not_prevent_system_sleep(foundati
 
 
 def test_non_macos_does_not_import_foundation(monkeypatch):
-    import proximic_ring.mac_activity as activity
+    import proximic_ring.platforms.macos.mac_activity as activity
     monkeypatch.setattr(activity.sys, 'platform', 'win32')
     monkeypatch.setitem(sys.modules, 'Foundation', None)
     scope = MacActivity('test')
@@ -153,7 +153,7 @@ def test_disconnect_releases_all_scopes_even_if_sdk_cleanup_fails(foundation):
 
 
 def test_mouse_process_balances_enable_disable_and_permission_failure(foundation):
-    from proximic_ring.native_touchpad import WorkerTouchpadMouse
+    from proximic_ring.platforms.macos.native_touchpad import WorkerTouchpadMouse
     calls, _ = foundation
     allowed = [True]
     read_fd, write_fd = os.pipe()

@@ -79,6 +79,9 @@ from ring_python_sdk.swipe.events import SwipeResult
 from ring_python_sdk.public_protocol import quaternion_start_command
 
 
+_SWIPE_RESET_SETTLE_S = 0.25
+
+
 class SensorsMixin:
     async def mic_on(
         self,
@@ -459,6 +462,7 @@ class SensorsMixin:
         print_events: bool = False,
         print_triggers: bool = True,
         print_profile: bool = True,
+        reset_device: bool = False,
     ) -> None:
         """Receive firmware classifications and triggers (legacy and V2).
 
@@ -466,11 +470,23 @@ class SensorsMixin:
         notification path; enqueue expensive work. An already-active capture
         keeps its callbacks until swipe_off() is called. Logging flags only
         control SDK log lines, never callback delivery or CSV recording.
+
+        reset_device clears an unknown device-side stream before a new host
+        capture. A new RingSession's swipe_active=False does not prove that the
+        firmware stopped after the previous host exited or detached from BLE.
+        STOP/START have no firmware acknowledgement; output is separate evidence.
         """
         assert self.client is not None
         if self.swipe_active:
             print("swipe already on")
             return
+        if reset_device:
+            # Force the wire STOP even though this new host has no local stream.
+            # No processor/callback exists yet, so pending old events are ignored.
+            await send_swipe_stop(self.client, self.rx_uuid)
+            await asyncio.sleep(_SWIPE_RESET_SETTLE_S)
+            if not self.client.is_connected:
+                raise ConnectionError("Ring disconnected during gesture reset")
         path = self._seg_path("swipe", DEFAULT_SWIPE_OUTPUT)
         self.print_flags.swipe = bool(print_events)
         self.swipe = SwipeProcessor(

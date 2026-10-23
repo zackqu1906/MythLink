@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring import mac_app_activation
+from proximic_ring.platforms.macos import mac_app_activation
 
 
 def test_non_macos_does_not_load_appkit(monkeypatch):
@@ -54,7 +54,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QWindow
 from PySide6.QtCore import QTimer
 from AppKit import NSApplication, NSWorkspace
-from proximic_ring.mac_app_activation import configure_app_activation
+from proximic_ring.platforms.macos.mac_app_activation import configure_app_activation
 app = QApplication([])
 native = NSApplication.sharedApplication()
 configure_app_activation(background=True)
@@ -86,7 +86,7 @@ def test_worker_stays_out_of_dock_across_restarts():
     # Set this in packaging validation to exercise the actual frozen executable.
     bundle = os.environ.get("PROXIMIC_TEST_MACOS_APP")
     args = ([str(Path(bundle) / "Contents/MacOS/Mythlink"), "--native-access-worker"]
-            if bundle else [sys.executable, "-B", "-m", "proximic_ring.native_access_worker"])
+            if bundle else [sys.executable, "-B", "-m", "proximic_ring.platforms.macos.native_access_worker"])
     for _ in range(3):
         process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True)

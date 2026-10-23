@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IMU Speech Lab · Ringo</title>
+<style>
+:root{--ink:#163029;--muted:#6b7c74;--line:#d9e1da;--paper:#f3f5f0;--green:#177657;--blue:#407bd1;--red:#dd755b}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1440px;margin:auto;padding:30px 36px 50px}header{display:flex;justify-content:space-between;align-items:center;gap:16px}h1{font-size:30px;font-weight:650;letter-spacing:-1px;margin:3px 0 6px}h2{font-size:14px;font-weight:650;margin:0}.eyebrow{font-size:10px;letter-spacing:2px;color:var(--green);font-weight:700}.sub{color:var(--muted);line-height:1.6;margin:0}.pill{background:#e3eee5;border:1px solid #d0e0d4;border-radius:20px;padding:8px 15px;font-weight:600;white-space:nowrap}.panel{background:white;border:1px solid var(--line);border-radius:14px;padding:18px;margin-top:18px}.config{display:flex;gap:12px;flex-wrap:wrap;align-items:end}label{display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--muted)}input,select,button{font:inherit}input,select{border:1px solid var(--line);border-radius:7px;padding:9px;background:#fafbf8;color:var(--ink);max-width:225px}input[type=checkbox]{accent-color:var(--green)}button{cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:10px 14px;color:var(--ink);background:white}button:hover:not(:disabled){border-color:var(--green);background:#f0f6f1}button.primary{background:var(--green);color:white;border-color:var(--green)}button:disabled{opacity:.4;cursor:default}.actions{display:flex;align-items:center;gap:8px;margin-top:15px;flex-wrap:wrap}.check{display:inline-flex;flex-direction:row;align-items:center;font-size:12px;gap:5px}.metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:18px}.metric{padding:15px 17px;border:1px solid var(--line);border-radius:12px;background:#eaf0e8}.metric strong{font-size:23px;font-weight:600;display:block;margin-top:6px;font-variant-numeric:tabular-nums}.metric span{font-size:11px;color:var(--muted)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid .panel{margin-top:16px}.charthead{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:8px}.legend{font-size:11px;color:var(--muted)}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 4px 0 9px}.canvas{width:100%;height:195px;display:block}.wide{grid-column:1 / -1}.notice{font-size:12px;line-height:1.6;padding:11px 14px;margin-top:14px;border-radius:8px;background:#e7ede6;color:#4d6657}.warning{background:#fff0d8;color:#8c5b16}.danger{background:#fbe4df;color:#a34231}.hidden{display:none!important}#labels{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}#labels button{padding:8px 11px;font-size:12px}#labels .selected{background:#e2f1e6;color:#166344;border-color:#238764}kbd{opacity:.45;font:11px monospace;margin-right:6px}#guideText{font-size:15px;font-weight:600;margin-left:8px}.small{font-size:11px;color:var(--muted);line-height:1.6}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:500}#savedPath{overflow-wrap:anywhere;font:11px ui-monospace,monospace}.tools{display:flex;align-items:center;gap:13px;margin-top:18px}.tools label{font-size:12px}details{margin-top:16px}summary{cursor:pointer;font-size:12px;color:var(--muted)}.empty{padding:24px 0;color:var(--muted);text-align:center;font-size:12px}footer{margin-top:20px;font-size:11px;color:var(--muted);line-height:1.7}
+@media(max-width:850px){main{padding:20px 15px}.grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}.wide{grid-column:auto}.config{gap:9px}h1{font-size:25px}}
+</style></head><body><main>
+<header><div><div class="eyebrow">RINGO / SIGNAL EXPLORER</div><h1>说话时，手指能感受到什么？</h1><p class="sub">同步观察 IMU 与音频，比较静默、发声和动作。先找信号，再谈识别。</p></div><span class="pill" id="status">待开始</span></header>
+<div id="demoBanner" class="notice danger hidden">演示模式 · 当前波形是人为合成数据，包含故意注入的相关信号。不能作为戒指实测证据。</div>
+<div id="tokenBanner" class="notice warning">当前默认接收与项目触摸板相同的 6 通道 float16 token。可观察变化，但通道物理单位与固件预处理未确认，不能当作未经处理的六轴振动。</div>
+<div id="error" class="notice danger hidden" role="alert"></div>
+<section class="panel offline-hide" id="lab-controls">
+<div class="config">
+<label>戒指名称 / 地址<input id="name" value="Ringo" aria-label="戒指名称"></label>
+<label>数据模式<select id="stream"><option value="token" selected>项目同款 · 6 通道 token</option><option value="raw">原始六轴 · raw LSB</option></select></label>
+<label>IMU 芯片<select id="chip"><option value="auto">自动读取设备报告</option><option value="icm42688">ICM-42688</option><option value="icm45686">ICM-45686</option></select></label>
+<label>请求速率<select id="hz"><option>100</option><option selected>200</option><option>500</option><option>1000</option></select></label>
+<label>加速度量程<select id="accel_fs"><option value="2">±2 g · 微弱信号</option><option value="4">±4 g</option><option value="8">±8 g</option><option value="16" selected>±16 g</option></select></label>
+<label>陀螺仪量程<select id="gyro_fs"><option value="125">±125 °/s</option><option value="250">±250 °/s</option><option value="500">±500 °/s</option><option value="1000">±1000 °/s</option><option value="2000" selected>±2000 °/s</option></select></label>
+<label>电脑麦克风<select id="mic"><option value="default">系统默认输入</option><option value="none">不采集音频</option></select></label>
+<label>音频速率<select id="audio_rate"><option value="16000">16 kHz</option><option value="48000">48 kHz</option></select></label>
+<label>姿势 / 距离 / 松紧<input id="note" value="手放桌面，正常佩戴" style="max-width:290px;width:260px"></label>
+</div>
+<div class="actions"><button id="start" class="primary">连接并开始采集</button><button id="stop" disabled>停止并保存报告</button><label class="check"><input id="demo" type="checkbox">用合成数据检查界面</label><span class="small">数据只写入本机。连接前请在占用戒指的其他程序中断开。</span></div>
+<div id="labels"></div>
+<div class="actions"><button id="guide" disabled>开始 65 秒引导实验</button><span id="guideText">先静默 10 秒 → 说话 → 静默 → 长音“啊” → 静默</span></div>
+<p class="small">数字键 0–7 切换条件。请用未戴戒指的手操作；分析会舍弃标签切换前后各 1 秒。建议每个条件重复 3 次，手的位置和佩戴松紧保持一致。</p>
+</section>
+<div class="metrics">
+<div class="metric"><span>实测包时间速率 / 请求 Hz</span><strong id="rate">— / 200</strong></div>
+<div class="metric"><span>当前窗口有效送达 Hz</span><strong id="delivery">—</strong></div>
+<div class="metric"><span>采集时间 / 原始样本</span><strong id="duration">0 s</strong><span id="count">0 samples</span></div>
+<div class="metric"><span>估计缺包 / 解码丢弃 · SDK 累计</span><strong id="loss">—</strong><span id="gaps">等待数据</span></div>
+<div class="metric"><span>音频 RMS · dBFS</span><strong id="audioLevel">—</strong><span id="audioHealth">等待麦克风</span></div>
+</div>
+<div id="qualityWarning" class="notice warning hidden"></div>
+<div class="tools"><label class="check"><input type="checkbox" id="center" checked>波形去窗口均值</label><label class="check"><input type="checkbox" id="lockY">锁定波形 Y 轴</label><label class="check"><input type="checkbox" id="pause">暂停画面</label><span class="small">最近 15 秒 · X 轴为本次实验秒数 · 自动缩放只改变显示，原始数据保持不变</span></div>
+<div class="grid">
+<section class="panel"><div class="charthead"><h2 id="accTitle">T1–T3 · token 单位</h2><div class="legend" id="axisLegend">T1 / T2 / T3</div></div><canvas id="acc" class="canvas"></canvas></section>
+<section class="panel"><div class="charthead"><h2 id="gyroTitle">T4–T6 · token 单位</h2><span class="small" id="streamNote">来自项目同款 IMU token 流</span></div><canvas id="gyro" class="canvas"></canvas></section>
+<section class="panel"><div class="charthead"><h2>短时能量 · 200 ms</h2><span class="small">各自标准化，仅比较时间起伏</span></div><canvas id="energy" class="canvas"></canvas><div class="legend"><i class="dot" style="background:#177657"></i><span id="energyA">T1–T3</span><i class="dot" style="background:#407bd1"></i><span id="energyG">T4–T6</span><i class="dot" style="background:#dd755b"></i>音频</div></section>
+<section class="panel"><div class="charthead"><h2>音频能量包络 · dBFS</h2><span class="small">20 ms RMS，无 ASR 或自动说话标签</span></div><canvas id="audio" class="canvas"></canvas></section>
+<section class="panel"><div class="charthead"><h2 id="accPsdTitle">T1–T3 功率谱 · dB [token²/Hz]</h2><span class="small" id="accPeak">等待连续数据</span></div><canvas id="accPsd" class="canvas"></canvas></section>
+<section class="panel"><div class="charthead"><h2 id="gyroPsdTitle">T4–T6 功率谱 · dB [token²/Hz]</h2><span class="small" id="gyroPeak">等待连续数据</span></div><canvas id="gyroPsd" class="canvas"></canvas></section>
+</div>
+<div class="notice" id="correlation">音频与 IMU 的相关性需要至少 4 秒有效窗口。</div>
+<section class="panel"><div class="charthead"><h2>条件对比</h2><span class="small">停止后计算整次实验；能量是去局部均值后的三通道合成 RMS 中位数</span></div><div id="conditions" class="empty">采集时标记条件，停止后查看与静默的比值。</div><div id="savedPath" class="small"></div></section>
+<details><summary>实验判读与时间同步限制</summary><div class="notice"><p id="timing"></p><p>频谱使用最后一段连续的 2–4 秒数据，三通道功率相加。出现数据间断时不跨缺口计算。频率上限为请求速率的一半，且必须先通过包时间速率检查；该检查不能证明传感器内部真实 ODR、带宽或滤波设置。</p><p>200 Hz 可先观察低频运动和包络。500/1000 Hz 只是发送给固件的实验请求，不代表硬件已经支持。量程同样按请求解码，固件没有回读确认；原始 LSB 同时保存，便于复核。</p><p>说话时能量更高或相关性更强，也可能来自呼吸、手部动作、桌面或空气振动。请加入旁人靠近戒指讲话、音箱播放、只动手、同时说话等对照。不要据此宣称身体传导或佩戴者 VAD 已验证。</p></div></details>
+<footer id="hardware">等待设备信息。</footer>
+</main><script>
+'use strict';
+const OFFLINE=/*BOOTSTRAP*/null, TOKEN=/*TOKEN*/'';
+const $=id=>document.getElementById(id), COLORS=['#177657','#407bd1','#dd755b'];
+const LABELS={unlabeled:'未标记',silence:'静默',self_speech:'自己说话',vowel:'自己长音啊',other_speech:'旁人说话',playback:'音箱播放',movement:'只动手',both:'同时说话'};
+let latest=null, fixedY={}, guide=null, guideTimer=null, localError='';
+function fmt(n,d=1){return n===null||n===undefined||!Number.isFinite(n)?'—':n.toFixed(d)}
+async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:{'X-Lab-Token':TOKEN,...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined});const v=await r.json();if(!r.ok)throw new Error(v.error||r.statusText);return v;}
+function error(e){localError=e.message||String(e);$('error').textContent=localError;$('error').classList.remove('hidden');}
+Object.entries(LABELS).forEach(([key,text],i)=>{const b=document.createElement('button');b.innerHTML=`<kbd>${i}</kbd>${text}`;b.dataset.label=key;b.disabled=true;b.onclick=()=>mark(key);$('labels').append(b);});
+async function mark(label){try{await api('mark',{label,note:$('note').value});}catch(e){error(e)}}
+function cancelGuide(){clearTimeout(guideTimer);guide=null;$('guide').textContent='开始 65 秒引导实验';$('guideText').textContent='先静默 10 秒 → 说话 → 静默 → 长音“啊” → 静默';}
+async function guideStep(){if(!guide||!latest?.active)return cancelGuide();if(guide.index>=guide.steps.length){cancelGuide();await api('stop',{});return;}
+ const label=guide.steps[guide.index];let remaining=3;
+ await mark('unlabeled');$('guideText').textContent=`准备：${LABELS[label]} · ${remaining} 秒后开始`;
+ const prep=()=>{if(!guide)return;remaining--;if(remaining>0){$('guideText').textContent=`准备：${LABELS[label]} · ${remaining} 秒后开始`;guideTimer=setTimeout(prep,1000);return;}
+ mark(label);remaining=10;
+ const tick=()=>{if(!guide)return;$('guideText').textContent=`${LABELS[label]} · 还剩 ${remaining} 秒`;if(remaining--<=0){guide.index++;guideStep().catch(error);}else guideTimer=setTimeout(tick,1000);};tick();};guideTimer=setTimeout(prep,1000);}
+$('guide').onclick=()=>{if(guide){cancelGuide();return;}guide={steps:['silence','self_speech','silence','vowel','silence'],index:0};$('guide').textContent='取消引导（继续采集）';guideStep().catch(error);};
+$('stream').onchange=()=>{const token=$('stream').value==='token';$('hz').value='200';$('accel_fs').value=token?'16':'2';$('gyro_fs').value=token?'2000':'250';for(const id of ['hz','accel_fs','gyro_fs','chip'])$(id).disabled=token;};
+$('start').onclick=async()=>{try{localError='';fixedY={};const c={demo:$('demo').checked,name:$('name').value,chip:$('chip').value,stream:$('stream').value,hz:+$('hz').value,accel_fs:+$('accel_fs').value,gyro_fs:+$('gyro_fs').value,mic:$('mic').value,audio_rate:+$('audio_rate').value,note:$('note').value};await api('start',c);}catch(e){error(e)}};
+$('stop').onclick=async()=>{cancelGuide();try{await api('stop',{});}catch(e){error(e)}};
+document.addEventListener('keydown',e=>{if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)||e.metaKey||e.ctrlKey||!latest?.active||guide)return;const key=Object.keys(LABELS)[+e.key];if(/^[0-7]$/.test(e.key)&&key){e.preventDefault();mark(key);}});
+for(const id of ['lockY','center'])$(id).onchange=()=>{fixedY={};if(latest)renderPlots(latest)};
+function plot(id,series,{xmin,xmax,ymin,ymax,unit='',markers=[]}={}){
+ const canvas=$(id),dpr=window.devicePixelRatio||1,w=canvas.clientWidth,h=canvas.clientHeight;canvas.width=w*dpr;canvas.height=h*dpr;
+ const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);const L=54,R=12,T=12,B=27,pw=w-L-R,ph=h-T-B;
+ const pts=series.flatMap(s=>s.points.filter(p=>p[0]>=xmin&&p[0]<=xmax&&p[1]!==null&&Number.isFinite(p[1])));
+ if(!pts.length){ctx.fillStyle='#8b9b91';ctx.font='12px sans-serif';ctx.fillText('等待有效数据',L,T+ph/2);return;}
+ if(ymin===undefined){ymin=Math.min(...pts.map(p=>p[1]));ymax=Math.max(...pts.map(p=>p[1]));let pad=(ymax-ymin)*.1||.001;ymin-=pad;ymax+=pad;}
+ if($('lockY').checked&&['acc','gyro'].includes(id)){if(!fixedY[id])fixedY[id]=[ymin,ymax];[ymin,ymax]=fixedY[id];}
+ const X=x=>L+(x-xmin)/(xmax-xmin||1)*pw,Y=y=>T+ph-(y-ymin)/(ymax-ymin||1)*ph;
+ for(let i=0;i<markers.length;i++){const m=markers[i],end=markers[i+1]?.t??xmax;if(m.label==='unlabeled'||m.t>xmax||end<xmin)continue;ctx.fillStyle=m.label==='silence'?'#eef2ee':'#eaf2fc';ctx.fillRect(X(Math.max(xmin,m.t)),T,X(Math.min(xmax,end))-X(Math.max(xmin,m.t)),ph);}
+ ctx.font='10px sans-serif';ctx.lineWidth=1;
+ for(let i=0;i<4;i++){const y=ymin+(ymax-ymin)*i/3;ctx.strokeStyle='#e4e9e3';ctx.beginPath();ctx.moveTo(L,Y(y));ctx.lineTo(w-R,Y(y));ctx.stroke();ctx.fillStyle='#819087';ctx.textAlign='right';const a=Math.abs(y);ctx.fillText(a<.001&&a!==0?y.toExponential(1):y.toFixed(a<.1?3:1),L-7,Y(y)+3);}
+ for(let i=0;i<5;i++){let x=xmin+(xmax-xmin)*i/4;ctx.fillStyle='#819087';ctx.textAlign='center';ctx.fillText(x.toFixed(1)+unit,X(x),h-7);}
+ ctx.save();ctx.beginPath();ctx.rect(L,T,pw,ph);ctx.clip();
+ for(const s of series){ctx.strokeStyle=s.color;ctx.lineWidth=1.2;ctx.beginPath();let pen=false,last=null;for(const [x,y]of s.points){if(x<xmin||x>xmax||y===null||!Number.isFinite(y)){pen=false;continue;}if(last!==null&&s.maxGap&&x-last>s.maxGap)pen=false;if(pen)ctx.lineTo(X(x),Y(y));else ctx.moveTo(X(x),Y(y));pen=true;last=x;}ctx.stroke();}ctx.restore();
+}
+function renderPlots(s){if($('pause').checked)return;const imu=s.imu||[],audio=s.audio||[],end=Math.max(imu.at(-1)?.[0]||0,audio.at(-1)?.[0]||0,15),xmin=Math.max(0,end-15);const options={xmin,xmax:end,unit:'s',markers:s.markers||[]};
+ for(const [id,offset]of [['acc',1],['gyro',4]]){const series=[0,1,2].map((a)=>{const rows=imu.filter(r=>r[0]>=xmin);const mean=$('center').checked&&rows.length?rows.reduce((sum,r)=>sum+r[offset+a],0)/rows.length:0;return{color:COLORS[a],maxGap:.15,points:rows.map(r=>[r[0],r[offset+a]-mean])};});plot(id,series,options);}
+ plot('audio',[{color:COLORS[2],maxGap:.05,points:audio.map(r=>[r[0],20*Math.log10(Math.max(r[1],1e-9))])}],{...options,ymin:-100,ymax:0});
+ const f=s.features||[];plot('energy',[1,2,3].map((c)=>{const valid=f.filter(r=>r[0]>=xmin&&r[c]!==null),vals=valid.map(r=>r[c]),mean=vals.reduce((a,b)=>a+b,0)/(vals.length||1),std=Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/(vals.length||1));return{color:COLORS[c-1],maxGap:.3,points:f.map(r=>[r[0],r[c]===null?null:std>1e-12?(r[c]-mean)/std:0])};}),options);
+ const p=s.spectrum||{},freq=p.hz||[];plot('accPsd',[{color:COLORS[0],points:freq.map((x,i)=>[x,p.acc_db[i]])}],{xmin:0,xmax:s.config.hz/2,unit:'Hz'});plot('gyroPsd',[{color:COLORS[1],points:freq.map((x,i)=>[x,p.gyro_db[i]])}],{xmin:0,xmax:s.config.hz/2,unit:'Hz'});
+ $('accPeak').textContent=p.acc_peak_hz===undefined?'等待连续数据':`峰值 ${fmt(p.acc_peak_hz)} Hz · ${fmt(p.seconds)} s 窗口`;$('gyroPeak').textContent=p.gyro_peak_hz===undefined?'等待连续数据':`峰值 ${fmt(p.gyro_peak_hz)} Hz · ${fmt(p.seconds)} s 窗口`;
+}
+function render(s){latest=s;$('status').textContent=s.status;$('demoBanner').classList.toggle('hidden',!s.demo);$('error').textContent=s.error||localError;$('error').classList.toggle('hidden',!s.error&&!localError);
+ const token=s.config.stream==='token',aName=token?'T1–T3':'加速度',gName=token?'T4–T6':'陀螺仪';$('tokenBanner').classList.toggle('hidden',!token);$('accTitle').textContent=aName+' · '+(token?'token 单位':'m/s²');$('gyroTitle').textContent=gName+' · '+(token?'token 单位':'°/s');$('accPsdTitle').textContent=aName+' 功率谱 · dB ['+(token?'token²':'(m/s²)²')+'/Hz]';$('gyroPsdTitle').textContent=gName+' 功率谱 · dB ['+(token?'token²':'(°/s)²')+'/Hz]';$('axisLegend').textContent=token?'T1 / T2 / T3':'X / Y / Z';$('energyA').textContent=aName;$('energyG').textContent=gName;$('streamNote').textContent=token?'同项目 START / 解码，未运行触摸板模型':'原始六轴，非姿态四元数';const active=s.active,ready=['采集中','演示数据采集中'].includes(s.status);$('start').disabled=!!active;$('stop').disabled=!active;$('guide').disabled=!ready;document.querySelectorAll('.config input,.config select,#demo').forEach(e=>e.disabled=!!active);$('note').disabled=false;for(const id of ['hz','accel_fs','gyro_fs','chip'])$(id).disabled=!!active||$('stream').value==='token';
+ if(!active&&guide)cancelGuide();document.querySelectorAll('#labels button').forEach(b=>{b.disabled=!ready||!!guide;b.classList.toggle('selected',b.dataset.label===s.markers?.at(-1)?.label);});
+ const q=s.quality||{};$('rate').textContent=`${fmt(q.packet_hz)} / ${s.config.hz}`;$('delivery').textContent=fmt(q.delivered_hz);$('duration').textContent=fmt(s.elapsed||0,0)+' s';$('count').textContent=(s.count||0).toLocaleString()+' samples';
+ const stats=s.sdk_stats?.sample_count!==undefined?s.sdk_stats:s.summary?.metadata?.sdk_stats;$('loss').textContent=stats?`${stats.estimated_lost_samples/10} / ${stats.invalid_packet_count+stats.dropped_packet_count}`:s.demo?'模拟 / 0':'—';$('gaps').textContent=`近期时间间断 ${q.gaps||0} · ${token?'token 无原始 LSB':('近饱和样本 '+(q.clipped||0))}`;
+ const a=s.audio||[];$('audioLevel').textContent=a.length?fmt(20*Math.log10(Math.max(a.at(-1)[1],1e-9)))+' dB':'—';$('audioHealth').textContent=`${s.audio_frames||0} frames · 音频状态事件 ${s.audio_status||s.summary?.metadata?.audio_status_events||0}`;
+ let warnings=[];if(a.length>=100&&a.slice(-100).every(r=>r[1]===0))warnings.push('麦克风连续 2 秒输出全零，请检查麦克风权限、静音状态和输入设备；此数据不能作为有效音频参照。');if(s.count>0&&!q.timing_ok)warnings.push('包时间速率尚未确认或与请求值不符：暂不计算频谱和能量对比。');if(q.gaps)warnings.push('发现时间间断，缺口窗口已排除。');if(q.clipped)warnings.push('原始值接近饱和，请调大量程重测。');if(s.config.hz>200)warnings.push('高采样率为固件实验请求，需结合实测速率确认。');if(s.audio_status)warnings.push('音频有状态异常，详见 audio_events.csv。');$('qualityWarning').textContent=warnings.join(' ');$('qualityWarning').classList.toggle('hidden',!warnings.length);
+ const corr=c=>c?`r=${fmt(c.r,2)}，延迟 ${fmt(c.lag_s)} s`:'数据不足或信号近乎恒定';$('correlation').textContent=`最近窗口包络相关 · ${aName} ${corr(s.acc_correlation)}；${gName} ${corr(s.gyro_correlation)}。搜索 ±1 s 的最大 |r|；正延迟表示 IMU 较晚，步长 0.2 s。仅作探索。`;
+ $('timing').textContent=s.timing||'';$('hardware').textContent=s.hardware?`${s.hardware.info||'合成信号'} · 模式 ${s.config.stream||'raw'} · ${s.hardware.sdk_path||'演示无 SDK'} · ${token?'token 单位未确认':'raw 按请求量程换算，未回读确认'}`:'等待设备信息。';
+ if(s.path)$('savedPath').textContent=`保存位置：${s.path} /  停止后生成 report.html、summary.json、conditions.csv；原始文件实时写入。`;
+ const conditions=s.summary?.conditions||[];if(conditions.length){const table=document.createElement('table');const header=table.createTHead().insertRow();['条件','有效秒数',aName+' RMS','/ 静默',gName+' RMS','/ 静默','音频 dBFS'].forEach(x=>{const th=document.createElement('th');th.textContent=x;header.append(th)});const body=table.createTBody();for(const c of conditions){const row=body.insertRow();[LABELS[c.label],fmt(c.seconds),fmt(c.acc_rms,5),fmt(c.acc_ratio,2)+'×',fmt(c.gyro_rms,5),fmt(c.gyro_ratio,2)+'×',fmt(c.audio_dbfs)].forEach(x=>row.insertCell().textContent=x);}$('conditions').replaceChildren(table);$('conditions').classList.remove('empty');}else{$('conditions').textContent=s.summary?'没有足够的已标记有效片段。每段至少持续 4 秒，并检查时间质量。':'采集时标记条件，停止后查看与静默的比值。';$('conditions').classList.add('empty');}
+ renderPlots(s);
+}
+window.addEventListener('resize',()=>{if(latest)renderPlots(latest)});
+if(OFFLINE){document.querySelectorAll('.offline-hide').forEach(e=>e.classList.add('hidden'));render(OFFLINE);$('status').textContent='离线报告';}
+else{async function poll(){try{render(await api('state'));}catch(e){error(e)}finally{setTimeout(poll,250)}}poll();api('devices').then(v=>{for(const d of v.devices){const o=document.createElement('option');o.value=String(d.id);o.textContent=d.name;$('mic').append(o)}if(v.error)error('麦克风枚举失败：'+v.error)}).catch(error);}
+</script></body></html>

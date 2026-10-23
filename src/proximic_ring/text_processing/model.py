@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 INPUT_MODE_DICTATION = "dictation"
 INPUT_MODE_EDIT = "edit"
+# An explicit gesture operation, not an ASR routing/input mode.
+TEXT_MODE_POLISH = "polish"
 # Backward-compatible import name for older scripts.  The former instruction
 # lane is now the one-shot edit lane; the Agent lane will be added separately.
 INPUT_MODE_INSTRUCTION = INPUT_MODE_EDIT

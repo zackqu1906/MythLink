@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from proximic_ring.diagnostic_log import RotatingDiagnosticLog
+from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
 
 
 def test_diagnostic_log_rotates_to_a_fixed_number_of_backups(tmp_path) -> None:

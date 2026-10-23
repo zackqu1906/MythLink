@@ -17,6 +17,9 @@ dist/
 .idea/
 .env
 .env.*
+*.p12
+*.pfx
+*.keychain-db
 
 # Private recordings and training material
 data/
@@ -25,6 +28,7 @@ datasets/
 noise_preview/
 run.log
 logs/
+agent-experience/
 
 # Reproducible training outputs. The release detector is stored in
 # src/proximic_ring/assets/ringo-near-v1.model instead.

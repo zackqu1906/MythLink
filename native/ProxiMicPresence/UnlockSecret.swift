@@ -1,17 +1,19 @@
 import Foundation
 
-/// Holds a credential only for one app-owned lock episode. The lock-screen path
-/// consumes memory; it never calls Keychain (which can display authorization UI).
+/// Prepared while this user's session is unlocked, for its next lock of any
+/// origin. The lock-screen path consumes memory and never calls Keychain.
 final class UnlockSecret {
     private var value: Data?
+    var isPrepared: Bool { value != nil }
     func prepare(locked: Bool?, load: () -> Data?) -> Bool {
-        discard()
-        guard locked == false, let candidate = load(), !candidate.isEmpty else { return false }
+        guard locked == false else { return false }
+        if isPrepared { return true }
+        guard let candidate = load(), !candidate.isEmpty else { return false }
         value = candidate
         return true
     }
-    func take(locked: Bool?, ownsLock: Bool) -> Data? {
-        guard locked == true, ownsLock else { discard(); return nil }
+    func take(locked: Bool?) -> Data? {
+        guard locked == true else { discard(); return nil }
         let result = value
         value = nil
         return result

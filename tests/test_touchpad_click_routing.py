@@ -1,9 +1,10 @@
 """Actual output workers with fake native mouse; no system events are posted."""
 import threading
 import time
+import pytest
 
-from proximic_ring.touchpad_mouse import TouchpadMouseOutput
-from proximic_ring.touchpad_strokes import TouchpadStrokeOutput
+from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
+from proximic_ring.touchpad.touchpad_strokes import TouchpadStrokeOutput
 from ring_python_sdk.touchpad import TouchpadClick, TouchpadContact, TouchpadMove
 
 
@@ -34,11 +35,11 @@ class Mouse:
         return self.target
 
 
-def pointer():
+def pointer(**options):
     mouse, ended, ready, switches = Mouse(), threading.Event(), threading.Event(), []
     output = TouchpadMouseOutput(connection=threading.Event(), gain=1, clicks=True, invert_y=False,
         on_ready=ready.set, on_end=lambda *_: ended.set(), mouse_factory=lambda: mouse,
-        on_double_click=switches.append)
+        on_double_click=switches.append, **options)
     output.start()
     assert ready.wait(1)
     output.activate()
@@ -136,6 +137,90 @@ def test_click_hints_still_recognize_when_native_click_output_is_disabled():
         output.submit(TouchpadClick(2, time.monotonic()))
         until(lambda: hints == ["click", "double-click"])
         assert not mouse.clicked and mouse.double_targets == 0 and not output.paused
+    finally:
+        output.stop()
+        assert ended.wait(1)
+
+
+def test_selector_clicks_are_independent_then_restore_double_click_after_exit():
+    context = [(1, 'ready')]
+    output, mouse, ended, switches = pointer(click_context=lambda: context[0])
+    try:
+        for step in (1, 2):
+            output.submit(TouchpadClick(step, time.monotonic()))
+            until(lambda: len(mouse.clicked) == step)
+        assert not switches and mouse.double_targets == 0
+        context[0] = (2, 'closed')
+        output.submit(TouchpadClick(3, time.monotonic()))
+        until(lambda: len(mouse.clicked) == 3)
+        output.submit(TouchpadClick(4, time.monotonic()))
+        until(lambda: bool(switches))
+        assert mouse.double_targets == 1 and len(mouse.clicked) == 3
+    finally:
+        output.stop()
+        assert ended.wait(1)
+
+
+def test_pair_cannot_span_selector_session_even_without_clicks_inside():
+    context = [(0, 'closed')]
+    output, mouse, ended, switches = pointer(click_context=lambda: context[0])
+    try:
+        output.submit(TouchpadClick(1, time.monotonic()))
+        until(lambda: len(mouse.clicked) == 1)
+        # Entry/exit changes the generation even if both clicks are outside.
+        context[0] = (2, 'closed')
+        output.submit(TouchpadClick(2, time.monotonic()))
+        until(lambda: len(mouse.clicked) == 2)
+        assert not switches and mouse.double_targets == 0
+    finally:
+        output.stop()
+        assert ended.wait(1)
+
+
+@pytest.mark.parametrize('phase', ['loading', 'activating'])
+def test_selector_transition_discards_clicks_but_keeps_pointer_motion(phase):
+    output, mouse, ended, switches = pointer(click_context=lambda: (1, phase))
+    try:
+        output.submit(TouchpadClick(1, time.monotonic()))
+        output.submit(TouchpadMove(30, 40, 1, 2, time.monotonic()))
+        until(lambda: mouse.point == (40, 60))
+        assert not mouse.clicked and not switches
+    finally:
+        output.stop()
+        assert ended.wait(1)
+
+
+def test_queued_click_does_not_leak_into_a_new_context():
+    mouse, ready, ended = Mouse(), threading.Event(), threading.Event()
+    context = [(1, 'ready')]
+    output = TouchpadMouseOutput(connection=threading.Event(), gain=1, clicks=True, invert_y=False,
+        on_ready=ready.set, on_end=lambda *_: ended.set(), mouse_factory=lambda: mouse,
+        click_context=lambda: context[0], on_double_click=lambda _: None)
+    output.activate()
+    output.submit(TouchpadClick(1, time.monotonic()))
+    context[0] = (2, 'closed')
+    output.submit(TouchpadMove(30, 40, 1, 2, time.monotonic()))
+    output.start()
+    try:
+        assert ready.wait(1)
+        until(lambda: mouse.point == (40, 60))
+        assert not mouse.clicked and mouse.double_targets == 0
+    finally:
+        output.stop()
+        assert ended.wait(1)
+
+
+def test_duplicate_click_is_still_rejected_when_pairing_is_disabled():
+    notes = []
+    output, mouse, ended, switches = pointer(click_context=lambda: (1, 'ready'),
+        on_diagnostic=lambda name: notes.append(name))
+    try:
+        event = TouchpadClick(1, time.monotonic())
+        output.submit(event)
+        until(lambda: len(mouse.clicked) == 1)
+        output.submit(event)
+        until(lambda: 'click_stale_or_duplicate' in notes)
+        assert len(mouse.clicked) == 1 and not switches
     finally:
         output.stop()
         assert ended.wait(1)

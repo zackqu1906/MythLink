@@ -1,5 +1,5 @@
 """Completed-path recognition: sustained tails versus straight/noisy paths."""
-from proximic_ring.stroke_input import StrokeDictionary
+from proximic_ring.touchpad.stroke.stroke_input import StrokeDictionary
 import pytest
 
 

@@ -13,12 +13,14 @@ final class IMEService {
     var gestureHints = VoiceHudBindings()
     var hudAppearance = VoiceHudAppearance()
     var multiUndoEnabled = false
+    private lazy var noticePanel = ActionPanel()
 
     private init() {
         transport.onMessage = { [weak self] in self?.receive($0) }
         transport.onDisconnect = { [weak self] in
             guard let self else { return }
             self.epoch = nil
+            self.noticePanel.hide()
             self.activeController?.hostDisconnected()
         }
     }
@@ -53,6 +55,21 @@ final class IMEService {
             return
         }
         guard let epoch, message["epoch"] as? String == epoch else { return }
+        if type == "input_notice" {
+            guard let pid = message["foreground_pid"] as? Int32,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                  let text = message["text"] as? String, !text.isEmpty, text.count <= 512 else { return }
+            if let active = activeController, active.showInputNotice(message) { return }
+            // Even before the first dictation, show a passive IME hint. Never
+            // activate an app or manufacture a composition to display feedback.
+            noticePanel.hide()
+            noticePanel.configureAppearance(hudAppearance)
+            noticePanel.showNotice(text)
+            let point = NSEvent.mouseLocation
+            noticePanel.position(caret: NSRect(x: point.x, y: point.y, width: 1, height: 1),
+                                 clientLevel: Int32(NSWindow.Level.floating.rawValue))
+            return
+        }
         if type == "configure_hud" {
             gestureHints.apply(message["gesture_hints"])
             hudAppearance.apply(message["scale_percent"])
@@ -127,6 +144,18 @@ final class ProxiMicInputController: IMKInputController {
     func configureGestureHints() {
         panel.configureGestureHints(IMEService.shared.gestureHints)
         panel.configureAppearance(IMEService.shared.hudAppearance)
+    }
+
+    func showInputNotice(_ message: [String: Any]) -> Bool {
+        guard activated, ownsActivation, !preparingActivation, !strokeActive, let adapter,
+              message["client_id"] as? String == currentClientID,
+              message["utterance_id"] as? String == (session?.utteranceID ?? ""),
+              let text = message["text"] as? String else { return false }
+        configureGestureHints()
+        panel.showNotice(text)
+        panel.position(caret: adapter.caret(compositionLength: 0, trace: false),
+                       clientLevel: adapter.client.windowLevel())
+        return true
     }
 
     func configureUndoHistory(_ enabled: Bool) {
@@ -228,14 +257,14 @@ final class ProxiMicInputController: IMKInputController {
         let bundle = input.bundleIdentifier() ?? ""
         activationApplication = bundle
         guard service.activation.owns(self, lease) else { return }
-        if !bundle.isEmpty {
-            nextAdapter.configureKeyDelivery { [weak self] command, count, tag, reply in
-                guard let self, self.activated, self.ownsActivation, self.session?.active == true else { reply("输入会话已结束"); return }
-                let id = UUID().uuidString
-                self.compatibilityKeyReply = (id, reply)
-                self.sendEvent("wechat_key", extra: ["request_id": id, "command": command, "count": count,
-                                                     "event_tag": tag, "application": bundle])
-            }
+        // Source-launched Qt clients have no bundle identifier. They still
+        // need native selection/deletion; the host pins their begin-time PID.
+        nextAdapter.configureKeyDelivery { [weak self] command, count, tag, reply in
+            guard let self, self.activated, self.ownsActivation, self.session?.active == true else { reply("输入会话已结束"); return }
+            let id = UUID().uuidString
+            self.compatibilityKeyReply = (id, reply)
+            self.sendEvent("wechat_key", extra: ["request_id": id, "command": command, "count": count,
+                                                 "event_tag": tag, "application": bundle])
         }
         guard service.activation.owns(self, lease) else { return }
         adapter = nextAdapter
@@ -483,6 +512,43 @@ final class ProxiMicInputController: IMKInputController {
             return
         }
         guard let session, session.utteranceID == utteranceID, session.accepts(sequence: sequence) else { return }
+        if type == "end_input" {
+            guard let outcome = message["outcome"] as? String, ["sent", "replaced"].contains(outcome),
+                  !session.hasComposition, !session.awaitingReadback,
+                  [.dictated, .edited, .undone, .interrupted, .error].contains(session.phase) else { return }
+            let clientID = currentClientID
+            let lease = activationLease
+            // Detach before cleanup so old callbacks cannot publish UI or write
+            // into the next answer. This never modifies the editor's contents.
+            sessionLifetime.clear("主程序已结束本句")
+            guard activated, IMEService.shared.activation.owns(self, lease),
+                  currentClientID == clientID, self.adapter === adapter, self.session == nil else { return }
+            undoHistory.clear()
+            undoSourceUtteranceID = nil
+            rejectedBeginID = nil
+            compatibilityKeyReply = nil
+            lastContext = nil
+            lastError = ""
+            lastLifecycleEvent = outcome
+            adapter.discardContextHint()
+            if outcome == "sent" {
+                let caret = adapter.caret(compositionLength: 0, trace: false)
+                let level = adapter.client.windowLevel()
+                guard activated, IMEService.shared.activation.owns(self, lease),
+                      currentClientID == clientID, self.adapter === adapter, self.session == nil else { return }
+                panel.showSent()
+                panel.position(caret: caret, clientLevel: level)
+            } else { panel.hide() }
+            sendState(includeSnapshot: true)
+            return
+        }
+        if type == "hotwords_learned" {
+            guard message["revision"] as? Int == session.revision, session.phase == .edited,
+                  !session.awaitingReadback, session.error.isEmpty,
+                  let words = message["words"] as? [String], !words.isEmpty else { return }
+            panel.showLearnedHotwords(words)
+            return // Presentation only; no text write, session update or readback.
+        }
         if type == "cancel" {
             cancelCurrentOrHistory()
             return
@@ -504,6 +570,13 @@ final class ProxiMicInputController: IMKInputController {
             case "convert": session.convert()
             case "finish": session.finish()
             case "finish_dictation": session.finishAsDictation()
+            case "polish": session.polish(restoringRawOnUndo: message["restore_raw_on_undo"] as? Bool ?? true)
+            case "polish_result":
+                if let revision = message["revision"] as? Int {
+                    let result = message["text"] as? String ?? ""
+                    let error = (result as NSString).length > 512 * 1024 ? "润色结果超过长度限制，已保留听写" : message["error"] as? String
+                    session.applyPolish(text: result, revision: revision, error: error)
+                }
             case "edit_result":
                 if let revision = message["revision"] as? Int {
                     let result = message["text"] as? String ?? ""
@@ -554,7 +627,7 @@ final class ProxiMicInputController: IMKInputController {
         if type == "stroke_clear" { clearStroke(notify: false, ending: token.isEmpty); return }
         guard !isWriting, !adapter.clientOperationPending,
               session?.hasComposition != true, session?.awaitingReadback != true else { return }
-        if let session, [.listening, .finishing, .editing].contains(session.phase) { return }
+        if let session, [.listening, .finishing, .editing, .polishing].contains(session.phase) { return }
         switch type {
         case "stroke_begin":
             guard !token.isEmpty, !strokeActive || token == strokeSessionID else { return }
@@ -669,6 +742,10 @@ final class ProxiMicInputController: IMKInputController {
             guard isCurrent() else { return }
             self?.sendEvent("edit_requested", extra: ["original": original, "instruction": instruction, "revision": revision])
         }
+        next.onPolish = { [weak self] text, revision in
+            guard isCurrent() else { return }
+            self?.sendEvent("polish_requested", extra: ["text": text, "revision": revision])
+        }
     }
 
     private func cancelCurrentOrHistory() {
@@ -750,6 +827,8 @@ final class ProxiMicInputController: IMKInputController {
                                     "phase": session?.phase.rawValue ?? (failedUtteranceID == nil ? "idle" : "error"),
                                     "application": application,
                                     "revision": session?.revision ?? 0, "edit_requested": session?.editRequested ?? false,
+                                    "can_polish": session?.canPolish ?? false, "polished": session?.polished ?? false,
+                                    "polish_restore_available": session?.canRestorePolish ?? false,
                                     "raw": session?.raw ?? "", "error": session?.error ?? (targetError ?? lastError),
                                     "lifecycle_event": lastLifecycleEvent, "has_composition": session?.hasComposition ?? false,
                                     "awaiting_readback": session?.awaitingReadback ?? false, "readback_stage": session?.readbackStage ?? "",

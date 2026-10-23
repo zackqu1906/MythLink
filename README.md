@@ -22,6 +22,46 @@ Windows 用户下载 `.exe`，Apple Silicon macOS 用户下载 `.dmg`；首次�
 以原生未定稿文字逐段显示，光标旁操作条支持撤销和转编辑。需要拼音时手动切回。
 安装入口、交互规则及 Codex / 微信验收边界见 [输入法听写体验](docs/INLINE_DICTATION.md)。
 
+## 主界面 Agent 工作区（macOS）
+
+在 **设置 → Agent** 点击 **连接 Codex**，自动检查本地登录、任务连接与电脑操作工具。
+缺少应用、登录或 Computer Use 时，设置中显示对应提示与打开/安装入口；已连接后可
+点击 **唤起 Agent**，也可使用托盘菜单或双捏中指。连接检查不发送模型任务，任务执行期间
+禁止重新检查；首次使用具体应用时仍需完成相应系统授权。外部导航栏不再放置 Agent 入口。
+源码启动仍使用
+`./scripts/start-ui.sh`；无需另开独立测试程序。需要本机已安装并登录可用的 Codex。
+Agent 按需启动，与主界面共用戒指连接、语音输入和笔画输入。
+
+右下角任务浮窗保留进度和简短结果，Agent 追问合并在同一窗口内，按到达顺序逐条
+回答。选项以编号文字展示，不是可点击按钮；输入 `1`、`选第一个`、`选择第二项` 或
+完整选项名称会发送对应的服务端选项，也可以直接输入自由回答。带额外要求的完整回答
+原样发送，不会仅因包含数字而误选。编号越界或选项不可用时保留草稿并在窗口内提示。
+
+自动授权正常处理的请求不弹窗；关闭自动授权（或仍需人工处理）时，权限请求保留独立
+窗口，**只能用鼠标点击**。所有窗口在屏幕可用区域内平滑展开、收拢和移动。
+
+| 场景 | 手势 |
+| --- | --- |
+| Agent 与上次应用窗口之间切换焦点 | double-middle-pinch；离开 Agent 后卡片收拢、变暗，任务继续 |
+| 输入任务或回答问题 | 双击 tap 开始语音，tap 结束 |
+| 发送当前输入 | 上滑；听写中先定稿再发送，中指捏合不再发送 |
+| 润色本句听写 | 下滑，沿用输入法原有润色流程 |
+| 撤销 / 编辑 | 左右滑动，沿用输入法原有操作 |
+| 笔画输入期间 | 保留输入法原有候选、撤销笔画和清空笔画操作 |
+| 当前任务仍在运行 | 无追问时发送文字作为 steer；有追问时只回答当前问题 |
+
+手势不再切换 Agent 窗口或选择权限按钮。问题切换时保留正在输入的草稿与原问题绑定，
+失效问题的文字不会误发给下一条问题或作为新任务。
+
+任务卡可切换自动授权；Agent 的追问仍由用户回答。输入栏右下角按钮支持鼠标点击：
+有文字时显示发送箭头，任务执行期间发送为 steer，追问期间发送为回答；任务执行且
+输入为空时显示方块，点击取消当前任务并清空等待队列。顶部也保留取消按钮。
+Agent 不再提供暂停 / 继续或输入时暂缓功能。主界面的左右滑动不控制任务取消。
+已发出的动作可能先完成；取消会拒绝后续请求并中断本轮，结束后释放电脑控制。
+正常完成后顺序执行队列；失败或取消后，其余排队任务标记为取消，需要执行请重新提交。
+主界面状态与诊断保存在运行时缓存的
+`desktop-agent/`，该目录不限制 Agent 的任务输出位置。
+
 ## 下载、生成并安装桌面安装包
 
 仓库源码 ZIP 和桌面安装包是两种不同的文件：
@@ -92,10 +132,10 @@ dist/Mythlink-0.6.0-macos-arm64.dmg
 Developer ID 签名并通过 Apple 公证；开发者本地未配置证书时生成的 ad-hoc 包只适合本机
 测试。首次启动按提示允许蓝牙，使用电脑麦克风时再允许麦克风权限。
 
-新构建的 DMG 已包含语音输入法：打开主程序，点击 **输入法设置 → 安装／更新输入法**，
-再从同一窗口打开辅助功能设置并允许 Mythlink。连接设备并开启识别后，点入目标文本框，
+新构建的 DMG 已包含语音输入法：打开主程序，点击 **设置 → 系统与权限 → 更新输入法**，
+再点击同一页辅助功能右侧的“请求权限”并允许 Mythlink。连接设备并开启识别后，点入目标文本框，
 在菜单栏手动选择 Mythlink；需要拼音时手动切回。用户不需要 Python、Xcode 或源码。
-更新 app 后也要点一次“安装／更新输入法”；更新前先切回拼音或 ABC。DMG 内附完整安装说明。
+更新 app 后也要点一次“更新输入法”；首次安装也使用此按钮。当前选中 Mythlink 时也可直接更新：程序会临时切到已启用的系统键盘，安装完成后在应用和输入法选择未变化时恢复 Mythlink。正在进行的语音或笔画输入需先结束。DMG 内附完整安装说明。
 
 如果应用图标出现后立即退出，新版本会弹出启动错误并把完整诊断写到：
 
@@ -581,16 +621,40 @@ python -m proximic_ring.ui
 
 ```text
 src/proximic_ring/
-├── audio/                 Ring、WAV 和系统麦克风输入
+├── __main__.py / cli.py    命令行入口
+├── runtime_paths.py        共享资源与用户数据路径
+├── audio/                 Ring、WAV、系统麦克风输入、PCM 和音频配置
 ├── asr/                   会话控制、worker 和可插拔 ASR 后端
 ├── assets/                ProxiMic 模型、DSP 参数和本地 LLM 清单
-├── text_processing/       prompts、tool schema、LLM 调用和编辑结果校验
-├── ui/                    PySide6 控制器和 Qt Quick/QML 界面
-├── detector.py            ProxiMic 两阶段检测
-├── desktop_target.py      Windows 外部文本读取与替换
-├── desktop_output.py      Unicode 键盘注入
-├── collect.py             数据采集
-└── train.py               近场模型训练
+├── voice/                 语音运行编排、动作、历史、热词和交互记录
+│   ├── detection/         两阶段近场检测、特征、模型和推理管线
+│   ├── training/          检测模型的数据采集、数据集和训练
+│   └── ime/               行内输入法通信、安装和输入源切换
+├── gestures/              手势配置、固件事件和应用手势规则
+├── touchpad/              触摸板点击、鼠标输出、轨迹采集和诊断
+│   └── stroke/            笔画识别、组字、上下文候选和输入焦点
+├── desktop/               应用目录、快捷键、窗口、焦点和桌面目标
+├── agent_workflow/        Agent 执行、记录、Workflow 提取、归组、推荐与交互界面
+├── platforms/
+│   ├── macos/             macOS 权限、原生工作进程、键鼠和系统适配
+│   └── windows/           Windows 文本注入、UI Automation 和按住说话
+├── scenes/                场景定义、识别、配置、默认值和适配器
+├── diagnostics/           统一日志、运行输出和场景诊断
+├── text_processing/       prompts、LLM 调用、编辑校验和本地模型安装
+└── ui/
+    ├── main.py            Qt 应用启动与界面组装
+    ├── controller.py      主控制器与各功能服务的连接
+    ├── voice/             语音、行内输入、历史、热词和统计界面逻辑
+    ├── gestures/          手势路由、提示和快捷键录制
+    ├── touchpad/          触摸板与笔画输入会话
+    ├── desktop/           应用配置、窗口选择、预览和焦点控制
+    ├── agent/             Agent 控制器和交互卡片
+    ├── proximity/         接近锁定控制器
+    ├── scenes/            场景提示控制器与浮层
+    ├── permissions/       权限状态、申请和回调
+    ├── shared/            通用窗口、浮层、菜单栏和剪贴板支持
+    ├── qml/               Qt Quick 界面（保持原位置）
+    └── assets/            界面素材（保持原位置）
 
 src/ring_python_sdk/       当前集成的 Ringo SDK snapshot
 third_party/               已验证的外部 ASR 源码快照
@@ -600,6 +664,17 @@ docs/                      详细设计、接入与验证文档
 experiments/               可复现实验脚本和结果
 scripts/                   安装、GPU 切换和启动脚本
 ```
+
+业务实现按功能归组，UI 控制器留在 `ui/` 的对应功能目录；共享桌面能力放在
+`desktop/`，操作系统边界放在 `platforms/`。新增模块应放入对应目录，避免重新平铺到包根目录。
+`asr/`、`scenes/` 和 `text_processing/` 继续作为独立功能包。
+
+包根目录已有的 `application_defaults.py`、`application_scene_policy.py`、
+`browser_shortcuts.py`、`gesture_scenes.py`、`scene_capabilities.py` 和 `scene_defaults.py`
+保留为旧场景 API 的兼容入口，实际实现仍在 `scenes/`。
+`from proximic_ring import ProxiMicDetector` 等公开导出，以及 `python -m proximic_ring`、
+`python -m proximic_ring.ui` 和已安装的命令行入口保持可用；内部模块导入使用上面的新路径。
+原生 Swift、QML、SDK、测试和脚本的目录位置保持不变。
 
 ## 测试
 
@@ -670,3 +745,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
 - [数据采集与训练](docs/DATASET_TRAINING.md)
 - [验证清单](docs/VALIDATION.md)
 - [移植说明](docs/PORTING_NOTES.md)
+
+## 命令行 Workflow Trials
+
+在项目根目录运行 `bash scripts/run-workflow-trials.sh list` 查看所有测试任务。
+任务内容位于 `experiments/workflow_trials/tasks/<任务名>/`：`baseline.txt` 是原任务，
+`steps.txt` 是自然语言步骤，`task.json` 保存共用参数和共同起点。保存修改后自动生成新任务版本。
+
+```bash
+bash scripts/run-workflow-trials.sh preview --task music --mode steps
+bash scripts/run-workflow-trials.sh run --task music --mode baseline
+bash scripts/run-workflow-trials.sh run --task music --mode steps
+bash scripts/run-workflow-trials.sh report
+```
+
+备忘录使用 `--task notes`。每次只运行一组，开始前手动复位，完成后人工核验。
+默认结果在本项目 `agent-experience/workflow-tests/`；原始事件在 `agent-experience/sessions/`。
+每轮使用新会话，测试记录不会自动触发 Workflow 提取。
+完整说明、JSON 旧实验入口与自定义任务见 [本地 Workflow Trials](experiments/workflow_trials/README.md)。

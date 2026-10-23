@@ -12,9 +12,9 @@ from ring_python_sdk.audio.processor import AudioProcessor
 from ring_python_sdk.ble.control import send_mic_control
 from ring_python_sdk.swipe.processor import SwipeProcessor
 from ring_python_sdk.swipe.events import SwipeResult
-from proximic_ring.firmware_gestures import FirmwareGestureWorker, GESTURE_NAMES
+from proximic_ring.gestures.firmware_gestures import FirmwareGestureWorker, GESTURE_NAMES
 from proximic_ring.audio.ring import RingAudioSource
-from proximic_ring.app_runtime import _gesture_health_status, RuntimeSettings
+from proximic_ring.voice.app_runtime import _gesture_health_status, RuntimeSettings
 
 
 def compact(cid=5, seq=1):

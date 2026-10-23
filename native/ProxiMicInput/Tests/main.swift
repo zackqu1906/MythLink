@@ -1277,4 +1277,101 @@ do {
     check(finishes == 1 && client.markCount == 0 && client.commitCount == 0, "empty handoff wrote or stopped audio twice")
 }
 
+for restore in [false, true] {
+    test("Polish only the utterance and honor undo origin: restore=\(restore)") {
+        let client = FakeClient("前缀👨‍👩‍👧‍👦旧字后缀", selection: NSRange(location: 13, length: 2))
+        let original = client.body
+        let session = try begin(client)
+        session.update("嗯明天见😀", final: true)
+        let dictated = client.body
+        var requests: [String] = []
+        var edits = 0
+        session.onPolish = { text, _ in requests.append(text) }
+        session.onEdit = { _, _, _ in edits += 1 }
+        session.polish(restoringRawOnUndo: restore)
+        let revision = session.revision
+        session.polish(restoringRawOnUndo: !restore)
+        check(requests == ["嗯明天见😀"] && edits == 0, "polish context mixed with editor or repeated")
+        session.applyPolish(text: "明天见！😀", revision: revision, error: nil)
+        check(client.body == "前缀👨‍👩‍👧‍👦明天见！😀后缀", "polish changed surrounding content")
+        check(session.phase == .dictated && session.polished, "polish did not settle")
+        let writes = client.replaceCount
+        session.applyPolish(text: "late", revision: revision, error: nil)
+        session.polish(restoringRawOnUndo: restore)
+        check(client.replaceCount == writes && requests.count == 1, "duplicate polish wrote")
+        session.cancel()
+        if restore {
+            check(client.body == dictated && session.phase == .dictated && !session.polished, "first undo must restore raw")
+            session.cancel()
+        }
+        check(client.body == original && session.phase == .undone, "utterance undo lost original selection")
+    }
+}
+
+for failure in ["cancel", "model", "empty", "caret", "text", "interrupt"] {
+    test("Polish ignores unsafe/failed result: \(failure)") {
+        let client = FakeClient("existing ")
+        let session = try begin(client)
+        session.update("raw", final: true)
+        session.polish(restoringRawOnUndo: true)
+        let revision = session.revision
+        if failure == "cancel" { session.cancel() }
+        if failure == "caret" { client.selected = NSRange(location: 0, length: 0) }
+        if failure == "text" { client.body = "changed raw" }
+        if failure == "interrupt" { session.interrupt("已切换输入框") }
+        let before = client.body
+        session.applyPolish(text: failure == "empty" ? "  " : "polished", revision: revision,
+                            error: failure == "model" ? "模型失败" : nil)
+        expireReadback(session, client)
+        check(client.body == before && client.replaceCount == 0, "stale/failed polish overwrote text")
+        check(session.phase != .polishing, "failed request stuck busy")
+    }
+}
+
+test("Polish and two-stage undo work with only an exact readable sentence") {
+    let client = FakeClient("prefix ")
+    client.fullContext = false; client.rangeReads = true
+    let session = try begin(client)
+    session.update("raw", final: true)
+    session.polish(restoringRawOnUndo: true)
+    session.applyPolish(text: "polished", revision: session.revision, error: nil)
+    check(client.body == "prefix polished", "range-only polish failed")
+    let record = session.undoRecord()!
+    let restored = CompositionSession(client: client, undo: record, utteranceID: "history", sequence: 1, revision: 10)
+    restored.cancel()
+    check(client.body == "prefix raw" && restored.phase == .dictated, "history lost raw-restore semantics")
+    restored.cancel()
+    check(client.body == "prefix " && restored.phase == .undone, "history lost sentence undo")
+}
+
+for restore in [true, false] {
+    test("Cancel waits for one polish write acknowledgement: restore=\(restore)") {
+        let client = FakeClient("before ")
+        let session = try begin(client)
+        session.update("raw", final: true)
+        session.polish(restoringRawOnUndo: restore)
+        client.delayReplace = true
+        session.applyPolish(text: "polished", revision: session.revision, error: nil)
+        session.cancel()
+        check(session.awaitingReadback && client.replaceCount == 1, "cancel replayed pending write")
+        client.delayReplace = false; client.publishReads()
+        session.advanceReadback()
+        check(client.body == (restore ? "before raw" : "before "), "pending cancel used wrong undo origin")
+        check(session.phase == (restore ? .dictated : .undone), "pending cancel stuck")
+    }
+}
+
+test("Unchanged polish still has a separate undo when requested after dictation") {
+    let client = FakeClient("before ")
+    let session = try begin(client)
+    session.update("raw", final: true)
+    session.polish(restoringRawOnUndo: true)
+    session.applyPolish(text: "raw", revision: session.revision, error: nil)
+    session.cancel()
+    check(client.body == "before raw" && session.phase == .dictated && !session.polished, "unchanged polish deleted the sentence")
+    check(client.replaceCount == 0, "unchanged polish needlessly wrote")
+    session.cancel()
+    check(client.body == "before " && session.phase == .undone, "second undo failed")
+}
+
 print("\(passed) native composition tests passed")

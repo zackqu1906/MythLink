@@ -1,11 +1,11 @@
 """One action-resolution boundary; retain existing per-scene priorities."""
-from ..app_gestures import normalize_shortcut
+from ..gestures.app_gestures import normalize_shortcut
 from .models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
 from .registry import SCENES, SCENE_LABELS, action_label
 from .capabilities import BROWSERS
 from .adapters.presentation import scene_actions
 from .adapters.native import activity_actions, ADAPTERS
-from .adapters.browser import video_actions
+from .adapters.browser import video_actions, media_actions
 from .menus import menu_action, start_action
 
 
@@ -26,6 +26,11 @@ def _presentation_action(bundle, action, profile, menus, *, entry=False):
 
 
 def resolve_action(bundle, scene, action, profile="", menus=(), *, entry=False):
+    if bundle.casefold() in BROWSERS and scene in {VIDEO, MUSIC}:
+        # Built-in media actions always use the extension, even when the
+        # browser's application menu happens to expose a similar label.
+        item = next((item for item in media_actions(scene) if item["id"].rsplit(":", 1)[-1] == action), None)
+        return {key: item[key] for key in ("id", "label", "path", "shortcut")} if item else None
     definition = SCENES.get(scene)
     if definition is not None and definition.resolution == "preset_first":
         return _presentation_action(bundle, action, profile, menus, entry=entry)
@@ -36,23 +41,19 @@ def resolve_action(bundle, scene, action, profile="", menus=(), *, entry=False):
         if item["id"].rsplit(":", 1)[-1] == action:
             return {key: item[key] for key in ("id", "label", "path", "shortcut")}
     shortcut = ADAPTERS.get(bundle.casefold(), {}).get(scene, {}).get(action)
-    if bundle.casefold() in BROWSERS and scene == VIDEO:
-        shortcut = {"play": "Space", "backward": "Left", "forward": "Right", "volume-up": "Up", "volume-down": "Down"}.get(action)
-    if bundle.casefold() in BROWSERS and scene == MUSIC:
-        shortcut = {"volume-up": "Up", "volume-down": "Down"}.get(action)
     if bundle.casefold() in BROWSERS and scene == PDF:
         shortcut = {"previous": "PageUp", "next": "PageDown"}.get(action)
     if not shortcut:
         return None
     identity = "web-video:" + action if bundle.casefold() in BROWSERS and scene == VIDEO else f"scene-default:{scene}:{action}"
     return dict(id=identity, label=action_label(scene, action),
-                path=SCENE_LABELS[scene] + " 默认快捷键", shortcut=normalize_shortcut(shortcut))
+                path="浏览器扩展 · 播放器控制" if bundle.casefold() in BROWSERS and scene in {VIDEO, MUSIC} else SCENE_LABELS[scene] + " 默认快捷键", shortcut=normalize_shortcut(shortcut))
 
 
 def catalog_actions(bundle, scene, profiles, *, presentation=""):
     """Action picker catalog for every scene, retaining its existing labels/IDs."""
     if scene in {"regular", PRESENTATION}:
         return scene_actions(bundle, scene, profile=presentation)
-    if bundle.casefold() in BROWSERS and scene == VIDEO:
-        return video_actions()
+    if bundle.casefold() in BROWSERS and scene in {VIDEO, MUSIC}:
+        return media_actions(scene)
     return activity_actions(bundle, scene, profiles.get(scene, ""))

@@ -42,33 +42,13 @@ def test_multipurpose_office_switches_between_pdf_and_slideshow_through_one_entr
         assert detect_scene('com.kingsoft.wpsoffice.mac', profiles, window, focus, metadata).scene == scene
 
 
-def test_browser_video_and_pdf_both_preserve_focused_page_identity():
-    window, web, wrapper, video = page()
-    profiles = application_scene_profiles('com.apple.Safari')
-    result = detect_scene('com.apple.Safari', profiles, window, web, read)
-    assert result.scene == VIDEO and result.web_area is web and result.player is video
-    assert result.page_key
-    web.attrs.update(AXURL='https://example.test/paper.pdf', AXChildren=[])
-    pdf = detect_scene('com.apple.Safari', profiles, window, web, read)
-    assert pdf.scene == PDF and pdf.web_area is web and pdf.player is None
-    assert pdf.page_key != result.page_key
-    assert 'paper.pdf' not in repr(pdf)
-
-
-def test_native_video_hints_in_a_webpage_never_replace_real_player_evidence():
-    window, focus = content(VIDEO); window.pop('AXDocument')
-    focus.update(AXRole='AXWebArea', AXEditable=False, AXURL='https://example.test/watch', AXDescription='video')
-    result = detect_scene('com.apple.Safari', application_scene_profiles('com.apple.Safari'), window, focus, metadata)
-    assert result.scene == '' and result.page_key
-
-
 def test_recognition_imports_without_ui_shortcut_execution_or_native_bridge():
     script = '''
 import sys
 class Guard:
     def find_spec(self, fullname, path=None, target=None):
         forbidden = ('PySide6', 'AppKit', 'Quartz', 'ApplicationServices',
-                     'proximic_ring.ui', 'proximic_ring.app_shortcuts',
+                     'proximic_ring.ui', 'proximic_ring.desktop.app_shortcuts',
                      'proximic_ring.scene_defaults', 'proximic_ring.application_defaults',
                      'proximic_ring.browser_shortcuts', 'proximic_ring.scenes.adapters',
                      'proximic_ring.scenes.defaults', 'proximic_ring.scenes.configuration',

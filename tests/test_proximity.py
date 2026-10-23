@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QObject, QCoreApplication, QSettings, Signal
 
-from proximic_ring.ui import proximity_controller as module
+from proximic_ring.ui.proximity import proximity_controller as module
 
 
 class Process(QObject):
@@ -69,7 +69,8 @@ def test_explicit_opt_in_and_prerequisites(proximity):
     assert "password" not in settings.allKeys()
 
 
-def test_lock_ack_only_after_voice_pause_and_ignore_late_messages(proximity):
+def test_lock_ack_only_after_voice_pause_and_ignore_late_messages(proximity, monkeypatch):
+    monkeypatch.setattr(module.ProximityController, "lock_connection_ready", property(lambda self: True))
     c, _ = proximity; prepare(c); c.enabled = True
     process = c._process; order = []
     c.lockPreparing.connect(lambda: order.append(("pause", len(process.writes))))
@@ -286,7 +287,8 @@ def test_old_unlock_delay_is_removed(tmp_path):
     c.close()
 
 
-def test_locked_gesture_is_consumed_and_sent_only_once(proximity):
+def test_locked_gesture_is_consumed_and_sent_only_once(proximity, monkeypatch):
+    monkeypatch.setattr(module.ProximityController, "lock_connection_ready", property(lambda self: True))
     import threading
     c, _ = proximity; prepare(c); c.enabled = True
     proc = c._process
@@ -484,14 +486,14 @@ def test_corrupt_saved_calibration_requires_new_capture(proximity):
     assert not c.savedCalibration
 
 
-def test_reconnect_request_requires_owned_locked_live_ready_helper(proximity, monkeypatch):
+def test_reconnect_request_requires_locked_live_ready_helper(proximity, monkeypatch):
     c, _ = proximity; prepare(c); c.enabled = True
     requests = []
     c.reconnectRequested.connect(requests.append)
-    valid = dict(event="monitor", owned=True, locked=True, connected=True, permission=True,
-                 reconnect_allowed=True, return_confirmed=True)
-    for override in (dict(owned=False), dict(locked=False), dict(connected=False),
-                     dict(reconnect_allowed=False), dict(return_confirmed=False), dict(error="failed")):
+    valid = dict(event="monitor", owned=False, locked=True, connected=True, permission=True,
+                 reconnect_allowed=True, return_confirmed=False)
+    for override in (dict(locked=False), dict(connected=False), dict(permission=False),
+                     dict(reconnect_allowed=False), dict(error="failed")):
         c._process.send({**valid, **override})
         assert not c.reconnect_target
     assert requests == []

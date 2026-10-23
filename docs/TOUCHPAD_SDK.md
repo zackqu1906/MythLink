@@ -45,6 +45,7 @@ async def use_existing_session(session: RingSession):
 | `on_event` | 必填，同步回调，接收 `TouchpadMove` 或 `TouchpadClick` |
 | `on_stats` | 可选，约每 0.5 秒回调一次不可变 `TouchpadStats` |
 | `on_stopped` | 可选，停止后回调一次；正常停止/超时为 None，异常为 Exception |
+| `on_discarded_event` | 可选，接收 `(event, reason)`，用于观察回调前过期或流已关闭而未交付的事件；诊断回调异常不会中断输入 |
 | `duration_s=90` | 从 START 成功后开始计时，只停止触摸板，不关闭应用/蓝牙/语音；传 None 可显式长期运行 |
 | `model_path=None` | 默认使用随 SDK 附带、校验哈希的原模型；自定义路径仍需满足相同输入输出约定 |
 
@@ -98,14 +99,16 @@ source = RingAudioSource(
 )
 ```
 
-它复用主程序已有连接，在固件手势启动后启动触摸板，关闭/断线时自动清理。`source.touchpad_active` 和 `source.touchpad_error` 可供 UI 展示。接收事件不代表自动发送系统鼠标动作，产品层可以选择将事件传给 `MacSystemMouse.handle` 或其他应用逻辑。桌面导航栏的“触摸板”页面使用 `duration_s=None` 持续控制鼠标，正常使用由“停止触摸板”按钮结束。设置只包含指针速度、轻触点击、反转上下方向；已移除自动停止时长、倒计时、鼠标线程截止时间及旧 `touchpad/seconds` 设置。桌面输出设置 `MacSystemMouse.stop_on_escape=False`，Esc 留给当前应用使用。断线、锁屏、退出和异常仍清理输出，重连后需手动再次开启。SDK／CLI 的可选限时参数保留，桌面页面不会启用。
+它复用主程序已有连接，在固件手势启动后启动触摸板，关闭/断线时自动清理。`source.touchpad_active` 和 `source.touchpad_error` 可供 UI 展示。接收事件不代表自动发送系统鼠标动作，产品层可以选择将事件传给 `MacSystemMouse.handle` 或其他应用逻辑。桌面导航栏的“触摸板”页面使用 `duration_s=None` 持续控制鼠标，正常使用由“停止触摸板”按钮结束。设置只包含指针速度、轻触点击、反转上下方向；已移除自动停止时长、倒计时、鼠标线程截止时间及旧 `touchpad/seconds` 设置。桌面输出设置 `MacSystemMouse.stop_on_escape=False`，Esc 留给当前应用使用。断线、锁屏、退出和异常仍清理输出；桌面应用在重连就绪或确认解锁后，按用户保存的开启状态恢复。SDK／CLI 的可选限时参数保留，桌面页面不会启用。
+
+语音和触摸板开关分别保存在 `input/voiceEnabled`、`touchpad/enabled`。手动开关才修改偏好，断连、锁屏暂停与退出不会保存成“关闭”。新连接待设备和识别组件就绪后恢复；触摸板还需当前连接的数据源就绪、上次停止清理完成，恢复为鼠标模式。锁屏期间延后恢复，解锁或取消锁屏请求后恢复；组件退出或故障清掉手势路由，不视为系统已解锁。连接没有真正断开时，锁屏暂停也会重新建立恢复任务。每次连接的就绪、断连、结束事件携带连接标识，旧连接的迟到事件不能关闭新连接的输入。自动启动失败保留偏好但不无限重试。诊断事件 `INPUT_PREFERENCES_RESTORE`、`INPUT_PREFERENCES_SUSPEND`、`INPUT_PREFERENCES_RESUME` 分别记录连接恢复、锁屏暂停和解锁恢复。
 
 ## 互斥与清理
 
 - 触摸板 token、原始 IMU、四元数共用 `21 00` / `21 01` 数据流，三个模式互斥，冲突时抛 RuntimeError；先关闭已有模式再切换。
 - 语音保持 ADPCM；手势保持固件 `26 06` / `26 07` 识别。它们在主机端独立路由；实际固件并发稳定性仍需设备验证。
 - 队列最多 64 包，溢出清空并重置推理；序号缺口、250 ms 断流、无效包会重新预热。超过 8 秒无有效 token，停止并报告 TimeoutError。
-- STOP、disconnect、stop_all 都会关闭触摸板输出；START 失败或被取消会尝试 STOP，STOP 写入失败仍释放模型和线程。断线不会自动恢复触摸板。
+- STOP、disconnect、stop_all 都会关闭触摸板输出；START 失败或被取消会尝试 STOP，STOP 写入失败仍释放模型和线程。SDK 不自行重连或恢复触摸板；桌面应用在新连接就绪后按已保存偏好发起 START。
 
 ## 离线模型／录制数据接口
 
@@ -159,7 +162,7 @@ bash scripts/test-touchpad-double-click.sh
 
 ### 主程序中的切换
 
-「触摸板」页保留鼠标设置与本地笔画试写框，两种实际输出共用一个「开启／停止触摸板」开关。每次开启默认鼠标模式；点入可编辑输入框后 Touchpad 双击进入笔画，与 tap 语音使用当前已聚焦的输入框，之后再次双击或离开当前输入框回到鼠标。切换复用原来的 SDK 数据流，不重新预热，不需要在 UI 手动切换输入模式。响指不再负责笔画唤起；旧的笔画唤起开关、手势和上次输入模式设置已移除。
+「触摸板」页保留鼠标设置与本地笔画试写框，两种实际输出共用一个「开启／停止触摸板」开关。每次开启默认鼠标模式；点入可编辑输入框后 Touchpad 双击进入笔画，与双击 tap 语音使用当前已聚焦的输入框，之后再次双击或离开当前输入框回到鼠标。切换复用原来的 SDK 数据流，不重新预热，不需要在 UI 手动切换输入模式。响指不再负责笔画唤起；旧的笔画唤起开关、手势和上次输入模式设置已移除。
 
 双击由原始 `TouchpadClick` 的时间戳判定，最大间隔为 400 ms。第一下立即发送普通单击，鼠标模式下直接点击当前位置；第二下在窗口内到达就发送双击手势，结束这一组配对，已经触发的第一下不会撤回或重放。超过窗口的下一下立即作为新单击。双击仍专用于切换笔画，第二下不会另发系统鼠标双击或补点光标；它使用当时的焦点，包括第一下正常点击带来的应用／输入框切换。笔画模式中的 Touchpad 单击只报告手势，不确认候选字也不向外部应用点击，确认仍用原来的固件 `tap`；左／右滑切换候选，上滑退一笔，下滑清空。SDK 原始 click 识别阈值与鼠标移动算法不变。
 
@@ -176,7 +179,7 @@ bash scripts/test-touchpad-double-click.sh
 3. **两个读取进度。** 每个进度只记录下一帧、下一发送时刻和追赶状态，不复制模型或速度样本。识别进度按 yyf 规则，每轮最多补齐 20 个到期帧；鼠标进度按原 `27c773d` 节奏，每轮至多一帧，通常约 5 ms，原追赶间隔为 4.75 ms。鼠标晚读时仍能拿到后续补入的预测，因此位移值和发送时间均可与旧版逐帧对照。两者都读完或过期后才释放这份样本。
 4. **识别和显示分别交付。** `on_event` 输出及时轨迹、接触边界和 click／verdict，笔画模式使用这些事件；`on_pointer_move` 只输出逐帧鼠标位移，鼠标模式使用它并从 `on_event` 接收点击。鼠标路径不再运行一遍无用的点击计算，其慢调度或过期也不会重置识别路径的 click。
 5. **独立的系统鼠标输出。** 鼠标线程消费最多 32 项的队列，同轮来不及发送的连续移动可以合并，但不会越过点击。使用独立控制进程，启用时同步检查一次辅助功能和事件发送权限，此后由该进程内的独立线程每隔约 1 秒复查；移动、单击和双击目标读取只读取内存结果，不等待权限查询。复查发现拒绝或异常后，下一次输出立即停止；空闲或笔画暂停期间，主程序每秒读取一次子进程缓存状态以报告错误，这个读取不触发系统权限查询。系统自身的授权限制始终生效，应用发现撤权的时间取决于复查周期、系统查询耗时和状态读取时机。手动停止、断线与停止管道不依赖复查；停止也不等待正在进行的权限查询。重新授权后重新开启触摸板使用新控制进程，不自动重放旧移动或点击。实际系统事件率仍取决于调度和原生调用耗时，不能用模型 200 Hz 推导光标一定刷新 200 次／秒。
-6. **当前交互逻辑。** 第一下一到就触发单击，400 ms 内第二下触发双击手势；超过窗口则是新单击，没有等待计时器、首击位置暂存或超时补发。双击按当前会话层的规则，在当时已聚焦的输入框唤起笔画，与 tap 语音共用输入法准备流程。笔画模式用固件 tap 选字，Touchpad 双击退出。切换复用当前数据流，恢复鼠标时忽略退出前的残留笔画位移。浮窗、候选、联想以及语音正在输入时先结束听写的规则保持现有行为。
+6. **当前交互逻辑。** 第一下一到就触发单击，400 ms 内第二下触发双击手势；超过窗口则是新单击，没有等待计时器、首击位置暂存或超时补发。双击按当前会话层的规则，在当时已聚焦的输入框唤起笔画，与双击 tap 语音共用输入法准备流程。笔画模式用固件 tap 选字，Touchpad 双击退出。切换复用当前数据流，恢复鼠标时忽略退出前的残留笔画位移。浮窗、候选、联想以及语音正在输入时先结束听写的规则保持现有行为。
 
 `pointer.py` 和第二个 `Postprocessor` 实例已移除。`tests/test_touchpad_pointer.py` 分别使用旧版鼠标与重构前 yyf 事件的固定回放摘要验证行为，另检查模型不会推理两次、鼠标不调用点击判定器、慢调度时样本缓存不会持续增长。
 
@@ -185,6 +188,38 @@ bash scripts/test-touchpad-double-click.sh
 前后台诊断写入统一日志：`TOUCHPAD_VISIBILITY` 标记 Mythlink 是否处于激活状态，`TOUCHPAD_STATS` 每约 2 秒记录有效 token 处理帧率 `token_hz`、SDK 轨迹输出率 `move_hz`、推理耗时、包队列延迟、Qt 排队延迟、原始 click 和最终单／双击数量，以及轨迹过期、整流重置、笔画等待判定超时等原因计数。统计来自现有 SDK 回调，不更改处理判断，也不记录文字或轨迹坐标。跨前后台的窗口标记 `mixed_visibility=true`，比较时应排除。实测需重启主程序，在前台和后台分别保持相同操作约 30 秒；用稳定且预热完成的窗口比较，不能把模拟调度测试当作前后台实测。
 
 新版日志标识为 `pipeline="unified-trajectory-v4"`：v2 将鼠标权限查询移至独立低频复查，v3 改为即时单击与 400 ms 双击配对，v4 增加按输入会话持有的 App Nap 保护及批处理 CPU 耗时诊断。SDK 轨迹、原始 click 与笔画识别算法沿用 v1。鼠标另记 `pointer_frame_hz`（逐帧调度交给鼠标线程的帧率）和 `pointer_post_hz`（权限进程实际发出的非零鼠标移动事件率）。`move_hz` 仅表示识别轨迹的数据处理量，不能用它判断鼠标输出是否平滑；静止时 `pointer_post_hz=0` 正常。
+
+### 逐次点击诊断与请求时限
+
+`[TOUCHPAD_CLICK]` 后是 JSON，每次点击有独立的 `click_id`。在统一的 `logs/diagnostic.log`（含轮转文件）中搜索这个 ID，可串起 `queued`、`dequeued`、`recognized`、`dispatch`、`native_received`、`native_result` 和最终 `result`。双击使用 `double_target_request`；未进入某阶段时不生成该阶段记录。原生记录经子进程 stderr 收集，和主进程记录的落盘顺序可能不同，按 `stage` 和 `recorded_at` 判断。日志在独立线程写入，不记录坐标、文本或窗口内容。
+
+| 字段 | 含义 |
+| --- | --- |
+| `queue_ms` | 进入应用输出层到被输出线程处理的等待时间；出队前被丢弃时为等待至丢弃的时间，未入队为 0 |
+| `event_age_ms` / `final_event_age_ms` | SDK 点击生成到出队／结束的时间，区别于应用队列等待时间 |
+| `ipc_age_ms` | 主进程创建原生请求到原生处理函数接收的时间 |
+| `ipc_roundtrip_ms` / `native_ms` | 主进程等候原生回复的总耗时／原生处理耗时 |
+| `clicks_posted` | 成功完成按下、抬起两次系统发送调用的点击数；通常为 0 或 1 |
+| `down_posts` / `up_posts` | 成功返回的按下／抬起发送调用数，异常时可识别只发出部分事件 |
+| `outcome` / `reason` | 最终状态及具体原因；`posted` 为已调用系统发送，`routed` 为交给其他功能，`discarded` 为未发送，`failed` 为处理异常，`unknown` 为无法确认发送结果 |
+
+原生 `touchpad_apply` 和双击目标请求的过期阈值从 **100 ms 调整为 250 ms**（`ipc_limit_ms=250`）；恰好 250 ms 可处理，超过才丢弃。该时限从原生请求创建时计算，不包含更早的 SDK／应用队列等待。SDK 回调及鼠标队列的 100 ms、点击判定及笔画队列的 150 ms、双击配对的 400 ms，以及 IPC 回复等待的 2 秒仍各自独立。
+
+主要原因：
+
+- `sdk_callback_expired`：SDK 事件尚未交给应用就超过回调时限；`sdk_stream_closed`、`sdk_duration_expired`、`touchpad_session_changed` 为流／会话已结束。
+- `mouse_queue_expired`、`stroke_queue_expired`：输出层事件过期；`queue_overflow`、`stroke_queue_overflow`：被新事件挤出有界队列。
+- `click_recognition_expired`、`click_future_timestamp`、`click_duplicate_or_out_of_order`：判定时过期、时间戳在未来、重复或乱序。
+- `output_inactive`、`stroke_output_inactive`、`output_paused`、`output_stopped`、`disconnected`：输出未启用、暂停、停止或断线。
+- `click_context_changed`、`selector_loading`、`selector_activating`：操作上下文变化或窗口选择器正在切换。
+- `clicks_disabled`、`native_disabled`、`permission_denied`：点击开关关闭、原生停止门已关闭或权限失效。
+- `ipc_expired`：到达原生进程时超过 250 ms；`ipc_future_timestamp`、`ipc_invalid_timestamp`：请求时钟数据无效。
+- `double_click_stroke_requested`、`double_click_exit_stroke_requested`、`stroke_mode_no_mouse_click`、`capture_callback_requested`：由笔画／截图功能接管，鼠标发送数为 0；这里只确认已调用接管回调，不保证功能后续启动成功。`double_target_unavailable`、`capture_callback_missing` 表示无法接管。
+- `channel_timeout`、`channel_disconnected`、`channel_protocol_error`：通信失败；已发出请求而缺失回执时，发送计数为 `null`、状态为 `unknown`，不当成 0，也不自动重试。继续查同 ID 的 `native_result`，它可能证明已发送或具体失败原因。`native_error`、`pointer_worker_error`、`stroke_worker_error` 附有异常类型。
+
+例如 `reason="ipc_expired", ipc_age_ms=270, clicks_posted=0` 可确认原生超时丢弃；`reason="posted", clicks_posted=1, down_posts=1, up_posts=1` 可确认发送调用已完成。系统发送调用没有目标应用的处理回执，所以 `posted` 不代表目标控件一定已响应。只有 `queued`／`dispatch` 而没有最终记录时，应排查进程退出、日志写入失败或轮转文件，不能直接判断“未发送”。
+
+修改后须重启主程序，使主程序和新建的鼠标子进程加载同一版代码。回归入口：`tests/test_touchpad_click_diagnostics.py`。
 
 ### macOS 后台输入保护
 
@@ -200,7 +235,7 @@ bash scripts/test-touchpad-double-click.sh
 
 候选条高 32 pt，当前候选使用蓝底白字，不加【】。候选条距光标 4 pt：放在上方时底边贴近光标，放在下方时顶边贴近光标。右侧最多 140 pt 的轨迹区独立上移 24 pt，不改变候选条位置；屏幕边缘会限制上移距离，底部空间不足时按比例缩小轨迹区。语音和笔画浮窗共用 `InputPaletteStyle.swift` 的半透明背景（68% 不透明度）、10 pt 圆角、细边框和无阴影外观；语音默认高度也为 32 pt，并继续支持现有的大小设置。
 
-`native_touchpad.py` 只在双击手势到达时读取当前前台应用，不保留首击前的应用或鼠标位置；第一下正常点击可以改变焦点。双击阶段不命中检测鼠标位置或补发光标点击。`ui/stroke_session_controller.py` 与 tap 语音共用 `InlineInputController` 的输入法准备流程：异步选中输入法、必要时恢复输入上下文、等待当前原生 client 就绪，随后等待 `stroke_begin` 确认再切换输出。准备期间的输入法重连保留同一请求；过期回调不能开启新会话。输入目标由原生输入法的 epoch、client 和笔画会话标识绑定；切换应用或输入框时退出。鼠标权限要求、SDK 识别输入和数据流不变。
+`native_touchpad.py` 只在双击手势到达时读取当前前台应用，不保留首击前的应用或鼠标位置；第一下正常点击可以改变焦点。双击阶段不命中检测鼠标位置或补发光标点击。`ui/stroke_session_controller.py` 与双击 tap 语音共用 `InlineInputController` 的输入法准备流程：异步选中输入法、必要时恢复输入上下文、等待当前原生 client 就绪，随后等待 `stroke_begin` 确认再切换输出。准备期间的输入法重连保留同一请求；过期回调不能开启新会话。输入目标由原生输入法的 epoch、client 和笔画会话标识绑定；切换应用或输入框时退出。鼠标权限要求、SDK 识别输入和数据流不变。
 
 原生输入法仅在浮窗实际可见后返回 `stroke_ready` 成功；无法定位或显示浮窗会明确返回失败，主程序恢复鼠标输出和语音待命。原生输入框拒绝、切换工具异常及输入法准备超时也会恢复鼠标，不重启 SDK 流。统一诊断日志中的 `TOUCHPAD_DOUBLE_CLICK` 和 `STROKE_SESSION` 记录双击路由、准备阶段及退出原因，不记录输入文字或笔画轨迹。输入法准备不创建语音句子，也不会发送语音 begin、finish 或 reset。
 

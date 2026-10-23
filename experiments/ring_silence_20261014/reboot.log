@@ -1,0 +1,63 @@
+Session dir: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134817
+Connecting 'Ringo8F56' (C23BC3B9-2293-AE6A-CD46-F03111E6EC4D) ...
+Connected successfully.
+MTU: 498
+button capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134817/ring_button.csv
+r2w capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134817/ring_raise_to_wake.csv
+Periodic battery polling disabled for this streaming session.
+IMU chip: icm42688
+DEVICE DeviceInfo(format_ver=1, hw_rev=1, fw_major=1, fw_minor=2, fw_patch=133, fw_tweak=0, components=(InfoComponent(id=1, present=1, count=1, model=1, flags=3), InfoComponent(id=2, present=0, count=0, model=0, flags=0), InfoComponent(id=3, present=1, count=1, model=1, flags=0), InfoComponent(id=4, present=1, count=1, model=1, flags=3), InfoComponent(id=5, present=1, count=1, model=1, flags=3), InfoComponent(id=6, present=1, count=1, model=2, flags=0), InfoComponent(id=7, present=1, count=1, model=1, flags=0), InfoComponent(id=8, present=1, count=1, model=2, flags=0)))
+TIME_BEFORE TimeStatus(synced=True, unix_ms=1791956900268, uptime_ms=10039139)
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134817/ring_audio.wav
+PHASE before_reboot
+RESULT {"phase": "before_reboot", "blocks": 58, "samples": 92800, "nonzero": 92630, "zero_blocks": 0, "tail_nonzero": 31934}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134817/ring_audio.wav
+reboot ENTER sent (expect disconnect or RESULT fail)
+REBOOT ok=None err=None
+button saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134817/ring_button.csv
+r2w saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134817/ring_raise_to_wake.csv
+Disconnected.
+Session dir: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832
+Connecting 'Ringo8F56' (C23BC3B9-2293-AE6A-CD46-F03111E6EC4D) ...
+Connected successfully.
+MTU: 498
+button capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_button.csv
+r2w capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_raise_to_wake.csv
+Periodic battery polling disabled for this streaming session.
+IMU chip: icm42688
+TIME_AFTER TimeStatus(synced=True, unix_ms=1791956914138, uptime_ms=10053007)
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio.wav
+PHASE after_reboot
+RESULT {"phase": "after_reboot", "blocks": 59, "samples": 94400, "nonzero": 11198, "zero_blocks": 52, "tail_nonzero": 0}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio.wav
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_2.wav
+PHASE after_reboot_restart_1
+RESULT {"phase": "after_reboot_restart_1", "blocks": 57, "samples": 91200, "nonzero": 11198, "zero_blocks": 50, "tail_nonzero": 0}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_2.wav
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_3.wav
+PHASE after_reboot_restart_2
+RESULT {"phase": "after_reboot_restart_2", "blocks": 57, "samples": 91200, "nonzero": 11198, "zero_blocks": 50, "tail_nonzero": 0}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_3.wav
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_4.wav
+PHASE after_reboot_restart_3
+RESULT {"phase": "after_reboot_restart_3", "blocks": 57, "samples": 91200, "nonzero": 11198, "zero_blocks": 50, "tail_nonzero": 0}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_4.wav
+mic ON command sent (encode=1)
+mic capturing -> /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_5.wav
+PHASE after_reboot_restart_4
+RESULT {"phase": "after_reboot_restart_4", "blocks": 57, "samples": 91200, "nonzero": 11198, "zero_blocks": 50, "tail_nonzero": 0}
+mic OFF command sent (encode=1)
+mic saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_audio_5.wav
+button saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_button.csv
+r2w saved: /Users/admin/Downloads/ProximicVoice-main/experiments/ring_silence_20261014/reboot/session/20261014_134832/ring_raise_to_wake.csv
+Disconnected.

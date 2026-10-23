@@ -3,7 +3,7 @@ from pathlib import Path
 import plistlib
 import subprocess
 
-from proximic_ring.application_catalog import application_metadata, installed_applications, spotlight_application_paths
+from proximic_ring.desktop.application_catalog import application_metadata, installed_applications, spotlight_application_paths
 
 
 def application(path, bundle, **extra):
@@ -35,7 +35,7 @@ def test_unopened_apps_nested_folders_and_indexed_locations_are_searchable(tmp_p
 
 
 def test_broken_app_is_skipped_and_spotlight_failure_keeps_folder_results(tmp_path, monkeypatch):
-    import proximic_ring.application_catalog as module
+    import proximic_ring.desktop.application_catalog as module
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], kwargs['timeout'])
     monkeypatch.setattr(module.subprocess, 'run', timeout)
@@ -82,7 +82,7 @@ def test_application_icon_provider_uses_native_path_and_caches_original(monkeypa
     from urllib.parse import quote
     from PySide6.QtCore import QSize
     from PySide6.QtGui import QImage
-    from proximic_ring.ui import application_icons as module
+    from proximic_ring.ui.desktop import application_icons as module
     calls = []
     source = QImage(128, 128, QImage.Format_ARGB32)
     source.fill(0xff123456)

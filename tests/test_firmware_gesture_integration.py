@@ -7,28 +7,29 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from proximic_ring import app_runtime
+from proximic_ring.voice import app_runtime
 from proximic_ring.audio.ring import RingAudioSource
 
 
 @pytest.mark.parametrize("confirm_name,slot,live", [
-    ("tap", 0, False), ("snap", 1, False), ("swipe-left", 0, True),
+    ("double-tap", 0, False), ("tap", 0, False), ("snap", 1, False), ("swipe-left", 0, True),
     ("swipe-up", 1, True),
     ("clench", 0, False), ("index-pinch", 1, True), ("middle-pinch", 0, False),
     ("circle-clockwise", 1, False), ("circle-counterclockwise", 0, True),
 ])
 def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypatch, confirm_name, slot, live):
     from proximic_ring.asr.controller import ProximitySessionController
-    from proximic_ring.events import Stage2Event
-    import proximic_ring.firmware_gestures as gestures
-    from proximic_ring.gesture_settings import GestureBindings, GESTURE_LABELS
+    from proximic_ring.voice.detection.events import Stage2Event
+    import proximic_ring.gestures.firmware_gestures as gestures
+    from proximic_ring.gestures.gesture_settings import GestureBindings, GESTURE_LABELS
 
     recognition, disconnect = threading.Event(), threading.Event()
     recognition.set()
     state, logs, finals, actions, detector_calls = {}, [], [], [], []
     confirms = (confirm_name, "") if slot == 0 else ("", confirm_name)
     remaining = [name for name in GESTURE_LABELS if name != confirm_name]
-    configured = GestureBindings(confirm=confirms, undo=tuple(remaining[:2]), switch_mode=tuple(remaining[2:4]))
+    configured = GestureBindings(confirm=confirms, end=confirms,
+                                 undo=tuple(remaining[:2]), switch_mode=tuple(remaining[2:4]))
     state["bindings"] = GestureBindings() if live else configured
     audio_thread = threading.get_ident()
 
@@ -179,6 +180,7 @@ def controller(tmp_path, monkeypatch):
     instance._desktop_output = False
     yield instance
     app.processEvents()
+    instance.proximity.close()
     instance._text_processing_worker.close(wait=True)
     instance._close_voice_history()
 
@@ -270,7 +272,15 @@ def test_stale_connection_gesture_cannot_apply(controller, monkeypatch, boundary
     assert "reason=" in log
 
 
-def test_ignored_gesture_logs_reason_and_health_does_not_replace_ui_status(controller):
+def test_ignored_gesture_logs_reason_and_health_does_not_replace_ui_status(controller, monkeypatch):
+    from proximic_ring.desktop.app_shortcuts import ShortcutTarget
+    from proximic_ring.voice.ime.focus_probe import InputFocus
+    proof = ('epoch', 'client', '', 'test.editor', 42, (0, 0))
+    monkeypatch.setattr(controller._inline_input, 'capture_start_focus', lambda: InputFocus('text', proof))
+    monkeypatch.setattr(controller._inline_input, 'same_gesture_target', lambda target: target == proof)
+    target = ShortcutTarget("test.editor", 42, "test.editor", input_context="text")
+    monkeypatch.setattr(controller._app_gestures.backend, "capture", lambda **kwargs: target)
+    monkeypatch.setattr(controller._app_gestures.backend, "same_target", lambda *args, **kwargs: True)
     controller._interaction_state = "idle"
     controller._gestureRecognized.emit(
         SimpleNamespace(name="swipe-right", confidence=0.91, timestamp_ms=12345),

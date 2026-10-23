@@ -15,7 +15,7 @@ import sys
 from Foundation import NSBundle
 from PySide6.QtCore import QBluetoothPermission, QMicrophonePermission, QTimer, Qt
 from PySide6.QtGui import QGuiApplication
-from proximic_ring.ui.permission_callback import PermissionCallback
+from proximic_ring.ui.permissions.permission_callback import PermissionCallback
 assert not getattr(sys, "frozen", False)
 for key in ("NSBluetoothAlwaysUsageDescription", "NSMicrophoneUsageDescription"):
     assert NSBundle.mainBundle().objectForInfoDictionaryKey_(key) is None

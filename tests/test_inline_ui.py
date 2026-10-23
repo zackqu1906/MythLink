@@ -29,7 +29,7 @@ def test_app_gesture_settings_layout_and_shortcut_recorder(inline_ui, tmp_path, 
     from PySide6.QtCore import QObject, QMetaObject, QPointF, Qt, Q_ARG
     from PySide6.QtQuick import QQuickItem
     from PySide6.QtTest import QTest
-    import proximic_ring.ui.app_gesture_controller as app_gestures
+    import proximic_ring.ui.gestures.app_gesture_controller as app_gestures
 
     controller, _, _, root, event = inline_ui
     dialog = root.findChild(QObject, "runtimeSettingsDialog")
@@ -128,7 +128,7 @@ def test_app_gesture_settings_layout_and_shortcut_recorder(inline_ui, tmp_path, 
 
 
 def test_shortcut_settings_reports_fallback_without_claiming_success(inline_ui, monkeypatch):
-    import proximic_ring.ui.app_gesture_controller as module
+    import proximic_ring.ui.gestures.app_gesture_controller as module
     controller, *_ = inline_ui
     calls = []
     monkeypatch.setattr(module.QDesktopServices, "openUrl", lambda url: calls.append(url.toString()) or False)
@@ -220,12 +220,14 @@ def test_settings_pages_and_back_navigation_fit_small_window(inline_ui):
     QMetaObject.invokeMethod(done, "click")
     QTest.qWait(160)
     assert dialog.property("visible")
-    QMetaObject.invokeMethod(root.findChild(QObject, "settingsCategory6"), "click")
+    QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 6))
     QTest.qWait(25)
-    assert dialog.property("currentPage") == 6
-    assert root.findChild(QQuickItem, "settingsPage6").isVisible()
-    QMetaObject.invokeMethod(root.findChild(QObject, "settingsBackButton"), "click")
     assert dialog.property("currentPage") == 0
+    assert root.findChild(QQuickItem, "settingsPage6") is None
+    assert not root.findChild(QQuickItem, "settingsBackButton").isVisible()
+    button = root.findChild(QQuickItem, "openScreenRecordingPermissionsButton")
+    p = button.mapToScene(QPointF())
+    assert 0 <= p.y() and p.y() + button.height() <= root.height()
     QMetaObject.invokeMethod(dialog, "close")
 
 
@@ -236,9 +238,11 @@ def inline_ui(tmp_path, monkeypatch):
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuick import QQuickWindow
     import proximic_ring.ui.controller as module
-    import proximic_ring.ui.inline_controller as inline
-    import proximic_ring.ui.app_gesture_controller as gesture_setup
-    from proximic_ring.wechat_setup import menu_details
+    import proximic_ring.ui.voice.inline_controller as inline
+    import proximic_ring.ui.gestures.app_gesture_controller as gesture_setup
+    from proximic_ring.ui.proximity.proximity_controller import ProximityController
+    monkeypatch.setattr(ProximityController, "_launch", lambda self, command, args=(): None)
+    from proximic_ring.platforms.macos.wechat_setup import menu_details
     from types import SimpleNamespace
     monkeypatch.setattr(gesture_setup, "detect_wechat_menu", lambda: menu_details(
         ["Show Previous Chat", "Show Next Chat"], version="4.1.11"))
@@ -263,7 +267,7 @@ def inline_ui(tmp_path, monkeypatch):
     monkeypatch.setattr(controller._text_processing_worker, "submit_routing", lambda _: pytest.fail("automatic routing must not run"))
     monkeypatch.setattr(controller, "_desktop_target_adapter", lambda: pytest.fail("IME must not access AX"))
     engine = QQmlApplicationEngine()
-    from proximic_ring.ui.application_icons import install_application_icons
+    from proximic_ring.ui.desktop.application_icons import install_application_icons
     install_application_icons(engine)
     warnings = []
     engine.warnings.connect(lambda items: warnings.extend(str(item) for item in items))
@@ -281,6 +285,8 @@ def inline_ui(tmp_path, monkeypatch):
 
     event(phase="listening", ready=True, revision=0, original="明天三点开会", selection=[6, 0], context_complete=True)
     yield controller, component._bridge, requests, root, event
+    controller.voicePractice.cancel()
+    controller.proximity.close()
     controller.appGestures.close()
     component.close()
     controller._close_voice_history()
@@ -306,29 +312,49 @@ def test_native_component_is_only_input_route_and_qml_has_no_overlay(inline_ui):
     assert bridge.messages[-1]["type"] == "finish"
 
 
-def test_input_method_setup_installs_asynchronously_and_displays_result(inline_ui, monkeypatch):
+@pytest.mark.parametrize('result,expected', [
+    ({'installed': True}, '已安装并启用'),
+    ({'installed': True, 'input_source_restored': True}, '已恢复 Mythlink'),
+    ({'installed': True, 'input_source_switched': True, 'input_source_restored': False}, '保留当前选择'),
+    ({'installed': True, 'input_source_restore_error': 'test'}, '但未能自动恢复输入法'),
+])
+def test_input_method_setup_installs_asynchronously_and_displays_result(inline_ui, monkeypatch, result, expected):
     import threading
     from PySide6.QtCore import QObject, QMetaObject
     from PySide6.QtTest import QTest
-    from proximic_ring.input_method_install import InputMethodInstaller
+    from proximic_ring.voice.ime.input_method_install import InputMethodInstaller
     controller, _, _, root, event = inline_ui
     component = controller._inline_input
     event(phase="idle", ready=False)
     released = threading.Event()
     calls = []
+    diagnostics = []
+    component.diagnostic.connect(diagnostics.append)
     def install(_):
         calls.append(True)
         assert released.wait(2)
-        return {"installed": True}
+        return result
     monkeypatch.setattr(InputMethodInstaller, "install", install)
-    dialog = root.findChild(QObject, "inputMethodSetupDialog")
-    button = root.findChild(QObject, "installInputMethodButton")
+    monkeypatch.setattr(InputMethodInstaller, "version_status", lambda _: {
+        "state": "outdated", "text": "待更新", "current": False, "detail": "测试旧版输入法",
+    })
+    dialog = root.findChild(QObject, "runtimeSettingsDialog")
+    button = root.findChild(QObject, "settingsInputMethodButton")
     QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(200)
     assert dialog.property("visible")
+    assert dialog.property("currentPage") == 0
+    assert root.findChild(QObject, "inputMethodSetupDialog") is None
     QMetaObject.invokeMethod(button, "click")
     QTest.qWait(20)
     assert component.installing and not button.property("enabled")
+    assert not component.begin(auto_select=True)
+    assert not component.stroke_commit('一')
+    errors = []
+    component.prepare_input_method('update-test', ('test.editor', 123),
+                                   lambda: pytest.fail('must not activate during update'), errors.append)
+    assert errors == ['输入法正在更新，请稍后重试']
+    assert dialog.property("visible") and dialog.property("currentPage") == 0
     component.installInputMethod()  # Double click cannot launch a second installer.
     released.set()
     for _ in range(100):
@@ -336,18 +362,46 @@ def test_input_method_setup_installs_asynchronously_and_displays_result(inline_u
         if not component.installing:
             break
     assert calls == [True]
+    install_events = [d for d in diagnostics if d.get('type', '').startswith('installation_')]
+    assert [d['type'] for d in install_events] == ['installation_started', 'installation_blocked', 'installation_finished']
+    assert install_events[1]['reason'] == 'already_installing'
+    assert expected in install_events[-1]['reason']
     assert "已安装并启用" in component.installationMessage
+    assert expected in component.installationMessage
+    assert "已安装并启用" in root.findChild(QObject, "inputMethodInstallationMessage").property("text")
     assert button.property("enabled")
     QMetaObject.invokeMethod(dialog, "close")
 
 
 def test_input_method_setup_does_not_install_during_live_dictation(inline_ui, monkeypatch):
-    from proximic_ring.input_method_install import InputMethodInstaller
+    from proximic_ring.voice.ime.input_method_install import InputMethodInstaller
     controller, _, _, _, _ = inline_ui
+    diagnostics = []
+    controller._inline_input.diagnostic.connect(diagnostics.append)
     monkeypatch.setattr(InputMethodInstaller, "install", lambda _: pytest.fail("live sentence must not be interrupted"))
     controller._inline_input.installInputMethod()
     assert not controller._inline_input.installing
     assert "先结束当前语音" in controller._inline_input.installationMessage
+    assert diagnostics[-1]['type'] == 'installation_blocked'
+    assert diagnostics[-1]['reason'] == 'input_session_active'
+
+
+@pytest.mark.parametrize('pending', ['activation', 'stroke', 'source_gesture'])
+def test_input_method_update_waits_for_pending_input_operations(inline_ui, monkeypatch, pending):
+    from proximic_ring.voice.ime.input_method_install import InputMethodInstaller
+    controller, _, _, _, event = inline_ui
+    component = controller._inline_input
+    event(phase='idle', ready=False)
+    if pending == 'activation':
+        component._begin_origin = ('test.editor', 123)
+    elif pending == 'stroke':
+        component.stroke_mode = True
+    else:
+        controller.appGestures._source_busy = True
+    monkeypatch.setattr(InputMethodInstaller, 'install', lambda _: pytest.fail('pending operation must finish first'))
+    component.installInputMethod()
+    assert not component.installing
+    assert '请' in component.installationMessage
 
 
 @pytest.mark.parametrize("size", [(1080, 820), (940, 700)])
@@ -382,19 +436,21 @@ def test_voice_controls_stay_inside_card_and_history_remains_accessible(
             assert position.x() + button.width() <= card.width() - 20
             assert position.y() + button.height() <= card.height() - 20
             assert button.mapToScene(QPointF(0, button.height())).y() <= root.height()
-            assert button.height() >= 44
-        assert history.mapToScene(QPointF(0, 0)).y() >= (
-            card.mapToScene(QPointF(0, card.height())).y() + 18
-        )
-        assert history.height() >= 250
+            assert button.height() >= (30 if name == "voiceRecognitionButton" else 40)
+        assert not history.isVisible()  # Figma separates history into its own route.
 
+    root.setProperty("currentPage", 4)
+    QTest.qWait(60)
+    assert history.isVisible() and history.height() >= 250
     page = root.findChild(QQuickItem, "mainPageScroll")
     flickable = page.property("contentItem")
     flickable.setProperty("contentY", max(0, page.property("contentHeight") - page.property("availableHeight")))
     QTest.qWait(60)
-    footer = root.findChild(QQuickItem, "openAssociationCenterButton")
-    assert footer.mapToScene(QPointF(0, 0)).y() >= 78
-    assert footer.mapToScene(QPointF(0, footer.height())).y() <= root.height() - 24
+    history_list = root.findChild(QQuickItem, "voiceHistoryList")
+    assert history_list.mapToScene(QPointF(0, 0)).y() >= 78
+    assert history_list.mapToScene(QPointF(0, history_list.height())).y() <= root.height() - 24
+    for name in ("smartAssociationSwitch", "openAssociationCenterButton"):
+        assert not root.findChild(QQuickItem, name).isVisible()
 
 
 def test_runtime_log_does_no_hidden_layout_and_coalesces_visible_bursts(inline_ui):
@@ -520,6 +576,32 @@ def test_final_asr_error_does_not_reclose_cancelled_recognition_gate(inline_ui):
     controller._suspend_recognition_for_interaction()
     controller._apply_runtime_update("", True, "识别服务超时", 2)
     assert controller._recognition_event.is_set()
+
+
+def test_silent_capture_error_reaches_native_hud_and_releases_next_sentence(inline_ui):
+    controller, bridge, requests, _, event = inline_ui
+    controller._connected = True
+    controller._recognition_event.set()
+    controller._apply_runtime_session_started(2)
+    controller._suspend_recognition_for_interaction()
+    reason = "本句录音全为静音，请检查麦克风或重新连接"
+    controller._apply_runtime_update("", True, reason, 2)
+    update = bridge.messages[-1]
+    assert update["type"] == "update" and update["final"]
+    assert update["error"] == reason and update["text"] == ""
+    assert controller._recognition_event.is_set()
+    assert not requests
+    event(phase="dictated", ready=True, raw="", revision=1, error=reason)
+    event("settled", phase="dictated", text="", error=reason, revision=1)
+    assert controller._inline_input.error == reason
+    assert controller._recognition_event.is_set()
+    # A fresh utterance cannot inherit the previous failure's closed gate.
+    controller._apply_runtime_status("[ASR] START t=2.000s")
+    controller._apply_runtime_session_started(3)
+    event(phase="listening", ready=True, raw="", revision=0, error="")
+    controller._apply_runtime_update("下一句", True, "", 3)
+    assert bridge.messages[-1]["text"] == "下一句"
+    assert bridge.messages[-1]["error"] == ""
 
 
 def test_begin_failed_before_session_id_still_retires_that_id(inline_ui):
@@ -666,8 +748,8 @@ def test_permission_warning_updates_and_settings_remain_usable(inline_ui, monkey
     from PySide6.QtCore import QObject, QMetaObject, QPointF
     from PySide6.QtQuick import QQuickItem
     from PySide6.QtTest import QTest
-    from proximic_ring.mac_permissions import MacPermissionError, PermissionState
-    import proximic_ring.ui.mac_permissions_controller as permission_module
+    from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, PermissionState
+    import proximic_ring.ui.permissions.mac_permissions_controller as permission_module
     controller, _, _, root, _ = inline_ui
     monitor = controller.inlineInput.permissions
     state = PermissionState(True, False)
@@ -681,20 +763,27 @@ def test_permission_warning_updates_and_settings_remain_usable(inline_ui, monkey
     assert banner.isVisible() and banner.height() >= 36
     assert banner.mapToItem(card, QPointF()).y() + banner.height() < card.height()
     assert root.grabWindow().save('/private/tmp/proximic-permission-warning.png')
-    QMetaObject.invokeMethod(root.findChild(QObject, 'inputMethodSetupButton'), 'click')
+    assert root.findChild(QObject, 'inputMethodSetupButton') is None
+    assert banner.property('actionText') == ''
+    QMetaObject.invokeMethod(root.findChild(QObject, 'runtimeSettingsButton'), 'click')
     QTest.qWait(80)
-    dialog = root.findChild(QObject, 'inputMethodSetupDialog')
+    dialog = root.findChild(QObject, 'runtimeSettingsDialog')
     assert dialog.property('visible')
-    assert '按键控制' in root.findChild(QObject, 'inputMethodPermissionNotice').property('message')
-    scroll = root.findChild(QQuickItem, 'inputMethodSetupScroll')
-    assert scroll.height() <= root.height() - 200
+    assert dialog.property('currentPage') == 0
+    assert '按键控制' in root.findChild(QObject, 'settingsAccessibilityHint').property('text')
+    scroll = root.findChild(QQuickItem, 'runtimeSettingsScroll')
+    # The Figma preferences shell has a fixed header and close control, with
+    # the remaining space available to scroll instead of a completion footer.
+    top = scroll.mapToScene(QPointF()).y()
+    assert top >= dialog.property('y') + dialog.property('topPadding')
+    assert top + scroll.height() <= dialog.property('y') + dialog.property('height') - dialog.property('bottomPadding')
     pos = scroll.mapToScene(QPointF())
     assert pos.y() >= 0 and pos.y() + scroll.height() < root.height()
     calls = []
     monkeypatch.setattr(permission_module, 'request_post_event_access', lambda: calls.append('request'))
     monkeypatch.setattr(permission_module.QDesktopServices, 'openUrl', lambda url: calls.append(url.toString()) or True)
     assert not calls
-    QMetaObject.invokeMethod(root.findChild(QObject, 'inputMethodPermissionNoticeButton'), 'click')
+    QMetaObject.invokeMethod(root.findChild(QObject, 'settingsAccessibilityButton'), 'click')
     QTest.qWait(30)
     assert calls == ['request', 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility']
     assert root.grabWindow().save('/private/tmp/proximic-permission-settings.png')
@@ -712,15 +801,15 @@ def test_permission_warning_updates_and_settings_remain_usable(inline_ui, monkey
         QTest.qWait(5)
     assert not monitor.checking
     assert not banner.isVisible()
-    assert not root.findChild(QObject, 'inputMethodPermissionNotice').property('visible')
+    assert root.findChild(QObject, 'settingsAccessibilityStatus').property('text') == '已开启'
     QMetaObject.invokeMethod(dialog, 'close')
 
 
 def test_permission_settings_are_compact_and_never_start_preview_capture(inline_ui, monkeypatch, tmp_path):
     from PySide6.QtCore import QObject, QMetaObject, Qt
     from PySide6.QtTest import QTest
-    from proximic_ring import screen_preview_check
-    from proximic_ring.ui import mac_permissions_controller as permissions
+    from proximic_ring.desktop import screen_preview_check
+    from proximic_ring.ui.permissions import mac_permissions_controller as permissions
     controller, _, _, root, _ = inline_ui
     monitor = controller.inlineInput.permissions
     monkeypatch.setattr(permissions, "read_screen_capture_access", lambda: False)
@@ -729,9 +818,9 @@ def test_permission_settings_are_compact_and_never_start_preview_capture(inline_
     root.resize(940,700); root.show()
     dialog = root.findChild(QObject,"runtimeSettingsDialog")
     QMetaObject.invokeMethod(dialog,"open"); QTest.qWait(100)
-    QMetaObject.invokeMethod(root.findChild(QObject,"settingsCategory6"),"click")
     QTest.qWait(50)
-    assert root.findChild(QObject, "screenRecordingPermissionNotice").property("visible")
+    assert dialog.property("currentPage") == 0
+    assert "未开启" in root.findChild(QObject, "screenRecordingPermissionStatus").property("text")
     import os
     shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
@@ -739,11 +828,22 @@ def test_permission_settings_are_compact_and_never_start_preview_capture(inline_
     for name in ("verifyScreenPreviewButton", "refreshScreenRecordingPermissionsButton", "copyPermissionDiagnosticsButton", "permissionApplicationPath"):
         assert root.findChild(QObject, name) is None
     assert not monitor.screenPreviewBusy
+    calls = []
+    monkeypatch.setattr(permissions, "request_screen_capture_access", lambda: calls.append("request"))
+    monkeypatch.setattr(permissions.QDesktopServices, "openUrl", lambda url: calls.append(url.toString()) or True)
+    QMetaObject.invokeMethod(root.findChild(QObject, "openScreenRecordingPermissionsButton"), "click")
+    for _ in range(100):
+        QTest.qWait(10)
+        if not monitor.screenRecordingRequesting:
+            break
+    assert calls == ["request", "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"]
+    assert dialog.property("visible") and dialog.property("currentPage") == 0
+    assert root.findChild(QObject, "settingsPage6") is None
     monkeypatch.setattr(permissions, "read_screen_capture_access", lambda: True)
     monitor._screen_setup_pending = True
     monitor._on_application_state(Qt.ApplicationActive)
     QTest.qWait(30)
-    assert not root.findChild(QObject, "screenRecordingPermissionNotice").property("visible")
+    assert root.findChild(QObject, "screenRecordingPermissionStatus").property("text") == "已开启"
     assert not monitor.screenPreviewBusy
     QMetaObject.invokeMethod(dialog,"close"); QTest.qWait(150)
 

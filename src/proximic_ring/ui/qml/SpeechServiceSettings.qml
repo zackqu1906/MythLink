@@ -9,21 +9,21 @@ ColumnLayout {
     readonly property bool online: controller.asrBackend === "volcengine"
     readonly property bool local: ["streaming_sensevoice", "funasr_nano"].indexOf(controller.asrBackend) >= 0
     signal gpuSetupRequested()
-    spacing: 30
-    UiTheme { id: theme }
+    spacing: 18
+    FigmaTheme { id: theme }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         title: "语音识别"; symbol: "microphone"
         description: pane.deviceSettingsLocked
             ? "设备已连接，灰色选项需在首页断开戒指后修改。"
             : "识别服务与语言在下次连接戒指时生效。"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "识别服务"
             description: pane.online ? "通过火山引擎在线识别，需要网络连接。"
                 : pane.controller.asrBackend === "funasr_nano" ? "在电脑上识别，支持添加常用人名和专有名词。"
                 : pane.controller.asrBackend === "streaming_sensevoice" ? "在电脑上实时识别语音。"
                 : "沿用已保存的识别配置。"
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "asrBackendCombo"
                 Layout.fillWidth: true
                 Accessible.name: "识别服务"
@@ -34,10 +34,10 @@ ColumnLayout {
                 onActivated: pane.controller.asrBackend = ["streaming_sensevoice", "funasr_nano", "volcengine"][currentIndex]
             }
         }
-        SettingsFormRow {
+        FigmaFormRow {
             title: "识别语言"
             description: "不确定时可选择自动识别。"
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "asrLanguageCombo"
                 Layout.fillWidth: true
                 Accessible.name: "识别语言"
@@ -50,19 +50,19 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         objectName: "asrOnlineGroup"
         visible: pane.online
         title: "在线服务"
         description: "服务密钥保存在当前用户的应用设置中。"
-        SettingsFormRow {
+        FigmaFormRow {
             title: "语音服务密钥"
             description: "填写豆包语音的 App Key。"
             controlWidth: 340
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
                 enabled: !pane.deviceSettingsLocked
-                UiTextField {
+                FigmaTextField {
                     objectName: "asrApiKeyField"
                     Layout.fillWidth: true; Layout.minimumWidth: 0
                     text: pane.controller.asrApiKey
@@ -70,7 +70,7 @@ ColumnLayout {
                     echoMode: revealAsrKey.checked ? TextInput.Normal : TextInput.Password
                     onEditingFinished: pane.controller.asrApiKey = text
                 }
-                UiAction {
+                FigmaAction {
                     id: revealAsrKey
                     objectName: "showAsrApiKeyButton"
                     checkable: true; quiet: true
@@ -82,12 +82,12 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         objectName: "asrHotwordsGroup"
         visible: pane.controller.asrBackend === "funasr_nano"
         title: "识别热词"
         description: "添加常用人名或专有名词，每行一个；也支持逗号、分号分隔。重新连接戒指后生效。"
-        ScrollView {
+        UiScrollView {
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             id: hotwordsScroll
             Layout.fillWidth: true; Layout.preferredHeight: 116
@@ -104,16 +104,16 @@ ColumnLayout {
         }
     }
 
-    SettingsFormGroup {
+    FigmaFormGroup {
         objectName: "asrAdvancedGroup"
         title: "本地识别性能"
         visible: pane.local
-        SettingsFormRow {
+        FigmaFormRow {
             objectName: "asrPerformanceRow"
             visible: pane.local
             title: "本地识别性能"
             description: pane.controller.gpuStatusText
-            SettingsSelect {
+            FigmaSelect {
                 objectName: "asrDeviceCombo"
                 Layout.fillWidth: true
                 Accessible.name: "本地识别性能"
@@ -131,7 +131,7 @@ ColumnLayout {
                 color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap
                 horizontalAlignment: Text.AlignRight
             }
-            UiAction {
+            FigmaAction {
                 objectName: "gpuInstallButton"
                 Layout.alignment: Qt.AlignRight
                 text: "安装 NVIDIA 加速"

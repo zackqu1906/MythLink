@@ -2,8 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.window_selector import WindowSelectorSession, grid_move
+from proximic_ring.desktop.window_selector import WindowSelectorSession, grid_move
 from test_text_focus import Node
+from proximic_ring.desktop.text_focus import FocusError
 
 
 class Desktop:
@@ -282,3 +283,222 @@ def test_preview_ids_are_exact_or_omitted_not_guessed_for_equal_window_geometry(
     d.rows[-1]["title"] = "Beta"
     result = d.listing()
     assert {c["title"]: c["number"] for c in result["cards"]} == {"Alpha":1,"Beta":2,"Gamma":3}
+
+
+@pytest.mark.parametrize('operation', ['AXUIElementGetAttributeValueCount', 'AXUIElementCopyAttributeValues'])
+def test_window_read_failure_keeps_ax_code_and_attribute(operation):
+    from types import SimpleNamespace
+    from proximic_ring.desktop.text_focus import FocusError
+    from proximic_ring.desktop.window_selector import MacWindowAX
+    from proximic_ring.diagnostics.scene_diagnostics import exception_details, safe_data
+    ax = MacWindowAX.__new__(MacWindowAX)
+    ax.application = lambda pid: object()
+    ax.ax = SimpleNamespace(kAXErrorAttributeUnsupported=-25205, kAXErrorNoValue=-25212,
+        AXUIElementGetAttributeValueCount=lambda *args: (-25204, 0) if operation.endswith('Count') else (0, 1),
+        AXUIElementCopyAttributeValues=lambda *args: (-25204, None))
+    with pytest.raises(FocusError) as raised:
+        ax.windows(42)
+    details = safe_data(exception_details(raised.value))
+    assert raised.value.status == 'unavailable'
+    assert details['ax_error'] == -25204
+    assert details['ax_operation'] == operation and details['ax_attribute'] == 'AXWindows'
+
+
+@pytest.mark.parametrize('host', [False, True])
+def test_transient_read_timeout_recovers_for_every_app_before_one_activation(host):
+    d = Desktop()
+    listing = (d.session.handle('selector_list', host_pid=10, host_window=dict(number=1, title='Alpha'))
+               if host else d.listing())
+    target = next(c for c in listing['cards'] if c['pid'] == 10)
+    original, attempts = d.windows, []
+    def windows(pid):
+        attempts.append(pid)
+        if len(attempts) <= 2:
+            raise FocusError('unavailable', ax_error=-25204,
+                             ax_operation='AXUIElementGetAttributeValueCount', ax_attribute='AXWindows')
+        return original(pid)
+    d.windows = windows
+    result = d.session.handle('selector_activate', token=listing['token'], target=target['id'])
+    assert result['status'] == 'activated' and len(d.activated) == 1 and attempts == [10, 10, 10]
+    assert d.session.last_diagnostic['ax_read_timeouts'] == 2
+    assert d.session.last_diagnostic['ax_error'] == -25204
+
+
+@pytest.mark.parametrize('attribute', ['AXRole', 'AXSubrole', 'AXMinimized', 'AXHidden'])
+def test_transient_window_property_failure_recovers_without_changing_selected_window(attribute):
+    d = Desktop()
+    listing = d.listing()
+    original, failures = d.attr, []
+    def attr(node, name):
+        if node is d.b and name == attribute and not failures:
+            failures.append(name)
+            raise FocusError('unavailable', ax_error=-25204,
+                             ax_operation='AXUIElementCopyAttributeValue', ax_attribute=name)
+        return original(node, name)
+    d.attr = attr
+    assert d.activate_card(listing)['status'] == 'activated'
+    assert d.activated == [(10, d.b)] and failures == [attribute]
+    assert d.session.last_diagnostic['ax_attribute'] == attribute
+
+
+@pytest.mark.parametrize('attribute', ['AXRole', 'AXSubrole', 'AXMinimized', 'AXHidden', 'rect'])
+@pytest.mark.parametrize('vanished_target', [False, True])
+def test_vanished_sharing_window_does_not_abort_but_vanished_selected_window_stays_stale(attribute, vanished_target):
+    d = Desktop()
+    listing = d.listing()
+    helper = Node('AXWindow', frame=d.b.frame)
+    vanished = d.b if vanished_target else helper
+    if not vanished_target: d.application_windows[10].append(helper)
+    original_attr, original_rect = d.attr, d.rect
+    def fail(node, name):
+        if node is vanished and name == attribute:
+            raise FocusError('unavailable', ax_error=-25202,
+                             ax_operation='AXUIElementCopyAttributeValue', ax_attribute=name)
+    def attr(node, name):
+        fail(node, name)
+        if node is helper:
+            return {'AXRole': 'AXWindow', 'AXSubrole': 'AXStandardWindow'}.get(name)
+        return original_attr(node, name)
+    def rect(node):
+        fail(node, 'rect')
+        return original_rect(node)
+    d.attr, d.rect = attr, rect
+    outcome = d.activate_card(listing)
+    assert outcome['status'] == ('stale' if vanished_target else 'activated')
+    assert d.activated == ([] if vanished_target else [(10, d.b)])
+    assert d.session.last_diagnostic['vanished_windows'] == 1
+
+
+@pytest.mark.parametrize('actually_removed', [True, False])
+def test_illegal_argument_is_only_ignored_when_a_fresh_window_list_proves_the_object_disappeared(actually_removed):
+    d = Desktop()
+    listing = d.listing()
+    helper = Node('AXWindow')
+    d.application_windows[10].append(helper)
+    original_attr, original_windows = d.attr, d.windows
+    reads = []
+    def windows(pid):
+        reads.append(pid)
+        return list(original_windows(pid))
+    def attr(node, name):
+        if node is helper:
+            if actually_removed: d.application_windows[10].remove(helper)
+            raise FocusError('unavailable', ax_error=-25201,
+                             ax_operation='AXUIElementCopyAttributeValue', ax_attribute=name)
+        return original_attr(node, name)
+    d.windows, d.attr = windows, attr
+    if actually_removed:
+        assert d.activate_card(listing)['status'] == 'activated'
+        assert d.activated == [(10, d.b)]
+        assert d.session.last_diagnostic['vanished_ax_error'] == -25201
+    else:
+        with pytest.raises(FocusError): d.activate_card(listing)
+        assert not d.activated
+    assert reads == [10, 10]
+
+
+@pytest.mark.parametrize('change', ['closed', 'minimized', 'other_space', 'app_closed'])
+def test_recovery_refreshes_visibility_instead_of_activating_stale_target(change):
+    d = Desktop()
+    listing = d.listing()
+    original, attempts = d.windows, []
+    def windows(pid):
+        attempts.append(pid)
+        if len(attempts) == 1:
+            if change == 'closed': d.application_windows[10].remove(d.b)
+            elif change == 'minimized': d.b.attrs['AXMinimized'] = True
+            elif change == 'other_space': d.rows = [r for r in d.rows if r['number'] != 2]
+            elif change == 'app_closed': del d.applications[10]
+            raise FocusError('unavailable', ax_error=-25204)
+        return original(pid)
+    d.windows = windows
+    assert d.activate_card(listing)['status'] == 'stale' and not d.activated
+
+
+@pytest.mark.parametrize('error,attempts', [(-25204, 4), (-25202, 1), (-25211, 1)])
+def test_persistent_read_failure_is_bounded_and_never_activates(error, attempts):
+    d = Desktop()
+    listing = d.listing()
+    reads = []
+    def windows(pid):
+        reads.append(pid)
+        raise FocusError('unavailable', ax_error=error)
+    d.windows = windows
+    with pytest.raises(FocusError): d.activate_card(listing)
+    assert len(reads) == attempts and not d.activated
+    assert d.activate_card(listing)['reason'] == 'session_invalid'
+
+
+def test_read_retry_respects_remaining_budget_and_does_not_retry_writes():
+    from proximic_ring.desktop.window_selector import retry_window_read
+    reads, pauses = [], []
+    def read():
+        reads.append(True)
+        raise FocusError('unavailable', ax_error=-25204)
+    with pytest.raises(FocusError):
+        retry_window_read(read, deadline=.07, clock=lambda: 0, pause=pauses.append)
+    assert reads == [True] and not pauses
+    d = Desktop()
+    listing = d.listing()
+    def activate(app, window):
+        d.activated.append((app.pid, window))
+        raise FocusError('unavailable', ax_error=-25204)
+    d.activate = activate
+    with pytest.raises(FocusError): d.activate_card(listing)
+    assert len(d.activated) == 1
+
+
+def test_activation_focus_verification_recovers_without_repeating_mutations():
+    from proximic_ring.desktop.window_selector import MacWindowAX
+    ax = MacWindowAX.__new__(MacWindowAX)
+    ax.application = lambda pid: 'app'
+    ax.settable = lambda node, name: True
+    ax.front = lambda: dict(pid=42)
+    writes, reads = [], []
+    ax.ax = SimpleNamespace(
+        AXUIElementSetAttributeValue=lambda *args: writes.append(args) or 0,
+        AXUIElementPerformAction=lambda *args: writes.append(args) or 0)
+    def attr(node, name):
+        reads.append(name)
+        if len(reads) == 1:
+            raise FocusError('unavailable', ax_error=-25204,
+                             ax_operation='AXUIElementCopyAttributeValue', ax_attribute=name)
+        return 'window'
+    ax.attr = attr
+    app = SimpleNamespace(processIdentifier=lambda: 42,
+                          activateWithOptions_=lambda value: writes.append(('activate', value)) or True)
+    assert ax.activate(app, 'window')
+    assert reads == ['AXFocusedWindow', 'AXFocusedWindow']
+    assert writes == [('app', 'AXFocusedWindow', 'window'), ('window', 'AXRaise'), ('activate', 0)]
+    assert ax.activation_diagnostic['verification_timeouts'] == 1
+
+
+@pytest.mark.parametrize('failed_step', ['AXFocusedWindow', 'AXFrontmost', 'AXRaise', 'activate'])
+@pytest.mark.parametrize('reached_target', [True, False])
+def test_activation_reply_failure_checks_exact_outcome_without_replaying_writes(failed_step, reached_target):
+    from proximic_ring.desktop.window_selector import MacWindowAX
+    ax = MacWindowAX.__new__(MacWindowAX)
+    ax.application = lambda pid: 'app'
+    ax.settable = lambda node, name: True
+    writes, failed = [], []
+    ax.front = lambda: dict(pid=42 if failed else 7)
+    ax.attr = lambda node, name: 'target' if reached_target else 'another-window'
+    def write(attribute):
+        writes.append(attribute)
+        if attribute == failed_step:
+            failed.append(True)
+            return -25204
+        return 0
+    ax.ax = SimpleNamespace(
+        AXUIElementSetAttributeValue=lambda node, attribute, value: write(attribute),
+        AXUIElementPerformAction=lambda node, action: write(action))
+    app = SimpleNamespace(processIdentifier=lambda: 42,
+                          activateWithOptions_=lambda value: write('activate') == 0)
+    assert ax.activate(app, 'target') is reached_target
+    steps = ['AXFocusedWindow', 'AXFrontmost', 'AXRaise', 'activate']
+    assert writes == steps[:steps.index(failed_step) + 1]
+    if failed_step == 'activate':
+        assert ax.activation_diagnostic['activation_accepted'] is False
+    else:
+        assert ax.activation_diagnostic['mutation_error'] == -25204
+        assert ax.activation_diagnostic['mutation_attribute'] == failed_step

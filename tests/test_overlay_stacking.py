@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QObject, QCoreApplication, Signal
-from proximic_ring.ui import overlay_stacking as module
+from proximic_ring.ui.shared import overlay_stacking as module
 
 
 def window(pid=5,layer=0,width=800,height=600,alpha=1,x=0,y=0):
@@ -43,7 +43,7 @@ def test_native_panel_joins_fullscreen_without_activation_or_secure_window_level
 
 def test_visibility_guard_reorders_only_visible_windows_and_never_extends_lifetime(monkeypatch):
     app=QCoreApplication.instance() or QCoreApplication([])
-    from proximic_ring.ui import notifications
+    from proximic_ring.ui.shared import notifications
     class Window(QObject):
         visibleChanged=Signal(bool)
         visible=False
@@ -64,3 +64,23 @@ def test_visibility_guard_reorders_only_visible_windows_and_never_extends_lifeti
     assert not guard._timer.isActive() and len(calls)==1
     window.set_visible(True);guard.refresh();assert len(errors)==2
     window.set_visible(False)
+
+
+@pytest.mark.parametrize('content,expected',[(0,3),(500,501)])
+def test_editable_workspace_keeps_ime_palette_above_it(content,expected):
+    levels=[]
+    kit=SimpleNamespace(NSFloatingWindowLevel=3,NSPopUpMenuWindowLevel=101,NSScreenSaverWindowLevel=1000)
+    native=SimpleNamespace(collectionBehavior=lambda:0,styleMask=lambda:0,
+        setStyleMask_=lambda _:None,setCollectionBehavior_=lambda _:None,
+        setLevel_=levels.append,setHidesOnDeactivate_=lambda _:None,orderFrontRegardless=lambda:None)
+    module.configure_native_overlay(native,kit,content_level=content,input_workspace=True)
+    assert levels==[expected]
+
+
+def test_agent_foreground_does_not_feed_its_own_level_back_into_stacking(monkeypatch):
+    import sys
+    import proximic_ring.platforms.macos.mac_workspace as workspace
+    monkeypatch.setattr(workspace,'frontmost_application',lambda:SimpleNamespace(processIdentifier=lambda:42))
+    monkeypatch.setitem(sys.modules,'Quartz',SimpleNamespace(
+        CGWindowListCopyWindowInfo=lambda *a:pytest.fail('ignore the complete host process before reading windows')))
+    assert module.foreground_content_window(ignored_pid=42) is None

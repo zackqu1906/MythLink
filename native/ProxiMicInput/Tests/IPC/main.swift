@@ -28,6 +28,24 @@ transport.onMessage = { message in
         requestCount += 1
         state(message["request_id"] as? String)
         print("SWIFT_IPC_PING \(requestCount)")
+    } else if message["epoch"] as? String == epoch, message["type"] as? String == "polish" {
+        guard message["restore_raw_on_undo"] as? Bool == false else { exit(2) }
+        transport.send(["type": "polish_requested", "epoch": epoch, "client_id": "ipc-test",
+                        "utterance_id": "polish-test", "revision": 7, "text": "本句中文😀"])
+    } else if message["epoch"] as? String == epoch, message["type"] as? String == "polish_result" {
+        guard message["client_id"] as? String == "ipc-test",
+              message["utterance_id"] as? String == "polish-test",
+              message["revision"] as? Int == 7,
+              message["text"] as? String == "润色后的本句😀" else { exit(3) }
+        transport.send(["type": "settled", "epoch": epoch, "client_id": "ipc-test",
+                        "utterance_id": "polish-test", "revision": 8,
+                        "phase": "dictated", "text": "润色后的本句😀"])
+        print("SWIFT_IPC_POLISH_RESULT")
+    } else if message["epoch"] as? String == epoch, message["type"] as? String == "hotwords_learned" {
+        guard message["client_id"] as? String == "ipc-test", message["utterance_id"] as? String == "edit-test",
+              message["revision"] as? Int == 2, message["words"] as? [String] == ["张玮", "Kubernetes"] else { exit(4) }
+        transport.send(["type": "pong", "epoch": epoch, "echo": "hotwords_learned"])
+        print("SWIFT_IPC_HOTWORDS_LEARNED")
     } else if message["epoch"] as? String == epoch, message["type"] as? String == "reset" {
         transport.send(["type": "pong", "epoch": epoch, "echo": "中文😀\n上下文"])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { transport.stop(); exit(0) }

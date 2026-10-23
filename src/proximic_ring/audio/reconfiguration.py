@@ -2,7 +2,7 @@
 from dataclasses import replace
 import threading
 
-from ..live_audio_settings import AudioConfiguration
+from .live_audio_settings import AudioConfiguration
 
 
 class AudioInputPipeline:
@@ -75,7 +75,7 @@ class AudioInputPipeline:
             self._extra_hotkey.close()
             self._extra_hotkey = self._manual_active = None
         if not gesture and self.settings.push_to_talk and self._manual_active is None:
-            from ..push_to_talk import WindowsPushToTalkHotkey
+            from ..platforms.windows.push_to_talk import WindowsPushToTalkHotkey
             self._extra_hotkey = WindowsPushToTalkHotkey(
                 on_error=self._on_state,
                 on_change=lambda active: self._on_push_to_talk(active)

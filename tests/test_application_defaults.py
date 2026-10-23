@@ -1,13 +1,13 @@
 """Built-in mappings are ordinary editable records, never a runtime fallback."""
 from dataclasses import replace
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from proximic_ring.application_defaults import default_mappings, DEFAULTS_VERSION
 from proximic_ring.gesture_scenes import PRESENTATION, POWERPOINT
-from proximic_ring.ui.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController, SETTINGS_KEY
+from proximic_ring.desktop.host_application import host_candidate
 from test_app_gestures import route
 from test_application_menus import configure, ACTION
 from test_gesture_scenes import presentation
@@ -116,13 +116,14 @@ def test_restore_and_readd_are_explicit_and_leave_other_apps_untouched(route, mo
     assert catalog.regularBindings[CODEX] == other
 
 
-def test_global_occupancy_suspends_defaults_without_changing_global_or_voice_rules(route, monkeypatch):
+def test_application_defaults_override_global_without_changing_global_or_voice_rules(route, monkeypatch):
     c, service, _, _, _, _, _ = route
     assert c.ringGestures.setGlobalBinding("window_selector", "snap")
     before = c.gestureBindings, c.ringGestures.globalBindings
     catalog = configure(service, monkeypatch, WPS)
     assert "snap" in catalog.regularBindings[WPS]
-    assert not catalog.for_target(WPS) and catalog.globalConflictNotice
+    assert catalog.for_target(WPS)["menu:snap"].shortcut == "Shift+F5"
+    assert "应用绑定优先" in catalog.globalConflictNotice
     assert not catalog.voice_overridden(WPS)
     assert (c.gestureBindings, c.ringGestures.globalBindings) == before
     assert c.ringGestures.setGlobalBinding("window_selector", "clench")
@@ -133,7 +134,7 @@ def test_global_occupancy_suspends_defaults_without_changing_global_or_voice_rul
 def test_chat_defaults_use_existing_foreground_route_and_user_changes_win(route, monkeypatch, bundle, prefix):
     _, service, _, backend, sent, _, emit = route
     catalog = configure(service, monkeypatch, bundle)
-    backend.target = replace(backend.target, bundle=bundle, profile=bundle)
+    backend.target = replace(backend.target, bundle=bundle, profile=bundle, input_context="nontext", focus="page")
     emit("circle-clockwise")
     emit("circle-counterclockwise")
     assert sent == [(bundle, prefix + "+]"), (bundle, prefix + "+[")]
@@ -152,9 +153,7 @@ def test_wps_defaults_route_only_in_their_own_app_and_scene(presentation, monkey
     c, service, _, backend, _, sent, _ = presentation
     catalog = configure(service, monkeypatch, WPS)
     backend.target = replace(backend.target, bundle=WPS, profile=WPS, scene="", input_context="nontext")
-    assert request(c, "snap")  # Normal app shortcuts continue down the existing route.
-    event = c.ringGestures.envelope(SimpleNamespace(name="snap"))
-    c._apply_gesture(event, c._disconnect_event)
+    assert not request(c, "snap")  # Outside actions dispatch through the focus route.
     assert sent == [(WPS, "Shift+F5")]
     backend.target = replace(backend.target, scene=PRESENTATION)
     for gesture in ("swipe-left", "swipe-right", "snap"):
@@ -166,7 +165,7 @@ def test_wps_defaults_route_only_in_their_own_app_and_scene(presentation, monkey
     assert len(sent) == 4
 
 
-def test_installed_scan_adds_only_requested_four_and_never_changes_selection(route, monkeypatch):
+def test_installed_scan_only_discovers_candidates_until_user_adds_an_application(route, monkeypatch):
     c, service, _, _, _, _, _ = route
     catalog = service.catalog
     requested = []
@@ -179,14 +178,17 @@ def test_installed_scan_adds_only_requested_four_and_never_changes_selection(rou
         (CODEX, "Codex"), (WORKBUDDY, "WorkBuddy"), (WPS, "WPS Office"), (POWERPOINT, "PowerPoint"),
         ("com.apple.iWork.Keynote", "Keynote"), ("com.example.Other", "Other")]]
     catalog._apply_result("apps", catalog._generation["apps"], "", dict(candidates=candidates), "")
-    assert {item["value"] for item in catalog.apps} == {CODEX, WORKBUDDY, WPS, POWERPOINT}
+    assert catalog.apps == [] and catalog._candidates == [host_candidate()] + candidates
     assert catalog.selectedApp == "" and requested == [("apps",)]
     assert (c.gestureBindings, c.ringGestures.globalBindings) == before
-    assert catalog.bindingCount(WPS) == catalog.bindingCount(POWERPOINT) == 4
-    assert catalog.bindingCount(CODEX) == catalog.bindingCount(WORKBUDDY) == 2
+    assert all(not catalog.for_target(app["value"]) for app in candidates)
+    assert not catalog.configured_scenes()
     saved = c._settings.value(SETTINGS_KEY)
     catalog._apply_result("apps", catalog._generation["apps"], "", dict(candidates=candidates), "")
     assert c._settings.value(SETTINGS_KEY) == saved
+    assert catalog.addApplication(WPS)
+    assert catalog.addApplication(CODEX)
+    assert catalog.bindingCount(WPS) == 4 and catalog.bindingCount(CODEX) == 2
     catalog.removeApplication(WPS)
     catalog.clearApplicationBindings(CODEX)
     catalog._apply_result("apps", catalog._generation["apps"], "", dict(candidates=candidates), "")
@@ -206,6 +208,8 @@ def test_no_installed_targets_creates_no_placeholder_apps_and_later_install_is_d
     catalog._apply_result("apps", 0, "", dict(candidates=[], partial=True), "")
     assert catalog.apps == []
     catalog._apply_result("apps", 0, "", [dict(value=POWERPOINT, label="PowerPoint")], "")
+    assert catalog.apps == [] and catalog._candidates[1]["value"] == POWERPOINT
+    assert catalog.addApplication(POWERPOINT)
     assert [item["value"] for item in catalog.apps] == [POWERPOINT]
 
 
@@ -278,7 +282,7 @@ def test_generic_presenter_resolves_actual_start_menu_without_overwriting_user_a
 
 
 def test_installed_scan_survives_unavailable_native_channel(route, monkeypatch):
-    import proximic_ring.ui.application_mapping_controller as module
+    import proximic_ring.ui.desktop.application_mapping_controller as module
     from PySide6.QtCore import QCoreApplication
     _, service, _, _, _, _, _ = route
     catalog = service.catalog
@@ -291,4 +295,5 @@ def test_installed_scan_survives_unavailable_native_channel(route, monkeypatch):
     monkeypatch.setattr(module.threading, "Thread", ImmediateThread)
     catalog.initializeInstalledApplications()
     QCoreApplication.processEvents()
-    assert catalog._is_added(CODEX) and catalog.bindingCount(CODEX) == 2
+    assert not catalog._is_added(CODEX) and catalog.bindingCount(CODEX) == 0
+    assert catalog._candidates == [host_candidate(), dict(value=CODEX, label="Codex")]

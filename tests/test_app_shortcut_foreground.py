@@ -4,14 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.app_shortcuts import LocalMacAppShortcuts
+from proximic_ring.desktop.app_shortcuts import LocalMacAppShortcuts
 from test_app_shortcuts import desktop
 
 
 @pytest.fixture
 def workspace(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
-    import proximic_ring.mac_workspace as workspace_module
+    import proximic_ring.platforms.macos.mac_workspace as workspace_module
     # This fixture represents the pipe worker, even if earlier tests created Qt.
     monkeypatch.setattr(workspace_module, "_on_qt_event_thread", lambda: False)
     apps = {

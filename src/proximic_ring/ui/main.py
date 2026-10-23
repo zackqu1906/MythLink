@@ -10,7 +10,7 @@ def main(argv: list[str] | None = None) -> int:
     from ..runtime_paths import configure_runtime_environment, resource_root
 
     configure_runtime_environment()
-    from ..runtime_diagnostics import configure_diagnostics
+    from ..diagnostics.runtime_diagnostics import configure_diagnostics
     from ..runtime_paths import is_frozen
     diagnostic_capture = configure_diagnostics(tee=not is_frozen())
     try:
@@ -28,29 +28,38 @@ def main(argv: list[str] | None = None) -> int:
     diagnostic_capture.install_qt()
 
     startup_probe = os.environ.get("PROXIMIC_STARTUP_PROBE", "").strip() == "1"
+    from proximic_ring.agent_workflow.ui.message_document import initialize_web_engine
+    initialize_web_engine()
     print("[startup] creating QApplication")
     app = QApplication(list(sys.argv if argv is None else argv))
     app.setApplicationName("Mythlink")
     app.setApplicationDisplayName("Mythlink")
     app.setOrganizationName("Mythlink")
 
-    from ..mac_app_activation import configure_app_activation
+    from ..platforms.macos.mac_app_activation import configure_app_activation
     configure_app_activation(background=startup_probe)
 
     base = Path(__file__).resolve().parent
     icon_path = base / "assets" / "mythlink-app.png"
     icon = QIcon(str(icon_path))
-    tray_icon = QIcon(str(base / "assets" / "mythlink-mark.svg"))
+    tray_asset = "mythlink-app.svg" if sys.platform == "darwin" else "mythlink-mark.svg"
+    tray_icon = QIcon(str(base / "assets" / tray_asset))
     if icon.isNull():
         icon = tray_icon
     app.setWindowIcon(icon)
 
+    from ..agent_workflow.agent.background_flow import shutdown_background_tasks
+    app.aboutToQuit.connect(shutdown_background_tasks)
     controller = AppController()
+    if not startup_probe:
+        controller.browserExtensions.start()
+    app.aboutToQuit.connect(controller.browserExtensions.close)
+    app.aboutToQuit.connect(controller.voicePractice.cancel)
     print("[startup] controller ready")
     voice_action_hotkeys = None
     if sys.platform == "win32":
         try:
-            from ..voice_actions import WindowsVoiceActionHotkeys
+            from ..voice.voice_actions import WindowsVoiceActionHotkeys
 
             voice_action_hotkeys = WindowsVoiceActionHotkeys(
                 controller.dispatchVoiceAction,
@@ -70,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     # On macOS the selected input method handles F8/Esc directly. No global
     # event tap or Accessibility permission is needed for speech interactions.
     engine = QQmlApplicationEngine()
-    from .application_icons import install_application_icons
+    from .desktop.application_icons import install_application_icons
     install_application_icons(engine)
     engine.rootContext().setContextProperty("appController", controller)
     qml_errors: list[str] = []
@@ -82,56 +91,73 @@ def main(argv: list[str] | None = None) -> int:
         detail = "\n".join(qml_errors) or "QML engine did not create a root window"
         raise RuntimeError(f"主界面加载失败：{detail}")
     window = engine.rootObjects()[0]
+    from .shared.window_chrome import configure_main_window_chrome
+
+    configure_main_window_chrome(window)
     controller.ringGestures.windowSelector.set_main_window(window)
-    from .notifications import install_ring_disconnect_notice
+    from proximic_ring.agent_workflow.ui.agent_overlay import AgentOverlay
+    agent_overlay = AgentOverlay(controller.agent, controller, app)
+    from .shared.main_window_activation import MainWindowActivation
+    main_activation = MainWindowActivation(window, agent_overlay, app)
+    from .shared.notifications import install_ring_disconnect_notice
 
     install_ring_disconnect_notice(window, controller)
-    from .gesture_hud import GestureHud
+    from .gestures.gesture_hud import GestureHud
 
     gesture_hud = GestureHud(app, diagnostic=controller._append_background_diagnostic)
-    from .gesture_trigger_overlay import GestureTriggerOverlay
+    from .gestures.gesture_trigger_overlay import GestureTriggerOverlay
     gesture_trigger = GestureTriggerOverlay(controller.gestureTrigger, app,
         diagnostic=controller._append_background_diagnostic)
-    text_fields = controller.ringGestures.textFields
-    from .focus_band import FocusBand
-    focus_band = FocusBand(text_fields.picker, app, diagnostic=controller._append_background_diagnostic)
     controller.ringGestures.showRequested.connect(
         lambda mode, message: gesture_hud.show_mode(
-            mode, message=message, input_fields_available=text_fields.available,
-            input_fields_hint=text_fields.hint, global_bindings=controller.ringGestures.globalBindings)
-    )
-    text_fields.changed.connect(
-        lambda: gesture_hud.update_input_fields(text_fields.available, text_fields.hint)
+            mode, message=message, global_bindings=controller.ringGestures.globalBindings,
+            global_labels=controller.ringGestures.globalActionLabels)
     )
     controller.ringGestures.sceneHudRequested.connect(
-        lambda mode, actions: gesture_hud.show_mode(mode, scene_actions=actions, global_bindings=controller.ringGestures.globalBindings)
+        lambda mode, actions: gesture_hud.show_mode(mode, scene_actions=actions,
+            global_bindings=controller.ringGestures.globalBindings, global_labels=controller.ringGestures.globalActionLabels)
     )
     controller.ringGestures.hideRequested.connect(gesture_hud.hide)
-    from .window_selector_overlay import WindowSelectorOverlay
+    from .desktop.window_selector_overlay import WindowSelectorOverlay
     window_selector = WindowSelectorOverlay(controller.ringGestures.windowSelector, app,
                                             diagnostic=controller._append_background_diagnostic)
     print("[startup] QML root window ready")
-    from .application_onboarding import ApplicationOnboarding
-    from .application_onboarding_overlay import ApplicationOnboardingOverlay
-    from .feedback_availability import feedback_block_reason
+    from .desktop.application_onboarding import ApplicationOnboarding
+    from .desktop.application_onboarding_overlay import ApplicationOnboardingOverlay
+    from .shared.feedback_availability import feedback_block_reason
     application_onboarding = ApplicationOnboarding(controller.appGestures.catalog, app,
         busy=lambda: feedback_block_reason(controller))
     application_suggestion = ApplicationOnboardingOverlay(application_onboarding, app)
-    from .scene_notice_controller import SceneNoticeController
-    from .scene_notice_overlay import SceneNoticeOverlay
+    from .scenes.scene_notice_controller import SceneNoticeController
+    from .scenes.scene_notice_overlay import SceneNoticeOverlay
     scene_notice = SceneNoticeController(controller.appGestures, app,
         busy=lambda: feedback_block_reason(controller, suggestion=application_onboarding))
     scene_notice_overlay = SceneNoticeOverlay(scene_notice, app)
     # Load model weights and seed both stable prompt prefixes after the first
     # frame instead of making the user's first utterance pay this cost.
     if startup_probe:
+        # Agent QML loads lazily during normal use. Exercise its real creation
+        # path too: Main.qml can succeed even when an Agent-only plugin is
+        # missing from the frozen bundle. Keep the card hidden; no task starts.
+        agent_overlay._create("task")
+        print("[startup] Agent workspace QML ready")
+        from types import SimpleNamespace
+        # Reach the shared focus gate with the real release controllers. The
+        # busy endpoint returns before native focus IO or any queued action;
+        # no audio stream or physical ring is needed for this package check.
+        bindings = controller._gesture_bindings
+        for name in sorted(set(bindings.confirm + bindings.end) - {""}):
+            if not controller.ringGestures.filter(SimpleNamespace(name=name), True,
+                                                  controller._disconnect_event):
+                raise RuntimeError(f"Packaged voice gesture endpoint rejected: {name}")
+        print("[startup] Ring voice gesture endpoints ready")
         if sys.platform == "darwin":
-            from ..mac_permissions import permission_status_report
+            from ..platforms.macos.mac_permissions import permission_status_report
             report = permission_status_report(app, controller._settings)
             if report["backend_errors"]:
                 raise RuntimeError("macOS permission backend unavailable: " + "; ".join(report["backend_errors"]))
             print("[startup] macOS permission backends ready (read-only)")
-            from ..app_shortcuts import verify_native_api
+            from ..desktop.app_shortcuts import verify_native_api
             verify_native_api()
             print("[startup] macOS browser scene backend ready (read-only)")
         # Packaging CI sets this flag to prove the frozen executable can import
@@ -158,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(600, controller.warmLocalModel)
         QTimer.singleShot(2500, application_onboarding.start)
         QTimer.singleShot(2500, scene_notice.start)
+        QTimer.singleShot(5000, controller.agent.historyRecommendations.start)
 
     tray_available = QSystemTrayIcon.isSystemTrayAvailable()
     controller.setTrayAvailable(tray_available)
@@ -168,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     if tray_available:
         if sys.platform == "darwin":
             try:
-                from .menu_bar import MacMenuBar
+                from .shared.menu_bar import MacMenuBar
 
                 tray = MacMenuBar(tray_icon)
             except Exception as exc:
@@ -179,25 +206,24 @@ def main(argv: list[str] | None = None) -> int:
         show_action = QAction("显示主窗口", menu)
         connection_action = QAction("连接设备", menu)
         recognition_action = QAction("开启语音识别", menu)
-        gesture_menu_action = QAction("显示当前手势菜单 · 输入模式", menu)
-        preview_input_action = QAction("预览手势菜单 · 输入模式", menu)
-        preview_operation_action = QAction("预览手势菜单 · 操作模式", menu)
+        touchpad_action = QAction("开启触摸板", menu)
+        gesture_menu_action = QAction("显示手势提示", menu)
+        agent_action = QAction("唤起 Agent", menu)
         quit_action = QAction("退出", menu)
         menu.addAction(show_action)
         menu.addAction(connection_action)
         menu.addAction(recognition_action)
+        menu.addAction(touchpad_action)
         menu.addSeparator()
         menu.addAction(gesture_menu_action)
-        menu.addAction(preview_input_action)
-        menu.addAction(preview_operation_action)
+        menu.addAction(agent_action)
+        agent_action.triggered.connect(controller.agent.show)
         menu.addSeparator()
         menu.addAction(quit_action)
         tray.setContextMenu(menu)
 
         def show_window() -> None:
-            window.show()
-            window.raise_()
-            window.requestActivate()
+            main_activation.show()
 
         def toggle_connection() -> None:
             if controller.connected:
@@ -224,7 +250,16 @@ def main(argv: list[str] | None = None) -> int:
                 "暂停语音识别" if controller.recognitionEnabled else "开启语音识别"
             )
             recognition_action.setEnabled(controller.connected and not controller.busy)
-            gesture_menu_action.setText(f"显示当前手势菜单 · {controller.ringGestures.modeLabel}")
+            touchpad = controller.touchpad
+            touchpad_action.setText(
+                "取消开启触摸板" if touchpad.state == "starting"
+                else "正在断开触摸板…" if touchpad.state == "stopping"
+                else "断开触摸板" if touchpad.active else "开启触摸板"
+            )
+            touchpad_action.setEnabled(
+                touchpad.supported
+                and (touchpad.active or (touchpad.available and not touchpad.busy))
+            )
             tray.setToolTip(f"Mythlink · {controller.statusTitle}")
             if hasattr(tray, "setConnectionStatus"):
                 tray.setConnectionStatus(
@@ -236,12 +271,12 @@ def main(argv: list[str] | None = None) -> int:
         show_action.triggered.connect(show_window)
         connection_action.triggered.connect(toggle_connection)
         recognition_action.triggered.connect(controller.toggleRecognition)
+        touchpad_action.triggered.connect(controller.touchpad.toggle)
         gesture_menu_action.triggered.connect(controller.ringGestures.showMenu)
-        preview_input_action.triggered.connect(lambda: gesture_hud.preview("input"))
-        preview_operation_action.triggered.connect(lambda: gesture_hud.preview("operation"))
         quit_action.triggered.connect(controller.requestQuit)
         controller.connectedChanged.connect(refresh_tray)
         controller.ringGestures.changed.connect(refresh_tray)
+        controller.touchpad.changed.connect(refresh_tray)
         controller.recognitionEnabledChanged.connect(refresh_tray)
         controller.busyChanged.connect(refresh_tray)
         controller.scanBusyChanged.connect(refresh_tray)

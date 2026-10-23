@@ -2,8 +2,8 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QImage, QColor
 
-from proximic_ring.ui.window_previews import WindowPreviews
-from proximic_ring.window_capture import dimensions, MAX_STREAMS
+from proximic_ring.ui.desktop.window_previews import WindowPreviews
+from proximic_ring.desktop.window_capture import dimensions, MAX_STREAMS
 from test_text_focus_controller import until
 
 

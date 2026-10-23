@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.mac_permissions import MacPermissionError, PermissionState
-from proximic_ring.native_touchpad import NativeTouchpadMouse, WorkerTouchpadMouse
-from proximic_ring.touchpad_mouse import TouchpadMouseOutput
+from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, PermissionState
+from proximic_ring.platforms.macos.native_touchpad import NativeTouchpadMouse, WorkerTouchpadMouse
+from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from ring_python_sdk.touchpad import macos
 
 
@@ -35,8 +35,8 @@ def pointer(monkeypatch):
 
 
 def test_slow_permission_probe_does_not_block_moves_clicks_or_stop(pointer, monkeypatch):
-    import proximic_ring.native_access_worker as worker
-    import proximic_ring.mac_workspace as workspace
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     mouse, posted = pointer
     entered, release = threading.Event(), threading.Event()
     caller = threading.get_ident()
@@ -61,7 +61,8 @@ def test_slow_permission_probe_does_not_block_moves_clicks_or_stop(pointer, monk
         for _ in range(100):
             result = dispatcher.handle(dict(operation='touchpad_apply', created=time.monotonic(),
                 events=[dict(kind='move', dx=1, dy=2)]))
-            assert result == {'result': {'moves': 1}}
+            assert result['result']['moves'] == 1
+            assert result['result']['clicks_posted'] == 0
         dispatcher.handle(dict(operation='touchpad_apply', events=[dict(kind='click')], created=time.monotonic()))
         target = dispatcher.handle(dict(operation='touchpad_double_click_target', created=time.monotonic()))
         assert target == {'result': {'bundle': 'test.editor', 'pid': 123}}
@@ -163,7 +164,7 @@ def test_idle_output_reports_monitor_failure_and_closes_channel():
 
 
 def test_parent_health_poll_is_limited_to_once_per_second(monkeypatch):
-    import proximic_ring.native_touchpad as native
+    import proximic_ring.platforms.macos.native_touchpad as native
     clock, calls = [10.], []
     monkeypatch.setattr(native, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
     channel = SimpleNamespace(call=lambda op, **kw: calls.append(op), close=lambda: None)

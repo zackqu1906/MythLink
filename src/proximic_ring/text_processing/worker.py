@@ -10,6 +10,7 @@ from .edit_tool import EDIT_MODE_RACE
 from .llm import OpenAICompatibleTextProcessor
 from .model import (
     INPUT_MODE_EDIT,
+    TEXT_MODE_POLISH,
     InputModeRoutingRequest,
     InputModeRoutingResult,
     LLMTraceCollection,
@@ -198,7 +199,10 @@ class TextProcessingWorker:
                     self._processor, "process_with_collection_trace", None
                 )
                 process_with_trace = getattr(self._processor, "process_with_trace", None)
-                if callable(process_with_collection_trace):
+                if request.mode == TEXT_MODE_POLISH:
+                    final_text, model_output = self._processor.polish_with_trace(
+                        request.raw_text, request.settings)
+                elif callable(process_with_collection_trace):
                     trace_request_id = request.request_id
 
                     def publish_trace(
@@ -274,7 +278,7 @@ class TextProcessingWorker:
             result = TextProcessingResult(
                 request_id=request.request_id,
                 session_id=request.session_id,
-                mode=normalize_input_mode(request.mode),
+                mode=TEXT_MODE_POLISH if request.mode == TEXT_MODE_POLISH else normalize_input_mode(request.mode),
                 raw_text=request.raw_text,
                 final_text=str(final_text or "").strip(),
                 latency_s=max(0.0, time.perf_counter() - started),

@@ -32,6 +32,12 @@ def verify_bundle(app: Path, minimum_macos: str) -> list[str]:
         info = plistlib.load(stream)
     if info.get("LSUIElement") is not True or info.get("LSBackgroundOnly"):
         errors.append("bundle must start as LSUIElement; only the main UI may enable its Dock icon")
+    browser_info = app / "Contents/Helpers/MythlinkBrowser.app/Contents/Info.plist"
+    if browser_info.is_file():
+        with browser_info.open("rb") as stream:
+            browser = plistlib.load(stream)
+        if browser.get("LSUIElement") is not True or browser.get("LSBackgroundOnly"):
+            errors.append("MythlinkBrowser must start as LSUIElement; periodic status checks must not enter the Dock")
     executable_root = app / "Contents" / "MacOS"
     resources_root = app / "Contents" / "Resources"
     files = [item for item in app.rglob("*") if item.is_file()]

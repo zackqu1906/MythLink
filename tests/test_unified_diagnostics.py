@@ -7,9 +7,9 @@ import traceback
 
 import pytest
 
-from proximic_ring.diagnostic_log import RotatingDiagnosticLog
-from proximic_ring.runtime_diagnostics import DiagnosticStream, RuntimeCapture
-from proximic_ring.scene_diagnostics import SceneDiagnostics
+from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
+from proximic_ring.diagnostics.runtime_diagnostics import DiagnosticStream, RuntimeCapture
+from proximic_ring.diagnostics.scene_diagnostics import SceneDiagnostics
 
 
 def test_console_runtime_scene_and_exceptions_share_one_log(tmp_path):
@@ -67,8 +67,8 @@ def test_qt_warnings_and_uncaught_thread_errors_share_log(tmp_path):
     script = '''
 import sys, threading
 from PySide6.QtCore import qWarning
-from proximic_ring.diagnostic_log import RotatingDiagnosticLog
-from proximic_ring.runtime_diagnostics import RuntimeCapture
+from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
+from proximic_ring.diagnostics.runtime_diagnostics import RuntimeCapture
 capture = RuntimeCapture(RotatingDiagnosticLog(sys.argv[1]))
 capture.install_qt()
 qWarning('qt diagnostic evidence')
@@ -92,7 +92,7 @@ capture.close()
 def test_multiple_processes_rotate_without_missing_or_interleaving_records(tmp_path):
     path = tmp_path / 'diagnostic.log'
     script = '''
-from proximic_ring.diagnostic_log import RotatingDiagnosticLog
+from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
 import sys
 log = RotatingDiagnosticLog(sys.argv[1], max_bytes=1200, backup_count=40)
 for index in range(80):
@@ -141,8 +141,8 @@ def test_crash_descriptor_follows_active_file_after_rotation(tmp_path):
 
 
 def test_capture_fallback_remains_the_path_used_by_controller(monkeypatch, tmp_path):
-    import proximic_ring.runtime_diagnostics as runtime
-    import proximic_ring.diagnostic_log as diagnostics
+    import proximic_ring.diagnostics.runtime_diagnostics as runtime
+    import proximic_ring.diagnostics.diagnostic_log as diagnostics
     import proximic_ring.runtime_paths as paths
     blocked = tmp_path / 'occupied'
     blocked.write_text('file')
@@ -158,8 +158,8 @@ def test_capture_fallback_remains_the_path_used_by_controller(monkeypatch, tmp_p
 
 
 def test_native_stderr_is_drained_without_polluting_json_protocol(monkeypatch, tmp_path):
-    import proximic_ring.native_access as native
-    import proximic_ring.diagnostic_log as diagnostics
+    import proximic_ring.platforms.macos.native_access as native
+    import proximic_ring.diagnostics.diagnostic_log as diagnostics
     real_popen = subprocess.Popen
     script = '''
 import json,sys

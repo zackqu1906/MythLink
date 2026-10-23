@@ -1,0 +1,46 @@
+{
+  "name": "Apple Music 随机播放并确认播放曲目",
+  "goal": "在 Apple Music 中从当前可播放的歌曲中启动随机播放，确认已开始播放，并读取当前播放曲名用于报告。",
+  "parameters": [],
+  "steps": [
+    {
+      "action": "打开并绑定 Apple Music 应用窗口",
+      "method": "在 cua_repl 中调用 cua.getApp(“Music”)，按应用名打开并绑定；绑定结果会自动附带最新 AX 状态，可直接读取窗口标题、侧边栏与播放控制元素。",
+      "check": "绑定成功后可读取标题为 Music 的窗口，AX 中包含侧边栏（搜索、Apple Music、Library 下的 Albums/Songs 等）与播放控制（play、shuffle 等）元素。"
+    },
+    {
+      "action": "在 Apple Music 侧边栏选择歌曲（Songs）入口，展示可播放歌曲",
+      "method": "先读取最新 AX 状态，按当前树中的侧边栏歌曲行（记录中为 Value: Songs 的可选行）点击，再调用 getAXState 查看内容区；每次重新读取、重新定位，不复用上次的元素索引。",
+      "check": "内容区标题为歌曲（Songs），列表中出现可选中的歌曲行。"
+    },
+    {
+      "action": "在播放控制区开启随机播放",
+      "method": "读取最新 AX 状态，定位播放控制栏中的 shuffle 按钮并点击，随后在同一次调用内 getAXState，检查该按钮描述是否已变为 do not shuffle（表示随机已开启）。",
+      "check": "AX 中 shuffle 按钮描述显示为 do not shuffle，即随机播放处于开启状态。"
+    },
+    {
+      "action": "点击播放按钮开始播放，并从最新界面状态读取当前曲名与播放状态",
+      "method": "读取最新 AX 状态后点击播放控制栏的 play 按钮，并在同一次调用内 getAXState；从返回的差异中读取 LCD 区的曲名文本、播放/暂停按钮描述与进度信息。",
+      "check": "AX 状态显示播放中（按钮为 pause、出现当前曲名与播放进度），并据此读取到本次播放的曲名。"
+    }
+  ],
+  "conditions": [
+    "运行环境为 macOS，Apple Music（com.apple.Music）已安装且可被 cua_repl 的 cua.getApp 绑定",
+    "Apple Music 音乐库中存在可播放的歌曲内容",
+    "用户已授权对该应用执行 computer use 操作（记录中的控制事件显示按已有应用授权执行）"
+  ],
+  "fallbacks": [
+    {
+      "when": "cua.getApp 按显示名无法解析或绑定音乐应用失败",
+      "action": "建议改用应用的 bundle ID（com.apple.Music）或 cua.listApps() 返回的条目重新绑定；这是记录中 API 文档给出的回退方式，本次未实际执行"
+    },
+    {
+      "when": "点击后界面没有变化，或上一次读取的元素索引已失效",
+      "action": "建议重新调用 getAXState（必要时使用完整树）获取最新状态后重新定位目标元素，不要复用旧索引；记录中的 API 文档明确要求动作后重新读取状态"
+    },
+    {
+      "when": "播放控制区 shuffle 按钮描述仍为 shuffle，随机播放实际未开启",
+      "action": "建议再次点击该 shuffle 按钮并重新读取 AX 状态，确认描述变为 do not shuffle 后再继续点击播放"
+    }
+  ]
+}

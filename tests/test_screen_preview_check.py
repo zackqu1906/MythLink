@@ -5,9 +5,9 @@ import pytest
 from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtTest import QTest
 
-from proximic_ring import screen_preview_check as check
-from proximic_ring.mac_permissions import PermissionState
-from proximic_ring.ui import mac_permissions_controller as permissions
+from proximic_ring.desktop import screen_preview_check as check
+from proximic_ring.platforms.macos.mac_permissions import PermissionState
+from proximic_ring.ui.permissions import mac_permissions_controller as permissions
 
 
 class Capture:

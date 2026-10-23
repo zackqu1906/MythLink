@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.app_shortcuts import LocalMacAppShortcuts
+from proximic_ring.desktop.app_shortcuts import LocalMacAppShortcuts
 from proximic_ring.gesture_scenes import POWERPOINT, PRESENTATION
 from scene_test_helpers import presentation_context
 from test_gesture_scenes import metadata, window_tree, wps_window_tree
@@ -100,7 +100,7 @@ def test_generic_presenter_needs_no_shortcut_profile_for_shared_detection(eviden
 
 
 def native_backend(monkeypatch, window, focus, *, bundle=POWERPOINT):
-    import proximic_ring.mac_workspace as workspace
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     monkeypatch.setattr(sys, "platform", "darwin")
     front = SimpleNamespace(bundleIdentifier=lambda: bundle, processIdentifier=lambda: 42,
                             localizedName=lambda: "Office")
@@ -120,7 +120,7 @@ def native_backend(monkeypatch, window, focus, *, bundle=POWERPOINT):
 @pytest.mark.parametrize("evidence", ["display_geometry", "installed_name"])
 def test_native_shared_evidence_is_available_to_every_presenter(monkeypatch, tmp_path, bundle, evidence):
     from test_application_catalog import application
-    import proximic_ring.mac_workspace as workspace
+    import proximic_ring.platforms.macos.mac_workspace as workspace
     window, focus = wps_window_tree()
     window.pop("AXFullScreen")
     window["AXSubrole"] = "AXStandardWindow"
