@@ -651,6 +651,14 @@ class RecognitionRuntime:
         def current_microphone():
             return input_pipeline.microphone if input_pipeline is not None else microphone
 
+        def pause_touchpad_microphone():
+            mic = current_microphone()
+            if mic is not None:
+                mic.pause_capture()
+
+        # The BLE owner waits for OS capture to stop before touchpad START.
+        source._pause_external_audio = pause_touchpad_microphone
+
         def session_started(session_id):
             if audio_settings is not None:
                 audio_settings.allowed.clear()
@@ -947,19 +955,47 @@ class RecognitionRuntime:
             last_gesture_health = None
             recognition_was_enabled = False
             practice_was_active = False
+            touchpad_was_active = False
+
+            def touchpad_audio_paused():
+                gate = getattr(source, '_touchpad_audio_suspended', None)
+                return gate is not None and gate.is_set()
 
             def safe_to_change_audio():
-                return not bool(getattr(controller, "gesture_busy", getattr(controller, "active", False))) and not (
+                return not touchpad_audio_paused() and not bool(getattr(controller, "gesture_busy", getattr(controller, "active", False))) and not (
                     (cancel_utterance_event is not None and cancel_utterance_event.is_set())
                     or (finish_utterance_event is not None and finish_utterance_event.is_set())
                 )
 
             def interrupt_idle_audio_read():
-                return (audio_settings.pending and not audio_settings.applying
+                return touchpad_audio_paused() or (audio_settings is not None
+                        and audio_settings.pending and not audio_settings.applying
                         and audio_settings.allowed.is_set() and safe_to_change_audio())
 
             on_started()
             while not disconnect_event.is_set():
+                if touchpad_audio_paused():
+                    if not touchpad_was_active:
+                        pause_touchpad_microphone()
+                        for method in ('discard_current', 'cancel_pending'):
+                            callback = getattr(controller, method, None)
+                            if callable(callback):
+                                callback()
+                        if detector is not None:
+                            detector.reset()
+                        if cancel_utterance_event is not None:
+                            cancel_utterance_event.clear()
+                        on_state("[ASR] CANCELLED reason=touchpad")
+                        recognition_was_enabled = False
+                    touchpad_was_active = True
+                    disconnect_event.wait(.05)
+                    continue
+                mic = current_microphone()
+                capture_gate = getattr(mic, '_capture_paused', None)
+                if touchpad_was_active or (capture_gate is not None and capture_gate.is_set()):
+                    if mic is not None:
+                        mic.resume_capture()
+                    touchpad_was_active = False
                 if utterance_commands is not None:
                     with audio_change_lock:
                         utterance_commands.drain(controller,allowed=(recognition_event.is_set()
@@ -990,7 +1026,7 @@ class RecognitionRuntime:
                         continue  # Never process an old-source block after switching.
                 try:
                     interruptible_read = getattr(audio_source, "read_interruptible", None)
-                    if audio_settings is not None and audio_source is source and callable(interruptible_read):
+                    if callable(interruptible_read):
                         try:
                             block = interruptible_read(320, should_interrupt=interrupt_idle_audio_read)
                         except InterruptedError:

@@ -646,6 +646,7 @@ def test_qml_composition_keeps_original_target_when_question_arrives(inline_ui,m
     '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
     '/Applications/Codex.app/Contents/Resources/codex',
     '/usr/local/bin/codex'])
+@pytest.mark.mac_only
 def test_agent_locates_nested_legacy_and_path_cli(monkeypatch,path):
     from proximic_ring.ui.agent import agent_controller as module
     monkeypatch.setattr(module.os,'access',lambda candidate,_:candidate==path)

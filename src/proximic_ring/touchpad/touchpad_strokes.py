@@ -4,23 +4,40 @@ from __future__ import annotations
 from collections import deque
 import threading
 import time
+import uuid
 
 from .stroke.stroke_input import StrokeCollector
 from .touchpad_clicks import TouchpadClicks
 from .touchpad_diagnostics import note
 from .click_diagnostics import ClickTrace, start_click_diagnostics
+from .stroke.stroke_kinematics import measure_stroke
+from .stroke.stroke_hold_selection import hold_selection
 
 
 class TouchpadStrokeOutput:
     def __init__(self, *, connection, on_ready, on_end, on_stroke, on_tap, on_trace=None,
-                 on_double_click=None, on_gesture=None, on_diagnostic=None):
+                 on_double_click=None, on_gesture=None, on_diagnostic=None, on_tap_contact=None,
+                 on_stroke_details=None, on_selection=None, on_selection_state=None,
+                 contact_classifier=None, on_contact_intent=None):
         self.connection = connection
         self.on_ready, self.on_end = on_ready, on_end
         self.on_stroke, self.on_tap = on_stroke, on_tap
         self.on_trace = on_trace
+        self.on_tap_contact = on_tap_contact
+        self.on_stroke_details = on_stroke_details
+        self.on_selection = on_selection
+        self.on_selection_state = on_selection_state
+        self.contact_classifier = contact_classifier
+        self.on_contact_intent = on_contact_intent
+        self._selection_time = 0.
+        self._selection_state = None
         self.on_double_click = on_double_click
         self.on_diagnostic = on_diagnostic
-        self.clicks = TouchpadClicks(on_gesture=on_gesture, on_diagnostic=on_diagnostic) if on_double_click else None
+        self.clicks = TouchpadClicks(on_gesture=on_gesture, on_diagnostic=on_diagnostic) if on_double_click and contact_classifier is None else None
+        # The opt-in contact policy owns single taps (candidate selection); it
+        # only borrows SDK click pairing to recognize a double click.
+        self.double_clicks = (TouchpadClicks(on_gesture=on_gesture, on_diagnostic=on_diagnostic)
+                              if on_double_click and contact_classifier is not None else None)
         self._trace_time = 0.
         self._trace_visible = False
         self.stopped = threading.Event()
@@ -31,14 +48,33 @@ class TouchpadStrokeOutput:
         self.active = False
         self.collector = StrokeCollector()
         self.pending_strokes = {}
+        self.pending_contact_details = {}
         self.click_verdicts = {}
         self.resolved_steps = deque(maxlen=256)
         start_click_diagnostics()
+        self._stream_id = uuid.uuid4().hex
+        self._contact_epoch = 0
+        # Optional foreground gate. A new monotonic cutoff starts a fresh
+        # input session; None pauses it. Ordinary input has no gate.
+        self.input_since = None
+        self.input_epoch = None
 
     def _clear_pending(self):
+        self._contact_epoch += 1
         self.pending_strokes.clear()
+        self.pending_contact_details.clear()
         self.click_verdicts.clear()
         self.resolved_steps.clear()
+        self._notify_selection_state([])
+
+    def _notify_selection_state(self, points):
+        if self.on_selection_state is None:
+            return
+        state = (self.contact_classifier or hold_selection)(points)
+        if state != self._selection_state:
+            self._selection_state = state
+            self.on_selection_state(state)
+        self._selection_time = time.monotonic()
 
     def _resolve_contacts(self):
         for end_step, (points, created) in list(self.pending_strokes.items()):
@@ -48,18 +84,81 @@ class TouchpadStrokeOutput:
             if end_step in self.click_verdicts:
                 is_click, _ = self.click_verdicts.pop(end_step)
                 del self.pending_strokes[end_step]
+                contact = self.pending_contact_details.pop(end_step, {})
                 self.resolved_steps.append(end_step)
+                contact_size = len(contact.get('points', []))
+                if self.contact_classifier is not None and self.clicks is None:
+                    # Opt-in application policy consumes every complete contact,
+                    # including SDK non-clicks. Shared SDK/mouse rules stay intact.
+                    complete = (contact.get('start_step') is not None and contact_size > 0
+                                and contact_size == end_step-contact['start_step']
+                                and contact_size <= self.collector.max_points
+                                and contact.get('complete', False))
+                    decision = (self.contact_classifier(contact['points'], finished=True) if complete else
+                                dict(phase='idle', progress=0, direction=None,
+                                     action='reject', reason='incomplete-contact'))
+                    value = dict(contact, end_step=end_step, sdk_is_click=is_click,
+                                 intent_decision=decision)
+                    if self.on_contact_intent is not None:
+                        self.on_contact_intent({k: v for k, v in value.items() if k != 'points'})
+                    action = decision['action']
+                    if action == 'stroke' and points is not None:
+                        self._publish_stroke(points, contact)
+                    elif action == 'tap':
+                        if self.on_tap_contact is not None:
+                            self._notify_trace(contact['points'], True)
+                            self.on_tap_contact(value)
+                            self._trace_visible = False
+                        else:
+                            self._notify_trace([], True)
+                            self.on_tap()
+                    elif action in {'select', 'page', 'punctuation', 'cancel-selection'} and self.on_selection is not None:
+                        self._notify_trace([], True)
+                        self.on_selection(dict(value, decision=decision))
+                    elif self.on_tap_contact is not None:
+                        # A rejected contact remains visible and gets a reason;
+                        # it cannot silently commit or become handwriting.
+                        value['intent_decision'] = dict(decision, action='reject')
+                        self._notify_trace(contact.get('points', []), True)
+                        self.on_tap_contact(value)
+                        self._trace_visible = False
+                    continue
+                if (self.on_selection is not None and contact.get('start_step') is not None
+                        and contact_size == end_step - contact['start_step']
+                        and contact_size <= self.collector.max_points):
+                    selection = hold_selection(contact.get('points', []), finished=True)
+                    if 'action' in selection:
+                        self._notify_trace([], True)
+                        self.on_selection(dict(contact, decision=selection, end_step=end_step))
+                        continue
                 if is_click:
                     note(self.on_diagnostic, 'stroke_contact_is_click')
+                    if self.clicks is None and self.on_tap_contact is not None:
+                        # The opt-in trial receives the actual collected geometry
+                        # for confirmation arbitration. SDK verdict stays intact;
+                        # this contact is never silently published as handwriting.
+                        tap_points = contact.pop('points', points or [])
+                        self._notify_trace(tap_points, True)
+                        self.on_tap_contact(dict(contact, points=tap_points, end_step=end_step,
+                                                 geometry_valid=points is not None))
+                        # The opt-in UI owns clearing accepted ink and retaining
+                        # rejected ink; don't erase it on the idle fade below.
+                        self._trace_visible = False
+                        continue
+                    # A tap may have produced a live preview while awaiting the
+                    # SDK verdict. Clear it before delivering the tap action;
+                    # only a negative click verdict publishes finished ink.
+                    self._notify_trace([], True)
                     if self.clicks is None: self.on_tap()
                 elif points is not None:
-                    self._publish_stroke(points)
+                    self._publish_stroke(points, contact)
                 else:
                     note(self.on_diagnostic, 'stroke_invalid_geometry')
             elif time.monotonic() - created > .5:
                 note(self.on_diagnostic, 'stroke_verdict_timeout')
                 # Missing a decision is incomplete data, never permission to write.
                 del self.pending_strokes[end_step]
+                self.pending_contact_details.pop(end_step, None)
         for end_step, (_, created) in list(self.click_verdicts.items()):
             if time.monotonic() - created > .5:
                 del self.click_verdicts[end_step]
@@ -76,6 +175,10 @@ class TouchpadStrokeOutput:
         if self.stopped.is_set() or self.connection.is_set() or not self.active:
             if trace: trace.finish(self._click_stop_reason())
             return
+        if self.input_since is not None:
+            since = self.input_since()
+            if since is None or event.timestamp < since:
+                return
         with self.lock:
             if self.stopped.is_set() or self.connection.is_set() or not self.active:
                 if trace: trace.finish(self._click_stop_reason())
@@ -112,10 +215,14 @@ class TouchpadStrokeOutput:
         self._trace_visible = bool(points)
         self._trace_time = time.monotonic()
 
-    def _publish_stroke(self, points):
+    def _publish_stroke(self, points, contact=None):
         note(self.on_diagnostic, 'stroke_delivered')
         self._notify_trace(points, True)
-        self.on_stroke(points)
+        if self.on_stroke_details is not None:
+            metrics = measure_stroke(points, (contact or {}).get('duration_ms'))
+            self.on_stroke_details(dict(points=points, kinematics=metrics))
+        else:
+            self.on_stroke(points)
 
     def _run(self):
         reason, error = "", None
@@ -133,12 +240,34 @@ class TouchpadStrokeOutput:
                     self.events.clear()
                     overflowed = self.overflowed
                     self.overflowed = False
+                if self.input_since is not None:
+                    since = self.input_since()
+                    if since != self.input_epoch:
+                        self.input_epoch = since
+                        self.collector.reset()
+                        self._notify_trace([])
+                        self._clear_pending()
+                        if self.clicks: self.clicks.clear()
+                        if self.double_clicks: self.double_clicks.clear()
+                    if since is None:
+                        for _, trace in events:
+                            if trace: trace.finish('stroke_not_foreground')
+                        events = []
+                        continue
+                    fresh = []
+                    for event, trace in events:
+                        if event.timestamp >= since:
+                            fresh.append((event, trace))
+                        elif trace:
+                            trace.finish('stroke_focus_changed')
+                    events = fresh
                 if overflowed:
                     note(self.on_diagnostic, 'stroke_queue_overflow')
                     self.collector.reset()
                     self._notify_trace([])
                     self._clear_pending()
                     if self.clicks: self.clicks.clear()
+                    if self.double_clicks: self.double_clicks.clear()
                 # Confirmed edges carry their original (earlier) frame index.
                 # Order this batch for the stroke consumer only; pointer and
                 # click delivery in the SDK keep their original ordering.
@@ -147,6 +276,8 @@ class TouchpadStrokeOutput:
                     if self.stopped.is_set() or self.connection.is_set():
                         break
                     if trace: trace.dequeued(queue_depth=len(events))
+                    if self.input_since is not None and self.input_since() != self.input_epoch:
+                        break
                     if time.monotonic() - event.timestamp > .15:
                         note(self.on_diagnostic, 'stroke_event_stale')
                         if trace: trace.finish('stroke_queue_expired', queue_limit_ms=150)
@@ -154,10 +285,11 @@ class TouchpadStrokeOutput:
                         self._notify_trace([])
                         self._clear_pending()
                         continue
-                    if self.clicks:
-                        decisions = self.clicks.feed(event)
+                    clicks = self.clicks or self.double_clicks
+                    if clicks:
+                        decisions = clicks.feed(event)
                         if trace and not decisions:
-                            trace.finish(self.clicks.last_rejection or 'click_rejected')
+                            trace.finish(clicks.last_rejection or 'click_rejected')
                         for decision in decisions:
                             if trace:
                                 trace.fields['decision'] = decision.kind
@@ -182,12 +314,36 @@ class TouchpadStrokeOutput:
                         last_step = self.collector.last_step
                         end_step = (event.step if event.kind == 'contact' and event.state == 'up'
                                     else self.collector.end_step)
+                        contact_points = []
+                        complete = False
+                        if (self.on_tap_contact is not None or self.on_selection is not None or self.contact_classifier is not None) and start_step is not None and end_step is not None:
+                            # Preserve even tiny/short contacts that the handwriting
+                            # collector legitimately rejects. Trim at the original
+                            # release frame, just as the collector does.
+                            moves = [m for m in self.collector.moves if start_step <= m.step < end_step]
+                            if (event.kind == 'move' and start_step <= event.step < end_step
+                                    and (not moves or event.step > moves[-1].step)):
+                                moves.append(event)
+                            if moves:
+                                complete = (len(moves) == end_step-start_step
+                                            and all(m.step == start_step+i for i, m in enumerate(moves)))
+                                contact_points = [(0., 0.)]
+                                x = y = 0.
+                                for move in moves[1:]:
+                                    x += float(move.dx)
+                                    y += float(move.dy)
+                                    contact_points.append((x, y))
                         points = self.collector.feed(event)
                         if (start_step is not None and self.collector.start_step is None
                                 and event.kind == 'move' and last_step is not None and event.step != last_step + 1):
                             note(self.on_diagnostic, 'stroke_movement_gap')
                         if start_step is not None and end_step is not None and self.collector.start_step is None:
                             self.pending_strokes[end_step] = (points, time.monotonic())
+                            self.pending_contact_details[end_step] = dict(
+                                start_step=start_step,
+                                duration_ms=(end_step-start_step)*5 if start_step is not None else None,
+                                points=contact_points, complete=complete,
+                                stream_id=f'{self._stream_id}:{self._contact_epoch}')
                     elif event.kind in {"click", "click_verdict"}:
                         if event.step not in self.resolved_steps:
                             self.click_verdicts[event.step] = (
@@ -196,7 +352,19 @@ class TouchpadStrokeOutput:
                     if trace and not trace.finished:
                         trace.finish(self._click_stop_reason())
                 events = []
+                if self.input_since is not None and self.input_since() != self.input_epoch:
+                    continue
                 self._resolve_contacts()
+                if self.on_selection_state is not None:
+                    if (self.collector.touching and self.collector.moves
+                            and time.monotonic() - self.collector.moves[-1].timestamp > .15):
+                        # A stopped stream is not evidence of a stationary finger.
+                        self.collector.reset()
+                        self._notify_trace([])
+                    if not self.collector.touching:
+                        self._notify_selection_state([])
+                    elif time.monotonic() - self._selection_time >= .033:
+                        self._notify_selection_state(self.collector.points)
                 if self.collector.touching and len(self.collector.points) > 1:
                     if time.monotonic()-self._trace_time >= .033:
                         self._notify_trace(self.collector.points)
@@ -217,4 +385,5 @@ class TouchpadStrokeOutput:
                                  error_type=type(error).__name__ if error else None)
             self._clear_pending()
             if self.clicks: self.clicks.clear()
+            if self.double_clicks: self.double_clicks.clear()
             self.on_end(reason, error)

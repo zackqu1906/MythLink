@@ -6,6 +6,13 @@ from test_inline_ui import inline_ui
 from test_ui_touchpad import Output, prepare
 
 
+@pytest.fixture(autouse=True)
+def simulated_mac_input_method(monkeypatch):
+    """External IME cases use fake Mac adapters even on a Windows test host."""
+    import proximic_ring.ui.touchpad.touchpad_controller as module
+    monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='darwin'))
+
+
 def idle(inline_ui):
     c, bridge, _, root, event = inline_ui
     c._utterance_active = False
@@ -52,7 +59,7 @@ def test_switching_outputs_keeps_existing_stream_and_voice_choice(inline_ui):
     tp.setInputMode("pointer"); QTest.qWait(20)
     assert old.stopped and tp._run.output.active and tp.active
     assert len(source.starts) == 1 and source.stops == 0
-    assert c.recognitionEnabled and c._recognition_event.is_set()
+    assert c.recognitionEnabled and not c._recognition_event.is_set()
     tp.setInputMode("stroke"); QTest.qWait(20)
     old.options["on_stroke"]([(0, 0), (100, 0)])
     old.options["on_end"]("old output", RuntimeError("old error"))
@@ -68,7 +75,7 @@ def test_default_gestures_are_consumed_before_scene_and_voice(inline_ui, monkeyp
     monkeypatch.setattr(c._app_gestures, "scene_envelope", lambda _: pytest.fail("stroke escaped to scenes"))
     tp.addStroke("h")
     candidates = tp.strokeCandidates
-    assert len(candidates) == 5
+    assert len(candidates) == tp.candidatePageSize
     for name, selected in [("swipe-right", 1), ("swipe-left", 0)]:
         assert not c._ring_gestures.filter(SimpleNamespace(name=name), False, c._disconnect_event)
         QTest.qWait(10)
@@ -77,6 +84,8 @@ def test_default_gestures_are_consumed_before_scene_and_voice(inline_ui, monkeyp
     tp.localCharacterCommitted.connect(entered.append)
     assert not c._ring_gestures.filter(SimpleNamespace(name="tap"), False, c._disconnect_event)
     QTest.qWait(10)
+    assert entered == []  # Complete SDK contacts own local confirmation.
+    tp._receive(tp._run, 'contact_tap', (tp._run.output, {'points': [(0, 0)] * 10}))
     assert entered == [candidates[0]] and tp._code == ""
     tp.addStroke("h"); tp.addStroke("s")
     for name, code in [("swipe-up", "h"), ("swipe-down", "")]:
@@ -161,6 +170,10 @@ def test_local_editor_candidates_and_layout(inline_ui, size, tmp_path):
     tp.setInputMode("stroke"); QTest.qWait(60)
     box = root.findChild(QObject, "strokeCompositionPanel")
     assert box.property("visible") and box.property("inputVisible")
+    # The panel switches to local input with Qt.callLater after its first frame.
+    for _ in range(100):
+        if tp._local_stroke_input: break
+        QTest.qWait(20)
     tp.addStroke("h"); QTest.qWait(20)
     assert tp._code and tp._local_stroke_input, (tp._code, tp._local_stroke_input, root.isActive(), c._inline_input._view)
     tp.selectCandidate(0); QTest.qWait(20)

@@ -23,6 +23,29 @@ def test_trace_observer_is_bounded_and_cannot_mutate_or_interrupt_recognition():
     assert paths == [path] and len(path) == 1000
 
 
+def test_enriched_stroke_measures_original_boundaries_and_ignores_late_lift_movement():
+    ready, written = threading.Event(), threading.Event()
+    values, legacy = [], []
+    output = TouchpadStrokeOutput(connection=threading.Event(), on_ready=ready.set,
+        on_end=lambda *_: None, on_stroke=legacy.append, on_tap=lambda: None,
+        on_stroke_details=lambda value: (values.append(value), written.set()))
+    output.start(); assert ready.wait(1); output.activate()
+    try:
+        now = time.monotonic()
+        batch = [TouchpadContact('down', 10, now), TouchpadContact('up', 20, now)]
+        batch += [TouchpadMove(1., 0., .99, step, now) for step in range(10, 24)]
+        batch.append(TouchpadClickVerdict(10, 20, False, now))
+        with output.lock: output.events.extend((event, None) for event in batch)
+        output.wake.set(); assert written.wait(1)
+        assert not legacy and len(values) == 1
+        assert values[0]['points'][-1] == (9., 0.)
+        assert values[0]['kinematics']['duration_ms'] == 50
+        assert values[0]['kinematics']['length'] == 9
+        assert values[0]['kinematics']['speed'] == 180
+    finally:
+        output.stop(); output.thread.join(1)
+
+
 def test_prototype_templates_and_common_candidates_are_available():
     dictionary = StrokeDictionary()
     assert len(dictionary.templates) >= 200
@@ -191,11 +214,17 @@ def test_late_click_with_already_received_lift_frames_never_publishes_a_stroke()
     """The recorded third failure: up is backdated and click arrives next batch."""
     from ring_python_sdk.touchpad import TouchpadClick
     ready, traced, tapped, written = (threading.Event() for _ in range(4))
-    paths, taps = [], []
+    paths, taps, views = [], [], []
+    def display(points, finished):
+        views.append((list(points), finished))
+        if len(points) == 14: traced.set()
+    def tap():
+        assert views[-1] == ([], True)
+        taps.append(True)
+        tapped.set()
     output = TouchpadStrokeOutput(connection=threading.Event(), on_ready=ready.set,
         on_end=lambda *_: None, on_stroke=lambda p: (paths.append(p), written.set()),
-        on_tap=lambda: (taps.append(True), tapped.set()),
-        on_trace=lambda p, finished: traced.set() if len(p) == 14 else None)
+        on_tap=tap, on_trace=display)
     output.start(); assert ready.wait(1); output.activate()
     try:
         now = time.monotonic()
@@ -210,6 +239,20 @@ def test_late_click_with_already_received_lift_frames_never_publishes_a_stroke()
         output.submit(TouchpadClickVerdict(0, 10, True, time.monotonic()))
         assert tapped.wait(1)
         assert paths == [] and taps == [True]
+        assert not any(points and finished for points, finished in views)
+        output.submit(TouchpadMove(.3, 0., .01, 14, time.monotonic()))
+        output.submit(TouchpadMove(.3, 0., .01, 15, time.monotonic()))
+        assert not written.wait(.05)
+        assert views[-1] == ([], True)
+        # A following contact still previews and delivers a normal stroke.
+        now = time.monotonic()
+        batch = [TouchpadContact('down',16,now),TouchpadContact('up',26,now)]
+        batch += [TouchpadMove(1.,0.,.99,step,now) for step in range(16,26)]
+        batch.append(TouchpadClickVerdict(16,26,False,now))
+        with output.lock: output.events.extend((event, None) for event in batch)
+        output.wake.set(); assert written.wait(1)
+        assert paths[0][-1] == (9., 0.) and taps == [True]
+        assert views[-1] == (paths[0], True)
     finally:
         output.stop(); output.thread.join(1)
 

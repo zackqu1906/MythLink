@@ -13,8 +13,12 @@ from ring_python_sdk.touchpad import TouchpadMove
 async def run(args):
     mouse = None
     if args.mouse:
-        from ring_python_sdk.touchpad.macos import MacSystemMouse
-        mouse = MacSystemMouse()
+        if sys.platform == 'win32':
+            from ring_python_sdk.touchpad.windows import WindowsSystemMouse
+            mouse = WindowsSystemMouse()
+        else:
+            from ring_python_sdk.touchpad.macos import MacSystemMouse
+            mouse = MacSystemMouse()
         if not mouse.permitted():
             mouse.request_permission()
         mouse.enable()  # No cursor control until the caller explicitly enables it.
@@ -23,6 +27,8 @@ async def run(args):
     stopped = asyncio.Event()
     outcome = []
     def on_event(event):
+        if mouse and sys.platform == 'win32' and event.kind not in {'click'}:
+            return
         if mouse:mouse.handle(event)
         elif isinstance(event, TouchpadMove):
             if event.dx or event.dy:print(f'move {event.dx:.3f} {event.dy:.3f}')
@@ -34,7 +40,8 @@ async def run(args):
     try:
         if not await session.connect_target(args.device):
             raise RuntimeError('Could not connect to the selected ring')
-        await session.touchpad_on(on_event=on_event, on_stopped=on_stopped,
+        pointer_options = {'on_pointer_move': mouse.handle} if mouse and sys.platform == 'win32' else {}
+        await session.touchpad_on(on_event=on_event, on_stopped=on_stopped, **pointer_options,
                                   on_stats=lambda s: print(f'tokens={s.tokens} warmup={s.warmup_frames}/200 resets={s.resets}'),
                                   duration_s=args.seconds)
         await stopped.wait()

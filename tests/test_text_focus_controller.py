@@ -155,6 +155,7 @@ def test_retired_field_state_does_not_block_voice_or_application_routes(route, m
         fields.picker.active.clear()
 
 
+@pytest.mark.mac_only
 def test_window_change_focuses_once_and_does_not_queue_when_speech_is_busy(fields):
     c, inline, service, _, d, _, _, _ = fields
     start(service)

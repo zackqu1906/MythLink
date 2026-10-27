@@ -455,18 +455,30 @@ class InlineInputController(QObject):
                 and not self._view.get("awaiting_readback") and not self._view.get("error") and words):
             self._send("hotwords_learned", revision=current[-1], words=list(words)[:8])
 
-    def stroke_update(self, code, candidates, selected, prediction=False):
+    def stroke_update(self, code, candidates, selected, prediction=False, visuals=None):
         if self._installing:
             return False
+        glyphs = []
+        if visuals:
+            from ..touchpad.stroke_glyph_images import native_glyph_images
+            glyphs = native_glyph_images(visuals)
         if self.stroke_target is not None:
-            return self.send_stroke("stroke_update", code=str(code)[:64], candidates=list(candidates)[:5],
-                                    selected=int(selected), prediction=bool(prediction))
+            return self.send_stroke("stroke_update", code=str(code)[:64], candidates=list(candidates)[:6],
+                                    selected=int(selected), prediction=bool(prediction), glyphs=glyphs)
         if (not self.ready or not self._bridge or self._begin_origin is not None
                 or self._view.get("phase") in {"starting", "listening", "finishing", "editing", "polishing"}):
             return False
         return self._bridge.send({"type": "stroke_update", "client_id": self._client_id,
-                                  "code": str(code)[:64], "candidates": list(candidates)[:5],
-                                  "selected": int(selected)})
+                                  "code": str(code)[:64], "candidates": list(candidates)[:6],
+                                  "selected": int(selected), "glyphs": glyphs})
+
+    def stroke_selection(self, state, select_distance):
+        """Live hold-to-select feedback for the native 3×3 palette (display only)."""
+        display = state.get('display') or {}
+        return self.send_stroke("stroke_selection", phase=str(state.get('phase') or 'idle'),
+                                progress=float(state.get('progress') or 0), direction=state.get('direction') or '',
+                                origin=list(display.get('origin') or []), points=list(display.get('points') or [])[:201],
+                                select_distance=float(select_distance))
 
     def stroke_clear(self):
         if self.stroke_target is not None:

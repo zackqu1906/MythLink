@@ -3853,8 +3853,8 @@ class AppController(QObject):
         self.recognitionEnabledChanged.emit()
         self.runningChanged.emit()
         if self._touchpad.blocksVoice:
-            self._set_status("笔画输入中", "语音已启用，退出笔画后恢复待命", "running")
-            self._append_log("语音识别已启用，等待笔画输入结束")
+            self._set_status("触摸板输入中", "语音已启用，停止触摸板后恢复待命", "paused")
+            self._append_log("语音识别已启用，等待触摸板输入结束")
             return
         detail = (
             f"{self.confirmGestureHint} 开始，{self.endGestureHint} 结束本句"
@@ -7202,7 +7202,7 @@ class AppController(QObject):
     @Slot(str)
     def _apply_voice_action(self, action: str, *, _from_gesture: bool = False) -> None:
         if self._touchpad.blocksVoice:
-            self._set_status("笔画输入中", "请先停止笔画输入，再使用语音操作", "paused")
+            self._set_status("触摸板输入中", "请先停止触摸板，再使用语音操作", "paused")
             return
         action = str(action).strip().lower()
         if action in {ACTION_CANCEL, ACTION_UNDO, ACTION_EDIT, ACTION_SWITCH_MODE}:

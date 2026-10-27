@@ -152,6 +152,7 @@ def test_disconnect_releases_all_scopes_even_if_sdk_cleanup_fails(foundation):
     assert len([c for c in calls if c[0] == 'end']) == 2
 
 
+@pytest.mark.mac_only
 def test_mouse_process_balances_enable_disable_and_permission_failure(foundation):
     from proximic_ring.platforms.macos.native_touchpad import WorkerTouchpadMouse
     calls, _ = foundation

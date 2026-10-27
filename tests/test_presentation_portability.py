@@ -139,6 +139,7 @@ def test_native_shared_evidence_is_available_to_every_presenter(monkeypatch, tmp
     assert backend.same_target(target)
 
 
+@pytest.mark.mac_only
 def test_scene_uses_actual_focus_window_instead_of_stale_editor_and_revalidates(monkeypatch):
     editor, _ = window_tree("Review.pptx")
     show, focus = window_tree("PowerPoint Slide Show - Review.pptx")

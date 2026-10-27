@@ -48,6 +48,7 @@ def wait_until(predicate):
     assert predicate()
 
 
+@pytest.mark.mac_only
 def test_authenticated_epoch_and_private_files(bridge):
     server, messages = bridge
     assert stat.S_IMODE(server.path.parent.stat().st_mode) == 0o700
@@ -72,6 +73,7 @@ def test_authenticated_epoch_and_private_files(bridge):
     newer_stream.close(); newer.close()
 
 
+@pytest.mark.mac_only
 def test_second_listener_does_not_remove_live_endpoint_or_rotate_token(bridge):
     first, _ = bridge
     token = (first.path.parent / "bridge.token").read_text()
@@ -86,6 +88,7 @@ def test_second_listener_does_not_remove_live_endpoint_or_rotate_token(bridge):
     stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_wechat_command_survives_transport_with_epoch_fencing(bridge):
     server, messages = bridge
     sock, stream = connect(server)
@@ -102,6 +105,7 @@ def test_wechat_command_survives_transport_with_epoch_fencing(bridge):
     stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_activation_trace_does_not_replace_focus_state(bridge):
     server, messages = bridge
     sock, stream = connect(server)
@@ -118,6 +122,7 @@ def test_activation_trace_does_not_replace_focus_state(bridge):
         stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 @pytest.mark.parametrize("kind", ["edit_requested", "polish_requested"])
 def test_model_request_crosses_real_socket_and_result_returns_to_same_sentence(bridge, kind):
     server, messages = bridge
@@ -139,6 +144,7 @@ def test_model_request_crosses_real_socket_and_result_returns_to_same_sentence(b
         stream.close(); sock.close()
 
 
+@pytest.mark.posix_only
 @pytest.mark.parametrize("name", ["bridge.sock", "bridge.token", "bridge.lock"])
 def test_reject_symlink_files(tmp_path, name):
     directory = tmp_path / "ime"
@@ -152,6 +158,7 @@ def test_reject_symlink_files(tmp_path, name):
     assert sentinel.read_text() == "untouched"
 
 
+@pytest.mark.mac_only
 def test_context_is_fresh_and_truncated_only_for_asr(bridge):
     server, messages = bridge
     sock, stream = connect(server)
@@ -173,6 +180,7 @@ def test_context_is_fresh_and_truncated_only_for_asr(bridge):
     stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_unavailable_context_does_not_reuse_previous_field(bridge):
     server, _ = bridge
     sock, stream = connect(server)
@@ -188,6 +196,7 @@ def test_unavailable_context_does_not_reuse_previous_field(bridge):
     stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_gesture_focus_uses_correlated_live_imk_reply_without_requiring_document_text(bridge):
     server, messages = bridge
     sock, stream = connect(server)
@@ -218,6 +227,7 @@ def test_gesture_focus_uses_correlated_live_imk_reply_without_requiring_document
 @pytest.mark.parametrize("change", [{"ready": False}, {"client_id": ""}, {"selection": [-1, -1]},
                                   {"selection": None}, {"selection": [True, 0]},
                                   {"selection": [2**63 - 1, 0]}])
+@pytest.mark.mac_only
 def test_gesture_focus_rejects_inactive_or_unbound_client(bridge, change):
     server, _ = bridge
     sock, stream = connect(server)
@@ -235,6 +245,7 @@ def test_gesture_focus_rejects_inactive_or_unbound_client(bridge, change):
         stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_gesture_focus_accepts_idle_client_before_first_sentence(bridge):
     server, _ = bridge
     sock, stream = connect(server)
@@ -253,6 +264,7 @@ def test_gesture_focus_accepts_idle_client_before_first_sentence(bridge):
         stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_activation_recovery_reply_reaches_host_and_does_not_replace_context(bridge):
     server, messages = bridge
     sock, stream = connect(server)
@@ -265,6 +277,7 @@ def test_activation_recovery_reply_reaches_host_and_does_not_replace_context(bri
     stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 @pytest.mark.parametrize('prefix', ['stroke:', 'start:'])
 def test_ui_ready_probe_reaches_host_but_asr_context_stays_private(bridge, prefix):
     server, messages = bridge
@@ -284,6 +297,7 @@ def test_ui_ready_probe_reaches_host_but_asr_context_stays_private(bridge, prefi
         stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 @pytest.mark.parametrize("kind", ["stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared"])
 def test_stroke_replies_cross_transport_with_request_and_epoch_intact(bridge, kind):
     server, messages = bridge

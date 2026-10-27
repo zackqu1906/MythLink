@@ -202,6 +202,7 @@ def test_contract_needs_no_evidence_refs_and_limits_to_four():
     assert validate_items({"items": []}) == []
 
 
+@pytest.mark.posix_only
 def test_cache_is_atomic_private_expiring_and_corruption_tolerant(tmp_path):
     path = tmp_path / "cache.json"
     value = snapshot()

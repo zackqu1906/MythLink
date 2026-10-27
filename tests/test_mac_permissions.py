@@ -48,6 +48,7 @@ def test_permission_changes_are_not_cached_by_key_delivery(monkeypatch):
     ("/Volumes/Mythlink/Mythlink.app/Contents/MacOS/Mythlink", True),
     ("/private/tmp/AppTranslocation/ABC/d/Mythlink.app/Contents/MacOS/Mythlink", True),
 ])
+@pytest.mark.mac_only
 def test_diagnostics_identify_the_running_app_not_an_installed_namesake(monkeypatch, path, temporary):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", path)

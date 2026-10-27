@@ -47,6 +47,7 @@ def test_retired_package_is_absent_and_production_entries_do_not_reference_it():
         assert 'proximic_ring.desktop_agent' not in path.read_text(), path
 
 
+@pytest.mark.posix_only
 def test_source_paths_packaging_and_documented_file_inventory():
     from proximic_ring.agent_workflow.execution import workflow_trial_cli
     assert workflow_trial_cli.REPO == ROOT

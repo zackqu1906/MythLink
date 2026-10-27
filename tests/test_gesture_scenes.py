@@ -392,6 +392,7 @@ def test_existing_wps_record_gains_scene_without_readding_or_changing_bindings(r
         restored.close()
 
 
+@pytest.mark.mac_only
 def test_native_capture_verifies_generic_installed_editor_and_fresh_focus(monkeypatch, tmp_path):
     import sys
     import proximic_ring.platforms.macos.mac_workspace as workspace

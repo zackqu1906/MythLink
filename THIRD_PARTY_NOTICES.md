@@ -90,8 +90,41 @@ are supplied by the existing PySide6 distribution and retain its Qt/Chromium lic
   (`stroke-input/stroke-input-data`, commit `d66ba5f`, CC BY 4.0). Conway's simplified
   character ranking is public domain. Attribution and source details are retained in
   the prototype's `THIRD_PARTY.md`.
+- Runtime ordinary matching filters this original table to retain reference orders,
+  permutations of their five-category strokes, and verified grass-component orders.
+  `assets/stroke-order-components.json` records grass positions derived from the
+  same cached Make Me a Hanzi decomposition data already used for left-dot annotations;
+  its source URL and SHA-256 are embedded. Rebuild with
+  `tools/build_stroke_order_components.py`. Original source records remain intact.
 - The 32-point handwriting templates are derived from the prototype's local P01 mouse
   recordings. They are a baseline for Ring testing, not a trained Ring-specific model.
+
+## Stroke glyph outlines and order
+
+- `assets/stroke-glyphs.json.gz` contains 9,574 offline Kaishu glyphs from
+  [hanzi-writer-data 2.0.1](https://github.com/chanind/hanzi-writer-data), the
+  data used by Hanzi Writer (the renderer underlying cnchar-draw). Original
+  outlines derive from Make Me a Hanzi and Arphic PL KaitiM GB / PL UKai.
+  The outlines are unchanged; medians and radical metadata are omitted.
+- Outline license: Arphic Public License, included verbatim in
+  `assets/stroke-glyphs-arphic-license.txt`. This data has a separate license
+  from the Hanzi Writer and cnchar application code.
+- Five-category order labels are derived from cnchar-order 3.2.6 (MIT).
+  Its license is included in `assets/stroke-left-dots-cnchar-license.txt`.
+  Labels with a different stroke count are omitted. Source archive URLs and
+  SHA-256 checksums are retained inside the asset.
+- Rebuild with `tools/build_stroke_glyphs.py`; the application renders these
+  local paths and never fetches glyphs at runtime. No cnchar or Hanzi Writer
+  JavaScript runtime is embedded.
+
+## Stroke fold orders
+
+`assets/stroke-folds.json.gz` retains fine stroke order letters from cnchar-order
+3.2.6 (MIT, https://github.com/theajack/cnchar), restricted to canonical orders
+present in the active five-category dictionary. Shared letter groups are kept
+intact. The source archive URL and SHA-256 are embedded in the asset. The license
+is included in `assets/stroke-left-dots-cnchar-license.txt`. Rebuild offline with
+`tools/build_fold_annotations.py`; no downloaded JavaScript is executed.
 
 ## Stroke context data
 

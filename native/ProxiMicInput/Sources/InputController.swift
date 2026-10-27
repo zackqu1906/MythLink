@@ -670,7 +670,7 @@ final class ProxiMicInputController: IMKInputController {
                                style: message["style"] as? [String: Any] ?? [:])
         case "stroke_update":
             let code = String((message["code"] as? String ?? "").prefix(64))
-            let candidates = Array((message["candidates"] as? [String] ?? []).prefix(5))
+            let candidates = Array((message["candidates"] as? [String] ?? []).prefix(6))
             let prediction = code.isEmpty && message["prediction"] as? Bool == true
                 && strokeActive && !token.isEmpty && !candidates.isEmpty
             if code.isEmpty && !prediction { clearStroke(notify: false, ending: token.isEmpty); return }
@@ -689,12 +689,23 @@ final class ProxiMicInputController: IMKInputController {
             }
             strokeCandidates = candidates
             if strokePanel == nil { strokePanel = StrokeCandidatePanel() }
-            strokePanel?.update(code: code, candidates: strokeCandidates, selected: message["selected"] as? Int ?? 0)
+            strokePanel?.update(code: code, candidates: strokeCandidates, selected: message["selected"] as? Int ?? 0,
+                                glyphs: Array((message["glyphs"] as? [[String: String]] ?? []).prefix(6)))
             tick()
+        case "stroke_selection":
+            guard strokeActive else { return }
+            strokePanel?.selection(phase: message["phase"] as? String ?? "idle",
+                                   progress: message["progress"] as? Double ?? 0,
+                                   direction: message["direction"] as? String ?? "",
+                                   origin: message["origin"] as? [Double] ?? [],
+                                   points: message["points"] as? [[Double]] ?? [],
+                                   selectDistance: message["select_distance"] as? Double ?? 3)
         case "stroke_commit":
             let request = message["request_id"] as? String ?? ""
             let value = message["text"] as? String ?? ""
-            let accepted = !request.isEmpty && value.count == 1 && strokeCandidates.contains(value)
+            // Punctuation cells of the menu replace any pending strokes.
+            let accepted = !request.isEmpty && value.count == 1
+                && (strokeCandidates.contains(value) || ["，", "。", "？"].contains(value))
                 && (!strokeCode.isEmpty || (strokeActive && !token.isEmpty))
             var prefix: String?
             if accepted {

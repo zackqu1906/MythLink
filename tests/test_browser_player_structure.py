@@ -7,6 +7,7 @@ from test_presentation_portability import native_backend
 from proximic_ring.diagnostics.scene_diagnostics import SceneActionError
 
 
+@pytest.mark.mac_only
 @pytest.mark.parametrize('bundle', ['com.apple.Safari', 'com.google.Chrome'])
 def test_native_boundary_reads_outer_window_only(monkeypatch,bundle):
     import proximic_ring.scenes.recognition.browser as module

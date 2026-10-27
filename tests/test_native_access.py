@@ -12,6 +12,7 @@ from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, Pe
 from proximic_ring.platforms.macos.native_access import NativeAccessChannel
 
 
+@pytest.mark.mac_only
 def test_process_cached_denial_recovers_without_restarting_host(tmp_path, monkeypatch):
     """A real child caches the initial grant, just as affected CG builds do."""
     permission = tmp_path / "permission"
@@ -66,6 +67,7 @@ for line in sys.stdin:
         channel.close()
 
 
+@pytest.mark.mac_only
 def test_lost_reply_is_not_replayed(tmp_path, monkeypatch):
     marker = tmp_path / "posted"
     channel = NativeAccessChannel()
@@ -86,6 +88,7 @@ def test_lost_reply_is_not_replayed(tmp_path, monkeypatch):
         channel.close()
 
 
+@pytest.mark.mac_only
 def test_large_slow_menu_reply_uses_metadata_budget(tmp_path, monkeypatch):
     worker = tmp_path / "large_menu.py"
     worker.write_text('''import sys, json, time

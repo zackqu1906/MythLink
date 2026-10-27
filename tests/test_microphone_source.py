@@ -8,6 +8,37 @@ import pytest
 from proximic_ring.audio import microphone as module
 
 
+def test_touchpad_pause_stops_os_capture_discards_pending_pcm_and_resumes_fresh_audio():
+    calls = []
+    source = module.MicrophoneSource()
+    class Stream:
+        def abort(self):
+            calls.append('abort')
+            source._on_finished()  # An intentional stop is not a device failure.
+        def start(self): calls.append('start')
+        def close(self): calls.append('close')
+    source._stream = Stream()
+    source._pending = np.ones(160, dtype=np.float32)
+    source._queue.put((np.ones(320, dtype=np.float32), 1))
+    source.pause_capture()
+    assert calls == ['abort'] and source.error is None
+    assert source._queue.empty() and source._pending.size == 0
+    timing = SimpleNamespace(currentTime=0, inputBufferAdcTime=0)
+    source._on_audio(np.ones((320, 1)), 320, timing, None)
+    assert source._queue.empty()  # A late callback cannot enter the resumed session.
+    with pytest.raises(InterruptedError): source.read(320)
+    source.pause_capture()
+    assert calls == ['abort']
+    source.resume_capture()
+    assert calls == ['abort', 'start']
+    source._on_audio(np.full((320, 1), .25), 320, timing, None)
+    np.testing.assert_allclose(source.read(320), .25)
+    source.pause_capture()
+    source.close()
+    source.resume_capture()
+    assert calls[-1] == 'close' and calls.count('start') == 1
+
+
 def test_dji_resolution_uses_identity_after_reorder_and_never_default_fallback(monkeypatch):
     rows = [
         {"name": "Built-in", "api": "Core Audio", "index": 0},

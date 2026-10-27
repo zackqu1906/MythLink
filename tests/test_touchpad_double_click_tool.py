@@ -16,7 +16,7 @@ spec.loader.exec_module(tool)
 
 
 def summary(folder):
-    return json.loads((folder / "summary.json").read_text())
+    return json.loads((folder / "summary.json").read_text(encoding="utf-8"))
 
 
 def test_demo_uses_production_detector_and_clearly_labels_its_log(tmp_path, capsys):
@@ -27,7 +27,7 @@ def test_demo_uses_production_detector_and_clearly_labels_its_log(tmp_path, caps
     assert "[模拟] 不连接 Ring" in text and "双击 #1" in text
     result = summary(folder)
     assert result["raw_clicks"] == 5 and result["single_clicks"] == 4 and result["double_clicks"] == 1
-    rows = [json.loads(row) for row in (folder / "events.jsonl").read_text().splitlines()]
+    rows = [json.loads(row) for row in (folder / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert all(row["mode"] == "demo" for row in rows)
     assert next(row for row in rows if row["event"] == "double")["interval_ms"] == pytest.approx(400)
     assert [row['event'] for row in rows if row['event'] in {'single', 'double'}] == [
@@ -61,7 +61,7 @@ def test_repeated_trajectory_cleanup_is_summarized_without_claiming_clicks_were_
         recorder.observe(TouchpadClick(400, 10.1), now=10.1)
         recorder.observe(TouchpadContact("reset", 0, 10.2), now=10.2)
         assert recorder.stream_resets == 1 and recorder.single == 1
-        rows = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
+        rows = [json.loads(line) for line in (folder / "events.jsonl").read_text(encoding="utf-8").splitlines()]
         assert sum(row.get("reset_scope") == "expired_motion" for row in rows) == 100
         assert rows[-1]["click_pair_reset"] is True
     finally:

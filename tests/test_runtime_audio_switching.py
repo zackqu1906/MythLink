@@ -2,11 +2,80 @@ import threading
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from proximic_ring.voice import app_runtime
 from proximic_ring.asr.controller import ProximitySessionController
 from proximic_ring.audio.live_audio_settings import AudioConfiguration, LiveAudioSettings
 from proximic_ring.gestures.gesture_settings import GestureBindings
+
+
+@pytest.mark.parametrize('startup_failed', [False, True])
+def test_touchpad_suspends_computer_capture_and_remote_pipeline_even_if_startup_fails(monkeypatch, startup_failed):
+    state, processed, calls = {}, [], []
+    class Ring:
+        error = None
+        def __init__(self, **kwargs):
+            self._touchpad_audio_suspended = threading.Event()
+            state['ring'] = self
+        def connect(self): pass
+        def start_stream(self, **kwargs): pass
+        def close(self): pass
+    class Mic:
+        error = None
+        device_name = 'Selected microphone'
+        def __init__(self, **kwargs):
+            self._capture_paused = threading.Event()
+            self.proved = False
+            state['mic'] = self
+        def open(self): pass
+        def close(self): calls.append('close')
+        def pause_capture(self):
+            self._capture_paused.set()
+            calls.append('pause')
+        def resume_capture(self):
+            self._capture_paused.clear()
+            calls.append('resume')
+        def read(self, frames):
+            assert not self._capture_paused.is_set()
+            if not self.proved:
+                self.proved = True
+                return np.ones(frames, np.float32)
+            state['recognition_before_eof'] = enabled.is_set()
+            return None
+    class Detector:
+        def reset(self): pass
+        def feed(self, block): pytest.fail('Suspended audio reached the detector')
+    class Controller:
+        active = False
+        def reset(self): pass
+        def discard_current(self): calls.append('discard')
+        def cancel_pending(self): calls.append('cancel')
+        def process(self, *args, **kwargs): processed.append(args)
+        def close(self): pass
+    def started():
+        state['ring']._touchpad_audio_suspended.set()
+        state['ring']._pause_external_audio()
+        if startup_failed:
+            state['ring']._touchpad_audio_suspended.clear()
+    def status(message):
+        if message == '[ASR] CANCELLED reason=touchpad':
+            assert state['mic']._capture_paused.is_set() and not processed
+            state['ring']._touchpad_audio_suspended.clear()
+    monkeypatch.setattr(app_runtime, 'RingAudioSource', Ring)
+    monkeypatch.setattr(app_runtime, 'MicrophoneSource', Mic)
+    monkeypatch.setattr(app_runtime, '_build_detector', lambda *_: Detector())
+    monkeypatch.setattr(app_runtime, '_build_session_controller', lambda *args, **kwargs: Controller())
+    enabled = threading.Event(); enabled.set()
+    app_runtime.RecognitionRuntime(app_runtime.RuntimeSettings(
+        audio_source='microphone', speech_control_mode='proximity', asr_end_on_tap=False,
+        push_to_talk=False,
+    )).run(threading.Event(), enabled, on_update=lambda _: None, on_state=status,
+           on_connected=lambda: None, on_disconnected=lambda: None, on_started=started)
+    assert not processed and 'resume' in calls and calls.index('pause') < calls.index('resume')
+    assert state['recognition_before_eof']  # EOF itself closes the recognition gate.
+    if not startup_failed:
+        assert calls.count('discard') == calls.count('cancel') == 1
 
 
 def test_runtime_finishes_old_turn_waits_for_commit_and_keeps_gestures_and_session_ids(monkeypatch):

@@ -6,6 +6,8 @@ Item {
     property var points: []
     required property var trailStyle
     property bool standard: false
+    // Center the ink's bounding box instead of anchoring its first point.
+    property bool centered: false
     function updateTrace(value, finished) {
         fade.stop(); points = value; standard = finished; canvas.opacity = 1; canvas.requestPaint()
         if (finished && value.length > 1) fade.restart()
@@ -20,7 +22,16 @@ Item {
             const c = getContext("2d"); c.reset()
             const p = trail.points
             if (p.length < 2) return
-            function point(i) { return {x: p[i][0] * width, y: p[i][1] * height} }
+            let dx = 0, dy = 0
+            if (trail.centered) {
+                let x0 = p[0][0], x1 = x0, y0 = p[0][1], y1 = y0
+                for (let i = 1; i < p.length; i++) {
+                    x0 = Math.min(x0, p[i][0]); x1 = Math.max(x1, p[i][0])
+                    y0 = Math.min(y0, p[i][1]); y1 = Math.max(y1, p[i][1])
+                }
+                dx = .5 - (x0 + x1) / 2; dy = .5 - (y0 + y1) / 2
+            }
+            function point(i) { return {x: (p[i][0] + dx) * width, y: (p[i][1] + dy) * height} }
             // Smooth the display only. Recognition uses the untouched path.
             c.strokeStyle = trail.trailStyle.color; c.lineWidth = trail.trailStyle.line_width
             c.lineCap = "round"; c.lineJoin = "round"

@@ -96,6 +96,7 @@ def test_question_id_zero_projects_once_and_retires_with_server(tmp_path):
     with pytest.raises(ValueError,match='已结束'):rpc.write({'id':0,'result':{'answers':{}}})
 
 
+@pytest.mark.posix_only
 def test_private_service_endpoint_rejects_public_directory(tmp_path):
     tmp_path.chmod(0o755)
     with pytest.raises(PermissionError):private_directory(tmp_path)

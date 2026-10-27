@@ -11,15 +11,20 @@ from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from ring_python_sdk.touchpad import TouchpadMove, TouchpadClick
 
 
-def test_dynamic_controls_use_existing_loop_without_stopping_audio():
+def test_dynamic_controls_mute_microphone_before_touchpad_start():
     async def run():
         source = RingAudioSource()
         calls = []
         class Session:
             touchpad_active = False
             mic_active = True
+            client = SimpleNamespace(is_connected=True)
+            async def mic_off(self):
+                calls.append('mic_off')
+                self.mic_active = False
             async def touchpad_on(self, **options):
                 assert asyncio.get_running_loop() is loop
+                assert not self.mic_active and source._pause_stream_requested.is_set()
                 calls.append(options)
                 self.callback = options['on_stopped']
                 self.touchpad_active = True
@@ -32,9 +37,12 @@ def test_dynamic_controls_use_existing_loop_without_stopping_audio():
         events = []
         future = await asyncio.to_thread(source.start_touchpad, on_event=events.append, duration_s=None)
         await asyncio.wrap_future(future)
-        assert source.touchpad_active and calls[0]['duration_s'] is None
+        assert source.touchpad_active and calls[0] == 'mic_off' and calls[1]['duration_s'] is None
+        assert source._touchpad_audio_suspended.is_set()
         await asyncio.wrap_future(source.stop_touchpad())
-        assert not source.touchpad_active and session.mic_active and not source._stop.is_set()
+        assert not source.touchpad_active and not source._stop.is_set()
+        assert not source._touchpad_audio_suspended.is_set()
+        assert not source._pause_stream_requested.is_set()  # Watchdog can restore MIC.
         assert not source._touchpad_requests
         source._touchpad_endpoint = None
         with pytest.raises(ConnectionError):

@@ -71,5 +71,6 @@ class DTWRecognizer:
                 codes.append(dict(item))
         result = dict(ranked[0])
         result.update(recognizer='dtw_v1', sample_count=32, direction_weight=self.weight,
-            template_profile=self.profile, alternatives=ranked[:2], category_alternatives=codes[:2])
+            template_profile=self.profile, alternatives=ranked[:2], category_alternatives=codes[:2],
+            category_scores=codes, shape_scores=ranked)
         return result

@@ -86,18 +86,25 @@ UiScrollView {
                 spacing: 12
                 RowLayout {
                     Layout.fillWidth: true; Layout.preferredHeight: 40; spacing: 12
-                    Label { Layout.preferredHeight: 36; Layout.alignment: Qt.AlignTop; verticalAlignment: Text.AlignVCenter; text: "语音输入"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
+                    Label { Layout.preferredHeight: 36; Layout.alignment: Qt.AlignTop; verticalAlignment: Text.AlignVCenter; text: page.controller.touchpad.blocksVoice ? "语音识别已暂停" : "语音输入"; objectName: "voiceStatusTitle"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
                     FigmaEnableControl {
                         objectName: "voiceRecognitionButton"
                         Layout.alignment: Qt.AlignTop; Layout.topMargin: 3
                         checked: page.controller.recognitionEnabled
-                        enabled: page.controller.connected && !page.controller.busy && !page.controller.scanBusy
+                        text: page.controller.touchpad.blocksVoice ? "触摸板使用中" : ""
+                        enabled: page.controller.connected && !page.controller.busy && !page.controller.scanBusy && !page.controller.touchpad.blocksVoice
                         Accessible.name: checked ? "暂停语音识别" : "开启语音识别"
                         onClicked: page.controller.toggleRecognition()
                     }
                     Item { Layout.fillWidth: true }
                     WorkbenchNavigation { objectName: "voiceHotwordLibraryButton"; Layout.alignment: Qt.AlignTop; text: "热词库"; onClicked: page.toggleHotwords() }
                     WorkbenchNavigation { objectName: "openVoiceGestureSettingsButton"; Layout.alignment: Qt.AlignTop; text: "映射调节"; onClicked: page.scrollToGestures() }
+                }
+                Label {
+                    objectName: "voiceStatusDetail"; Layout.fillWidth: true; wrapMode: Text.Wrap
+                    visible: page.controller.touchpad.blocksVoice
+                    text: "触摸板使用期间麦克风已暂停，停止后恢复原来的语音设置。"
+                    color: theme.muted; font.pixelSize: 13
                 }
                 Grid {
                     id: gestureBindings

@@ -106,6 +106,8 @@ class MicrophoneSource(AudioSource):
         self._stream = None
         self._lock = threading.Lock()
         self._stopped = threading.Event()
+        self._capture_paused = threading.Event()
+        self._capture_generation = 0
         self._queue: queue.Queue = queue.Queue(maxsize=100)
         self._pending = np.empty(0, dtype=np.float32)
         self._pending_start_ns = 0
@@ -150,7 +152,7 @@ class MicrophoneSource(AudioSource):
                 raise
 
     def _on_audio(self, data, frames, timing, status) -> None:
-        if self._stopped.is_set() or self._error is not None:
+        if self._stopped.is_set() or self._capture_paused.is_set() or self._error is not None:
             return
         try:
             if status:
@@ -166,8 +168,33 @@ class MicrophoneSource(AudioSource):
             self._error = RuntimeError("麦克风处理积压，已停止本次连接") if isinstance(exc, queue.Full) else exc
 
     def _on_finished(self) -> None:
-        if not self._stopped.is_set() and self._error is None:
+        if not self._stopped.is_set() and not self._capture_paused.is_set() and self._error is None:
             self._error = RuntimeError("麦克风连接已中断，请检查 DJI 接收器并重新连接")
+
+    def pause_capture(self) -> None:
+        """Stop the OS stream without retiring this selected microphone."""
+        with self._lock:
+            if self._capture_paused.is_set() or self._stopped.is_set():
+                return
+            self._capture_paused.set()
+            self._capture_generation += 1
+            if self._stream is not None:
+                self._stream.abort()
+            self._pending = np.empty(0, dtype=np.float32)
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+
+    def resume_capture(self) -> None:
+        with self._lock:
+            if not self._capture_paused.is_set() or self._stopped.is_set():
+                return
+            self._resampler = _StreamingMonoResampler(self.native_sample_rate)
+            self._capture_paused.clear()
+            if self._stream is not None:
+                self._stream.start()
 
     def close(self) -> None:
         self._stopped.set()
@@ -180,12 +207,18 @@ class MicrophoneSource(AudioSource):
                 stream.close()
 
     def read(self, frames: int) -> np.ndarray | None:
+        return self.read_interruptible(frames)
+
+    def read_interruptible(self, frames: int, *, should_interrupt=None) -> np.ndarray | None:
         if frames <= 0:
             raise ValueError("frames must be positive")
         deadline = time.monotonic() + 3.0
+        generation = self._capture_generation
         chunks = []
         remaining = frames
         while remaining:
+            if self._capture_paused.is_set() or generation != self._capture_generation or (should_interrupt is not None and should_interrupt()):
+                raise InterruptedError("麦克风采集暂停")
             if self._stopped.is_set():
                 return None
             if self._error is not None:
@@ -204,6 +237,8 @@ class MicrophoneSource(AudioSource):
             remaining -= take
             self._pending_start_ns += take * 1_000_000_000 // self.sample_rate
             self.last_read_end_monotonic_ns = self._pending_start_ns
+        if generation != self._capture_generation:
+            raise InterruptedError("麦克风采集已切换")
         return np.concatenate(chunks).astype(np.float32, copy=False)
 
 

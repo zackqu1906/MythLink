@@ -138,6 +138,7 @@ def test_presentation_negative_evidence_is_not_lost_to_generic_detector():
     assert result.diagnostic['canvas_reason'] == 'canvas_bounds_mismatch' and result.diagnostic['scanned_nodes'] > 0
 
 
+@pytest.mark.mac_only
 def test_ax_failures_keep_attribute_codes_not_document_values(monkeypatch):
     window, focus = window_tree('Slide Show - secret.pptx')
     backend, _, _ = native_backend(monkeypatch, window, focus)

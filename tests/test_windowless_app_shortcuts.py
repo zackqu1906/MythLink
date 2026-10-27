@@ -8,6 +8,7 @@ from test_app_shortcuts import desktop
 from test_presentation_portability import native_backend
 
 
+@pytest.mark.mac_only
 @pytest.mark.parametrize('scene', [False, True])
 @pytest.mark.parametrize('focus_role', [None, 'AXApplication'])
 @pytest.mark.parametrize('shortcut', ['Cmd+N', 'Cmd+O'])

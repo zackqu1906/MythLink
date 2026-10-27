@@ -84,6 +84,7 @@ def test_transport_fragmented_utf8_and_bounded_frames():
     a.close();b.close()
 
 
+@pytest.mark.posix_only
 def test_transport_secure_socket_and_real_request_roundtrip(tmp_path):
     import tempfile
     from pathlib import Path

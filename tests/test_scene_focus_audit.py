@@ -116,6 +116,7 @@ def test_switching_document_in_same_window_rejects_old_target(monkeypatch, scene
     assert 'file:///' not in repr(target)
 
 
+@pytest.mark.mac_only
 def test_mid_capture_focus_owner_change_discards_mixed_snapshot(monkeypatch):
     window, focus = window_tree(); focus['AXWindow'] = window
     other, _ = window_tree('Other.pptx')

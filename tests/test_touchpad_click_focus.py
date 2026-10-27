@@ -6,6 +6,8 @@ import pytest
 
 from proximic_ring.platforms.macos.native_touchpad import WorkerTouchpadMouse
 
+pytestmark = pytest.mark.mac_only  # exercises the macOS native touchpad helper
+
 
 @pytest.fixture
 def native_click(monkeypatch):

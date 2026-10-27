@@ -19,6 +19,7 @@ def test_independent_code_alternatives_and_no_online_learning():
     before = recognizer.bank.copy()
     result = recognizer.recognize([(0, 0), (100, 0), (94, 6)])
     assert result['shape'] == '横钩'
+    assert len(result['category_scores']) == 5
     assert len(result['category_alternatives']) == 2
     assert len({r['category'] for r in result['category_alternatives']}) == 2
     assert np.array_equal(before, recognizer.bank)

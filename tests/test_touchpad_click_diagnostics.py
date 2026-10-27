@@ -16,6 +16,8 @@ from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from proximic_ring.touchpad.touchpad_strokes import TouchpadStrokeOutput
 from ring_python_sdk.touchpad import TouchpadClick, TouchpadMove, TouchpadStats
 
+pytestmark = pytest.mark.mac_only  # exercises the macOS native touchpad helper
+
 
 @pytest.fixture
 def records(caplog):

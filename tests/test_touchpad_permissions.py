@@ -11,6 +11,8 @@ from proximic_ring.platforms.macos.native_touchpad import NativeTouchpadMouse, W
 from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from ring_python_sdk.touchpad import macos
 
+pytestmark = pytest.mark.mac_only  # exercises the macOS native touchpad helper
+
 
 @pytest.fixture
 def pointer(monkeypatch):

@@ -76,6 +76,7 @@ def test_unrelated_existing_bundle_is_never_overwritten(installer):
     assert not any(c[-1] == 'register' for c in calls)
 
 
+@pytest.mark.posix_only
 def test_selected_input_source_is_released_before_stop_and_restored_after_install(installer, monkeypatch):
     value, state, calls = installer
     bundle(value.destination, module.BUNDLE_ID, 'previous')
@@ -261,6 +262,7 @@ def test_system_must_confirm_enabled_source_or_install_rolls_back(installer):
     assert not value.destination.exists()
 
 
+@pytest.mark.posix_only
 def test_only_our_inactive_current_user_process_can_be_stopped(installer, monkeypatch):
     value, state, _ = installer
     state['running'] = '42'
@@ -274,6 +276,7 @@ def test_only_our_inactive_current_user_process_can_be_stopped(installer, monkey
     assert stopped == [42]
 
 
+@pytest.mark.posix_only
 def test_different_executable_is_not_stopped(installer, monkeypatch):
     value, state, _ = installer
     state['running'] = '42'

@@ -175,6 +175,7 @@ def test_successful_retry_clears_current_failure_but_keeps_paid_failure_history(
     assert any(j['status']=='failed' for j in store.rows('operation_jobs'))
 
 
+@pytest.mark.posix_only  # uses os.nice
 @pytest.mark.parametrize('failures',[0,1,3])
 def test_background_serve_automatically_extracts_imports_reviews_and_updates_ranking(recorder, store, monkeypatch,failures):
     """Exercise the actual idle loop, including periodic scan and review callbacks.

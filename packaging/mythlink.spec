@@ -6,7 +6,7 @@ import platform
 import runpy
 import tomllib
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata, collect_dynamic_libs
 
 
 project_root = Path(SPECPATH).parent
@@ -45,8 +45,10 @@ if notices.is_file():
     datas.append((str(notices), "."))
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
-if platform.system() == "Darwin":
+if platform.system() in {"Darwin", "Windows"}:
     hiddenimports += ["MNN", "_mnncengine"]
+if platform.system() == "Windows":
+    binaries += collect_dynamic_libs("MNN")
 hiddenimports += [
     "PySide6.QtWebEngineQuick",
     "PySide6.QtWebEngineCore",

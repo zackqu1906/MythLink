@@ -94,6 +94,7 @@ def test_voice_send_freezes_before_asr_finishes(inline_ui,monkeypatch,tmp_path,o
     assert QImage(frame['path']).pixelColor(10,10).name()=='#123456'
 
 
+@pytest.mark.posix_only
 def test_smart_capture_pins_target_before_worker_and_sends_frozen_path(inline_ui,monkeypatch,tmp_path):
     from pathlib import Path
     from PySide6.QtTest import QTest

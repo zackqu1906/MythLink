@@ -70,7 +70,7 @@ def test_qml_packaging_hook_keeps_plugins_and_metadata_for_actual_ui_imports(mon
     root = Path(__file__).parents[1]
     imports = set()
     for qml in (root / "src/proximic_ring").rglob("*.qml"):
-        imports.update(re.findall(r"^import (Qt[\w.]+)", qml.read_text(), re.MULTILINE))
+        imports.update(re.findall(r"^import (Qt[\w.]+)", qml.read_text(encoding='utf-8-sig'), re.MULTILINE))
     destinations = {"PySide6/Qt/qml/" + name.replace(".", "/") for name in imports}
     unused = "PySide6/Qt/qml/QtQuick/Pdf"
     plugins = [(path + "/plugin.dylib", path) for path in sorted(destinations | {unused})]
@@ -135,6 +135,8 @@ def test_open_unified_log_rotates_oversized_previous_run(
 
 def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> None:
     launcher = _load_launcher()
+    checked = []
+    monkeypatch.setattr(launcher, '_verify_touchpad_runtime', lambda: checked.append('touchpad'))
     output = io.StringIO()
     log_path = tmp_path / "diagnostic.log"
     def open_log():
@@ -148,6 +150,8 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
     )
 
     runtime_paths = types.ModuleType("proximic_ring.runtime_paths")
+    from proximic_ring import runtime_paths as real_runtime_paths
+    runtime_paths.__dict__.update(vars(real_runtime_paths))
     runtime_paths.configure_runtime_environment = lambda: None
     runtime_paths.is_frozen = lambda: False
     runtime_paths.resource_root = lambda: tmp_path
@@ -166,7 +170,8 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
 
     original_stdout, original_stderr = sys.stdout, sys.stderr
     try:
-        assert launcher.run() == 0
+        assert launcher.run() == 0, output.getvalue()
+        assert checked == (['touchpad'] if sys.platform in {'win32', 'darwin'} else [])
     finally:
         sys.stdout, sys.stderr = original_stdout, original_stderr
 

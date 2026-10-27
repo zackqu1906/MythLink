@@ -29,6 +29,7 @@ def activation_snapshot(role='AXLayoutArea', focused=True):
 @pytest.mark.parametrize('bundle', ['com.microsoft.Powerpoint', 'com.kingsoft.wpsoffice.mac',
     'com.apple.iWork.Keynote', 'com.apple.Preview', 'com.apple.QuickTimePlayerX',
     'com.apple.Music', 'com.openai.codex', 'test.unknown.application'])
+@pytest.mark.mac_only
 @pytest.mark.parametrize('scene_capture', [False, True])
 @pytest.mark.parametrize('focused', [True, False])
 def test_all_app_window_shortcuts_work_from_disabled_canvas_and_revalidate(monkeypatch, bundle, scene_capture, focused):
@@ -300,6 +301,7 @@ def test_codex_31_level_focus_chain_reaches_window_without_skipping_ancestor_gua
         assert target.diagnostic['focus_depth'] == 31
 
 
+@pytest.mark.mac_only
 def test_independent_native_shortcut_never_reads_focus_and_survives_focus_change(monkeypatch, desktop):
     _, state, _ = desktop
     window, editor = activation_snapshot('AXTextArea')

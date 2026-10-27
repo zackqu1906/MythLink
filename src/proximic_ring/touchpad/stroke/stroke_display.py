@@ -16,6 +16,24 @@ STANDARD_STROKES = {
     "z": [[.20, .28], [.80, .28], [.51, .76]],
 }
 
+# Trial previews use a constant logical-pixel / SDK-unit ratio, independent
+# of stroke extent and widget size. Recognition continues using raw points.
+TRIAL_TRACE_SCALE = .5
+
+
+def fixed_scale_trace(points, width, height, *, scale=TRIAL_TRACE_SCALE):
+    """Translate to the view center without fitting or normalizing stroke size.
+
+    Long traces may extend outside the view and be clipped by the renderer.
+    The same sensor displacement must occupy the same pixels on every trial.
+    """
+    points = [(float(x), float(y)) for x, y in points]
+    if not points or any(not math.isfinite(v) for p in points for v in p):
+        return []
+    cx = (min(x for x, _ in points) + max(x for x, _ in points)) / 2
+    cy = (min(y for _, y in points) + max(y for _, y in points)) / 2
+    return [[(x-cx)*scale + width/2, (y-cy)*scale + height/2] for x, y in points]
+
 
 def standard_stroke(category):
     return [list(point) for point in STANDARD_STROKES.get(category, [])]

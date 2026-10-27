@@ -29,6 +29,15 @@ def _self_check_requested() -> bool:
     return bool(_SELF_CHECK_OPTIONS.intersection(sys.argv[1:]))
 
 
+def _verify_touchpad_runtime() -> None:
+    import numpy as np
+    from ring_python_sdk.touchpad import TouchpadBackbone
+    velocities = TouchpadBackbone().step(np.zeros(6, dtype=np.float32))
+    if velocities.shape != (5, 3) or not np.isfinite(velocities).all():
+        raise RuntimeError('触摸板模型自检失败')
+    print('[startup] touchpad model ready')
+
+
 def _verify_bundled_qml_runtime(resource_root: Path) -> None:
     candidates = (
         resource_root / "PySide6" / "Qt" / "qml",
@@ -116,6 +125,8 @@ def run() -> int:
             if not package_self_check:
                 return 0
         if package_self_check:
+            if sys.platform in {'win32', 'darwin'}:
+                _verify_touchpad_runtime()
             from proximic_ring.agent_workflow.history.package_check import verify_runtime
             verify_runtime(frozen=is_frozen())
             print("[startup] Computer History recommendation runtime ready")

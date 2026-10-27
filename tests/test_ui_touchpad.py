@@ -158,6 +158,51 @@ def test_legacy_stop_duration_is_retired(inline_ui):
     reloaded.close()
 
 
+@pytest.mark.parametrize('enabled', [True, False])
+def test_pointer_blocks_voice_until_touchpad_stops(inline_ui, enabled):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    c, _, _, root, _ = inline_ui
+    tp, source = prepare(c)
+    c._recognition_enabled = enabled
+    c._recognition_event.set() if enabled else c._recognition_event.clear()
+    tp.start(); QTest.qWait(20)
+    assert tp.blocksVoice and not c._recognition_event.is_set()
+    source.future.set_result(None); QTest.qWait(20)
+    assert tp.blocksVoice and not c._recognition_event.is_set()
+    button = root.findChild(QObject, 'voiceRecognitionButton')
+    assert not button.property('enabled') and button.property('text') == '触摸板使用中'
+    assert root.findChild(QObject, 'voiceStatusTitle').property('text') == '语音识别已暂停'
+    c._apply_runtime_status('[ASR] START t=2.000s')
+    assert c._cancel_utterance_event.is_set()
+    tp.stop(); QTest.qWait(20)
+    assert not tp.blocksVoice and c._recognition_event.is_set() == enabled
+    assert c.recognitionEnabled == enabled
+
+
+def test_pointer_start_failure_restores_voice_gate(inline_ui):
+    from PySide6.QtTest import QTest
+    c, *_ = inline_ui
+    tp, source = prepare(c)
+    c._recognition_event.set()
+    tp.start(); QTest.qWait(20)
+    source.future.set_exception(RuntimeError('model unavailable')); QTest.qWait(20)
+    assert tp.state == 'error' and not tp.blocksVoice
+    assert c._recognition_event.is_set()
+
+
+def test_pointer_keeps_user_paused_voice_disabled_after_stop(inline_ui):
+    from PySide6.QtTest import QTest
+    c, *_ = inline_ui
+    tp, source = prepare(c)
+    c._recognition_event.set()
+    tp.start(); QTest.qWait(20)
+    source.future.set_result(None); QTest.qWait(20)
+    c.pauseRecognition()
+    tp.stop(); QTest.qWait(20)
+    assert not c.recognitionEnabled and not c._recognition_event.is_set()
+
+
 def test_cancel_start_and_ignore_callbacks_from_old_run(inline_ui):
     from PySide6.QtTest import QTest
     c, _, _, _, _ = inline_ui

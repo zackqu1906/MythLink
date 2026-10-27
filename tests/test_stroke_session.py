@@ -20,6 +20,10 @@ def until(predicate):
 
 @pytest.fixture
 def stroke(inline_ui, monkeypatch):
+    # Native-editor session tests use a fake macOS IME. Enable that platform
+    # branch explicitly when this fixture is run on a Windows development host.
+    import proximic_ring.ui.touchpad.touchpad_controller as module
+    monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='darwin'))
     c, bridge, root, tp, source = idle(inline_ui)
     session = tp.strokeSession
     c._inline_input._source_switch_factory = FakeSource
@@ -97,28 +101,61 @@ def test_double_click_enters_without_any_voice_commands_and_exits_without_source
     tp._run.output.options["on_double_click"]()
     until(lambda: session.phase == "idle" and not tp.busy)
     assert not tp._code and not tp.strokeCandidates
-    assert c.recognitionEnabled and c._recognition_event.is_set()
+    assert c.recognitionEnabled and not c._recognition_event.is_set()
     assert source.stops == 0 and len(source.starts) == 1 and tp.inputMode == "pointer" and tp.active
     assert any(m["type"] == "stroke_end" for m in bridge.messages)
     assert not any(m["type"] == "stroke_commit" for m in bridge.messages)
     assert helper.calls == [("start", ("test.editor", 123)), ("cancel",)]
 
 
-def test_confirm_keeps_stroke_mode_and_shares_standard_geometry(stroke):
+def test_confirm_keeps_stroke_mode_and_does_not_show_canonical_shape(stroke):
     c, bridge, tp, _, session = stroke
     wake(stroke)
     seen = []
     tp.strokeTraceChanged.connect(lambda p, f: seen.append((p, f)))
     tp.addStroke("z")
-    assert seen[-1] == (standard_stroke("z"), True)
-    trace = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_trace")
-    assert trace["points"] == seen[-1][0] and trace["finished"] is True
+    # Recognized strokes keep their own ink, which fades; no canonical shape is drawn.
+    assert (standard_stroke("z"), True) not in seen
     tp.selectCandidate(0)
     until(lambda: bool(tp._pending_stroke_commit))
     request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
     c._inline_input._accept(dict(type="stroke_result", epoch=c._inline_input._epoch,
         client_id=request["client_id"], request_id=request["request_id"], success=True))
     assert session.phase == "running" and tp.active and tp._code == "" and tp.blocksVoice
+
+
+def test_native_palette_gets_the_trial_menu_selection_and_punctuation(stroke):
+    c, bridge, tp, _, session = stroke
+    wake(stroke)
+    run = tp._run
+    tp.addStroke("h")
+    update = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_update")
+    assert len(update["candidates"]) == tp.candidatePageSize == 6 and len(update["glyphs"]) == 6
+    points = [(0., 0.), (-2., 0.), (-4., 0.)]
+    tp._receive(run, "selection_state", (run.output, dict(phase="selecting", progress=100, direction="left",
+        display=dict(origin=(0., 0.), points=points))))
+    state = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_selection")
+    assert state["phase"] == "selecting" and state["direction"] == "left"
+    assert state["origin"] == [0., 0.] and state["points"][-1] == [-4., 0.] and state["select_distance"] == 3.
+    chosen = tp.strokeCandidates[1]
+    tp._receive(run, "selection", (run.output, dict(decision=dict(phase="selecting", direction="left"))))
+    assert next(m for m in reversed(bridge.messages) if m["type"] == "stroke_selection")["phase"] == "idle"
+    request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
+    assert request["text"] == chosen
+    c._inline_input._accept(dict(type="stroke_result", epoch=c._inline_input._epoch,
+        client_id=request["client_id"], request_id=request["request_id"], success=True))
+    until(lambda: not tp._pending_stroke_commit)
+    tp.addStroke("s")
+    learned = tp._writer_model().snapshot()["confirmations"]
+    tp._receive(run, "selection", (run.output, dict(decision=dict(phase="selecting", direction="up"))))
+    request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
+    assert request["text"] == "。"
+    c._inline_input._accept(dict(type="stroke_result", epoch=c._inline_input._epoch,
+        client_id=request["client_id"], request_id=request["request_id"], success=True))
+    until(lambda: not tp._pending_stroke_commit)
+    # Punctuation replaces the pending strokes and is never learned as handwriting.
+    assert not tp._code and tp._writer_model().snapshot()["confirmations"] == learned
+    assert session.phase == "running"
 
 
 def test_firmware_tap_still_confirms_and_touchpad_single_does_not(stroke):
@@ -231,7 +268,7 @@ def test_reset_during_preparation_restores_pointer_without_a_stuck_voice_gate(st
     c._inline_input.reset()
     session._poll()
     until(lambda: not session.engaged and tp._run.output.active)
-    assert not tp.blocksVoice and c._recognition_event.is_set()
+    assert tp.blocksVoice and not c._recognition_event.is_set()
 
 
 @pytest.mark.parametrize("with_ink", [False, True])
@@ -309,9 +346,9 @@ def test_failed_double_click_handoff_restores_pointer_and_voice(stroke, monkeypa
                 client_id="stroke-editor", stroke_session=session._token, success=True,
                 panel_visible=False, error="浮窗无法显示"))
     until(lambda: not session.engaged and tp._run.output is not output and tp._run.output.active)
-    assert tp.inputMode == "pointer" and tp.active and not tp.blocksVoice
+    assert tp.inputMode == "pointer" and tp.active and tp.blocksVoice
     assert tp._run.switch_pending is None
-    assert c.recognitionEnabled and c._recognition_event.is_set()
+    assert c.recognitionEnabled and not c._recognition_event.is_set()
     assert len(source.starts) == 1 and source.stops == 0
     assert not any(m["type"] in {"begin", "finish", "finish_dictation", "stroke_commit"} for m in bridge.messages)
     assert any(event == "STROKE_SESSION" and fields.get("reason") for event, fields in events)
@@ -380,6 +417,9 @@ def test_enabling_voice_during_strokes_changes_preference_without_listening(stro
     assert c.recognitionEnabled and not c._recognition_event.is_set()
     tp.strokeSession.cancel()
     until(lambda: not tp.busy)
+    assert tp.blocksVoice and not c._recognition_event.is_set()
+    tp.stop()
+    until(lambda: not tp.busy)
     assert c._recognition_event.is_set()
 
 
@@ -438,7 +478,7 @@ def test_previous_session_clear_cannot_close_reopened_strokes_in_same_editor(str
     assert session.phase == "running" and tp._code == "h"
 
 
-def test_updated_ui_previews_canonical_shape(stroke, inline_ui, tmp_path):
+def test_updated_ui_does_not_preview_canonical_shape(stroke, inline_ui, tmp_path):
     from PySide6.QtCore import QObject
     _, _, tp, _, _ = stroke
     root = inline_ui[3]
@@ -451,8 +491,8 @@ def test_updated_ui_previews_canonical_shape(stroke, inline_ui, tmp_path):
     tp.addStroke("z")
     QTest.qWait(30)
     trail = root.findChild(QObject, "strokeTrailDisplay")
-    assert trail.property("standard") is True
-    assert root.grabWindow().save(str(tmp_path / "stroke-canonical-preview.png"))
+    assert not trail.property("points")
+    assert root.grabWindow().save(str(tmp_path / "stroke-no-canonical-preview.png"))
     assert tp.strokeGestureLabel == "Touchpad 双击"
     assert tp.doubleClickIntervalMs == 400
     assert root.findChild(QObject, "strokeWakeEnabled") is None

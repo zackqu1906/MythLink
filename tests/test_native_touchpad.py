@@ -13,6 +13,8 @@ from proximic_ring.platforms.macos.mac_permissions import MacPermissionError, Pe
 from proximic_ring.platforms.macos.native_access import NativeAccessChannel
 from proximic_ring.platforms.macos.native_touchpad import NativeTouchpadMouse, WorkerTouchpadMouse
 
+pytestmark = pytest.mark.mac_only  # exercises the macOS native touchpad helper
+
 
 def test_pointer_recovers_cached_denial_in_new_child_without_restarting_host(tmp_path, monkeypatch):
     # The host's cached denial must neither block the fresh child nor be bypassed

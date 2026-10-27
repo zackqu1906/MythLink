@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 import threading
 import time
+import sys
 
 from .touchpad_clicks import TouchpadClicks
 from .touchpad_diagnostics import note
@@ -108,11 +109,15 @@ class TouchpadMouseOutput:
         try:
             factory = self.mouse_factory
             if factory is None:
-                from ..platforms.macos.native_touchpad import NativeTouchpadMouse
-                factory = NativeTouchpadMouse
+                if sys.platform == 'win32':
+                    from ring_python_sdk.touchpad.windows import WindowsSystemMouse
+                    factory = WindowsSystemMouse
+                else:
+                    from ..platforms.macos.native_touchpad import NativeTouchpadMouse
+                    factory = NativeTouchpadMouse
             self.mouse = factory()
             self.mouse.gain, self.mouse.clicks_enabled, self.mouse.invert_y = self.options
-            self.mouse.stop_on_escape = False
+            self.mouse.stop_on_escape = sys.platform == 'win32' and hasattr(self.mouse, 'check_health')
             if self.stopped.is_set() or self.connection.is_set():
                 return
             self.mouse.enable()
@@ -293,5 +298,8 @@ class TouchpadMouseOutput:
                     self.on_double_click(target)
                     self._finish_click(trace, 'double_click_stroke_requested', outcome='routed', **details)
                 else:
+                    if sys.platform == 'win32' and not target and self.click_context() == context:
+                        self._send_click(trace)
+                        continue
                     self._finish_click(trace, 'click_context_changed' if self.click_context() != context
                                        else receipt.get('reason', 'double_target_unavailable'), **details)

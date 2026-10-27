@@ -40,6 +40,7 @@ def wait_until(predicate):
     assert predicate()
 
 
+@pytest.mark.mac_only
 def test_busy_host_retries_after_owner_exits_and_accepts_native_handshake(controllers):
     with tempfile.TemporaryDirectory(prefix="ime-retry-", dir="/private/tmp") as directory:
         path = Path(directory) / "bridge.sock"

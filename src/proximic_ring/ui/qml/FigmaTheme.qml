@@ -18,7 +18,10 @@ QtObject {
     readonly property color warning: "#76520B"
     readonly property color warningSurface: "#FFFAEF"
     readonly property color warningBorder: "#F0E2C2"
-    readonly property FontLoader regularFont: FontLoader { source: "../assets/fonts/SourceHanSansSC-Regular.otf" }
-    readonly property FontLoader mediumFont: FontLoader { source: "../assets/fonts/SourceHanSansSC-Medium.otf" }
-    readonly property string family: regularFont.name
+    // The bundled CFF faces can resolve to incorrect CJK glyphs in the native
+    // Windows font engine. Use the OS UI face there; keep bundled fonts on Mac.
+    readonly property bool useSystemFont: Qt.platform.os === "windows"
+    readonly property FontLoader regularFont: FontLoader { source: Qt.platform.os === "windows" ? "" : "../assets/fonts/SourceHanSansSC-Regular.otf" }
+    readonly property FontLoader mediumFont: FontLoader { source: Qt.platform.os === "windows" ? "" : "../assets/fonts/SourceHanSansSC-Medium.otf" }
+    readonly property string family: useSystemFont ? "Microsoft YaHei UI" : regularFont.name
 }

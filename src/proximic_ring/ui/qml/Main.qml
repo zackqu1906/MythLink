@@ -9,7 +9,7 @@ ApplicationWindow {
     width: 1200
     height: 780
     minimumWidth: 940
-    minimumHeight: 700
+    minimumHeight: 560
     readonly property bool unifiedTitlebar: Qt.platform.os === "osx"
     flags: unifiedTitlebar
            ? Qt.Window | Qt.ExpandedClientAreaHint | Qt.NoTitleBarBackgroundHint

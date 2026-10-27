@@ -70,7 +70,10 @@ class StrokeSessionController(QObject):
     def request(self, target=None):
         self._toggle(self.owner._disconnect_event, target)
 
-    def _toggle(self, connection, event):
+    def request_local(self):
+        self._toggle(self.owner._disconnect_event, None, local=True)
+
+    def _toggle(self, connection, event, *, local=False):
         if (connection is not self.owner._disconnect_event or connection.is_set()
                 or self.tp._closed or self.owner._quitting):
             return
@@ -84,8 +87,18 @@ class StrokeSessionController(QObject):
         self._generation += 1
         self._connection = connection
         self._token = uuid.uuid4().hex
-        self._origin = ((event["bundle"], event["pid"]) if event else self.inline._foreground_identity())
-        self.local = self.tp._local_stroke_focus
+        if local:
+            self.local = True
+            self._origin = None
+        elif self.tp.externalStrokeSupported:
+            self._origin = ((event["bundle"], event["pid"]) if event else self.inline._foreground_identity())
+            self.local = self.tp._local_stroke_focus
+        else:
+            self.local = self.tp._local_stroke_focus
+            if not self.local:
+                self.cancel('Windows 请在程序内试写框输入笔画')
+                return
+            self._origin = None
         if not self.local and self.inline._foreground_identity() != self._origin:
             self.cancel("已切换应用，笔画唤起已取消")
             return
@@ -160,6 +173,7 @@ class StrokeSessionController(QObject):
             self.cancel("笔画输入已退出")
         elif kind == "stroke_ink_cleared" and message.get("stroke_session") == self._token:
             self.tp._code = ""
+            self.tp._clear_stroke_evidence()
             self.tp._stroke_context = ""
             self.tp.strokeTraceChanged.emit([], False)
             self.tp._refresh_candidates()
@@ -252,6 +266,7 @@ class StrokeSessionController(QObject):
         self.inline._stroke_timer.stop()
         self._initial_context = ""
         self.tp._code = self.tp._pending_stroke_commit = ""
+        self.tp._clear_stroke_evidence()
         if not self.local:
             self.tp._stroke_context = ""
         self.tp._prediction_mode = False

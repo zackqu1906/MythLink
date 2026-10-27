@@ -14,6 +14,7 @@ import pytest
 
 from proximic_ring.voice.ime.ime_bridge import IMEBridge
 from proximic_ring.touchpad.stroke.stroke_context import StrokeContext
+from proximic_ring.touchpad.stroke.stroke_common import common_characters
 from test_inline_ui import inline_ui
 from test_stroke_session import stroke, until
 
@@ -76,7 +77,7 @@ def test_double_click_shows_native_palette_commits_and_returns_to_mouse(stroke, 
             model = StrokeContext()
             prefix = initial_text[:caret]
             assert tp._stroke_context == prefix[-4:]
-            assert tp.strokeCandidates == model.suggestions(prefix)[:5]
+            assert tp.strokeCandidates == model.suggestions(prefix, allowed_characters=common_characters())[:6]
             tp.addStroke("h")
             assert not tp.predictionMode
             prefix += tp.strokeCandidates[0]
@@ -87,7 +88,7 @@ def test_double_click_shows_native_palette_commits_and_returns_to_mouse(stroke, 
             for count in [2, 3]:
                 assert tp.predictionMode and not tp._code
                 assert tp._stroke_context == prefix[-4:]
-                assert tp.strokeCandidates == model.suggestions(prefix)[:5]
+                assert tp.strokeCandidates == model.suggestions(prefix, allowed_characters=common_characters())[:6]
                 assert tp.consume_gesture(SimpleNamespace(name="swipe-right"), c._disconnect_event)
                 until(lambda: tp.selectedCandidate == 1)
                 prefix += tp.strokeCandidates[1]
@@ -100,13 +101,14 @@ def test_double_click_shows_native_palette_commits_and_returns_to_mouse(stroke, 
             assert tp.predictionMode and tp._stroke_context == prefix[-4:]
             tp._run.output.options["on_double_click"]()
             until(lambda: session.phase == "idle" and tp._run.output.active and tp.inputMode == "pointer")
-            assert c._recognition_event.is_set() and not tp.blocksVoice
+            assert not c._recognition_event.is_set() and tp.blocksVoice
             assert len(source.starts) == 1 and source.stops == 0
             assert not {"begin", "finish", "finish_dictation", "cancel"} & {m["type"] for m in sent}
             bridge.send(dict(type="test_exit"))
             output, _ = process.communicate(timeout=3)
             assert process.returncode == 0, output
             assert "STROKE_PALETTE_VISIBLE" in output, output
+            assert "STROKE_GLYPHS_RENDERED" in output, output
             assert "STROKE_COMMIT_ACKNOWLEDGED" in output, output
             assert "STROKE_PREDICTIONS_VISIBLE" in output, output
             assert "STROKE_FINAL_TEXT=" + prefix + initial_text[caret:] in output, output

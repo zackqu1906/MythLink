@@ -26,7 +26,7 @@ _EXCLUDED_QML_SUBTREES = {
     # Window, Layouts and Material Controls.
     # These optional modules pull in sizeable, otherwise unused Qt frameworks.
     "PySide6/Qt/qml/QtQuick/Dialogs",
-    "PySide6/Qt/qml/QtQuick/Effects",
+    # GestureActionEditor imports Effects; retain it in the shared UI bundle.
     "PySide6/Qt/qml/QtQuick/LocalStorage",
     "PySide6/Qt/qml/QtQuick/NativeStyle",
     "PySide6/Qt/qml/QtQuick/Particles",

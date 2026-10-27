@@ -78,6 +78,20 @@ service.transport.onMessage = { message in
     let previousText = isValidRange(editor.marked)
         ? (editor.text as NSString).replacingCharacters(in: editor.marked, with: "") : editor.text
     receive?(message)
+    if message["type"] as? String == "stroke_update",
+       let glyphs = message["glyphs"] as? [[String: String]],
+       glyphs.contains(where: { !($0["png"] ?? "").isEmpty }), let palette = palette() {
+        let panel = Mirror(reflecting: palette).children.first { $0.label == "panel" }?.value as? NSPanel
+        func images(in view: NSView) -> Int {
+            let own = (view as? NSImageView)?.image == nil ? 0 : 1
+            return own + view.subviews.reduce(0) { $0 + images(in: $1) }
+        }
+        let expected = glyphs.filter { !($0["png"] ?? "").isEmpty }.count
+        let actual = panel.flatMap { $0.contentView }.map { images(in: $0) } ?? 0
+        precondition(actual == expected,
+                     "candidate glyph PNGs did not render in the AppKit palette")
+        print("STROKE_GLYPHS_RENDERED")
+    }
     switch message["type"] as? String {
     case "stroke_begin":
         precondition(palette()?.isVisible == true, "actual stroke palette did not appear")

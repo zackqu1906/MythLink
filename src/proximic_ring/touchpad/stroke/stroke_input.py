@@ -9,9 +9,11 @@ from collections import defaultdict, deque
 import gzip
 import json
 import math
+import heapq
 from importlib.resources import files
 
 from .stroke_structure import splits, compare_parts, nearly_straight
+from .stroke_context import FUZZY_LANGUAGE_WEIGHT, promote_completed_fuzzy
 
 SYMBOLS = {"h": "一", "s": "丨", "p": "丿", "n": "丶", "z": "𠃍"}
 NAMES = {"h": "横", "s": "竖", "p": "撇", "n": "点／捺", "z": "折"}
@@ -45,7 +47,9 @@ def _normalize(points, count=32):
 
 
 class StrokeDictionary:
-    def __init__(self, data=None, *, sample_count=32, recognizer='structure'):
+    def __init__(self, data=None, *, sample_count=32, recognizer='structure', left_dots=None, personal_model=None,
+                 fold_orders=None):
+        self.personal_model = personal_model
         if recognizer not in ('structure', 'dtw'):
             raise ValueError('Unknown stroke recognizer')
         if recognizer == 'dtw' and sample_count != 32:
@@ -55,7 +59,8 @@ class StrokeDictionary:
         if sample_count not in (32, 64, 96):
             raise ValueError('sample_count must be 32, 64, or 96')
         self.sample_count = sample_count
-        if data is None:
+        builtin = data is None
+        if builtin:
             with gzip.open(files("proximic_ring").joinpath("assets/strokes.json.gz"), "rt", encoding="utf-8") as stream:
                 data = json.load(stream)
         self.ranks = data["ranks"]
@@ -64,13 +69,30 @@ class StrokeDictionary:
             raise ValueError('Higher resolution requires original template recordings')
         self._comparison_traces = [t['trace'] if sample_count == 32 else
             _normalize(t['raw_trace'], sample_count) for t in self.templates]
-        self.entries = data["entries"]
+        from .stroke_dictionary_orders import filter_order_variants
+        self.entries = filter_order_variants(data["entries"]) if builtin else data["entries"]
+        from .stroke_folds import fold_orders as builtin_fold_orders
+        self._fold_orders = builtin_fold_orders() if builtin and fold_orders is None else (fold_orders or {})
+        from .stroke_left_dots import left_dot_annotations, validate_annotations
+        self._left_dots = (left_dot_annotations() if builtin and left_dots is None else
+                           validate_annotations(left_dots or []))
+        if builtin:
+            entry_codes = {(character, code) for character, code, *_ in self.entries}
+            self._left_dots = {key: positions for key, positions in self._left_dots.items()
+                               if key in entry_codes}
+        self._fuzzy_priors = {char: .35*math.log1p(self.ranks.get(char, 100000))
+                              for char, _, _ in self.entries}
         self._template_parts = [splits(t['trace']) if t['shape'] in {'撇点', '横钩'} else {}
                                 for t in self.templates]
         self.by_initial = defaultdict(list)
+        self.by_character = defaultdict(list)
+        self._left_dot_initial = []
         for entry in self.entries:
+            self.by_character[entry[0]].append(entry)
             if entry[1]:
                 self.by_initial[entry[1][0]].append(entry)
+                if 0 in self._left_dots.get((entry[0], entry[1]), ()):
+                    self._left_dot_initial.append(entry)
 
     def recognize_template(self, points):
         """Original whole-path baseline, retained for comparison and rollback."""
@@ -81,7 +103,8 @@ class StrokeDictionary:
             if self._dtw is None:
                 from .stroke_dtw import DTWRecognizer
                 self._dtw = DTWRecognizer(self.templates)
-            return self._dtw.recognize(points)
+            result = self._dtw.recognize(points)
+            return self.personal_model.adapt(points, result) if self.personal_model is not None else result
         return self._recognize(points, structured=True)
 
     def _recognize(self, points, *, structured):
@@ -89,6 +112,8 @@ class StrokeDictionary:
         if trace is None:
             return None
         best = None
+        by_class = {}
+        by_shape = {}
         evidence = splits(points) if structured else {}
         straight = structured and not evidence and nearly_straight(points)
         simple = {'横', '提', '竖', '撇', '点', '捺'}
@@ -107,16 +132,26 @@ class StrokeDictionary:
                 distance += .025
             if best is None or distance < best[0]:
                 best = (distance, template["category"], shape, whole_distance)
+            old = by_class.get(template['category'])
+            if old is None or distance < old['distance']:
+                by_class[template['category']] = dict(category=template['category'], shape=shape, distance=distance)
+            old_shape = by_shape.get(shape)
+            if old_shape is None or distance < old_shape['distance']:
+                by_shape[shape] = dict(category=template['category'], shape=shape, distance=distance)
         result = {"category": best[1], "shape": best[2], "distance": best[3]}
+        result['category_scores'] = sorted(by_class.values(), key=lambda item: item['distance'])
+        result['shape_scores'] = sorted(by_shape.values(), key=lambda item: item['distance'])
         if structured:
             result.update(score=best[0], structure=list(evidence), recognizer='structure_v1')
         return result
 
-    def candidates(self, code, limit=30):
+    def candidates(self, code, limit=30, *, allowed_characters=None):
         if not code or any(letter not in SYMBOLS for letter in code):
             return []
         rows = {}
         for char, full_code, sources in self.by_initial[code[0]]:
+            if allowed_characters is not None and char not in allowed_characters:
+                continue
             if not full_code.startswith(code):
                 continue
             exact = full_code == code
@@ -124,9 +159,106 @@ class StrokeDictionary:
             if current is None or (exact, sources) > (current[0], current[1]):
                 rows[char] = (exact, sources, len(full_code))
         ranked = sorted(rows.items(), key=lambda item: (
-            self.ranks.get(item[0], 100000) - (3000 if item[1][0] and item[0] in self.ranks else 0),
+            not item[1][0], self.ranks.get(item[0], 100000),
             -(item[1][1] & 1), item[1][2], item[0]))
         return [char for char, _ in ranked[:limit]]
+
+    def fuzzy_candidates(self, evidence, limit=30, *, predictor=None, context='', allowed_characters=None,
+                         policy=None):
+        """Rescore the entire prefix; never discard an earlier interpretation."""
+        from .stroke_fuzzy import match_prefix, DEFAULT_FUZZY_POLICY
+        from .stroke_folds import fold_evidence, fold_adjustment
+        policy = policy or DEFAULT_FUZZY_POLICY
+        if not evidence:
+            return []
+        folds = fold_evidence(evidence, policy) if self._fold_orders else {}
+        # Preserve the original ordering when every stroke was explicitly entered.
+        use_left_dots = bool(self._left_dots) and any(
+            stroke['category'] in 'ps' and not stroke.get('manual', True) for stroke in evidence)
+        if not folds and not use_left_dots and all(len(stroke['costs']) == 1 for stroke in evidence):
+            code = ''.join(stroke['category'] for stroke in evidence)
+            exact_chars = {char for char, full_code, _ in self.by_initial[code[0]] if full_code == code}
+            matches = [dict(char=char, code=code, cost=0., corrections=[], exact_match=char in exact_chars)
+                       for char in self.candidates(code, limit, allowed_characters=allowed_characters)]
+            return matches or self._replacement_candidates(evidence, limit, predictor=predictor,
+                context=context, allowed_characters=allowed_characters, policy=policy)
+        rows, prefix_matches = {}, {}
+        groups = [self.by_initial[initial] for initial in evidence[0]['costs']]
+        if (use_left_dots and evidence[0]['category'] in 'ps'
+                and not evidence[0].get('manual', True) and 'n' not in evidence[0]['costs']):
+            groups.append(self._left_dot_initial)
+        for group in groups:
+            for char, code, sources in group:
+                if allowed_characters is not None and char not in allowed_characters:
+                    continue
+                prefix = code[:len(evidence)]
+                dots = tuple(index for index in self._left_dots.get((char, code), ()) if index < len(evidence))
+                cache_key = (prefix, dots)
+                if cache_key not in prefix_matches:
+                    prefix_matches[cache_key] = match_prefix(prefix, evidence, left_dots=dots, policy=policy)
+                match = prefix_matches[cache_key]
+                if match is None:
+                    continue
+                rank = self.ranks.get(char, 100000)
+                fine = fold_adjustment(char, code, self._fold_orders, folds) if folds else {}
+                score = match['cost'] + self._fuzzy_priors[char] + fine.get('fold_score', 0.)
+                if len(code) == len(evidence) and rank < 100000:
+                    score -= .35
+                exact_match = len(code) == len(evidence) and not match['corrections']
+                complete_variant = (len(code) == len(evidence) and bool(match['left_dot_corrections'])
+                                    and match['corrections'] == match['left_dot_corrections'])
+                # A complete five-category code is insufficient when the ink
+                # clearly favors another fold (e.g. first 撇点 versus 乙).
+                compatible = fine.get('fold_compatible', True)
+                priority = 0 if exact_match and compatible else 1 if complete_variant and compatible else 2
+                key = (priority, score, -(sources & 1), len(code), code)
+                old = rows.get(char)
+                if old is None or key < old['key']:
+                    rows[char] = dict(char=char, code=code, key=key, score=score,
+                                      exact_match=exact_match, **match, **fine)
+        if not rows:
+            return self._replacement_candidates(evidence, limit, predictor=predictor,
+                context=context, allowed_characters=allowed_characters, policy=policy)
+        bonuses = predictor.stroke_bonuses(context, rows) if predictor else {}
+        results = heapq.nsmallest(max(limit, 30), rows.values(), key=lambda item: (
+            item['key'][0], item['score']-FUZZY_LANGUAGE_WEIGHT*bonuses.get(item['char'], 0.),
+            *item['key'][2:], item['char']))
+        results = [dict(item, language_bonus=bonuses.get(item['char'], 0.),
+                     final_score=item['score']-FUZZY_LANGUAGE_WEIGHT*bonuses.get(item['char'], 0.)) for item in results]
+        return promote_completed_fuzzy(results, evidence, predictor, context, limit)
+
+    def _replacement_candidates(self, evidence, limit, *, predictor, context, allowed_characters, policy):
+        """Recover an empty match by changing one nearby automatic stroke only."""
+        from .stroke_fuzzy import replacement_options
+        observed = ''.join(stroke['category'] for stroke in evidence)
+        prefixes = {}
+        for index, stroke in enumerate(evidence):
+            for expected, cost in replacement_options(stroke, policy=policy).items():
+                prefix = observed[:index] + expected + observed[index+1:]
+                prefixes[prefix] = (index, cost)
+        rows = {}
+        for initial in sorted({prefix[0] for prefix in prefixes}):
+            for char, code, sources in self.by_initial[initial]:
+                if allowed_characters is not None and char not in allowed_characters:
+                    continue
+                replacement = prefixes.get(code[:len(observed)])
+                if replacement is None:
+                    continue
+                index, cost = replacement
+                complete = len(code) == len(observed)
+                score = cost + self._fuzzy_priors[char]
+                key = (not complete, score, -(sources & 1), len(code), code)
+                old = rows.get(char)
+                if old is None or key < old['key']:
+                    rows[char] = dict(char=char, code=code, cost=cost, score=score, key=key,
+                        exact_match=False, rescues=1, corrections=[index], left_dot_corrections=[],
+                        replacement_corrections=[index], match_type='single_replacement')
+        bonuses = predictor.stroke_bonuses(context, rows) if predictor else {}
+        results = heapq.nsmallest(limit, rows.values(), key=lambda item: (
+            item['key'][0], item['score']-FUZZY_LANGUAGE_WEIGHT*bonuses.get(item['char'], 0.),
+            *item['key'][2:], item['char']))
+        return [dict(item, language_bonus=bonuses.get(item['char'], 0.),
+                     final_score=item['score']-FUZZY_LANGUAGE_WEIGHT*bonuses.get(item['char'], 0.)) for item in results]
 
 
 class StrokeCollector:

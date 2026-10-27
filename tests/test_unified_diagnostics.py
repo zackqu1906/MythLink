@@ -157,6 +157,7 @@ def test_capture_fallback_remains_the_path_used_by_controller(monkeypatch, tmp_p
     assert 'fallback works' in (tmp_path / 'Mythlink-diagnostic.log').read_text()
 
 
+@pytest.mark.mac_only
 def test_native_stderr_is_drained_without_polluting_json_protocol(monkeypatch, tmp_path):
     import proximic_ring.platforms.macos.native_access as native
     import proximic_ring.diagnostics.diagnostic_log as diagnostics

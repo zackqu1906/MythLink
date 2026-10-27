@@ -62,6 +62,7 @@ def test_semantic_context_reaches_background_turn_without_eager_image(tmp_path,m
         flow.events.close()
 
 
+@pytest.mark.posix_only
 @pytest.mark.parametrize('mode', ['new', 'steer', 'queue'])
 def test_mixed_input_reaches_start_steer_and_queued_turn(tmp_path, attachments, mode):
     flow = Flow(with_ring=False, runtime_dir=tmp_path/'flow')
@@ -85,6 +86,7 @@ def test_mixed_input_reaches_start_steer_and_queued_turn(tmp_path, attachments, 
         flow.events.close()
 
 
+@pytest.mark.posix_only
 def test_attachment_only_and_control_word_with_attachment_are_messages(tmp_path, attachments):
     flow = Flow(with_ring=False, runtime_dir=tmp_path/'flow'); flow.rpc = Wire(); flow.tid = 'thread'
     try:
@@ -97,6 +99,7 @@ def test_attachment_only_and_control_word_with_attachment_are_messages(tmp_path,
         flow.events.close()
 
 
+@pytest.mark.posix_only
 def test_attachments_park_with_task_and_keep_original_turn(attachments):
     workspace = Workspace(); workspace.update({'turnId': 'original'})
     workspace.attach('task', attachments)
@@ -116,6 +119,7 @@ def test_attachments_park_with_task_and_keep_original_turn(attachments):
     assert workspace.submission('task') is None
 
 
+@pytest.mark.posix_only
 def test_attachment_only_removal_and_missing_paths(attachments, tmp_path):
     workspace = Workspace(); workspace.update({})
     workspace.attach('task', attachments)
@@ -127,6 +131,7 @@ def test_attachment_only_removal_and_missing_paths(attachments, tmp_path):
     assert turn_input('原有文字') == [{'type': 'text', 'text': '原有文字'}]
 
 
+@pytest.mark.posix_only
 def test_composer_picker_preview_remove_paste_and_mixed_send(inline_ui, monkeypatch, tmp_path, attachments):
     from PySide6.QtCore import QCoreApplication, QMimeData, QPoint, QPointF, Qt, QUrl
     from PySide6.QtGui import QGuiApplication, QImage, QDragEnterEvent, QDropEvent
@@ -196,6 +201,7 @@ def test_composer_picker_preview_remove_paste_and_mixed_send(inline_ui, monkeypa
         overlay.close()
 
 
+@pytest.mark.posix_only
 def test_attachment_validation_preserves_draft_and_question_routing(inline_ui, monkeypatch, attachments):
     from PySide6.QtCore import QUrl
     owner = inline_ui[0]; agent = owner.agent; sent = []
@@ -213,6 +219,7 @@ def test_attachment_validation_preserves_draft_and_question_routing(inline_ui, m
     assert len(agent.workspace.attachments['task']) == 1
 
 
+@pytest.mark.posix_only
 def test_picker_finishing_after_turn_end_preserves_attachments_for_review(inline_ui, monkeypatch, attachments):
     from PySide6.QtWidgets import QFileDialog
     owner = inline_ui[0]; agent = owner.agent; sent = []
