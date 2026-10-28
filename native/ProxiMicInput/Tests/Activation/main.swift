@@ -41,7 +41,9 @@ final class StrokeCandidatePanel {
     var needsPosition: Bool { false }
     var isVisible: Bool { Self.visible && Self.canShow }
     func hide() { Self.visible = false; Self.lastTrace = [] }
-    func update(code: String, candidates: [String], selected: Int) { Self.visible = true }
+    func update(code: String, candidates: [String], selected: Int, glyphs: [[String: String]] = []) { Self.visible = true }
+    func selection(phase: String, progress: Double, direction: String,
+                   origin: [Double], points: [[Double]], selectDistance: Double) {}
     func position(caret: NSRect?, clientLevel: Int32) {}
     func trace(points: [[Double]], finished: Bool, style: [String: Any]) { Self.lastTrace = points }
 }

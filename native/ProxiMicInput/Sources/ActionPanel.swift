@@ -98,7 +98,7 @@ final class ActionPanel: NSObject {
         hints.detachesHiddenViews = true
         hintWidthConstraint = hints.widthAnchor.constraint(equalToConstant: 0)
         for hint in actionHints {
-            scaledConstraints += [(hint.widthAnchor.constraint(equalToConstant: 59), 59),
+            scaledConstraints += [(hint.widthAnchor.constraint(equalToConstant: VoiceHudHint.baseWidth), VoiceHudHint.baseWidth),
                                   (hint.heightAnchor.constraint(equalToConstant: 32), 32)]
         }
         scaledConstraints += [
@@ -121,7 +121,7 @@ final class ActionPanel: NSObject {
         NSLayoutConstraint.activate(scaledConstraints.map { $0.0 } + [hintWidthConstraint, stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor)])
         cancelButton.target = self; cancelButton.action = #selector(cancel)
         convertButton.target = self; convertButton.action = #selector(convert)
-        // Down swipe is routed by the host, including waiting for final ASR.
+        // Polish gestures remain routed by the host, including waiting for final ASR.
         polishHint.setAccessibilityRole(.image)
         refreshHints()
         applyAppearance()
@@ -156,7 +156,7 @@ final class ActionPanel: NSObject {
     private func fitVisibleActions() {
         let scale = appearance.scale
         let count = actionHints.filter { !$0.isHidden }.count
-        let actionsWidth = CGFloat(count * 59 + max(0, count - 1) * 6) * scale
+        let actionsWidth = (CGFloat(count) * VoiceHudHint.baseWidth + CGFloat(max(0, count - 1) * 6)) * scale
         hintWidthConstraint.constant = actionsWidth
         hints.isHidden = count == 0
         stack.spacing = count == 0 ? 0 : 18 * scale
@@ -173,11 +173,11 @@ final class ActionPanel: NSObject {
     }
 
     private func refreshHints() {
-        cancelButton.configure(gestures: gestureHints.actions["undo"] ?? [], functionAsset: "function-cancel",
+        cancelButton.configure(gestures: gestureHints.actions["undo"] ?? [], caption: cancelDetail.hasPrefix("取消") ? "取消" : "撤销",
                                available: cancelAvailable, detail: cancelDetail)
-        convertButton.configure(gestures: gestureHints.actions["switch_mode"] ?? [], functionAsset: "function-edit",
+        convertButton.configure(gestures: gestureHints.actions["switch_mode"] ?? [], caption: "修改",
                                 available: editAvailable, detail: "转换为编辑")
-        polishHint.configure(gestures: ["swipe-down"], functionAsset: "function-polish",
+        polishHint.configure(gestures: gestureHints.actions["polish"] ?? [], caption: "润色",
                              available: polishAvailable, detail: polishDetail)
     }
 

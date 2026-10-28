@@ -119,9 +119,13 @@ class VoiceTutorialController(QObject):
     @Property("QVariantMap", notify=changed)
     def hint(self):
         def result(state_id, title, text, action="", function="", tone="normal"):
-            gestures = (["swipe-down"] if action == "polish" else
-                        [g for g in self.owner.gestureBindings.get(action, []) if g])
+            gestures = [g for g in self.owner.gestureBindings.get(action, []) if g]
             label = " / ".join(GESTURE_LABELS.get(g, g) for g in gestures)
+            if action and not gestures:
+                action_name = {"confirm": "开始语音", "end": "结束语音", "polish": "润色", "switch_mode": "语音修改"}.get(action, "此操作")
+                return dict(id="unbound-" + action, title=action_name + "尚未绑定手势", tone="normal",
+                            text="请到手势控制的全局默认中配置" + action_name + "手势，再继续练习。",
+                            gestures=[], functionAsset="")
             return dict(id=state_id, title=title, tone=tone,
                         text=text.replace("{gesture}", label or "对应手势"),
                         gestures=gestures, functionAsset=function)
@@ -153,10 +157,10 @@ class VoiceTutorialController(QObject):
             if self._stage == 2:
                 return result("convert", "将指令转换为编辑", "文字仍带下划线时{gesture}，转换为编辑并结束收音。", "switch_mode", "function-edit")
             if self._stage == 1:
-                return result("polish-live", "下滑润色本句", "说完后{gesture}，结束收音并润色这句话。", "polish")
+                return result("polish-live", "润色本句", "说完后{gesture}，结束收音并润色这句话。", "polish")
             return result("finalize", "确认听写结果", "文字尚未定稿。说完后{gesture}，即可定稿本句。", "end")
         if self._stage == 1 and phase == "dictated" and not state.get("polished"):
-            return result("polish-committed", "下滑润色当前句", "保持光标在练习框，{gesture}润色刚才的听写。", "polish")
+            return result("polish-committed", "润色当前句", "保持光标在练习框，{gesture}润色刚才的听写。", "polish")
         if self._stage == 2:
             if self.owner.speechControlMode == "proximity":
                 return result("start-edit", "开启语音编辑", "保持原句，靠近 Ring 开始新一轮语音。")

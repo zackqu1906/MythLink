@@ -25,6 +25,10 @@ else:
     # used to decide its type. A bare QCoreApplication lacks GUI signals such as
     # screenAdded, so later UI tests in the same (xdist) process failed in setup.
     _application = QApplication.instance() or QApplication([])
+    # Keep PySide's offscreen screen wrappers alive across QML engine teardown.
+    # Otherwise repeated overlay tests can invalidate the primary screen before
+    # the next QWindow is constructed (QWindowPrivate::init crashes).
+    _screens = _application.screens()
 
 IS_MAC = sys.platform == "darwin"
 IS_POSIX = os.name == "posix"

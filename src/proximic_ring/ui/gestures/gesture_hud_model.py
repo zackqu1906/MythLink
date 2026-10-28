@@ -1,7 +1,7 @@
 """Build a bounded hint view from effective mappings, without changing routing."""
 from __future__ import annotations
 
-from ...gestures.gesture_settings import GESTURE_LABELS, GlobalGestureBindings
+from ...gestures.gesture_settings import GESTURE_LABELS, GestureBindings, GlobalGestureBindings
 
 MAX_ORBS = 6
 GESTURE_ORDER = ("swipe-left", "swipe-right", "swipe-up", "swipe-down", "double-tap", "tap", "snap",
@@ -19,7 +19,7 @@ def gesture_label(key):
         key, GESTURE_LABELS.get(key, key).split("（")[0])
 
 
-def hint_view(mode, actions=None, global_bindings=None, global_labels=None):
+def hint_view(mode, actions=None, global_bindings=None, global_labels=None, voice_bindings=None):
     """Show the effective focus route; application bindings override global defaults."""
     from ...gestures.gesture_settings import GLOBAL_ACTION_LABELS
     labels = GLOBAL_ACTION_LABELS if global_labels is None else global_labels
@@ -28,13 +28,19 @@ def hint_view(mode, actions=None, global_bindings=None, global_labels=None):
     context = rows[0] if rows and mode != "input" else {}
     scene = context.get("scene", "")
     effective = {}
+    voice = GestureBindings().as_dict() if voice_bindings is None else voice_bindings
     if mode == "input":
-        for key, label, symbol in [("swipe-up", "发送", "up"), ("swipe-down", "润色本句", "down"),
-                ("double-tap", "开始语音", "mic"), ("tap", "结束语音", "mic"),
-                ("swipe-right", "语音编辑", "edit"), ("swipe-left", "撤销", "undo")]:
-            effective[key] = (label, "mode", symbol)
+        for action, label, symbol in [("send", "发送", None), ("polish", "润色本句", None),
+                ("confirm", "开始语音", "mic"), ("end", "结束语音", "mic"),
+                ("switch_mode", "语音编辑", "edit"), ("undo", "撤销", "undo")]:
+            for key in voice.get(action, []):
+                if key in SYMBOLS:
+                    text = "开始 / 定稿" if action == "end" and key in voice.get("confirm", []) else label
+                    effective[key] = (text, "mode", symbol or SYMBOLS[key])
     else:
-        effective["double-tap"] = ("开始语音", "mode", "mic")
+        for key in voice.get("confirm", []):
+            if key in SYMBOLS:
+                effective[key] = ("开始语音", "mode", "mic")
         for action, key in bindings.items():
             if key in SYMBOLS and action in labels:
                 effective[key] = (labels[action], "global", SYMBOLS[key])

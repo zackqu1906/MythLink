@@ -81,25 +81,6 @@ ApplicationWindow {
     property color textMain: uiTheme.text
     property color textMuted: uiTheme.muted
 
-    component GestureBindingSelector: VoiceGestureBindingSelector {
-        controller: appController
-    }
-
-    component GestureBindingRow: ColumnLayout {
-        id: gestureRow
-        required property string actionName
-        required property string title
-        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-        spacing: 4
-        Label { text: gestureRow.title; color: root.textMain; font.pixelSize: 12 }
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            GestureBindingSelector { actionName: gestureRow.actionName; slotIndex: 0 }
-            GestureBindingSelector { actionName: gestureRow.actionName; slotIndex: 1 }
-        }
-    }
-
     component SegmentedChoice: Rectangle {
         id: segmentedChoice
         property var options: []
@@ -720,10 +701,10 @@ ApplicationWindow {
                 }
             }
             GesturesPage {
+                id: gesturesPage
                 anchors.fill: parent
                 visible: root.currentPage === 2
                 controller: appController
-                onVoiceSettingsRequested: mainPageScroll.scrollToGestures()
             }
         }
     }
@@ -780,6 +761,7 @@ ApplicationWindow {
         onHomeRequested: root.currentPage = 0
         onHistoryRequested: root.showVoice(true)
         onTutorialRequested: tutorialPreview.open()
+        onGesturesRequested: { root.currentPage = 2; gesturesPage.configureVoice() }
     }
 
     LockPage {
@@ -795,9 +777,10 @@ ApplicationWindow {
             onGpuSetupRequested: gpuInstallDialog.open()
             onClosed: {
                 if (root.visible) {
-                    root.showPreferences(1)
+                    root.showPreferences(advancedSettingsDialog.returnSection)
                     Qt.callLater(function() {
-                        runtimeSettingsScroll.contentItem.contentY = advancedSettingsDialog.returnScrollPosition
+                        if (advancedSettingsDialog.returnSection === 1)
+                            runtimeSettingsScroll.contentItem.contentY = advancedSettingsDialog.returnScrollPosition
                     })
                 }
             }
@@ -971,8 +954,8 @@ ApplicationWindow {
                                 text: "按输入焦点自动分配手势"
                                       + "\n提示、窗口选择与页面滚动的手势在“手势控制 → 全局默认”中配置。"
                                       + "\n输入焦点仅影响与输入功能冲突的手势；其余手势按应用优先、全局兜底执行。"
-                                      + "\n双击 Tap 沿用现有输入法启动入口；输入时下滑润色本句，不发送。"
-                                      + "\n录音中下滑：定稿后润色，左滑撤销整句；听写后下滑：左滑先还原听写。"
+                                      + "\n配置的开始手势沿用现有输入法启动入口；润色操作仅写回本句，不发送。"
+                                      + "\n录音中润色：定稿后润色，撤销时撤回整句；听写后润色：撤销时先还原听写。"
                                 color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
                             }
                             SettingsFormRow {
@@ -997,13 +980,14 @@ ApplicationWindow {
                             }
                             Label {
                                 Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
-                                text: "每项最多设置两个手势；开始与结束可共用同一手势，其他语音操作不能重复分配。语音手势与应用、全局手势可复用，按输入焦点自动分配。"
+                                text: "每个手势可选择任意语音操作，同一功能可绑定多个手势。语音绑定在全局默认中统一配置，应用中只读显示，修改后自动保存。"
                                 color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                             }
-                            GestureBindingRow { actionName: "confirm"; title: "开始本句语音" }
-                            GestureBindingRow { actionName: "end"; title: "结束本句语音" }
-                            GestureBindingRow { actionName: "undo"; title: "撤销 · 处理中用于取消" }
-                            GestureBindingRow { actionName: "switch_mode"; title: "转换 · 下划线期间转为编辑" }
+                            FigmaAction {
+                                objectName: "configureGlobalVoiceGesturesButton"
+                                Layout.leftMargin: 28; text: "配置语音手势"
+                                onClicked: { runtimeSettingsDialog.close(); root.currentPage = 2; gesturesPage.configureVoice() }
+                            }
                             ColumnLayout {
                                 Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
                                 visible: appController.appGestures.supported
@@ -1028,7 +1012,7 @@ ApplicationWindow {
                                 }
                                 Label {
                                     Layout.fillWidth: true
-                                    text: "默认未绑定，可自行选择空闲手势。此操作只切换输入法，不开始听写；暂停语音识别时也可用。双击 tap 自动切换并开始听写不受此设置影响。"
+                                    text: "默认未绑定，可自行选择空闲手势。此操作只切换输入法，不开始听写；暂停语音识别时也可用。语音开始手势自动切换并开始听写不受此设置影响。"
                                     color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                                 }
                             }
@@ -1039,19 +1023,7 @@ ApplicationWindow {
                                 text: appController.gestureSettingsError
                                 font.pixelSize: 12; wrapMode: Text.Wrap
                             }
-                            RowLayout {
-                                Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: "确认至少保留一个手势。设置会自动保存。"
-                                    color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                                }
-                                FigmaAction {
-                                    objectName: "resetGestureBindingsButton"
-                                    text: "恢复默认手势"
-                                    onClicked: appController.resetGestureBindings()
-                                }
-                            }
+
 
 
                         }

@@ -121,7 +121,9 @@ def migrate_voice_defaults(bindings: GestureBindings) -> GestureBindings:
     return replace(bindings,
                    confirm=("double-tap", "") if bindings.confirm == ("tap", "") else bindings.confirm,
                    undo=("swipe-left", "") if bindings.undo == ("swipe-left", "swipe-down") else bindings.undo,
-                   switch_mode=("swipe-right", "") if bindings.switch_mode == ("swipe-right", "swipe-up") else bindings.switch_mode)
+                   switch_mode=("swipe-right", "") if bindings.switch_mode == ("swipe-right", "swipe-up") else bindings.switch_mode,
+                   send=("swipe-up", "") if not any(bindings.send) and bindings.switch_mode == ("swipe-right", "swipe-up") else bindings.send,
+                   polish=("swipe-down", "") if not any(bindings.polish) and bindings.undo == ("swipe-left", "swipe-down") else bindings.polish)
 
 
 def action_phase(action: str, *, phase: str, composing: bool = False,

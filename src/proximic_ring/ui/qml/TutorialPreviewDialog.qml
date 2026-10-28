@@ -25,6 +25,16 @@ FigmaDialog {
     onAboutToShow: { practice.cancel(); tutorial.stop(); if (step >= 2) step = 0 }
     onClosed: { practice.cancel(); tutorial.stop() }
     FigmaTheme { id: theme }
+    function demonstrationHint() {
+        var action = step === 2 ? "end" : step === 3 ? "polish" : "switch_mode"
+        var gestures = (controller.gestureBindings[action] || []).filter(function(g) { return g.length > 0 })
+        var label = controller.gestureButtonHints[action] || ""
+        var title = step === 2 ? "确认听写" : step === 3 ? "润色当前句" : "转换为语音修改"
+        if (!gestures.length) return {id:"demo-unbound-" + action, title:title + "尚未绑定手势",
+            text:"请到手势控制的全局默认中配置，再继续练习。", gestures:[], functionAsset:"", tone:"normal"}
+        return {id:"demo-" + action, title:title, text:label + (step === 2 ? "定稿当前听写。" : step === 3 ? "润色当前句。" : "将本句转换为修改指令。"),
+            gestures:gestures, functionAsset:step === 4 ? "function-edit" : "", tone:"normal"}
+    }
     function begin(demo) {
         practice.cancel()
         if (!demo && !tutorial.start()) return
@@ -223,7 +233,7 @@ FigmaDialog {
                 TutorialHintCard {
                     objectName: "tutorialHintCard"
                     Layout.preferredWidth: 280; Layout.alignment: Qt.AlignTop
-                    hint: dialog.demonstration ? {id:"demo",title:"操作示意",text:"真实教学会随输入状态提示当前操作。",gestures:[],functionAsset:"",tone:"normal"} : dialog.tutorial.hint
+                    hint: dialog.demonstration ? dialog.demonstrationHint() : dialog.tutorial.hint
                 }
             }
             Flow {
@@ -233,7 +243,7 @@ FigmaDialog {
                     objectName: "tutorialExerciseButton"
                     visible: dialog.demonstration
                     primary: true; font.pixelSize: 16
-                    text: ["模拟定稿", "模拟下滑润色", "模拟完成纠正"][dialog.step - 2] || ""
+                    text: ["模拟定稿", "模拟润色", "模拟完成纠正"][dialog.step - 2] || ""
                     onClicked: dialog.exercise()
                 }
                 FigmaAction { objectName: "tutorialNextButton"; text: dialog.step === 4 ? "完成教学" : "下一步"; focusPolicy: Qt.NoFocus; enabled: dialog.currentStepDone && (dialog.demonstration || !dialog.tutorial.busy); onClicked: dialog.advance() }
@@ -250,8 +260,8 @@ FigmaDialog {
                     spacing: 20
                     Label { Layout.fillWidth: true; text: dialog.demonstration ? "输入、润色、修改，操作示意已看完" : "输入、润色、修改，你已经试过了"; font.pixelSize: 22; font.weight: Font.Medium; color: theme.text; wrapMode: Text.Wrap }
                     Label { Layout.fillWidth: true; text: dialog.demonstration ? "连接设备后，还可以进行一次真实的语音练习。" : "回到常用应用，把焦点放进文本框，再使用 Ring 开始输入。"; font.pixelSize: 16; color: theme.muted; wrapMode: Text.Wrap }
-                    Label { text: (dialog.controller.speechControlMode === "proximity" ? "靠近 Ring 开启" : dialog.controller.confirmGestureHint + "开启") + "；" + dialog.controller.endGestureHint + "确认定稿"; font.pixelSize: 16; color: theme.text }
-                    Label { Layout.fillWidth: true; text: "下滑润色当前句；说出修改指令，在未定稿时" + dialog.controller.gestureButtonHints.switch_mode + "转换为编辑。"; font.pixelSize: 16; color: theme.text; wrapMode: Text.Wrap }
+                    Label { text: (dialog.controller.speechControlMode === "proximity" ? "靠近 Ring 开启" : (dialog.controller.confirmGestureHint ? dialog.controller.confirmGestureHint + "开启" : "开始手势未配置")) + "；" + (dialog.controller.endGestureHint ? dialog.controller.endGestureHint + "确认定稿" : "结束手势未配置"); font.pixelSize: 16; color: theme.text }
+                    Label { Layout.fillWidth: true; text: (dialog.controller.gestureButtonHints.polish || "配置润色手势后可") + "润色当前句；说出修改指令，在未定稿时" + (dialog.controller.gestureButtonHints.switch_mode ? dialog.controller.gestureButtonHints.switch_mode + "转换为编辑。" : "请先配置语音修改手势。"); font.pixelSize: 16; color: theme.text; wrapMode: Text.Wrap }
                     Flow {
                         Layout.fillWidth: true; spacing: 12
                         FigmaAction { text: "回到首页"; primary: true; onClicked: dialog.homeRequested() }

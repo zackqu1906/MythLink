@@ -170,3 +170,16 @@ def test_hint_transitions_are_fast_and_do_not_restart_for_each_partial(inline_ui
     QTest.qWait(180)
     assert content.property('opacity') == 1 and not motion.property('running')
     QMetaObject.invokeMethod(dialog, 'close')
+
+
+def test_polish_lesson_follows_reassigned_and_repeated_voice_gestures(inline_ui):
+    controller, _, _, _, event = inline_ui
+    tutorial = start_lesson(controller, event)
+    tutorial._stage = 1
+    assert controller.setVoiceGestureAction('swipe-down', 'send')
+    assert controller.setVoiceGestureAction('snap', 'polish')
+    assert controller.setVoiceGestureAction('clench', 'polish')
+    begin_sentence(controller, event)
+    event(phase='listening', ready=True, raw='识别到的文字')
+    assert tutorial.hint['gestures'] == ['snap', 'clench']
+    assert '下滑' not in tutorial.hint['text']

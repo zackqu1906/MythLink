@@ -15,6 +15,8 @@ import tempfile
 import time
 from xml.parsers.expat import ExpatError
 
+from .component_fingerprint import SOURCE_FINGERPRINT_KEY, source_fingerprint
+
 BUNDLE_ID = "com.proximic.inputmethod.ProxiMicVoice"
 
 
@@ -58,6 +60,15 @@ def product_bundle(path: Path) -> bool:
         return False
 
 
+def _fingerprint(path: Path, key: str) -> str:
+    try:
+        with (path / "Contents/Info.plist").open("rb") as stream:
+            value = plistlib.load(stream).get(key, "")
+        return value if isinstance(value, str) else ""
+    except (OSError, ValueError, AttributeError, ExpatError):
+        return ""
+
+
 class InputMethodInstaller:
     def __init__(self, payload: Path | None = None):
         self.payload = payload if payload is not None else payload_directory()
@@ -65,6 +76,30 @@ class InputMethodInstaller:
         self.source = self.payload / "ProxiMicInput.app"
         self.destination = Path.home() / "Library/Input Methods/ProxiMicInput.app"
         self.system_destination = Path("/Library/Input Methods/ProxiMicInput.app")
+
+    def _development_root(self) -> Path | None:
+        root = self.payload.parent.parent
+        if (not getattr(sys, "frozen", False) and self.payload.name == "input-method"
+                and self.payload.parent.name == ".build"
+                and (root / "native/ProxiMicInput/Info.plist").is_file()):
+            return root
+        return None
+
+    def _needs_build(self) -> bool:
+        root = self._development_root()
+        return root is not None and source_fingerprint(root) != _fingerprint(self.source, SOURCE_FINGERPRINT_KEY)
+
+    def _build_if_needed(self) -> None:
+        if not self._needs_build():
+            return
+        root = self._development_root()
+        result = subprocess.run([sys.executable, str(root / "tools/build_input_method.py")],
+                                cwd=root, capture_output=True, text=True, timeout=300)
+        if result.returncode:
+            detail = (result.stderr.strip() or result.stdout.strip())[-2000:]
+            raise RuntimeError("输入法构建失败，已安装组件保持不变。" + detail)
+        if self._needs_build():
+            raise RuntimeError("输入法源码仍有未构建的更改，已安装组件保持不变。")
 
     def version_status(self) -> dict:
         """Compare installed release/build numbers with this application's payload."""
@@ -75,6 +110,13 @@ class InputMethodInstaller:
         bundled = _bundle_version(self.source)
         label = lambda value: f"{value[0]} ({value[1]})" if value else "无法读取"
         detail = f"已安装：{label(installed)}；随应用提供：{label(bundled)}"
+        try:
+            if self._needs_build():
+                return dict(state="needs_build", text="待构建更新", current=False,
+                            detail=detail + "；输入法源码有更新，点击更新将先构建再安装。")
+        except OSError:
+            return dict(state="unknown", text="版本待确认", current=False,
+                        detail=detail + "；无法校验输入法源码，请检查源码是否完整。")
         if not installed_path.exists() and not installed_path.is_symlink():
             state, text = "not_installed", "未安装"
         elif installed is None or bundled is None:
@@ -87,7 +129,12 @@ class InputMethodInstaller:
             elif installed_key > bundled_key:
                 state, text = "newer", "已是更高版本"
             else:
-                state, text = "current", "已是最新版"
+                installed_fingerprint = _fingerprint(installed_path, "MythlinkInputMethodFingerprint")
+                bundled_fingerprint = _fingerprint(self.source, "MythlinkInputMethodFingerprint")
+                if bundled_fingerprint and installed_fingerprint != bundled_fingerprint:
+                    state, text = "outdated", "待更新"
+                else:
+                    state, text = "current", "已是最新版"
         return dict(state=state, text=text, current=state in {"current", "newer"}, detail=detail)
 
     @property
@@ -103,6 +150,8 @@ class InputMethodInstaller:
         return result
 
     def verify_payload(self) -> None:
+        if self._needs_build():
+            raise RuntimeError("输入法源码有未构建的更改，请先构建或点击更新输入法。")
         if not self.available:
             raise RuntimeError("安装包缺少语音输入法组件，请重新安装完整应用。源码运行请先构建输入法组件。")
         self._run(["/usr/bin/codesign", "--verify", "--strict", str(self.source)])
@@ -189,6 +238,7 @@ class InputMethodInstaller:
             time.sleep(.1)
 
     def install(self) -> dict:
+        self._build_if_needed()
         self.verify_payload()
         if self.destination.exists() or self.destination.is_symlink():
             if not product_bundle(self.destination):

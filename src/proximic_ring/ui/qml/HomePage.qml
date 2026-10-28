@@ -32,7 +32,7 @@ UiScrollView {
             Layout.fillWidth: true
             readonly property string versionState: page.controller.inlineInput.inputMethodVersion.state
             visible: page.controller.inlineInput.enabled
-                     && (versionState === "outdated" || versionState === "not_installed")
+                     && (versionState === "outdated" || versionState === "not_installed" || versionState === "needs_build")
             message: page.controller.inlineInput.installing ? "正在更新语音输入法…"
                      : versionState === "not_installed" ? "语音输入法尚未安装，请在设置的“系统与权限”中安装。"
                      : "语音输入法待更新，请在设置的“系统与权限”中更新。"

@@ -121,12 +121,13 @@ def test_voice_start_rechecks_the_original_native_target(browser_focus, monkeypa
 def test_shared_voice_gesture_routes_to_input_without_media_extension(browser_focus):
     backend, root, window, web, text, extension = browser_focus
     from proximic_ring.voice.ime.focus_probe import InputFocus
+    from proximic_ring.gestures.gesture_settings import GestureBindings
     target = backend.capture(menu_action=True, scene=True)
     proof = InputFocus('text', ('e', 'c', '', target.bundle, target.pid, (0, 0)))
     current = {'proof': proof}
     inline = SimpleNamespace(capture_start_focus=lambda: current['proof'],
                              same_gesture_target=lambda value: value == current['proof'].target)
-    owner = SimpleNamespace(_inline_input=inline, _gesture_bindings=SimpleNamespace(confirm=('tap',)),
+    owner = SimpleNamespace(_inline_input=inline, _gesture_bindings=GestureBindings(confirm=('tap',)),
                             _ring_gestures=SimpleNamespace(speech_busy=lambda: False))
     target = backend.capture(menu_action=True, scene=True)
     service = SimpleNamespace(owner=owner, backend=backend, _generation=1, _source_gesture='',

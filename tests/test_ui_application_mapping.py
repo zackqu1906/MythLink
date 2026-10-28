@@ -112,23 +112,23 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
     assert editor.property("editable")
     click("presentationGestureScene")
     assert editor.property("editable")
-    assert "PowerPoint" not in root.findChild(QObject, "gestureSceneHint").property("text")
+    assert root.findChild(QObject, "gestureSceneHint") is None
     if profile != "generic":
         assert editor.property("savedId") == profile + ":next"
         assert catalog.setBinding(bundle, "swipe-right", "")
         catalog._busy = True
         catalog.discoveryChanged.emit()
         click("menuAction_" + profile + ":next")
-        assert root.findChild(QObject, "saveMenuMappingButton") is not None
+        assert root.findChild(QObject, "undoMenuMappingButton") is not None
 
         assert catalog.bindings[bundle]["swipe-right"]["shortcut"] == "Right"
-        assert "PowerPoint" not in root.findChild(QObject, "savedMenuBindingStatus").property("text")
+        assert "PowerPoint" not in root.findChild(QObject, "gestureActionEditor").property("savedStatus")
     else:
         assert {a["id"] for a in catalog.actions if a.get("preset")} == {"presentation:previous", "presentation:next", "presentation:end"}
         assert catalog.defaultMappingNotice
         click("gestureMappingDropdown")
         click("gestureCategory_shortcut")
-        assert root.findChild(QObject, "customShortcutButton").property("visible")
+        assert root.findChild(QObject, "gestureShortcutRecorder").property("visible")
     click("gestureCard_index-pinch")
     assert editor.property("editable")
     assert c.gestureBindings == before and bridge.messages == messages
@@ -304,8 +304,7 @@ def mapping_ui(inline_ui, monkeypatch):
         assert item is not None, name
         assert QMetaObject.invokeMethod(item, "click")
         QTest.qWait(30)
-    # The v6 design stages choices in an anchored menu, then saves explicitly.
-    # Retain these end-to-end mapping scenarios through that public UI sequence.
+    # Exercise the anchored menu; each choice saves automatically.
     def click(name):
         editor = root.findChild(QObject, "gestureActionEditor")
         if name.startswith("menuAction_"):
@@ -320,11 +319,9 @@ def mapping_ui(inline_ui, monkeypatch):
                 QTest.qWait(40)
         elif name == "customShortcutButton":
             raw_click("gestureMappingDropdown")
-            raw_click("gestureCategory_shortcut")
+            root.findChild(QObject, "menuActionSearch").setProperty("text", "自定义快捷键")
+            QTest.qWait(40)
         raw_click(name)
-        if name.startswith("menuAction_") or name == "useCustomShortcutButton":
-            if editor.property("dirty"):
-                raw_click("saveMenuMappingButton")
     raw_click("gestureCard_circle-clockwise")
     def add(bundle=BUNDLE):
         click("addGestureApplicationButton")
@@ -413,7 +410,7 @@ def test_browser_regular_navigation_can_be_unbound_in_ui(mapping_ui):
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (1200, 780), (940, 700)])
-def test_choose_and_clear_explicit_save_without_changing_voice(mapping_ui, tmp_path, size):
+def test_choose_and_clear_autosave_without_changing_voice(mapping_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QPointF
     from PySide6.QtTest import QTest
     from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController
@@ -426,15 +423,15 @@ def test_choose_and_clear_explicit_save_without_changing_voice(mapping_ui, tmp_p
     position = editor.mapToItem(mapping, QPointF())
     assert position.x() == pytest.approx(0)
     assert position.y() >= mapping.height()
-    for name in ("gestureMappingDropdown", "saveMenuMappingButton", "resetMenuMappingButton"):
+    for name in ("gestureMappingDropdown", "undoMenuMappingButton", "gestureAutoSaveStatus"):
         control = root.findChild(QObject, name)
         point = control.mapToItem(editor, QPointF())
         assert 0 <= point.x() and point.x() + control.width() <= editor.width()
-    assert root.findChild(QObject, "saveMenuMappingButton") is not None
+    assert root.findChild(QObject, "undoMenuMappingButton") is not None
     assert root.findChild(QObject, "cancelMenuMappingButton") is None
     click("menuAction_next-tab")
     assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == "Ctrl+Tab"
-    assert "已保存更改" in editor.property("feedback")
+    assert "已自动保存" in editor.property("feedback")
     click("gestureCard_circle-counterclockwise")
     click("menuAction_previous-tab")
     click("gestureCard_circle-clockwise")
@@ -500,10 +497,10 @@ def test_voice_group_notice_and_global_occupancy_follow_saved_settings(mapping_u
     editor = root.findChild(QObject, "gestureActionEditor")
     assert editor.property("editable")
     notice = root.findChild(QObject, "applicationVoiceOverrideNotice")
-    assert not notice.property("visible")
+    assert notice is None
     click("menuAction_next-tab")
 
-    assert not notice.property("visible") and not catalog.voice_overridden(BUNDLE)
+    assert notice is None and not catalog.voice_overridden(BUNDLE)
     assert root.findChild(QObject, "gesturesPage").description("swipe-right") == "未配置映射"
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
@@ -527,7 +524,7 @@ def test_voice_group_notice_and_global_occupancy_follow_saved_settings(mapping_u
         scroll.setProperty("contentY", max(0, scroll.property("contentHeight") - page.property("availableHeight")))
     QTest.qWait(50)
     assert root.grabWindow().save(str(shots / f"global-gesture-settings-{size[0]}.png"))
-    assert root.findChild(QObject, "saveMenuMappingButton") is not None
+    assert root.findChild(QObject, "undoMenuMappingButton") is not None
     click("gestureApplication_" + BUNDLE)
     click("gestureCard_snap")
     assert editor.property("editable")
@@ -537,7 +534,7 @@ def test_voice_group_notice_and_global_occupancy_follow_saved_settings(mapping_u
     click("gestureCard_tap")
     click("menuAction_")
 
-    assert not notice.property("visible") and not catalog.voice_overridden(BUNDLE)
+    assert notice is None and not catalog.voice_overridden(BUNDLE)
     assert c.gestureBindings == before and bridge.messages == messages
 
 
@@ -622,14 +619,14 @@ def test_global_custom_shortcut_recording_and_builtin_rebinding(mapping_ui, tmp_
     saved = GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY))
     assert saved.custom_for('circle-clockwise').shortcut == 'Cmd+Shift+K'
     assert catalog.globalOccupancy['circle-clockwise'] == '测试全局快捷键'
-    assert 'Cmd+Shift+K' in root.findChild(QObject, 'savedMenuBinding').property('text')
+    assert root.findChild(QObject, 'savedMenuBinding') is None
+    assert c._global_gesture_bindings.custom_for('circle-clockwise').shortcut == 'Cmd+Shift+K'
     assert root.grabWindow().save(str(shots / f'global-custom-saved-{size[0]}.png'))
     click('gestureCard_double-middle-pinch')
     assert editor.property('savedId') == 'agent'
     click('gestureCard_snap')
     # Use the same QML selection handler even if the row is below the viewport.
     editor.choose('agent')
-    click('saveMenuMappingButton')
     QTest.qWait(30)
     assert c.ringGestures.globalBindings['agent'] == 'snap'
     click('gestureCard_double-middle-pinch')
@@ -670,7 +667,7 @@ def test_custom_shortcut_recording_save_and_menu_error(mapping_ui, tmp_path, siz
     assert editor.property("savedId").startswith("custom:")
 
     assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == "Cmd+Shift+["
-    assert "自定义快捷键" in root.findChild(QObject, "savedMenuBindingStatus").property("text")
+    assert "自定义快捷键" in root.findChild(QObject, "gestureActionEditor").property("savedStatus")
     assert c.gestureBindings == before and bridge.messages == messages
     click("customShortcutButton")
     QTest.qWait(180)
@@ -873,8 +870,8 @@ def test_saved_binding_status_distinguishes_missing_partial_and_failed_reads(map
 
     saved = catalog.bindings
     messages = list(bridge.messages)
-    status = root.findChild(QObject, "savedMenuBindingStatus")
-    assert status.property("text") == "上次读取时菜单可用"
+    status = root.findChild(QObject, "gestureActionEditor")
+    assert status.property("savedStatus") == "上次读取时菜单可用"
     for result, error, expected in [
         (dict(actions=[dict(ACTIONS[0], available=False)]), "", "上次读取时菜单不可用"),
         (dict(actions=[dict(ACTIONS[0], available=None)]), "", "上次读取未能确认菜单状态"),
@@ -884,15 +881,16 @@ def test_saved_binding_status_distinguishes_missing_partial_and_failed_reads(map
     ]:
         catalog._apply_result("menu", catalog._generation["menu"], BUNDLE, result, error)
         QTest.qWait(50)
-        assert status.property("text") == expected
+        assert status.property("savedStatus") == expected
         assert catalog.bindings == saved
-        assert root.findChild(QObject, "saveMenuMappingButton") is not None
+        assert root.findChild(QObject, "undoMenuMappingButton") is not None
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(shots / "application-menu-unavailable.png"))
     click("refreshApplicationMenu")
-    assert status.property("text") == "上次读取时菜单可用"
-    assert root.findChild(QObject, "applicationMenuReadTime").property("text").startswith("最近读取 ")
+    assert status.property("savedStatus") == "上次读取时菜单可用"
+    assert catalog.menuReadAt
+    assert root.findChild(QObject, "applicationMenuReadTime") is None
     assert bridge.messages == messages
 
 

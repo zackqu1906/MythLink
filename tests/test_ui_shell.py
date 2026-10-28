@@ -47,8 +47,8 @@ def test_shell_navigation_preserves_live_state_and_configuration(inline_ui, tmp_
             mapping = root.findChild(QObject, "gestureMappingPanel")
             editor = root.findChild(QObject, "gestureActionEditor")
             position = editor.mapToItem(mapping, QPointF())
-            assert position.x() >= mapping.width()
-            assert position.y() == pytest.approx(0)
+            assert position.x() == pytest.approx(0)
+            assert position.y() >= mapping.height()
             assert editor.width() >= 340
         assert root.grabWindow().save(str(shots / f"{page}-{size[0]}.png"))
     assert visual_child(root.contentItem(), "mainNav4") is not None
@@ -68,7 +68,7 @@ def test_shell_navigation_preserves_live_state_and_configuration(inline_ui, tmp_
     assert 0 <= origin.y() < root.height()
 
 
-def test_voice_gestures_are_inspectable_but_cannot_open_binding_editor(inline_ui):
+def test_all_gestures_are_editable_without_navigation_mutating_settings(inline_ui):
     from PySide6.QtCore import QObject, QMetaObject
     from PySide6.QtTest import QTest
 
@@ -85,7 +85,7 @@ def test_voice_gestures_are_inspectable_but_cannot_open_binding_editor(inline_ui
         QMetaObject.invokeMethod(card, "click")
         QTest.qWait(20)
         assert page.property("selectedGesture") == key
-        assert not edit.property("editable")
+        assert edit.property("editable")
         assert not root.findChild(QObject, "runtimeSettingsDialog").property("visible")
     assert controller.gestureBindings == before
     assert bridge.messages == messages_before
@@ -195,10 +195,11 @@ def test_grouped_setting_changes_only_the_selected_preference(inline_ui):
     bindings = controller.gestureBindings
     phase = controller.inlineInput.status
     control = root.findChild(QObject, "multiUndoSwitch")
-    QMetaObject.invokeMethod(control, "click")
     assert controller.multiUndoEnabled
+    QMetaObject.invokeMethod(control, "click")
+    assert not controller.multiUndoEnabled
     assert bridge.messages[-1]["type"] == "configure"
-    assert bridge.messages[-1]["multi_undo_enabled"]
+    assert not bridge.messages[-1]["multi_undo_enabled"]
     after = {key: controller._settings.value(key) for key in controller._settings.allKeys()}
     assert {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)} == {"input/multiUndoEnabled"}
     assert controller.gestureBindings == bindings

@@ -498,7 +498,11 @@ def test_multi_undo_setting_is_visible_persisted_and_immediately_configures_nati
     controller, bridge, _, root, event = inline_ui
     control = root.findChild(QObject, "multiUndoSwitch")
     assert control is not None
-    assert not controller.multiUndoEnabled
+    assert controller.multiUndoEnabled
+    assert control.property("checked") is True
+    controller.multiUndoEnabled = False
+    assert controller._settings.value("input/multiUndoEnabled", type=bool) is False
+    assert bridge.messages[-1]["multi_undo_enabled"] is False
     controller.multiUndoEnabled = True
     assert control.property("checked") is True
     assert controller._settings.value("input/multiUndoEnabled", type=bool) is True

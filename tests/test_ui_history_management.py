@@ -142,7 +142,7 @@ def test_unified_record_type_and_filters_reset_without_touching_live_input(inlin
     QTest.qWait(100)
     shot(root, tmp_path, f'history-all-{size[0]}.png')
     assert root.findChild(QObject, 'voiceHistoryProcessingFilter') is None
-    assert item(root, 'voiceHistoryModeFilter').property('model') == ['全部类型', '听写', '润色（下滑）', '指令']
+    assert item(root, 'voiceHistoryModeFilter').property('model') == ['全部类型', '听写', '润色', '指令']
     select(root, 'voiceHistoryModeFilter', 2)
     select(root, 'voiceHistoryApplicationFilter', 1)
     select(root, 'voiceHistoryTimeFilter', 1)

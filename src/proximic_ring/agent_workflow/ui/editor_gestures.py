@@ -1,8 +1,8 @@
 """Shared voice actions for Agent and recommendation parameter editors.
 
 The hosting editor validates focus, field identity, connection and sentence.
-Swipe up waits for the same native dictation commit before submitting; swipe
-down polishes the current sentence. No second ASR/IME or gesture mapping.
+Configured send gestures wait for the same native dictation commit before
+submitting; polish gestures operate on the current sentence. No second ASR/IME or gesture mapping.
 """
 import time
 from PySide6.QtCore import QTimer, Slot
@@ -22,7 +22,7 @@ class EditorGestureActions:
 
     def _input_action_timeout(self):
         self._cancel_input_action()
-        self._input_notice('本句尚未完成定稿，文字已保留，请完成后再次上滑。')
+        self._input_notice('本句尚未完成定稿，文字已保留，请完成后再次执行发送手势。')
 
     def _input_state_changed(self):
         pending = self._pending_input_action
@@ -49,7 +49,7 @@ class EditorGestureActions:
         try:
             if not self._input_context_valid(key, connection, context): return
             if action_phase('send', **self.owner._app_gestures.phase_state()) != 'dispatch': return
-            if name == 'swipe-up': self._submit_from_gesture(key,name)
+            if name in context[1].send: self._submit_from_gesture(key,name)
             else: self.owner._inline_input.polish(restore_raw_on_undo=False)
         finally:
             capture=getattr(self,'auto_context',None)
@@ -59,22 +59,22 @@ class EditorGestureActions:
     def _input_gesture(self, name, key, connection, created, context):
         sentence, bindings = context
         if time.monotonic()-created > 1 or not self._input_context_valid(key, connection, context): return
-        if name in {'swipe-up', 'swipe-down'}:
+        if name in bindings.send + bindings.polish:
             phase = action_phase('send', **self.owner._app_gestures.phase_state())
             if self._pending_input_action: return
             if phase == 'finish_then_send':
                 inline = self.owner._inline_input
                 if not inline.ready or not inline._utterance_id:
-                    self._input_notice('听写输入框尚未就绪，请稍后重新上滑。')
+                    self._input_notice('听写输入框尚未就绪，请稍后重新执行此手势。')
                     return
                 self._pending_input_action = (name, key, connection, context)
                 capture=getattr(self,'auto_context',None)
-                if name=='swipe-up' and capture:capture.prepare(key)
+                if name in bindings.send and capture:capture.prepare(key)
                 self._send_timer.start()
                 self.owner._finish_utterance_event.set()
                 inline.finish()
             elif phase == 'dispatch':
-                if name == 'swipe-up': self._submit_from_gesture(key,name)
+                if name in context[1].send: self._submit_from_gesture(key,name)
                 elif not self.owner._inline_input.polish():
                     self._input_notice('当前没有可润色的本句听写。')
             else: self._input_notice(phase)

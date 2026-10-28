@@ -29,7 +29,7 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
     confirms = (confirm_name, "") if slot == 0 else ("", confirm_name)
     remaining = [name for name in GESTURE_LABELS if name != confirm_name]
     configured = GestureBindings(confirm=confirms, end=confirms,
-                                 undo=tuple(remaining[:2]), switch_mode=tuple(remaining[2:4]))
+                                 undo=tuple(remaining[:2]), switch_mode=tuple(remaining[2:4]), send=(), polish=())
     state["bindings"] = GestureBindings() if live else configured
     audio_thread = threading.get_ident()
 

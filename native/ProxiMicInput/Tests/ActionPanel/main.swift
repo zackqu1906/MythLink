@@ -68,7 +68,7 @@ func capture(_ name: String) throws {
     layer.render(in: context.cgContext)
     try bitmap.representation(using: .png, properties: [:])!.write(to: screenshotDirectory.appendingPathComponent(name + ".png"))
 }
-for name in VoiceHudBindings.names.keys.map({ VoiceHudBindings.assetName($0) }) + ["listening-waveform", "processing-spinner", "processing-dots", "status-done", "status-error", "function-cancel", "function-edit", "function-polish"] {
+for name in VoiceHudBindings.names.keys.map({ VoiceHudBindings.assetName($0) }) + ["listening-waveform", "processing-spinner", "processing-dots", "status-done", "status-error"] {
     check(VoiceHudAssets.image(name)?.isValid == true, "missing/unreadable HUD asset: \(name)")
 }
 guard let cancelHint = find(content, "voiceHint_undo") as? VoiceHudHint,
@@ -82,8 +82,8 @@ check(!window.hasShadow && content.layer?.backgroundColor?.alpha == 0.68,
       "voice palette does not share the translucent stroke surface")
 check(cancelHint.gestures == ["swipe-left"] && editHint.gestures == ["swipe-right"], "wrong default mapping")
 check(find(content, "voiceHint_confirm") == nil, "introduced a Tap/confirmation hint that was not in the existing panel")
-check(cancelHint.title.isEmpty && editHint.title.isEmpty && polishHint.title.isEmpty, "function captions are still visible")
-check(polishHint.gestures == ["swipe-down"] && polishHint.functionAsset == "function-polish" && polishHint.action == nil,
+check(cancelHint.title == "取消" && editHint.title == "修改" && polishHint.title == "润色", "missing action captions")
+check(polishHint.gestures == ["swipe-down"] && polishHint.action == nil,
       "polish must remain a down-swipe hint routed by the host")
 
 func checkActionFit(_ count: Int, scale: CGFloat = 0.8) {
@@ -91,6 +91,12 @@ func checkActionFit(_ count: Int, scale: CGFloat = 0.8) {
     let visible = [cancelHint, editHint, polishHint].filter { !$0.isHidden }
     check(visible.count == count, "fixture has the wrong visible action count")
     check(abs(content.bounds.height - 40 * scale) < 0.01, "action count changed the configured height")
+    for hint in visible {
+        let textWidth = (hint.title as NSString).size(withAttributes: [.font: VoiceHudStyle.font(max(11, 14 * scale))]).width
+        let gesturesWidth = CGFloat(min(2, hint.gestures.count)) * (hint.gestures.count > 1 ? 17 : 24) * scale
+        let gap: CGFloat = hint.gestures.isEmpty ? 0 : 6 * scale
+        check(textWidth + gesturesWidth + gap <= hint.bounds.width - 8 * scale, "gesture or function caption is clipped")
+    }
     if let last = visible.last {
         let right = last.convert(last.bounds, to: content).maxX
         check(abs(content.bounds.maxX - right - 14 * scale) < 1,
@@ -135,12 +141,20 @@ check(cancelHint.toolTip?.contains("取消") == true && !cancelHint.isHidden && 
 check(!polishHint.isHidden && polishHint.toolTip == "下滑 · 结束听写并润色本句", "listening is missing its polish hint")
 let snapshot = (session.phase, session.revision, session.raw)
 var reordered = VoiceHudBindings()
-reordered.apply(["undo": ["swipe-right", "snap"], "confirm": ["swipe-left"], "switch_mode": ["tap"]])
+reordered.apply(["undo": ["swipe-right", "snap", "double-index-pinch"], "confirm": [], "end": [],
+                 "switch_mode": ["tap"], "send": ["swipe-down"], "polish": ["middle-pinch", "clench", "swipe-up"]])
 palette.configureGestureHints(reordered)
-check(cancelHint.gestures == ["swipe-right", "snap"] && cancelHint.functionAsset == "function-cancel" && editHint.functionAsset == "function-edit" && editHint.gestures == ["tap"], "gesture and function cannot be recombined")
-check(polishHint.gestures == ["swipe-down"], "display remapping changed the reserved down-swipe hint")
+check(cancelHint.gestures == ["swipe-right", "snap", "double-index-pinch"] && cancelHint.title == "取消" && editHint.title == "修改" && editHint.gestures == ["tap"], "gesture and caption cannot be recombined")
+check(polishHint.gestures == ["middle-pinch", "clench", "swipe-up"], "polish hint did not follow configured gestures")
+check(polishHint.toolTip?.contains("上滑") == true, "extra alternatives are missing from the accessible hint")
 check(session.phase == snapshot.0 && session.revision == snapshot.1 && session.raw == snapshot.2, "display configuration changed the transaction")
 try capture("custom-bindings")
+var doubleHints = reordered
+doubleHints.apply(["undo": ["double-tap"], "confirm": [], "end": [],
+                   "switch_mode": ["double-index-pinch", "double-middle-pinch"], "send": [], "polish": ["circle-clockwise"]])
+palette.configureGestureHints(doubleHints)
+checkActionFit(3)
+try capture("double-gestures")
 var noUndoGesture = reordered
 noUndoGesture.apply(["undo": ["", ""], "confirm": ["tap", ""], "switch_mode": ["swipe-right", ""]])
 palette.configureGestureHints(noUndoGesture)
@@ -227,7 +241,7 @@ check(!window.isVisible && hudContent.layer?.animation(forKey: kCATransition) ==
 print("PASS native panel freezes during editing, follows the result caret and follows undo")
 palette.applyPresentation(ActionPanelPresentation(phase: .error, error: cases[0].0))
 try capture("error")
-print("PASS icon-only defaults, remapping, original hint visibility and mouse callbacks preserve composition")
+print("PASS gesture icons with text captions, remapping, hint visibility and mouse callbacks preserve composition")
 spinner.setAnimating(true, reducedMotion: true)
 check(spinner.rotor.animation(forKey: "rotation") == nil && spinner.rotor.animation(forKey: "pulse") != nil,
       "Reduce Motion kept spatial animation")
@@ -263,6 +277,7 @@ check(!polishHint.isHidden && polishHint.toolTip == "下滑 · 结束听写并�
 readySession.update("下一句", final: true)
 palette.update(readySession)
 checkActionFit(2)
+check(cancelHint.title == "撤销" && polishHint.title == "润色", "settled actions lost their text captions")
 check(!polishHint.isHidden && editHint.isHidden && polishHint.toolTip == "下滑 · 润色本句", "dictated text is missing its polish hint")
 try capture("dictated")
 readySession.polish(restoringRawOnUndo: true)

@@ -73,9 +73,9 @@ def test_conflicts_are_per_app_voice_undo_and_edit_can_be_reused():
 
 
 def test_migration_only_retires_old_default_aliases():
-    old = GestureBindings(undo=("swipe-left", "swipe-down"), switch_mode=("swipe-right", "swipe-up"))
+    old = GestureBindings(undo=("swipe-left", "swipe-down"), switch_mode=("swipe-right", "swipe-up"), send=("", ""), polish=("", ""))
     assert migrate_voice_defaults(old) == GestureBindings()
-    custom = GestureBindings(undo=("swipe-down", "snap"), switch_mode=("swipe-up", "swipe-right"))
+    custom = GestureBindings(undo=("swipe-down", "snap"), switch_mode=("swipe-up", "swipe-right"), send=("", ""), polish=("", ""))
     assert migrate_voice_defaults(custom) == custom
 
 
@@ -428,7 +428,6 @@ def test_input_swipe_up_is_plain_enter_without_app_or_role_whitelist(route, bund
 
 def test_swipe_up_settings_migrate_to_fixed_global_enter(route):
     from proximic_ring.ui.gestures.app_gesture_controller import AppGestureController
-    from proximic_ring.gestures.gesture_settings import reserve_ring_gestures
     c, s, *_ = route
     profiles = default_profiles()
     profiles["codex"]["send"] = AppBinding("snap", "Cmd+Return", False)
@@ -440,6 +439,8 @@ def test_swipe_up_settings_migrate_to_fixed_global_enter(route):
                    for actions in restored._profiles.values())
         assert restored._profiles["workbuddy"]["next"].enabled
         assert not s.setBinding("codex", "send", "swipe-up", "Cmd+Return", True)
-        assert reserve_ring_gestures(GestureBindings(confirm=("swipe-up", ""))) == GestureBindings()
+        assert c.setVoiceGestureAction("swipe-up", "confirm")
+        assert "swipe-up" in c.gestureBindings["confirm"]
+        assert not any(c.gestureBindings["send"])
     finally:
         restored.close()

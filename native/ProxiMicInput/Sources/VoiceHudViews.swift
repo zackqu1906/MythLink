@@ -27,12 +27,12 @@ enum VoiceHudAssets {
     }
 }
 
-/// Figma function and gesture SVGs are separate, freely recombinable layers.
+/// Gesture artwork matches the settings page; actions use plain text captions.
 /// Only the original Cancel and Convert controls dispatch mouse actions.
 final class VoiceHudHint: NSButton {
     let actionID: String
     private(set) var gestures: [String] = []
-    private(set) var functionAsset = ""
+    static let baseWidth: CGFloat = 84
     var uiScale: CGFloat = 0.8 { didSet { needsDisplay = true } }
     override var acceptsFirstResponder: Bool { false }
     override var isFlipped: Bool { true }
@@ -48,9 +48,9 @@ final class VoiceHudHint: NSButton {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(gestures: [String], functionAsset: String, available: Bool, detail: String) {
+    func configure(gestures: [String], caption: String, available: Bool, detail: String) {
         self.gestures = gestures
-        self.functionAsset = functionAsset
+        title = caption
         isEnabled = available
         isHidden = !available
         let names = gestures.compactMap { VoiceHudBindings.names[$0] }.joined(separator: " 或 ")
@@ -63,20 +63,43 @@ final class VoiceHudHint: NSButton {
         let opacity: CGFloat = isEnabled ? 1 : 0.38
         NSColor.labelColor.withAlphaComponent(0.05).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 4 * uiScale, yRadius: 4 * uiScale).fill()
-        // Keep Figma's 24 pt gesture/function cells. Two alternatives use smaller
-        // gesture cells, preserving the panel's size and its held caret anchor.
+        // Multiple alternatives stay bounded; the tooltip retains every mapping.
         let gestureCell: CGFloat = (gestures.count > 1 ? 17 : 24) * uiScale
-        let symbolsWidth = CGFloat(gestures.count) * gestureCell
-        let total = symbolsWidth + (gestures.isEmpty ? 0 : 1 * uiScale) + 24 * uiScale
+        let symbolsWidth = CGFloat(min(gestures.count, 2)) * gestureCell
+        let caption = title as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: VoiceHudStyle.font(max(11, 14 * uiScale)),
+            .foregroundColor: VoiceHudStyle.text.withAlphaComponent(opacity)
+        ]
+        let captionSize = caption.size(withAttributes: attributes)
+        let gap: CGFloat = gestures.isEmpty ? 0 : 6 * uiScale
+        let total = symbolsWidth + gap + captionSize.width
         var x = (bounds.width - total) / 2
-        for gesture in gestures {
+        for gesture in gestures.prefix(gestures.count > 2 ? 1 : 2) {
             drawAsset(VoiceHudBindings.assetName(gesture), cell: NSRect(x: x, y: 0, width: gestureCell, height: bounds.height),
                       maximum: (gestures.count > 1 ? 16 : 20) * uiScale, opacity: opacity)
+            if gesture.hasPrefix("double-") {
+                let badgeAttributes: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: max(8, 9 * uiScale), weight: .semibold),
+                    .foregroundColor: VoiceHudStyle.blue.withAlphaComponent(opacity)
+                ]
+                let badge = "2" as NSString
+                let size = badge.size(withAttributes: badgeAttributes)
+                badge.draw(at: NSPoint(x: x + gestureCell - size.width, y: bounds.height - size.height - uiScale),
+                           withAttributes: badgeAttributes)
+            }
             x += gestureCell
         }
-        if !gestures.isEmpty { x += uiScale }
-        drawAsset(functionAsset, cell: NSRect(x: x, y: 0, width: 24 * uiScale, height: bounds.height),
-                  maximum: 20 * uiScale, opacity: opacity)
+        if gestures.count > 2 {
+            let count = "+\(gestures.count - 1)" as NSString
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 9 * uiScale),
+                                                           .foregroundColor: NSColor.labelColor.withAlphaComponent(opacity)]
+            let size = count.size(withAttributes: attributes)
+            count.draw(at: NSPoint(x: x + (gestureCell-size.width)/2, y: (bounds.height-size.height)/2), withAttributes: attributes)
+            x += gestureCell
+        }
+        caption.draw(at: NSPoint(x: x + gap, y: (bounds.height - captionSize.height) / 2),
+                     withAttributes: attributes)
     }
 
     private func drawAsset(_ name: String, cell: NSRect, maximum: CGFloat, opacity: CGFloat) {

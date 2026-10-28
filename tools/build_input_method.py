@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -25,18 +26,19 @@ def build_parts(value):
 FINGERPRINT_KEY = 'MythlinkInputMethodFingerprint'
 
 
+def source_fingerprint(root):
+    # Load the shared, dependency-free implementation without importing the app
+    # or depending on an editable Python installation in the build environment.
+    path = root / 'src/proximic_ring/voice/ime/component_fingerprint.py'
+    spec = importlib.util.spec_from_file_location('ime_component_fingerprint', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.source_fingerprint(root)
+
+
 def input_fingerprint(root):
     """Exclude host-app code, build dates, signatures and temporary build paths."""
-    paths = [root / 'native/ProxiMicInput/Info.plist',
-             root / 'scripts/build-input-method.sh', root / 'tools/build_input_method.py']
-    paths += sorted((root / 'native/ProxiMicInput/Sources').glob('*.swift'))
-    resources = root / 'native/ProxiMicInput/Resources'
-    paths += sorted(path for path in resources.rglob('*') if path.is_file() and path.name != '.DS_Store')
-    digest = hashlib.sha256()
-    for path in paths:
-        content = path.read_bytes()
-        digest.update(path.relative_to(root).as_posix().encode() + b'\0')
-        digest.update(str(len(content)).encode() + b'\0' + content)
+    digest = hashlib.sha256(source_fingerprint(root).encode())
     settings = {
         'architecture': platform.machine(),
         'deployment_target': os.environ.get('MACOSX_DEPLOYMENT_TARGET', '15.0'),
@@ -109,6 +111,7 @@ def build(root):
             Path('/Library/Input Methods/ProxiMicInput.app/Contents/Info.plist'),
         ], fingerprint)
         info[FINGERPRINT_KEY] = fingerprint
+        info['MythlinkInputMethodSourceFingerprint'] = source_fingerprint(root)
         with tempfile.TemporaryDirectory(prefix='.build-', dir=output) as directory:
             stage = Path(directory)
             contents = stage / 'ProxiMicInput.app/Contents'

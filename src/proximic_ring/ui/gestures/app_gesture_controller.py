@@ -109,7 +109,7 @@ class AppGestureController(QObject):
             if reserved != self._profiles:
                 self._profiles = reserved
                 owner._settings.setValue("gestures/appProfiles", profiles_to_json(reserved))
-                self._error = "旧发送绑定已更新；输入框内上滑统一为 Enter"
+                self._error = "旧发送绑定已更新；语音发送操作统一使用 Enter"
             validate_profiles(self._profiles, owner._gesture_bindings, frozenset())
         except (ValueError, TypeError, KeyError):
             self._profiles = default_profiles()
@@ -288,15 +288,11 @@ class AppGestureController(QObject):
         self.changed.emit()
 
     def validate_voice(self, bindings):
-        if any(name in {"swipe-up", "swipe-down"}
-               for pair in bindings.as_dict().values() for name in pair):
-            raise ValueError("输入状态的上下滑固定用于发送和润色")
         validate_profiles(self._profiles, bindings, frozenset())
         self._validate_source_conflict(self._profiles, bindings)
 
     def _unused_source_gestures(self):
         used = {g for pair in self.owner._gesture_bindings.as_dict().values() for g in pair}
-        used.update({"swipe-up", "swipe-down"})
         return [g for g in GESTURE_LABELS if g not in used]
 
     def _validate_source_conflict(self, profiles, voice):
@@ -381,7 +377,7 @@ class AppGestureController(QObject):
             if app not in self._profiles or action not in self._profiles[app]:
                 raise ValueError("应用操作不存在")
             if action == "send":
-                raise ValueError("输入模式上滑固定为 Enter，适用于所有应用")
+                raise ValueError("请在全局默认中配置语音发送手势；发送操作使用 Enter")
             binding = AppBinding(gesture, shortcut, enabled if gesture else False)
             profiles = {key: dict(value) for key, value in self._profiles.items()}
             profiles[app][action] = binding
@@ -587,21 +583,21 @@ class AppGestureController(QObject):
                         raise SceneActionError(start_focus.reason)
                     elif input_only:
                         raise SceneActionError("input_method_no_focus")
-            if busy and input_priority and name in {"swipe-up", "swipe-down"}:
+            if busy and input_priority and name in bindings.send + bindings.polish:
                 input_method_target = inline.capture_gesture_target()
                 if input_method_target is None:
                     raise SceneActionError("input_method_not_ready")
             # Cancelling/converting a live sentence needs its session identity,
             # not an AX lookup that could delay cancellation after focus loss.
             if input_method_target is not None:
-                if name == "swipe-up":
+                if name in bindings.send:
                     # Enter still needs a real native window/PID target. IMK
                     # proves its text client; AX only pins the window here.
                     target = self.backend.capture(plain_enter=True, focus_sensitive=False)
                     if (target is None or (target.bundle, target.pid) !=
                             (input_method_target[3], input_method_target[4])):
                         target, input_method_target = None, None
-            elif not busy or name in {"swipe-up", "swipe-down"}:
+            elif not busy or name in bindings.send + bindings.polish:
                 front = None
                 scene_capture = False
                 if self._catalog.uses_scene(name):
@@ -649,7 +645,7 @@ class AppGestureController(QObject):
 
     def input_gestures(self, bindings=None):
         bindings = bindings or self.owner._gesture_bindings
-        return {"swipe-up", "swipe-down"} | {g for pair in bindings.as_dict().values() for g in pair if g} | (
+        return {g for pair in bindings.as_dict().values() for g in pair if g} | (
             {self._source_gesture} if self._source_gesture else set())
 
     def scene_envelope(self, event, *, trace_id=None):
@@ -784,8 +780,9 @@ class AppGestureController(QObject):
         if target is None and event.input_method_target is None:
             self._stop_trace(event, event.capture_reason or "target_unavailable")
             return False
-        actions = ({"send": AppBinding("swipe-up", "Return")} if name == "swipe-up"
-                   else {"polish": _PolishBinding()} if name == "swipe-down"
+        bindings = event.source.bindings if isinstance(event.source, BoundGestureEvent) else self.owner._gesture_bindings
+        actions = ({"send": AppBinding(name, "Return")} if name in bindings.send
+                   else {"polish": _PolishBinding(gesture=name)} if name in bindings.polish
                    else {})
         action = next((key for key, b in actions.items() if b.enabled and b.gesture == name), None)
         if action is None:
@@ -851,8 +848,8 @@ class AppGestureController(QObject):
             self._pending_timer.start(12000)
             self.owner._finish_utterance_event.set()
             inline.finish()
-            self.notify("正在定稿，完成后润色；左滑可取消" if action == "polish" else
-                        "正在定稿，完成后发送；左滑可取消", duration=12000)
+            self.notify("正在定稿，完成后润色；可使用取消操作" if action == "polish" else
+                        "正在定稿，完成后发送；可使用取消操作", duration=12000)
             return True
         if action == "polish":
             self._dispatch_polish(event, restore_raw_on_undo=original != "finish_then_send")
@@ -902,7 +899,7 @@ class AppGestureController(QObject):
                 if not valid:
                     raise RuntimeError("输入目标已变化，未发送快捷键")
             if action == "send" and not target.plain_enter and target.input_context != "text":
-                raise RuntimeError("请先点入消息输入框，再上滑发送")
+                raise RuntimeError("请先点入消息输入框，再执行发送手势")
             from ...browser_bridge.protocol import media_action
             direct = media_action(binding.action_id) if target.browser_target and action.startswith("scene:") else ""
             if (action.startswith(("scene:", "menu:", "global:"))
@@ -1031,7 +1028,7 @@ class AppGestureController(QObject):
             return
         self._pending = None
         self._pending_timer.stop()
-        if binding.gesture == "swipe-down":
+        if isinstance(binding, _PolishBinding):
             self._dispatch_polish(event, restore_raw_on_undo=False)
         else:
             self._dispatch("send", binding, event.target, trace_id=event.trace_id,

@@ -1051,7 +1051,7 @@ class AgentController(QObject, EditorGestureActions):
             # Permission windows accept mouse clicks only, never ring decisions.
             return name in voice_gestures | {'tap','double-tap','swipe-up','swipe-down',
                                              'swipe-left','swipe-right','middle-pinch'}
-        if name in voice_gestures | {'swipe-up','swipe-down'}:
+        if name in voice_gestures:
             # Native stroke candidates keep their original gestures and palette.
             stroke = getattr(getattr(self.owner, '_touchpad', None), 'strokeSession', None)
             if stroke and stroke.engaged and name != 'middle-pinch':
@@ -1063,7 +1063,7 @@ class AgentController(QObject, EditorGestureActions):
                 self.focusRequested.emit('task')
             if name in bindings.confirm + bindings.end:
                 return False  # Shared audio endpoint owns start/end, including tap toggles.
-            if name in {'swipe-up','swipe-down'} | set(bindings.undo + bindings.switch_mode):
+            if name in bindings.send + bindings.polish + bindings.undo + bindings.switch_mode:
                 # Qt tool windows are AXSystemDialog. Use the already-bound
                 # local editor and native sentence, not a generic AX dialog route.
                 self._inputGestureReceived.emit(name,self.inputKey,connection,time.monotonic(),

@@ -82,7 +82,7 @@ class GestureHud(QObject):
         return hud_screen(self._diagnostic)
 
     def show_mode(self, mode: str, *, preview: bool = False, input_fields_available: bool = True,
-                  message: str = "", input_fields_hint: str = "", scene_actions=None, global_bindings=None, global_labels=None):
+                  message: str = "", input_fields_hint: str = "", scene_actions=None, global_bindings=None, global_labels=None, voice_bindings=None):
         if mode not in ("input", "operation"):
             raise ValueError("未知手势提示模式")
         root = self.window.rootObject()
@@ -93,7 +93,7 @@ class GestureHud(QObject):
         app_keys = {row.get("key") for row in scene_actions or [] if row.get("scope") in {"application", "scene"}}
         root.setProperty("globalLabels", {key: GESTURE_LABELS.get(value, "").split("（")[0] for key, value in bindings.items() if value not in app_keys})
         from .gesture_hud_model import hint_view
-        for name, value in hint_view(mode, scene_actions, bindings, global_labels).items():
+        for name, value in hint_view(mode, scene_actions, bindings, global_labels, voice_bindings).items():
             root.setProperty(name, value)
         root.setProperty("notice", message)
         screen = self._screen()

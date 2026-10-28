@@ -1,4 +1,4 @@
-"""The v6 hand workbench stages edits without changing saved gesture behavior."""
+"""The v5 hand workbench shows automatically saved mappings with one-step undo."""
 import pytest
 from PySide6.QtCore import QObject, QMetaObject, QPointF, Qt
 from PySide6.QtTest import QTest
@@ -47,13 +47,17 @@ def test_hand_layout_starts_unselected_and_all_triggers_are_reachable(mapping_ui
     QTest.qWait(80)
     editor = find(root, "gestureActionEditor")
     assert not editor.property("editable")
-    assert not find(root, "saveMenuMappingButton").property("enabled")
+    assert not find(root, "undoMenuMappingButton").property("enabled")
+    assert root.findChild(QObject, "saveMenuMappingButton") is None
     hand = find(root, "gestureHandImage")
     from PySide6.QtQml import QQmlExpression, QQmlEngine
     expression = QQmlExpression(QQmlEngine.contextForObject(hand), hand, "status === Image.Ready")
     assert expression.evaluate()[0] and hand.property("mirror")
     assert (hand.width(), hand.height()) == (432, 432)
-    for name in ("gestureMappingDropdown", "resetMenuMappingButton", "saveMenuMappingButton"):
+    corner = find(root, "gestureVoicePriorityCard")
+    hand_right = hand.mapToScene(QPointF(hand.width(), 0)).x()
+    assert corner.mapToScene(QPointF()).x() >= hand_right + 8
+    for name in ("gestureMappingDropdown", "undoMenuMappingButton", "gestureAutoSaveStatus"):
         control = find(root, name)
         pos = control.mapToScene(QPointF())
         assert 0 <= pos.x() and pos.x() + control.width() <= root.width()
@@ -69,56 +73,58 @@ def test_hand_layout_starts_unselected_and_all_triggers_are_reachable(mapping_ui
     assert (dict(c.ringGestures.globalBindings), c.gestureBindings, list(bridge.messages)) == before
 
 
-def test_unsaved_edits_are_scoped_and_reset_does_not_write(mapping_ui):
+def test_auto_saved_edits_and_undo_are_scoped_to_the_latest_change(mapping_ui):
     c, bridge, root, catalog, _, navigate, add = mapping_ui
     add()
     before, messages = c.gestureBindings, list(bridge.messages)
     stage(root, "next-tab")
     editor = find(root, "gestureActionEditor")
-    assert editor.property("dirty") and not catalog.bindings[BUNDLE]
+    assert catalog.bindings[BUNDLE]["circle-clockwise"]["id"] == "next-tab"
+    assert editor.property("feedback") == "已自动保存"
     navigate("gestureCard_snap")
     stage(root, "previous-tab")
     navigate("gestureCard_circle-clockwise")
     assert editor.property("selectedActionId") == "next-tab"
-    click(root, "resetMenuMappingButton")
-    assert not editor.property("dirty") and not catalog.bindings[BUNDLE]
+    assert not find(root, "undoMenuMappingButton").property("enabled")
     navigate("gestureCard_snap")
-    assert editor.property("selectedActionId") == "previous-tab"
-    click(root, "saveMenuMappingButton")
-    assert catalog.bindings[BUNDLE]["snap"]["id"] == "previous-tab"
-    assert not editor.property("dirty")
+    assert find(root, "undoMenuMappingButton").property("enabled")
+    click(root, "undoMenuMappingButton")
+    assert "snap" not in catalog.bindings[BUNDLE]
+    assert catalog.bindings[BUNDLE]["circle-clockwise"]["id"] == "next-tab"
+    assert not find(root, "undoMenuMappingButton").property("enabled")
     assert c.gestureBindings == before and bridge.messages == messages
 
 
-def test_global_draft_waits_for_save_and_rejection_preserves_saved_value(mapping_ui):
-    c, _, root, _, _, navigate, _ = mapping_ui
+def test_failed_auto_save_keeps_saved_value_and_success_can_be_undone(mapping_ui):
+    c, _, root, _, _, _, _ = mapping_ui
     idle(c)
     before = dict(c.ringGestures.globalBindings)
+    c._inline_input._view["phase"] = "listening"
     stage(root, "window_selector")
     editor = find(root, "gestureActionEditor")
-    assert dict(c.ringGestures.globalBindings) == before and editor.property("dirty")
-    c._inline_input._view["phase"] = "listening"
-    click(root, "saveMenuMappingButton")
-    assert editor.property("feedbackError") and editor.property("dirty")
+    assert editor.property("feedbackError")
     assert dict(c.ringGestures.globalBindings) == before
+    assert find(root, "gestureAutoSaveError").property("visible")
     idle(c)
-    click(root, "saveMenuMappingButton")
+    stage(root, "window_selector")
     assert c.ringGestures.globalBindings["window_selector"] == "circle-clockwise"
-    assert not editor.property("dirty")
-    # Opening/closing the menu preserves the actual saved selection.
+    assert not editor.property("feedbackError")
     click(root, "gestureMappingDropdown")
     click(root, "gestureCategory_system")
     details = find(root, "menuActionDescription_window_selector").property("text")
     assert "选择要切换到的窗口" in details and "此手势当前用于" in details
     assert find(root, "menuAction_window_selector").property("checked")
     QMetaObject.invokeMethod(find(root, "gestureMappingMenu"), "close")
+    click(root, "undoMenuMappingButton")
+    assert dict(c.ringGestures.globalBindings) == before
 
 
-def test_custom_shortcut_is_a_draft_until_explicit_save(mapping_ui):
-    c, _, root, catalog, _, _, add = mapping_ui
+def test_custom_shortcut_auto_saves_after_recording_and_can_be_undone(mapping_ui):
+    _, _, root, catalog, _, _, add = mapping_ui
     add()
     click(root, "gestureMappingDropdown")
-    click(root, "gestureCategory_shortcut")
+    find(root, "menuActionSearch").setProperty("text", "自定义快捷键")
+    QTest.qWait(40)
     click(root, "customShortcutButton")
     find(root, "customShortcutName").setProperty("text", "测试动作")
     click(root, "customShortcutEntryMode")
@@ -126,14 +132,13 @@ def test_custom_shortcut_is_a_draft_until_explicit_save(mapping_ui):
     click(root, "useCustomShortcutButton")
     QTest.qWait(100)
     assert not find(root, "customShortcutDialog").property("visible")
-    assert not catalog.bindings[BUNDLE]
-    assert find(root, "gestureActionEditor").property("dirty")
-    click(root, "saveMenuMappingButton")
     assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == "Cmd+Shift+K"
+    click(root, "undoMenuMappingButton")
+    assert not catalog.bindings[BUNDLE]
 
 
-def test_scene_drafts_are_discarded_when_restoring_or_removing_application(mapping_ui):
-    _, _, root, catalog, _, navigate, _ = mapping_ui
+def test_restore_defaults_and_removing_application_invalidate_undo(mapping_ui):
+    c, _, root, catalog, _, navigate, _ = mapping_ui
     bundle = "com.microsoft.Powerpoint"
     catalog._candidates = [dict(value=bundle, label="PowerPoint", path="")]
     assert catalog.addApplication(bundle)
@@ -147,18 +152,20 @@ def test_scene_drafts_are_discarded_when_restoring_or_removing_application(mappi
     editor = find(root, "gestureActionEditor")
     assert editor.property("selectedActionId") == "next-tab"
     assert catalog.restoreDefaultMappings(bundle)
-    assert not editor.property("dirty")
+    assert not c.gestureMappingHistory.canUndo
     navigate("presentationGestureScene")
-    assert not editor.property("dirty") and editor.property("savedId") == "powerpoint:next"
+    assert editor.property("savedId") == "powerpoint:next"
     stage(root, "powerpoint:previous")
+    assert c.gestureMappingHistory.canUndo
     assert catalog.removeApplication(bundle)
+    assert not c.gestureMappingHistory.canUndo
     assert catalog.addApplication(bundle)
     QTest.qWait(40)
     navigate("gestureApplication_" + bundle)
-    assert not editor.property("dirty")
+    assert not find(root, "undoMenuMappingButton").property("enabled")
 
 
-def test_hover_is_stable_and_voice_category_opens_existing_mapping_dialog(mapping_ui):
+def test_hover_is_stable_and_voice_category_expands_in_place(mapping_ui):
     _, _, root, _, _, _, _ = mapping_ui
     chip = find(root, "gestureCard_snap")
     pos = chip.mapToScene(QPointF(chip.width()/2, chip.height()/2)).toPoint()
@@ -169,8 +176,10 @@ def test_hover_is_stable_and_voice_category_opens_existing_mapping_dialog(mappin
     assert chip.property("hovered") and chip.property("background").property("color") == color
     click(root, "gestureMappingDropdown")
     click(root, "gestureCategory_voice")
-    assert find(root, "voiceGestureBindingDialog").property("visible")
-    QMetaObject.invokeMethod(find(root, "voiceGestureBindingDialog"), "close")
+    assert root.findChild(QObject, "voiceGestureBindingDialog") is None
+    assert find(root, "gestureMappingMenu").property("visible")
+    assert find(root, "menuAction_voice:start_end").property("visible")
+    QMetaObject.invokeMethod(find(root, "gestureMappingMenu"), "close")
 
 
 def rows(root):
@@ -229,12 +238,8 @@ def test_system_keyboard_presets_use_existing_binding_scope(mapping_ui, applicat
     assert "搜索栏" in description and "系统中改键" in description
     assert find(root, "menuActionShortcut_keyboard:spotlight").property("text") == "Cmd+Space"
     click(root, "menuAction_keyboard:spotlight")
-    assert dict(c.ringGestures.globalBindings) == before_globals
-    if application_scope:
-        assert catalog.bindings[BUNDLE] == {}
-    click(root, "saveMenuMappingButton")
     editor = find(root, "gestureActionEditor")
-    assert not editor.property("dirty") and not editor.property("feedbackError")
+    assert not editor.property("feedbackError")
     if application_scope:
         assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == "Cmd+Space"
         assert dict(c.ringGestures.globalBindings) == before_globals
@@ -262,5 +267,5 @@ def test_browser_media_actions_are_not_described_as_key_presses(mapping_ui):
     click(root, "gestureMappingDropdown")
     click(root, "gestureCategory_application")
     action = next(a for a in rows(root) if a["id"].startswith("web-video:"))
-    assert find(root, "menuActionShortcut_" + action["id"]).property("text") == "播放器控制"
+    assert find(root, "menuActionShortcut_" + action["id"]).property("text") == ""
     assert "不发送键盘按键" in find(root, "menuActionDescription_" + action["id"]).property("text")

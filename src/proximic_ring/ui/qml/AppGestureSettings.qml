@@ -27,7 +27,7 @@ ColumnLayout {
 
     Label {
         Layout.fillWidth: true
-        text: "输入框有焦点时：上滑固定按一次 Enter，适用于所有应用和浏览器的当前输入框。发送、换行或搜索由该输入框决定；听写中会先定稿。\n应用配置优先于全局配置；仅与输入手势重叠时，输入框内优先执行输入功能。"
+        text: "输入框有焦点时：语音发送操作按一次 Enter，适用于所有应用和浏览器的当前输入框。发送、换行或搜索由该输入框决定；听写中会先定稿。\n应用配置优先于全局配置；仅与输入手势重叠时，输入框内优先执行输入功能。"
         color: "#687286"; wrapMode: Text.Wrap; font.pixelSize: 12
     }
     SettingsSelect {

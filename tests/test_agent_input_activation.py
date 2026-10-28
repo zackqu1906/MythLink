@@ -275,7 +275,9 @@ def test_parked_steer_and_answers_have_separate_native_sessions(inline_ui, monke
         assert begin_voice() not in sentences
         finish_fixture_voice(owner)
         agent.submit('task')
-        assert sent[-1]=={'type':'steer','targetTurn':'original','text':draft.strip()}
+        assert {k: sent[-1][k] for k in ('type', 'targetTurn', 'text')} == {
+            'type':'steer','targetTurn':'original','text':draft.strip()}
+        assert sent[-1]['context']['context_schema'] == 'invocation-context-1'
     finally:
         overlay.close()
 

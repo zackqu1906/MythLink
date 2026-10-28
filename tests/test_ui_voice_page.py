@@ -48,23 +48,14 @@ def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_
     click(root, "openVoiceGestureSettingsButton")
     QTest.qWait(100)
     dialog = root.findChild(QObject, "runtimeSettingsDialog")
-    card = root.findChild(QObject, "voiceGestureSettingsCard")
-    assert not dialog.property("visible") and root.property("currentPage") == 1
-    position = card.mapToScene(QPointF())
-    assert position.y() >= 0 and position.y() < root.height()
+    assert not dialog.property("visible") and root.property("currentPage") == 2
+    editor = root.findChild(QObject, "gestureActionEditor")
+    assert editor.property("voiceScope")
+    assert root.findChild(QObject, "voiceGestureBindingDialog") is None
     assert controller.gestureBindings == before and bridge.messages == messages
-    notice = root.findChild(QObject, "voicePageGesturePriorityNotice")
-    assert "仅下列已绑定的手势优先执行输入功能" in notice.property("text")
-    assert "无需输入框失焦" in notice.property("text")
-    for action, gesture, label in [("send", "swipe-up", "上滑"), ("polish", "swipe-down", "下滑")]:
-        fixed = visual_child(card, f"voicePage_{action}Card")
-        assert fixed.property("visible")
-        icon = visual_child(fixed, f"voicePreviewGesture_{gesture}")
-        assert icon.property("implicitWidth") > 0
-        assert visual_child(fixed, f"voicePage_{action}FixedGesture").property("text") == label + " · 固定手势"
-        pos = fixed.mapToItem(card, QPointF())
-        assert 0 <= pos.x() and pos.x() + fixed.width() <= card.width()
-        assert 0 <= pos.y() and pos.y() + fixed.height() <= card.height()
+    card = visual_child(root.contentItem(), "gestureVoicePriorityCard")
+    position = card.mapToScene(QPointF())
+    assert position.y() >= 0 and position.y() + card.height() <= root.height()
     directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     directory.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(directory / f"input-gestures-{size[0]}.png"))
@@ -72,74 +63,38 @@ def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
-def test_voice_page_edits_existing_bindings_and_only_sends_hud_metadata(inline_ui, tmp_path, size):
-    from PySide6.QtCore import QObject, QMetaObject, QPointF, Q_ARG
+def test_voice_overview_follows_global_bindings_and_settings_routes_to_same_editor(inline_ui, size):
+    from PySide6.QtCore import QObject, QMetaObject, Q_ARG
     from PySide6.QtTest import QTest
     controller, bridge, _, root, _ = inline_ui
     root.resize(*size)
     root.setProperty("currentPage", 1)
     root.show()
-    QTest.qWait(100)
-    page = root.findChild(QObject, "voiceGestureSettingsCard")
-    def assert_selections():
-        for action in ("confirm", "end", "undo", "switch_mode"):
-            for slot in (0, 1):
-                expected = controller.gestureBindings[action][slot]
-                # Both editors must retain their selection when another slot's
-                # change rebuilds their available-options model.
-                for control in (visual_child(page, f"voicePage_{action}Gesture{slot}"),
-                                root.findChild(QObject, f"{action}Gesture{slot}")):
-                    assert control.property("currentValue") == expected, control.objectName()
-                    label = next(item["label"] for item in control.property("options")
-                                 if item["value"] == expected)
-                    assert control.property("displayText") == label
-    assert_selections()
-    # Repeater delegates belong to the visual tree.
-    selector = visual_child(page, "voicePage_undoGesture0")
-    assert selector is not None
-    options = selector.property("options")
-    index = next(i for i, option in enumerate(options) if option["value"] == "snap")
+    QTest.qWait(60)
     before = (controller.inlineInput._view.copy(), controller.inlineInput._utterance_id,
               controller.inlineInput._seq, controller.recognitionEnabled)
     bridge.messages.clear()
-    selector.setProperty("currentIndex", index)
-    QMetaObject.invokeMethod(selector, "activated", Q_ARG(int, index))
+    assert controller.setVoiceGestureAction('swipe-down', 'send')
+    assert controller.setVoiceGestureAction('clench', 'polish')
     QTest.qWait(30)
-    assert controller.gestureBindings["undo"] == ["snap", ""]
-    assert_selections()
+    send = visual_child(root.contentItem(), 'voiceCurrentBinding1').property('modelData')
+    polish = visual_child(root.contentItem(), 'voiceCurrentBinding2').property('modelData')
+    assert send['title'] == '上滑/下滑' and polish['title'] == '握拳'
+    assert polish['icon'] == 'clench'
     assert (controller.inlineInput._view, controller.inlineInput._utterance_id,
             controller.inlineInput._seq, controller.recognitionEnabled) == before
-    assert [m["type"] for m in bridge.messages] == ["configure_hud"]
-    assert bridge.messages[0]["gesture_hints"]["undo"] == ["snap", ""]
-    preview = visual_child(page, "voicePage_undoPreview")
-    assert preview.property("functionAsset") == "function-cancel"
-    icon = visual_child(preview, "voicePreviewGesture_snap")
-    assert icon.property("implicitWidth") > 0
-    assert icon.property("source").toString().endswith("gesture-snap.svg")
-    # The existing settings page shares the same model and conflict validation.
-    assert root.findChild(QObject, "undoGesture0").property("selectedGesture") == "snap"
-    assert controller.setGestureBinding("end", 0, "double-tap")
-    assert controller.setGestureBinding("undo", 0, "tap")
-    assert controller.gestureBindings["undo"] == ["tap", ""]
-    QTest.qWait(30)
-    assert_selections()
-    assert selector.property("selectedGesture") == "tap"
-    for action in ("confirm", "end", "undo", "switch_mode"):
-        for slot in (0, 1):
-            control = visual_child(page, f"voicePage_{action}Gesture{slot}")
-            position = control.mapToItem(page, QPointF())
-            assert control.width() > 70
-            assert 0 <= position.x() and position.x() + control.width() <= page.width()
-    click(root, "voicePageResetGesturesButton")
-    QTest.qWait(30)
-    assert controller.gestureBindings["undo"] == ["swipe-left", ""]
-    assert_selections()
-    icon = visual_child(preview, "voicePreviewGesture_swipe-left")
-    assert icon.property("implicitWidth") > 0
-    assert icon.property("source").toString().endswith("gesture-swipe-left.svg")
-    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
-    directory.mkdir(parents=True, exist_ok=True)
-    assert root.grabWindow().save(str(directory / f"voice-gestures-{size[0]}.png"))
+    assert [m['type'] for m in bridge.messages] == ['configure_hud', 'configure_hud']
+    assert root.findChild(QObject, 'voiceGestureSettingsCard') is None
+    assert root.findChild(QObject, 'undoGesture0') is None
+    dialog = root.findChild(QObject, 'runtimeSettingsDialog')
+    QMetaObject.invokeMethod(dialog, 'open')
+    QMetaObject.invokeMethod(dialog, 'navigate', Q_ARG('QVariant', 2))
+    QTest.qWait(50)
+    click(root, 'configureGlobalVoiceGesturesButton')
+    QTest.qWait(250)
+    assert not dialog.property('visible') and root.property('currentPage') == 2
+    assert root.findChild(QObject, 'gestureActionEditor').property('voiceScope')
+    assert not root.findChild(QObject, 'gestureActionEditor').property('applicationScope')
 
 
 def test_voice_preview_assets_match_the_native_figma_originals():
@@ -152,6 +107,8 @@ def test_voice_preview_assets_match_the_native_figma_originals():
         data = (ui / (name + ".svg")).read_bytes()
         assert data == (native / (name + ".svg")).read_bytes()
         assert hashlib.sha256(data).hexdigest() == metadata["sha256"]
+        if name.startswith("gesture-"):
+            assert data == (ui.parent / metadata["source_file"]).read_bytes()
 
 
 def test_application_shortcut_settings_open_the_explicit_application_catalog(inline_ui):

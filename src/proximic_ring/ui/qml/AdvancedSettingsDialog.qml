@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-SettingsDialog {
+PreferencesDialog {
     id: dialog
     objectName: "advancedSettingsDialog"
     required property var controller
@@ -11,13 +11,17 @@ SettingsDialog {
     signal gpuSetupRequested()
     closePolicy: Popup.CloseOnEscape
     title: "高级设置"
-    subtitle: "识别服务、文本模型与性能集中在此设置。"
-    symbol: "tool"
+    section: 1
+    property int returnSection: 1
     showBack: true
     backObjectName: "advancedSettingsBackButton"
     onBackRequested: finish()
-    doneObjectName: "advancedSettingsDoneButton"
-    onDoneRequested: finish()
+    closeObjectName: "advancedSettingsDoneButton"
+    onCloseRequested: finish()
+    onAccountRequested: { returnSection = 0; finish() }
+    onSettingsRequested: { returnSection = 1; finish() }
+    onHelpRequested: { returnSection = 2; finish() }
+    onAboutToShow: returnSection = 1
     onOpened: scrollToSection(initialSection)
     onAboutToHide: saveCurrentEditor()
 
@@ -46,10 +50,10 @@ SettingsDialog {
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             ColumnLayout {
                 width: scroll.availableWidth
-                spacing: 18
+                spacing: 24
                 SpeechServiceSettings {
                     objectName: "settingsPage4"
-                    Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28; Layout.topMargin: 24
+                    Layout.fillWidth: true
                     controller: dialog.controller
                     deviceSettingsLocked: controller.connected || controller.busy
                     onGpuSetupRequested: dialog.gpuSetupRequested()
@@ -57,7 +61,7 @@ SettingsDialog {
                 TextServiceSettings {
                     id: textServices
                     objectName: "settingsPage5"
-                    Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28; Layout.bottomMargin: 28
+                    Layout.fillWidth: true
                     controller: dialog.controller
                 }
             }

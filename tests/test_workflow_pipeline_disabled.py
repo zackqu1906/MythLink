@@ -113,7 +113,8 @@ def test_ui_does_not_start_worker_or_restore_saved_auto_preference(inline_ui, mo
     assert agent.recommendations.dialog is None and agent._workflow_trial_dialog is None
     switch = root.findChild(QObject, 'agentWorkflowAutoSwitch')
     assert switch is not None and not switch.property('enabled')
-    assert root.findChild(QObject, 'openWorkflowRecommendations').property('enabled')
+    assert root.findChild(QObject, 'openWorkflowRecommendations') is None
+    assert agent.historyRecommendations.enabled
 
 
 def test_bridge_send_is_inert_even_outside_controller(tmp_path, monkeypatch):

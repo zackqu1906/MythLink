@@ -111,11 +111,11 @@ def main(argv: list[str] | None = None) -> int:
     controller.ringGestures.showRequested.connect(
         lambda mode, message: gesture_hud.show_mode(
             mode, message=message, global_bindings=controller.ringGestures.globalBindings,
-            global_labels=controller.ringGestures.globalActionLabels)
+            global_labels=controller.ringGestures.globalActionLabels, voice_bindings=controller.gestureBindings)
     )
     controller.ringGestures.sceneHudRequested.connect(
         lambda mode, actions: gesture_hud.show_mode(mode, scene_actions=actions,
-            global_bindings=controller.ringGestures.globalBindings, global_labels=controller.ringGestures.globalActionLabels)
+            global_bindings=controller.ringGestures.globalBindings, global_labels=controller.ringGestures.globalActionLabels, voice_bindings=controller.gestureBindings)
     )
     controller.ringGestures.hideRequested.connect(gesture_hud.hide)
     from .desktop.window_selector_overlay import WindowSelectorOverlay

@@ -11,9 +11,11 @@ ColumnLayout {
     FigmaTheme { id: theme }
 
     FigmaFormGroup {
+        flat: true
         title: "文本处理"
         description: "用于编辑指令和听写整理，修改在下一次文本处理时生效。"
         FigmaFormRow {
+            preferenceStyle: true
             title: "运行方式"
             description: pane.local ? "文本模型在电脑上运行，语音识别服务单独设置。"
                 : "使用已配置的在线文本服务，需要网络连接。"
@@ -32,10 +34,12 @@ ColumnLayout {
     }
 
     FigmaFormGroup {
+        flat: true
         objectName: "localTextModelGroup"
         visible: pane.local
         title: "本地模型"
         FigmaFormRow {
+            preferenceStyle: true
             title: pane.controller.localModelInstalled ? "模型已就绪" : "准备本地模型"
             description: pane.controller.localModelInstallStatus
             FigmaAction {
@@ -56,13 +60,15 @@ ColumnLayout {
     }
 
     FigmaFormGroup {
+        flat: true
         objectName: "onlineTextModelGroup"
         visible: !pane.local
         title: pane.controller.llmProvider === "volcengine" ? "火山方舟" : "当前在线服务"
         FigmaFormRow {
+            preferenceStyle: true
             title: "在线模型"
             description: "沿用已保存的模型，也可在下方填写自定义模型标识。"
-            controlWidth: 340
+            controlWidth: pane.width >= 760 ? 340 : 220
             FigmaSelect {
                 objectName: "llmModelCombo"
                 Layout.fillWidth: true
@@ -81,11 +87,12 @@ ColumnLayout {
             }
         }
         FigmaFormRow {
+            preferenceStyle: true
             title: "服务密钥"
             description: pane.controller.llmApiKeyEnv.length
                 ? "未填写时沿用已配置的环境变量。"
                 : "保存在当前用户的应用设置中。"
-            controlWidth: 340
+            controlWidth: pane.width >= 760 ? 340 : 220
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
                 FigmaTextField {
@@ -109,12 +116,14 @@ ColumnLayout {
     }
 
     FigmaFormGroup {
+        flat: true
         objectName: "llmAdvancedGroup"
         visible: !pane.local
         title: "在线服务参数"
         description: "仅在使用自定义在线服务时调整，需与服务提供方的配置一致。"
         FigmaFormRow {
-            title: "服务地址"; controlWidth: 340
+            preferenceStyle: true
+            title: "服务地址"; controlWidth: pane.width >= 760 ? 340 : 220
             FigmaTextField {
                 objectName: "llmBaseUrlField"
                 Layout.fillWidth: true
@@ -124,7 +133,8 @@ ColumnLayout {
             }
         }
         FigmaFormRow {
-            title: "模型标识"; controlWidth: 340
+            preferenceStyle: true
+            title: "模型标识"; controlWidth: pane.width >= 760 ? 340 : 220
             FigmaTextField {
                 objectName: "llmModelField"
                 Layout.fillWidth: true

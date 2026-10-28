@@ -52,13 +52,15 @@ def receive(controller, kind="state", **fields):
     })
 
 
-def test_multi_undo_setting_survives_shortcut_updates_and_reconnect(component):
+@pytest.mark.parametrize('enabled', [True, False])
+def test_multi_undo_setting_survives_shortcut_updates_and_reconnect(component, enabled):
     c, _ = component
-    c.configure("F8", multi_undo_enabled=True)
+    assert c._multi_undo_enabled is True
+    c.configure("F8", multi_undo_enabled=enabled)
     c.configure("F9")
-    assert c._bridge.messages[-1]["multi_undo_enabled"] is True
+    assert c._bridge.messages[-1]["multi_undo_enabled"] is enabled
     c._accept({"type": "connected", "epoch": "new"})
-    assert c._bridge.messages[-1]["multi_undo_enabled"] is True
+    assert c._bridge.messages[-1]["multi_undo_enabled"] is enabled
 
 
 def test_hud_configuration_is_independent_of_voice_and_survives_reconnect(component):

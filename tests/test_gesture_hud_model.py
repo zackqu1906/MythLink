@@ -58,3 +58,16 @@ def test_capped_hints_preserve_all_saved_bindings_and_show_overflow():
     view = hint_view("operation", actions, {})
     assert [orb["key"] for orb in view["orbs"]] == list(keys[:6])
     assert view["overflow"] == 2 and actions == original
+
+
+def test_input_hints_follow_custom_repeated_actions_and_explicit_unbindings():
+    from proximic_ring.gestures.gesture_settings import GestureBindings
+    from proximic_ring.ui.gestures.voice_gesture_mapping import with_action
+    bindings = GestureBindings()
+    for gesture in GESTURE_ORDER:
+        bindings = with_action(bindings, gesture, '')
+    for gesture in ('snap', 'clench', 'index-pinch'):
+        bindings = with_action(bindings, gesture, 'polish')
+    bindings = with_action(bindings, 'swipe-down', 'send')
+    actions = {orb['key']: orb['action'] for orb in hint_view('input', voice_bindings=bindings.as_dict())['orbs']}
+    assert actions == {'snap': '润色本句', 'clench': '润色本句', 'index-pinch': '润色本句', 'swipe-down': '发送'}

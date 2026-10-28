@@ -41,6 +41,8 @@ function description(action, applicationScope, applicationName, platform) {
 }
 
 function actionDetails(action, applicationScope, applicationName, platform) {
+    if (action.voiceAction) return "语音输入 · 可与应用和全局映射重叠，输入框内优先执行。"
+        + "\n仅在全局默认中修改；同一功能可绑定多个手势，选择后自动保存。"
     if (action.category) {
         return {application:"来自「" + applicationName + "」的菜单和场景预设。",system:"Mythlink 内置功能，如窗口选择、滚动和 Agent。",voice:"调整听写、定稿、润色和编辑的输入手势。",shortcut:"macOS 系统组合键，或你自己录制的快捷键。"}[action.category] || ""
     }

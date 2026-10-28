@@ -27,6 +27,7 @@ Rectangle {
             VoiceGesturePreview {
                 objectName: "tutorialCurrentGesture"
                 Layout.alignment: Qt.AlignHCenter
+                maximumWidth: hintContent.width
                 visible: gestures.length > 0
                 gestures: card.hint.gestures || []
                 functionAsset: card.hint.functionAsset || ""

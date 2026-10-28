@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
 import QtQuick.Window
 
@@ -10,10 +11,13 @@ UiScrollView {
     objectName: "gesturesPage"
     property bool applicationScope: false
     property string selectedGesture: ""
-    signal voiceSettingsRequested()
     readonly property var catalog: controller.appGestures.catalog
     readonly property string selectedApp: catalog.selectedApp
+    // Catalog state/menu refreshes must not recreate a pressed application tab.
+    readonly property string applicationTabsJson: JSON.stringify(catalog.apps)
+    readonly property var applicationTabsModel: JSON.parse(applicationTabsJson)
     readonly property bool sceneScope: applicationScope && catalog.selectedScene !== "regular"
+    readonly property bool showVoiceMappings: controller.recognitionEnabled || actionEditor.voiceScope
     readonly property var selectedApplication: catalog.apps.filter(function(app) { return app.value === page.selectedApp })[0] || null
     property string managementFeedback: ""
     onSelectedAppChanged: {
@@ -22,10 +26,17 @@ UiScrollView {
     }
     function selectApplication(bundle) {
         managementFeedback = ""
+        actionEditor.voiceScope = false
         applicationScope = true
         if (selectedApp !== bundle) catalog.selectApplication(bundle)
     }
     function addApplication() { addDialog.open() }
+    function configureVoice() {
+        applicationScope = false
+        selectedGesture = controller.gestureBindings.confirm.filter(function(g) { return g.length > 0 })[0] || "tap"
+        actionEditor.voiceScope = true
+        contentItem.contentY = 0
+    }
     readonly property var gestures: [
         {key: "circle-clockwise", title: "顺时针", row: 0, col: 0},
         {key: "clench", title: "握拳", row: 0, col: 1},
@@ -44,6 +55,16 @@ UiScrollView {
     ]
     readonly property string selectedTitle: (gestures.filter(function(g) { return g.key === selectedGesture })[0] || {}).title || ""
     function description(key) {
+        if (actionEditor.voiceScope) {
+            return voiceDescription(key) || "未配置语音操作"
+        }
+        return regularDescription(key) || "未配置映射"
+    }
+    function voiceDescription(key) {
+        var bindings = controller.gestureBindings
+        return controller.voiceGestureAction(key).label || ""
+    }
+    function regularDescription(key) {
         if (applicationScope) {
             var binding = (catalog.bindings[selectedApp] || {})[key]
             if (binding) return binding.label
@@ -52,7 +73,17 @@ UiScrollView {
             if (regular) return "沿用应用 · " + regular.label
         }
         var fallback = catalog.globalOccupancy[key]
-        return fallback ? (applicationScope ? "沿用全局 · " : "") + fallback : "未配置映射"
+        return fallback ? (applicationScope ? "沿用全局 · " : "") + fallback : ""
+    }
+    function mappingHint(key) {
+        var ordinary = regularDescription(key)
+        var voice = showVoiceMappings ? voiceDescription(key) : ""
+        var ordinaryHint = ordinary ? ordinary + " · " + sourceLabel(key) : "未配置普通功能"
+        if (!voice) return ordinaryHint
+        return (controller.recognitionEnabled ? "输入框内或语音操作中：" : "语音绑定（已关闭）：") + voice
+            + (ordinary ? "\n其他时候：" + ordinaryHint : "")
+            + "\n语音与普通功能独立保存，同一次手势只执行其中一个功能。"
+            + (applicationScope ? "\n语音绑定在此处只读，请到全局默认中修改。" : "")
     }
     function locked(key) { return applicationScope && sceneScope && catalog.isSharedNavigation(key) }
     function sourceLabel(key) {
@@ -67,6 +98,25 @@ UiScrollView {
     contentWidth: availableWidth
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
     ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+    FigmaDialog {
+        id: priorityRules
+        objectName: "voiceGesturePriorityRules"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(400, page.Window.width - 48); padding: 20
+        modal: true; popupType: Popup.Item
+        background: Rectangle { radius: 12; color: theme.surface; border.color: theme.line }
+        contentItem: ColumnLayout {
+            spacing: 12
+            Label { text: "语音优先与生效规则"; color: theme.text; font.family: theme.family; font.pixelSize: 18; font.weight: Font.Medium }
+            Label { Layout.fillWidth: true; text: "语音手势可以与应用、全局配置重叠，\n不会删除或关闭普通映射。"; wrapMode: Text.Wrap; color: theme.text; font.family: theme.family; font.pixelSize: 16 }
+            Label { text: "输入框内或语音操作中"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
+            Label { Layout.fillWidth: true; text: "已绑定的语音手势优先执行输入功能；语音会话进行中继续由本次输入接管。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
+            Label { text: "其他手势"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
+            Label { Layout.fillWidth: true; text: "未与语音绑定重叠的手势仍按应用配置优先、全局配置兜底执行，无需输入框失焦。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
+            Label { Layout.fillWidth: true; text: "语音绑定仅在全局默认中修改，对所有应用生效。同一语音功能可绑定多个手势；同一事件只执行一次。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
+            FigmaAction { Layout.fillWidth: true; text: "知道了"; font.pixelSize: 16; onClicked: priorityRules.close() }
+        }
+    }
     AddGestureApplicationDialog {
         id: addDialog
         parent: Overlay.overlay
@@ -181,15 +231,44 @@ UiScrollView {
         GestureHandMap {
             Layout.fillWidth: true; Layout.preferredHeight: implicitHeight
             selectedGesture: page.selectedGesture
-            describeGesture: function(gesture) { return page.description(gesture) + " · " + page.sourceLabel(gesture) }
+            voiceOverview: page.showVoiceMappings
+            voiceActive: page.controller.recognitionEnabled
+            voiceEditable: !page.applicationScope
+            describeGesture: function(gesture) {
+                return page.regularDescription(gesture).replace(/^沿用(应用|全局) · /, "")
+            }
+            describeVoiceGesture: function(gesture) { return page.showVoiceMappings ? page.voiceDescription(gesture) : "" }
+            gestureHint: function(gesture) { return page.mappingHint(gesture) }
             onGestureChosen: function(gesture) { page.selectedGesture = gesture }
+            onMappingChosen: function(gesture, voice) { page.selectedGesture = gesture; actionEditor.voiceScope = voice && !page.applicationScope }
+            cornerContent: Component {
+                Rectangle {
+                    objectName: "gestureVoicePriorityCard"
+                    radius: 12; color: "transparent"; border.color: theme.line
+                    ColumnLayout {
+                        anchors.fill: parent; anchors.margins: 13; spacing: 8
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 12
+                            Label { Layout.fillWidth: true; text: "语音输入"; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text }
+                            VoiceRecognitionControl { objectName: "gestureVoiceRecognitionButton"; controller: page.controller }
+                        }
+                        Label { Layout.fillWidth: true; Layout.fillHeight: true; text: page.controller.recognitionEnabled ? (page.applicationScope ? "语音绑定跟随全局，请到「全局默认」中修改。" : "两行表示不同场景下的功能，同一次手势只执行一个。") : "开启后，语音绑定会显示在所有应用和全局配置中。"; font.family: theme.family; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
+                        FigmaAction {
+                            objectName: "voiceGesturePriorityRulesButton"
+                            Layout.fillWidth: true; Layout.preferredHeight: 32
+                            text: "查看优先规则"; navigation: true; font.pixelSize: 14; leftPadding: 8
+                            onClicked: priorityRules.open()
+                        }
+                    }
+                }
+            }
         }
         RowLayout {
             Layout.fillWidth: true; Layout.preferredHeight: 44; spacing: 16
             FigmaAction {
                 objectName: "globalGestureScope"; text: "全局默认"; primary: !page.applicationScope
                 Layout.preferredWidth: 120; Layout.preferredHeight: 40; font.pixelSize: 16
-                onClicked: page.applicationScope = false
+                onClicked: { page.applicationScope = false; actionEditor.voiceScope = false }
             }
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: 44
@@ -201,14 +280,15 @@ UiScrollView {
                         objectName: "gestureApplicationTabs"
                         Layout.fillWidth: true; Layout.preferredHeight: 36
                         orientation: ListView.Horizontal; spacing: 8; clip: true
-                        model: page.catalog.apps
+                        model: page.applicationTabsModel
+                        interactive: contentWidth > width
                         currentIndex: {
                             for (var i = 0; i < model.length; ++i)
                                 if (page.applicationScope && model[i].value === page.selectedApp) return i
                             return -1
                         }
                         onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
-                        ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+                        ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOff }
                         delegate: FigmaAction {
                             id: appTab
                             required property var modelData
@@ -216,7 +296,12 @@ UiScrollView {
                             width: 44; height: 36; padding: 0
                             checked: page.applicationScope && page.selectedApp === modelData.value
                             Accessible.name: modelData.label + "，应用手势"; Accessible.role: Accessible.PageTab
-                            ToolTip.visible: hovered; ToolTip.delay: 350; ToolTip.text: modelData.label
+                            Basic.ToolTip {
+                                objectName: "applicationTooltip_" + appTab.modelData.value
+                                parent: appTab; popupType: Popup.Item; y: -height - 8
+                                visible: appTab.hovered; delay: 350; text: appTab.modelData.label
+                                focus: false; modal: false; closePolicy: Popup.NoAutoClose
+                            }
                             onClicked: page.selectApplication(modelData.value)
                             background: Rectangle { radius: 8; color: appTab.checked || appTab.down ? theme.selection : appTab.hovered ? theme.subtle : "transparent"; border.width: appTab.visualFocus ? 1 : 0; border.color: theme.primary }
                             contentItem: Item {
@@ -241,10 +326,9 @@ UiScrollView {
         GestureActionEditor {
             id: actionEditor
             Layout.fillWidth: true; Layout.preferredHeight: implicitHeight
-            service: page.controller.appGestures; globalController: page.controller.ringGestures
+            service: page.controller.appGestures; globalController: page.controller.ringGestures; voiceController: page.controller
             gesture: page.selectedGesture; gestureTitle: page.selectedTitle
             currentDescription: page.description(page.selectedGesture); applicationScope: page.applicationScope
-            onVoiceSettingsRequested: page.voiceSettingsRequested()
         }
         ColumnLayout {
             id: applicationManagementBar
@@ -312,48 +396,11 @@ UiScrollView {
                 FigmaAction { objectName: "addApplicationSceneButton"; text: "添加场景"; implicitHeight: 32; visible: page.catalog.addableScenes.length > 0; onClicked: purposeDialog.open() }
             }
         }
-        ColumnLayout {
-            Layout.fillWidth: true; spacing: 8
-            visible: page.selectedGesture.length > 0 || page.applicationScope || page.managementFeedback.length > 0
-            Label { objectName: "menuMappingFeedback"; Layout.fillWidth: true; visible: text.length > 0; text: actionEditor.feedback; color: actionEditor.feedbackError ? theme.warning : theme.success; font.pixelSize: 14; wrapMode: Text.Wrap }
-            Label { objectName: "applicationManagementFeedback"; Layout.fillWidth: true; visible: text.length > 0; text: page.managementFeedback; color: theme.success; font.pixelSize: 14; wrapMode: Text.Wrap }
-            Label { objectName: "selectedGestureDescription"; Layout.fillWidth: true; visible: !actionEditor.editable && page.selectedGesture.length > 0; text: page.description(page.selectedGesture) + (actionEditor.sharedSceneNavigation ? " · 浏览器各场景共用，请在默认配置中修改转圈手势" : ""); color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
-            Label { objectName: "savedMenuBinding"; Layout.fillWidth: true; visible: Boolean(actionEditor.saved); text: "已保存：" + (actionEditor.saved ? actionEditor.saved.label + (actionEditor.actionHint(actionEditor.saved) ? " · " + actionEditor.actionHint(actionEditor.saved) : "") : ""); color: theme.text; font.pixelSize: 14; wrapMode: Text.Wrap }
-            Label { objectName: "savedMenuBindingStatus"; Layout.fillWidth: true; visible: Boolean(actionEditor.saved); text: actionEditor.savedStatus; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
-            Label { objectName: "globalBindingEffect"; Layout.fillWidth: true; visible: !page.applicationScope && page.selectedGesture.length > 0; text: actionEditor.dirty && actionEditor.draft.effect ? actionEditor.draft.effect.replace("选择后", "保存后") : actionEditor.globalEffect; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
-            PermissionNotice { objectName: "applicationVoiceOverrideNotice"; Layout.fillWidth: true; message: page.applicationScope ? page.catalog.voiceOverrideNotice : ""; actionText: "" }
-            PermissionNotice { objectName: "applicationGlobalConflictNotice"; Layout.fillWidth: true; message: page.applicationScope ? page.catalog.globalConflictNotice : ""; actionText: "" }
-            FigmaAction { id: detailsToggle; objectName: "gestureDetailsButton"; text: checked ? "收起配置说明" : "配置说明"; quiet: true; checkable: true; implicitHeight: 32 }
-            ColumnLayout {
-                Layout.fillWidth: true; spacing: 8; visible: detailsToggle.checked
-            Label {
-                objectName: "gestureSceneHint"
-                Layout.fillWidth: true; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap
-                text: page.catalog.isBrowser
-                    ? "连接 Chrome 或 Safari 扩展并授权网站后，自动识别网页视频和音频。浏览器 PDF、图片场景暂不自动识别。顺时针切换下一个标签页，逆时针切换上一个；所有场景共用默认配置中的转圈绑定。输入框内优先执行输入功能。"
-                    : !page.catalog.isBrowser && page.catalog.supportsPresentation && page.catalog.selectedScene === "regular"
-                    ? "默认配置用于未进入放映时的应用快捷键，例如响指开始放映；放映中的翻页、结束动作请在「放映」中设置。"
-                    : page.sceneScope
-                    ? "仅在此应用前台处于「" + page.catalog.selectedSceneLabel + "」且未输入文字时生效；场景手势独立于常规配置。"
-                      + (["video", "music"].indexOf(page.catalog.selectedScene) >= 0 ? "播放暂停时仍可使用播放控制。" : "")
-                    : "仅与输入手势重叠时，输入框内优先执行输入功能；其他手势不受输入焦点影响。未配置的应用使用全局配置；已配置的应用优先，未绑定的手势沿用全局配置。"
-            }
-            Label {
-                objectName: "gestureSceneObservation"
-                visible: page.sceneScope && page.catalog.isBrowser; Layout.fillWidth: true
-                text: page.catalog.sceneHint; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap
-            }
-            UiNotice {
-                Layout.fillWidth: true
-                visible: page.catalog.defaultMappingNotice.length > 0
-                text: page.catalog.defaultMappingNotice
-                font.pixelSize: 14; wrapMode: Text.Wrap
-            }
-
-                Label { objectName: "applicationMenuReadTime"; Layout.fillWidth: true; visible: page.applicationScope; text: page.catalog.menuReadAt ? "最近读取 " + page.catalog.menuReadAt + " · 菜单状态以该次读取为准" : "刷新快捷键以查看菜单状态"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
-                Label { objectName: "menuReadMessage"; Layout.fillWidth: true; visible: page.applicationScope; text: page.catalog.message; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
-                FigmaAction { objectName: "openWorkflowRecommendations"; text: "查看推荐"; enabled: page.controller.agent.workflowPipelineEnabled || page.controller.agent.historyRecommendations.enabled; onClicked: page.controller.agent.openRecommendations() }
-            }
+        Label {
+            objectName: "applicationManagementFeedback"
+            Layout.fillWidth: true
+            visible: page.managementFeedback.length > 0
+            text: page.managementFeedback; color: theme.success; font.pixelSize: 14; wrapMode: Text.Wrap
         }
     }
 }

@@ -352,3 +352,109 @@ def test_missing_payload_or_executable_cannot_report_current(installer):
     (value.destination / 'Contents/MacOS/ProxiMicInput').unlink()
     assert value.version_status()['state'] == 'unknown'
     assert calls == []
+
+
+def stamp(path, **values):
+    plist = path / 'Contents/Info.plist'
+    info = plistlib.loads(plist.read_bytes())
+    info.update(values)
+    plist.write_bytes(plistlib.dumps(info))
+
+
+@pytest.fixture
+def development_installer(installer, tmp_path, monkeypatch):
+    value, state, calls = installer
+    root = tmp_path / 'checkout'
+    for name in ('native/ProxiMicInput/Info.plist', 'scripts/build-input-method.sh',
+                 'scripts/InputMethodAdmin.swift', 'scripts/InputSourceSelection.swift',
+                 'tools/build_input_method.py', 'src/proximic_ring/voice/ime/component_fingerprint.py',
+                 'native/ProxiMicInput/Sources/ActionPanel.swift',
+                 'native/ProxiMicInput/Resources/VoiceHud/gesture-tap.svg'):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+    monkeypatch.setattr(value, '_development_root', lambda: root)
+    bundle(value.destination, module.BUNDLE_ID, 'installed')
+    stamp(value.source, **{module.SOURCE_FINGERPRINT_KEY: module.source_fingerprint(root)})
+    return value, state, calls, root
+
+
+@pytest.mark.parametrize('change', ['source', 'artwork', 'helper', 'added', 'removed', 'legacy'])
+def test_unbuilt_component_edits_never_claim_current(development_installer, change):
+    value, _, calls, root = development_installer
+    assert value.version_status()['state'] == 'current'
+    paths = {
+        'source': 'native/ProxiMicInput/Sources/ActionPanel.swift',
+        'artwork': 'native/ProxiMicInput/Resources/VoiceHud/gesture-tap.svg',
+        'helper': 'scripts/InputMethodAdmin.swift',
+        'added': 'native/ProxiMicInput/Resources/VoiceHud/new.svg',
+    }
+    if change == 'removed':
+        (root / paths['artwork']).unlink()
+    elif change == 'legacy':
+        stamp(value.source, **{module.SOURCE_FINGERPRINT_KEY: ''})
+    else:
+        (root / paths[change]).write_text('changed')
+    result = value.version_status()
+    assert result['state'] == 'needs_build' and not result['current']
+    assert '先构建再安装' in result['detail']
+    assert calls == []
+
+
+def test_host_edits_do_not_invalidate_component(development_installer):
+    value, _, _, root = development_installer
+    (root / 'src/app.py').write_text('new host UI')
+    assert value.version_status()['state'] == 'current'
+
+
+def test_development_update_builds_before_replacing_installed_component(development_installer, monkeypatch):
+    value, _, calls, root = development_installer
+    (root / 'native/ProxiMicInput/Sources/ActionPanel.swift').write_text('new HUD')
+    run = module.subprocess.run
+    builds = []
+    def compile_first(args, **kwargs):
+        if args[0] == module.sys.executable:
+            assert (value.destination / 'marker').read_text() == 'installed'
+            assert calls == []
+            builds.append(args)
+            stamp(value.source, **{module.SOURCE_FINGERPRINT_KEY: module.source_fingerprint(root)})
+            return subprocess.CompletedProcess(args, 0, '', '')
+        return run(args, **kwargs)
+    monkeypatch.setattr(module.subprocess, 'run', compile_first)
+    value.install()
+    assert builds == [[module.sys.executable, str(root / 'tools/build_input_method.py')]]
+    assert (value.destination / 'marker').read_text() == 'new'
+    assert value.version_status()['current']
+
+
+@pytest.mark.parametrize('failure', ['build', 'stale_after_build'])
+def test_failed_development_build_preserves_installed_component(development_installer, monkeypatch, failure):
+    value, _, calls, root = development_installer
+    (root / 'native/ProxiMicInput/Sources/ActionPanel.swift').write_text('new HUD')
+    monkeypatch.setattr(module.subprocess, 'run', lambda args, **kwargs:
+        subprocess.CompletedProcess(args, 1 if failure == 'build' else 0, '', 'fixture build error'))
+    with pytest.raises(RuntimeError, match='已安装组件保持不变'):
+        value.install()
+    assert (value.destination / 'marker').read_text() == 'installed'
+    assert calls == []
+
+
+def test_matching_versions_with_different_content_require_update(installer):
+    value, _, _ = installer
+    bundle(value.destination, module.BUNDLE_ID, 'installed')
+    stamp(value.source, MythlinkInputMethodFingerprint='new')
+    stamp(value.destination, MythlinkInputMethodFingerprint='old')
+    assert value.version_status()['state'] == 'outdated'
+    stamp(value.destination, MythlinkInputMethodFingerprint='new')
+    assert value.version_status()['current']
+
+
+def test_development_detection_never_rebuilds_frozen_payload(tmp_path, monkeypatch):
+    root = tmp_path / 'checkout'
+    info = root / 'native/ProxiMicInput/Info.plist'
+    info.parent.mkdir(parents=True)
+    info.write_text('fixture')
+    value = module.InputMethodInstaller(root / '.build/input-method')
+    assert value._development_root() == root
+    monkeypatch.setattr(module.sys, 'frozen', True, raising=False)
+    assert value._development_root() is None

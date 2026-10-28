@@ -12,7 +12,7 @@ final class IMEService {
     var cancelShortcut = "Esc"
     var gestureHints = VoiceHudBindings()
     var hudAppearance = VoiceHudAppearance()
-    var multiUndoEnabled = false
+    var multiUndoEnabled = true
     private lazy var noticePanel = ActionPanel()
 
     private init() {

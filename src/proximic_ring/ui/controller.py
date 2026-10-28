@@ -55,7 +55,7 @@ from ..desktop.desktop_target import (
 from ..diagnostics.diagnostic_log import RotatingDiagnosticLog, diagnostic_log_path, diagnostic_run_id, format_record
 from ..gestures.gesture_settings import (
     BoundGestureEvent, GestureBindings, GESTURE_LABELS,
-    reserve_ring_gestures, GlobalGestureBindings, GLOBAL_BINDINGS_KEY,
+    GlobalGestureBindings, GLOBAL_BINDINGS_KEY,
 )
 from ..gestures.app_gestures import migrate_voice_defaults
 from .gestures.app_gesture_controller import AppGestureController, AppGestureEvent, InputSourceGestureEvent
@@ -515,7 +515,7 @@ class AppController(QObject):
             )
         )
         self._gesture_settings_error = ""
-        self._multi_undo_enabled = self._bool_setting("input/multiUndoEnabled", False)
+        self._multi_undo_enabled = self._bool_setting("input/multiUndoEnabled", True)
         try:
             self._voice_hud_scale = max(80, min(140, int(self._settings.value("ui/voiceHudScale", 80))))
         except (TypeError, ValueError):
@@ -552,12 +552,6 @@ class AppController(QObject):
                 self._settings.value(GLOBAL_BINDINGS_KEY, GlobalGestureBindings().to_json()))
         except (ValueError, TypeError):
             self._global_gesture_bindings = GlobalGestureBindings()
-        reserved = reserve_ring_gestures(self._gesture_bindings,
-                                        {"swipe-up", "swipe-down"})
-        if reserved != self._gesture_bindings:
-            self._gesture_bindings = reserved
-            self._settings.setValue("input/gestureBindings", reserved.to_json())
-            self._gesture_settings_error = "输入状态的上下滑固定用于发送和润色；冲突绑定已解除"
         # This switch controls only optional post-processing for dictation.
         # Edit mode always needs the selected text model.
         self._llm_enabled = self._bool_setting("llm/enabled", True)
@@ -1269,7 +1263,7 @@ class AppController(QObject):
         elif phase == "finishing" and self._recognition_enabled:
             self._set_status("正在定稿", "正在等待本句识别结果", "processing")
         elif phase == "polishing" and self._recognition_enabled:
-            self._set_status("正在润色", "正在润色本句听写，左滑可取消", "processing")
+            self._set_status("正在润色", "正在润色本句听写，可使用取消操作", "processing")
         elif phase in {"dictated", "edited"} and self._recognition_enabled:
             title = ("已听写" if inline._view.get("raw") else "未识别到语音") if phase == "dictated" else "已编辑"
             if phase == "dictated" and inline._view.get("polished"):
@@ -2921,7 +2915,6 @@ class AppController(QObject):
             and {key, action} != {"confirm", "end"}
         }
         used.add(self._app_gestures.inputSourceGesture)
-        used.update({"swipe-up", "swipe-down"})
         return [{"value": "", "label": "未设置"}] + [
             {"value": name, "label": label}
             for name, label in GESTURE_LABELS.items() if name not in used
@@ -2946,8 +2939,6 @@ class AppController(QObject):
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
-            if name in {"swipe-up", "swipe-down"}:
-                raise ValueError("输入状态的上下滑固定用于发送和润色")
             bindings = self._gesture_bindings.with_slot(action, slot, name)
             self._app_gestures.validate_voice(bindings)
         except ValueError as exc:
@@ -2955,6 +2946,38 @@ class AppController(QObject):
             self.gestureSettingsChanged.emit()
             return False
         self._save_gesture_bindings(bindings)
+        return True
+
+    @Property("QVariantList", constant=True)
+    def voiceGestureActions(self):
+        from .gestures.voice_gesture_mapping import VOICE_ACTIONS
+        return [dict(id="voice:" + key, label=label, voiceAction=key, shortcut="", path="语音输入")
+                for key, label, _ in VOICE_ACTIONS]
+
+    @Property(QObject, constant=True)
+    def gestureMappingHistory(self):
+        if not hasattr(self, "_gesture_mapping_history"):
+            from .gestures.gesture_mapping_history import GestureMappingHistory
+            self._gesture_mapping_history = GestureMappingHistory(self)
+        return self._gesture_mapping_history
+
+    @Slot(str, result="QVariantMap")
+    def voiceGestureAction(self, gesture):
+        from .gestures.voice_gesture_mapping import action_for
+        return action_for(self._gesture_bindings, gesture) or {}
+
+    @Slot(str, str, result=bool)
+    def setVoiceGestureAction(self, gesture, action):
+        from .gestures.voice_gesture_mapping import with_action
+        try:
+            bindings = with_action(self._gesture_bindings, gesture, action)
+            self._app_gestures.validate_voice(bindings)
+        except ValueError as exc:
+            self._gesture_settings_error = str(exc)
+            self.gestureSettingsChanged.emit()
+            return False
+        if bindings != self._gesture_bindings:
+            self._save_gesture_bindings(bindings)
         return True
 
     @Slot()
@@ -7136,7 +7159,7 @@ class AppController(QObject):
             return
         if not self._app_gestures.input_event_valid(app_event):
             return
-        if name in {"swipe-up", "swipe-down"}:
+        if name in self._gesture_bindings.send + self._gesture_bindings.polish:
             self._app_gestures.handle(app_event)
             return
         if name and name == self._app_gestures.inputSourceGesture:

@@ -13,11 +13,13 @@ ColumnLayout {
     FigmaTheme { id: theme }
 
     FigmaFormGroup {
+        flat: true
         title: "语音识别"; symbol: "microphone"
         description: pane.deviceSettingsLocked
             ? "设备已连接，灰色选项需在首页断开戒指后修改。"
             : "识别服务与语言在下次连接戒指时生效。"
         FigmaFormRow {
+            preferenceStyle: true
             title: "识别服务"
             description: pane.online ? "通过火山引擎在线识别，需要网络连接。"
                 : pane.controller.asrBackend === "funasr_nano" ? "在电脑上识别，支持添加常用人名和专有名词。"
@@ -35,6 +37,7 @@ ColumnLayout {
             }
         }
         FigmaFormRow {
+            preferenceStyle: true
             title: "识别语言"
             description: "不确定时可选择自动识别。"
             FigmaSelect {
@@ -51,14 +54,16 @@ ColumnLayout {
     }
 
     FigmaFormGroup {
+        flat: true
         objectName: "asrOnlineGroup"
         visible: pane.online
         title: "在线服务"
         description: "服务密钥保存在当前用户的应用设置中。"
         FigmaFormRow {
+            preferenceStyle: true
             title: "语音服务密钥"
             description: "填写豆包语音的 App Key。"
-            controlWidth: 340
+            controlWidth: pane.width >= 760 ? 340 : 220
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
                 enabled: !pane.deviceSettingsLocked
@@ -83,6 +88,7 @@ ColumnLayout {
     }
 
     FigmaFormGroup {
+        flat: true
         objectName: "asrHotwordsGroup"
         visible: pane.controller.asrBackend === "funasr_nano"
         title: "识别热词"
@@ -105,10 +111,12 @@ ColumnLayout {
     }
 
     FigmaFormGroup {
+        flat: true
         objectName: "asrAdvancedGroup"
         title: "本地识别性能"
         visible: pane.local
         FigmaFormRow {
+            preferenceStyle: true
             objectName: "asrPerformanceRow"
             visible: pane.local
             title: "本地识别性能"

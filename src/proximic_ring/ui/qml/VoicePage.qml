@@ -19,6 +19,7 @@ UiScrollView {
     signal homeRequested()
     signal historyRequested()
     signal tutorialRequested()
+    signal gesturesRequested()
     FigmaTheme { id: theme }
     VoiceHistoryTheme { id: historyTheme }
     objectName: "mainPageScroll"
@@ -48,7 +49,7 @@ UiScrollView {
         interval: 160
         onTriggered: page.historyModel.searchText = historySearch.text
     }
-    function scrollToGestures() { bindingDialog.open() }
+    function scrollToGestures() { gesturesRequested() }
     function scrollToHistory() { historyRequested() }
     function toggleHotwords() {
         hotwordsExpanded = !hotwordsExpanded
@@ -56,8 +57,10 @@ UiScrollView {
         else { hotwordLibrary.cancelDrag(); hotwordDialog.close() }
     }
     function bindingLabel(action) {
-        var labels = {"tap":"点击", "double-tap":"双击", "swipe-up":"上滑", "swipe-down":"下滑", "swipe-left":"左滑", "swipe-right":"右滑", "snap":"响指", "pinch-index-thumb":"食拇捏合"}
-        return (controller.gestureBindings[action] || []).filter(function(v) { return v.length > 0 }).map(function(v) { return labels[v] || v }).join(" / ") || "未配置"
+        return controller.gestureButtonHints[action] || "未配置"
+    }
+    function bindingIcon(action) {
+        return (controller.gestureBindings[action] || []).filter(function(v) { return v.length > 0 })[0] || ""
     }
     function statusColor(): color {
         if (!controller.connected) return "#919BB0"
@@ -87,18 +90,14 @@ UiScrollView {
                 RowLayout {
                     Layout.fillWidth: true; Layout.preferredHeight: 40; spacing: 12
                     Label { Layout.preferredHeight: 36; Layout.alignment: Qt.AlignTop; verticalAlignment: Text.AlignVCenter; text: page.controller.touchpad.blocksVoice ? "语音识别已暂停" : "语音输入"; objectName: "voiceStatusTitle"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
-                    FigmaEnableControl {
+                    VoiceRecognitionControl {
                         objectName: "voiceRecognitionButton"
                         Layout.alignment: Qt.AlignTop; Layout.topMargin: 3
-                        checked: page.controller.recognitionEnabled
-                        text: page.controller.touchpad.blocksVoice ? "触摸板使用中" : ""
-                        enabled: page.controller.connected && !page.controller.busy && !page.controller.scanBusy && !page.controller.touchpad.blocksVoice
-                        Accessible.name: checked ? "暂停语音识别" : "开启语音识别"
-                        onClicked: page.controller.toggleRecognition()
+                        controller: page.controller
                     }
                     Item { Layout.fillWidth: true }
                     WorkbenchNavigation { objectName: "voiceHotwordLibraryButton"; Layout.alignment: Qt.AlignTop; text: "热词库"; onClicked: page.toggleHotwords() }
-                    WorkbenchNavigation { objectName: "openVoiceGestureSettingsButton"; Layout.alignment: Qt.AlignTop; text: "映射调节"; onClicked: page.scrollToGestures() }
+                    WorkbenchNavigation { objectName: "openVoiceGestureSettingsButton"; Layout.alignment: Qt.AlignTop; text: "配置手势"; onClicked: page.scrollToGestures() }
                 }
                 Label {
                     objectName: "voiceStatusDetail"; Layout.fillWidth: true; wrapMode: Text.Wrap
@@ -114,11 +113,11 @@ UiScrollView {
                     columnSpacing: 12; rowSpacing: 8
                     Repeater {
                         model: [
-                            { icon: "tap", title: page.bindingLabel("confirm") === page.bindingLabel("end") ? page.bindingLabel("confirm") : page.bindingLabel("confirm") + "\n" + page.bindingLabel("end"), detail: page.bindingLabel("confirm") === page.bindingLabel("end") ? "开始 / 定稿" : "开始\n定稿" },
-                            { icon: "swipe-up", title: "上滑", detail: "发送文本" },
-                            { icon: "swipe-down", title: "下滑", detail: "润色当前句" },
-                            { icon: "swipe-left", title: page.bindingLabel("undo"), detail: "取消 / 撤回" },
-                            { icon: "swipe-right", title: page.bindingLabel("switch_mode"), detail: "语音修改" }
+                            { icon: page.bindingIcon("confirm") || page.bindingIcon("end"), title: page.bindingLabel("confirm") === page.bindingLabel("end") ? page.bindingLabel("confirm") : page.bindingLabel("confirm") + "\n" + page.bindingLabel("end"), detail: page.bindingLabel("confirm") === page.bindingLabel("end") ? "开始 / 定稿" : "开始\n定稿" },
+                            { icon: page.bindingIcon("send"), title: page.bindingLabel("send"), detail: "发送文本" },
+                            { icon: page.bindingIcon("polish"), title: page.bindingLabel("polish"), detail: "润色当前句" },
+                            { icon: page.bindingIcon("undo"), title: page.bindingLabel("undo"), detail: "取消 / 撤回" },
+                            { icon: page.bindingIcon("switch_mode"), title: page.bindingLabel("switch_mode"), detail: "语音修改" }
                         ]
                         Item {
                             required property var modelData
@@ -131,7 +130,7 @@ UiScrollView {
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 12
-                                FigmaIcon { Layout.preferredWidth: 20; Layout.preferredHeight: 20; symbol: modelData.icon; intrinsicSize: modelData.icon === "tap" ? Qt.size(13.5, 13.5) : Qt.size(-1, -1) }
+                                FigmaIcon { Layout.preferredWidth: 20; Layout.preferredHeight: 20; visible: modelData.icon.length > 0; asset: modelData.icon ? "../assets/figma/voice-hud/gesture-" + modelData.icon.replace(/^double-/, "") + ".svg" : ""; intrinsicSize: Qt.size(20, 20) }
                                 Label { id: bindingTitle; Layout.maximumWidth: 64; text: modelData.title; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text; lineHeight: 22; lineHeightMode: Text.FixedHeight; elide: Text.ElideRight }
                                 Label { id: bindingDetail; Layout.fillWidth: true; text: modelData.detail; font.pixelSize: 16; color: theme.muted; lineHeight: 22; lineHeightMode: Text.FixedHeight; elide: Text.ElideRight }
                             }
@@ -268,7 +267,7 @@ UiScrollView {
                                 objectName: "voiceHistoryModeFilter"
                                 Layout.fillWidth: true; Layout.minimumWidth: 0
                                 Accessible.name: "记录类型"
-                                model: ["全部类型", "听写", "润色（下滑）", "指令"]
+                                model: ["全部类型", "听写", "润色", "指令"]
                                 currentIndex: ["all", "dictation", "polish", "edit"].indexOf(page.historyModel.modeFilter)
                                 onActivated: page.historyModel.modeFilter = ["all", "dictation", "polish", "edit"][currentIndex]
                             }
@@ -418,17 +417,6 @@ UiScrollView {
         contentItem: UiScrollView {
             clip: true; contentWidth: availableWidth
             HotwordSettings { id: hotwordLibrary; objectName: "personalHotwordSettings"; width: parent.width; height: implicitHeight; service: page.controller.hotwords; onCloseRequested: hotwordDialog.close() }
-        }
-    }
-    FigmaDialog {
-        id: bindingDialog
-        objectName: "voiceGestureBindingDialog"
-        parent: Overlay.overlay; popupType: Popup.Item; anchors.centerIn: parent
-        width: Math.min(900, parent.width - 48); height: Math.min(660, parent.height - 48)
-        title: "语音映射调节"; modal: true; standardButtons: Dialog.Close
-        contentItem: UiScrollView {
-            clip: true; contentWidth: availableWidth
-            VoiceGestureSettingsCard { id: voiceGestureCard; objectName: "voiceGestureSettingsCard"; width: parent.width; height: implicitHeight; controller: page.controller }
         }
     }
     FigmaDialog {

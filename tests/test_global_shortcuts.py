@@ -122,9 +122,12 @@ def test_shared_custom_obeys_live_imk_but_independent_custom_works_in_text(route
 def test_agent_and_recommendations_obey_rebinding_unbinding_and_current_app_override(route, monkeypatch, pipeline, action, default_gesture):
     c, service, _, backend, sent, _, _ = route
     outside(backend)
-    agent, calls = c.agent, []
     from proximic_ring.agent_workflow import pipeline_policy
     monkeypatch.setattr(pipeline_policy, 'legacy_workflow_enabled', lambda: pipeline)
+    agent, calls = c.agent, []
+    if pipeline and agent.recommendations.input is None:
+        from proximic_ring.agent_workflow.ui.recommendation_input import RecommendationInput
+        agent.recommendations.input = RecommendationInput(agent.recommendations)
     monkeypatch.setattr(agent, 'toggleFocus', lambda: calls.append('agent'))
     monkeypatch.setattr(agent, 'openRecommendations', lambda *args: calls.append('workflow_recommendations'))
     request(c, default_gesture)

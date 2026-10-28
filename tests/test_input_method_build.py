@@ -42,8 +42,11 @@ def build_repo(tmp_path, monkeypatch):
     root = tmp_path / 'Project with spaces'
     scripts = root / 'scripts'
     scripts.mkdir(parents=True)
-    for name in ('build-input-method.sh', 'macos-signing-env.sh'):
+    for name in ('build-input-method.sh', 'macos-signing-env.sh', 'InputMethodAdmin.swift', 'InputSourceSelection.swift'):
         shutil.copyfile(ROOT / 'scripts' / name, scripts / name)
+    shared = Path('src/proximic_ring/voice/ime/component_fingerprint.py')
+    (root / shared).parent.mkdir(parents=True)
+    shutil.copyfile(ROOT / shared, root / shared)
     (root / 'tools').mkdir()
     shutil.copyfile(ROOT / 'tools/build_input_method.py', root / 'tools/build_input_method.py')
     write_info(root / 'native/ProxiMicInput/Info.plist')
@@ -128,7 +131,7 @@ def test_host_only_builds_preserve_ime_version(build_repo):
     builder.build(build_repo)
     before = payload_info(build_repo)
     (build_repo / 'pyproject.toml').write_text('[project]\nversion = "0.6.10"\n')
-    (build_repo / 'src').mkdir()
+    (build_repo / 'src').mkdir(exist_ok=True)
     (build_repo / 'src/app.py').write_text('host app change')
     builder.build(build_repo)
     assert payload_info(build_repo) == before

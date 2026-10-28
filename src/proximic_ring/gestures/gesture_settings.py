@@ -21,7 +21,8 @@ GESTURE_LABELS = {
     "circle-clockwise": "顺时针画圈",
     "circle-counterclockwise": "逆时针画圈",
 }
-GESTURE_ACTION_LABELS = {"confirm": "开始", "end": "结束", "undo": "撤销", "switch_mode": "类型转换"}
+GESTURE_ACTION_LABELS = {"confirm": "开始", "end": "结束", "undo": "撤销", "switch_mode": "类型转换",
+                         "send": "发送", "polish": "润色"}
 RING_RESERVED_GESTURES = frozenset({"index-pinch", "middle-pinch", "clench", "swipe-down", "swipe-up"})
 VOICE_GESTURE_GROUP = frozenset({"tap", "double-tap", "swipe-left", "swipe-right", "swipe-up", "swipe-down"})
 GLOBAL_ACTION_LABELS = {"show_menu": "手势提示", "window_selector": "窗口选择",
@@ -161,17 +162,19 @@ def reserve_ring_gestures(bindings: GestureBindings, reserved=RING_RESERVED_GEST
 
 @dataclass(frozen=True)
 class GestureBindings:
-    confirm: tuple[str, str] = ("double-tap", "")
-    end: tuple[str, str] = ("tap", "")
-    undo: tuple[str, str] = ("swipe-left", "")
-    switch_mode: tuple[str, str] = ("swipe-right", "")
+    confirm: tuple[str, ...] = ("double-tap", "")
+    end: tuple[str, ...] = ("tap", "")
+    undo: tuple[str, ...] = ("swipe-left", "")
+    switch_mode: tuple[str, ...] = ("swipe-right", "")
+    send: tuple[str, ...] = ("swipe-up", "")
+    polish: tuple[str, ...] = ("swipe-down", "")
 
     def __post_init__(self):
         used = {}
         for action in GESTURE_ACTION_LABELS:
             values = getattr(self, action)
-            if not isinstance(values, tuple) or len(values) != 2:
-                raise ValueError("每项操作只能设置两个手势位置")
+            if not isinstance(values, tuple) or len(values) > len(GESTURE_LABELS):
+                raise ValueError("语音手势列表格式无效")
             for value in values:
                 if not isinstance(value, str) or value and value not in GESTURE_LABELS:
                     raise ValueError("请选择 SDK 支持的手势")
@@ -180,10 +183,6 @@ class GestureBindings:
                 if value in used and {action, used[value]} != {"confirm", "end"}:
                     raise ValueError(f"{GESTURE_LABELS[value]}已用于{GESTURE_ACTION_LABELS[used[value]]}，不能重复分配")
                 used[value] = action
-        if not any(self.confirm):
-            raise ValueError("开始至少保留一个手势")
-        if not any(self.end):
-            raise ValueError("结束至少保留一个手势")
 
     def as_dict(self) -> dict[str, list[str]]:
         return {action: list(getattr(self, action)) for action in GESTURE_ACTION_LABELS}
@@ -192,6 +191,7 @@ class GestureBindings:
         if action not in GESTURE_ACTION_LABELS or slot not in (0, 1):
             raise ValueError("无效的手势设置位置")
         values = list(getattr(self, action))
+        values.extend([""] * max(0, 2 - len(values)))
         values[slot] = value
         return replace(self, **{action: tuple(values)})
 
@@ -201,7 +201,8 @@ class GestureBindings:
     @classmethod
     def from_json(cls, value: object) -> GestureBindings:
         data = json.loads(str(value))
-        if not isinstance(data, dict) or set(data) not in (set(GESTURE_ACTION_LABELS), set(GESTURE_ACTION_LABELS) - {"end"}):
+        legacy = set(GESTURE_ACTION_LABELS) - {"send", "polish"}
+        if not isinstance(data, dict) or set(data) not in (set(GESTURE_ACTION_LABELS), legacy, legacy - {"end"}):
             raise ValueError("手势设置格式无效")
         if any(not isinstance(values, list) for values in data.values()):
             raise ValueError("手势设置格式无效")
@@ -210,6 +211,12 @@ class GestureBindings:
             # single/double tap defaults to separate start and end gestures.
             data["end"] = (["tap", ""] if data["confirm"] in (["tap", ""], ["double-tap", ""])
                            else list(data["confirm"]))
+        # Old files did not store send/polish. Preserve deliberate assignments
+        # and add the old defaults only where no stored voice action owns them.
+        occupied = {gesture for values in data.values() for gesture in values}
+        for action, gesture in (("send", "swipe-up"), ("polish", "swipe-down")):
+            if action not in data:
+                data[action] = [gesture if gesture not in occupied else "", ""]
         return cls(**{key: tuple(values) for key, values in data.items()})
 
     @property

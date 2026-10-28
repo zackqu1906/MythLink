@@ -105,7 +105,7 @@ ColumnLayout {
         }
         Label {
             Layout.fillWidth: true; wrapMode: Text.Wrap
-            text: "如果修改上方的按键或微信菜单语言，请同步更新系统里的这两项配置。上滑发送无需此设置。"
+            text: "如果修改上方的按键或微信菜单语言，请同步更新系统里的这两项配置。语音发送操作无需此设置。"
             color: "#687286"; font.pixelSize: 12
         }
     }

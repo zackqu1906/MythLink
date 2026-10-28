@@ -64,7 +64,7 @@ class InlineInputController(QObject):
         from ...gestures.gesture_settings import GestureBindings
         self._gesture_hints = GestureBindings().as_dict()
         self._hud_scale_percent = 80
-        self._multi_undo_enabled = False
+        self._multi_undo_enabled = True
         self._utterance_sessions = {}
         self._edit_intents = {}
         self.settled_session_id = None
@@ -202,7 +202,9 @@ class InlineInputController(QObject):
             self.changed.emit()
             return
         self._installing = True
-        self._installation_message = "正在更新输入法，使用中的 Mythlink 会临时切换到系统键盘…"
+        self._installation_message = ("正在构建并更新输入法，请稍候…"
+            if self._input_method_version.get("state") == "needs_build"
+            else "正在更新输入法，使用中的 Mythlink 会临时切换到系统键盘…")
         self._diagnose("installation_started", reason="user_request")
         self.changed.emit()
 

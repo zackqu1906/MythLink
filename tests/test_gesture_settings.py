@@ -61,13 +61,16 @@ def test_saved_single_tap_default_migrates_to_double_start_single_end(tmp_path, 
         _close(migrated)
 
 
-def test_down_is_reserved_for_polish_in_voice_settings(tmp_path, monkeypatch):
+def test_down_defaults_to_polish_but_can_be_reassigned(tmp_path, monkeypatch):
     controller = _controller(tmp_path, monkeypatch)
     try:
-        assert all("swipe-down" not in pair for pair in controller.gestureBindings.values())
+        assert controller.gestureBindings["polish"] == ["swipe-down", ""]
         assert "swipe-down" not in {row["value"] for row in controller.gestureOptionsForSlot("undo", 1)}
         assert not controller.setGestureBinding("undo", 1, "swipe-down")
         assert not controller._app_gestures.setInputSourceGesture("swipe-down")
+        assert controller.setVoiceGestureAction("swipe-down", "undo")
+        assert "swipe-down" in controller.gestureBindings["undo"]
+        assert not any(controller.gestureBindings["polish"])
         assert not controller.ringGestures.textFields.picker.active.is_set()
     finally:
         _close(controller)
@@ -78,8 +81,7 @@ def test_down_is_reserved_for_polish_in_voice_settings(tmp_path, monkeypatch):
     {"confirm": ("tap", "swipe-left")},
     {"undo": ("double-tap", "")},
     {"switch_mode": ("swipe-left", "")},
-    {"confirm": ("", "")},
-    {"undo": ("snap", "", "")},
+    {"undo": tuple(["snap"] * 15)},
     {"undo": ("empty", "")},
     {"confirm": ("pinch", "")},
 ])
@@ -90,7 +92,7 @@ def test_invalid_or_conflicting_assignments_are_rejected(changes):
 
 def test_custom_cancel_undo_and_conversion_keep_action_priority():
     bindings = GestureBindings(confirm=("swipe-up", "swipe-down"), end=("swipe-up", "swipe-down"),
-                               undo=("tap", "snap"), switch_mode=("swipe-left", "swipe-right"))
+                               undo=("tap", "snap"), switch_mode=("swipe-left", "swipe-right"), send=(), polish=())
     for name in bindings.undo:
         assert voice_action_for_gesture(name, interaction_active=True, bindings=bindings) == "cancel"
         assert voice_action_for_gesture(name, interaction_active=True, undo_active=True, bindings=bindings) == "undo"
@@ -117,8 +119,8 @@ def test_settings_save_restore_conflicts_and_immediate_dispatch(tmp_path, monkey
         assert "不能重复分配" in controller.gestureSettingsError
         assert controller._gesture_bindings is snapshot
         assert controller._settings.value("input/gestureBindings") == saved
-        assert not controller.setGestureBinding("confirm", 0, "")
-        assert "至少保留一个" in controller.gestureSettingsError
+        assert controller.setGestureBinding("confirm", 0, "")
+        assert controller.setGestureBinding("confirm", 0, "snap")
         assert "tap" not in [row["value"] for row in controller.gestureOptionsForSlot("confirm", 1)]
         assert "tap" in [row["value"] for row in controller.gestureOptionsForSlot("undo", 0)]
 

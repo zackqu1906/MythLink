@@ -421,6 +421,41 @@
       "slot": "marker-fist",
       "sha256": "c225f6eaf1d74bc322344e3a2de6e38c2cab762a06591b76414f53efec5596f9",
       "sourceNode": "567:33097"
+    },
+    {
+      "file": "redesign-544-30358-marker-touch.svg",
+      "url": "https://www.figma.com/api/mcp/asset/841a9616-3a49-4ad7-8272-52cc23c93d4a.svg",
+      "slot": "marker-touch",
+      "sha256": "17494d9782a21e3781b9fc925bdfa0308275b200af8f4359b378353e2f22bc71",
+      "sourceNode": "544:30358"
+    },
+    {
+      "file": "redesign-544-30358-marker-rotate.svg",
+      "url": "https://www.figma.com/api/mcp/asset/4b7c7839-d53f-4f6d-8b3b-d4bbf10e7696.svg",
+      "slot": "marker-rotate",
+      "sha256": "3f30df5b0fd631da600669ffeae3959f89533b05e3f7ee8306eecc0464a94645",
+      "sourceNode": "544:30358"
+    },
+    {
+      "file": "redesign-544-30358-marker-middle.svg",
+      "url": "https://www.figma.com/api/mcp/asset/5223f699-21d1-44bc-8b4a-0bebee83f0b9.svg",
+      "slot": "marker-middle",
+      "sha256": "b8d6e4f897b8f343f650c45a6abd81f3e047142124db2332de4da74dd2a8d15b",
+      "sourceNode": "544:30358"
+    },
+    {
+      "file": "redesign-544-30358-marker-index.svg",
+      "url": "https://www.figma.com/api/mcp/asset/c08204a3-893a-416e-bd04-d34a68c76cb5.svg",
+      "slot": "marker-index",
+      "sha256": "89d5cfc709716805099e2f5ded0a856828a231a9406f0d1a54d38aec0c2f2dc8",
+      "sourceNode": "544:30358"
+    },
+    {
+      "file": "redesign-544-30358-marker-fist.svg",
+      "url": "https://www.figma.com/api/mcp/asset/ea59aa75-67e9-4ab2-9ed3-6b86843ed143.svg",
+      "slot": "marker-fist",
+      "sha256": "db54ed90aa2a15d8f2f756a8c0cf06c7e2c773490cd178817d9a2f03dab94882",
+      "sourceNode": "544:30358"
     }
   ]
 }
