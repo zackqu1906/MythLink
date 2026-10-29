@@ -21,11 +21,10 @@ def test_voice_configuration_navigation_and_shared_enable_state(mapping_ui):
     root.setProperty("currentPage", 1)
     QTest.qWait(60)
     pointer_click(root, "openVoiceGestureSettingsButton")
-    assert root.property("currentPage") == 2
-    assert find(root, "gestureActionEditor").property("voiceScope")
-    assert find(root, "gesturesPage").property("selectedGesture") == c.gestureBindings["confirm"][0]
-    assert find(root, "gestureCard_tap").property("doubleTrigger")
-    assert root.findChild(QObject, "voiceGestureBindingDialog") is None
+    assert root.property("currentPage") == 1
+    assert find(root, "voiceGestureBindingDialog").property("visible")
+    assert find(root, "voiceFunctionGestures_confirm").property("text") == "双击"
+    assert find(root, "voiceFunctionGestures_end").property("text") == "点击"
     for enabled in (False, True):
         c._recognition_enabled = enabled
         c.recognitionEnabledChanged.emit()
@@ -35,8 +34,19 @@ def test_voice_configuration_navigation_and_shared_enable_state(mapping_ui):
     assert (c.gestureBindings, list(bridge.messages)) == before
 
 
-def test_voice_submenu_saves_without_overwriting_global_or_application(mapping_ui):
-    c, bridge, root, catalog, _, navigate, add = mapping_ui
+def choose_voice_gesture(root, action, gesture):
+    click(root, "voiceFunctionGestures_" + action)
+    click(root, "voiceFunctionGesture_" + action + "_" + gesture)
+    from PySide6.QtQml import QQmlExpression, QQmlEngine
+    picker = find(root, "voiceFunctionGestures_" + action)
+    visible = QQmlExpression(QQmlEngine.contextForObject(picker), picker, "gestureMenu.visible").evaluate()[0]
+    if visible:  # A rejected save keeps the menu open with an error.
+        QTest.keyClick(root, Qt.Key_Escape)
+    QTest.qWait(30)
+
+
+def test_voice_dialog_saves_without_overwriting_global_or_application(mapping_ui):
+    c, bridge, root, catalog, _, _, add = mapping_ui
     idle(c)
     add()
     assert catalog.setBinding(BUNDLE, "snap", "next-tab")
@@ -44,26 +54,28 @@ def test_voice_submenu_saves_without_overwriting_global_or_application(mapping_u
     before_app = catalog.bindings
     before_global = dict(c.ringGestures.globalBindings)
     before_voice = c.gestureBindings
-    navigate("globalGestureScope")
-    navigate("gestureCard_snap")
-    click(root, "gestureMappingDropdown")
-    click(root, "gestureCategory_voice")
-    menu = find(root, "gestureMappingMenu")
-    assert menu.property("visible") and menu.property("width") == 296
-    assert find(root, "menuAction_voice:start_end").height() == 44
-    assert not find(root, "menuActionDescription_voice:start_end").property("visible")
+    root.setProperty("currentPage", 1)
+    click(root, "openVoiceGestureSettingsButton")
     bridge.messages.clear()
-    click(root, "menuAction_voice:start_end")
-    assert c.gestureBindings["confirm"] == ["double-tap", "snap"]
-    assert c.gestureBindings["end"] == ["tap", "snap"]
+    choose_voice_gesture(root, "start_end", "snap")
+    assert c.gestureBindings["confirm"] == ["snap", ""]
+    assert c.gestureBindings["end"] == ["snap", ""]
     assert catalog.bindings == before_app and dict(c.ringGestures.globalBindings) == before_global
     assert [message["type"] for message in bridge.messages] == ["configure_hud"]
-    # Clearing in the voice editing scope releases only this voice assignment.
-    click(root, "gestureMappingDropdown")
-    click(root, "gestureMenuBack")
-    click(root, "menuAction_")
+    click(root, "undoVoiceGestureMappingButton")
     assert c.gestureBindings == before_voice
+    choose_voice_gesture(root, "start_end", "snap")
+    choose_voice_gesture(root, "start_end", "")
+    assert not any(c.gestureBindings["confirm"]) and not any(c.gestureBindings["end"])
+    click(root, "undoVoiceGestureMappingButton")
+    assert c.gestureBindings["confirm"] == c.gestureBindings["end"] == ["snap", ""]
     assert catalog.bindings == before_app and dict(c.ringGestures.globalBindings) == before_global
+    # Closing and reopening retains saved assignments without an extra save action.
+    choose_voice_gesture(root, "send", "double-index-pinch")
+    QMetaObject.invokeMethod(find(root, "voiceGestureBindingDialog"), "close")
+    QTest.qWait(100)
+    click(root, "openVoiceGestureSettingsButton")
+    assert find(root, "voiceFunctionGestures_send").property("text") == "双次食拇捏合"
 
 
 def test_app_tooltip_and_catalog_refresh_do_not_swallow_first_click(mapping_ui):
@@ -91,22 +103,94 @@ def test_app_tooltip_and_catalog_refresh_do_not_swallow_first_click(mapping_ui):
     assert catalog.selectedApp == BUNDLE
 
 
-def test_voice_functions_can_repeat_and_only_global_scope_has_voice_menu(mapping_ui):
+def test_voice_functions_replace_the_previous_gesture_and_never_appear_in_gesture_menus(mapping_ui):
     c, _, root, _, _, navigate, add = mapping_ui
+    root.setProperty("currentPage", 1)
+    click(root, "openVoiceGestureSettingsButton")
     for gesture in ("swipe-up", "swipe-down", "tap", "snap"):
-        navigate("gestureCard_" + gesture)
-        stage(root, "voice:undo")
+        choose_voice_gesture(root, "undo", gesture)
         assert c.voiceGestureAction(gesture)["voiceAction"] == "undo"
-    assert len([g for g in c.gestureBindings["undo"] if g]) == 5
+        assert [g for g in c.gestureBindings["undo"] if g] == [gesture]
+    assert not c.voiceGestureAction("swipe-left")
     assert not any(c.gestureBindings["end"])
-    add()
-    navigate("gestureCard_swipe-down")
-    click(root, "gestureMappingDropdown")
-    rows = find(root, "gestureActionEditor").property("menuRows").toVariant()
-    assert all(row.get("category") != "voice" for row in rows)
-    find(root, "menuActionSearch").setProperty("text", "语音")
+    QMetaObject.invokeMethod(find(root, "voiceGestureBindingDialog"), "close")
+    root.setProperty("currentPage", 2)
+    for app_scope in (False, True):
+        if app_scope: add()
+        else: navigate("globalGestureScope")
+        navigate("gestureCard_swipe-down")
+        click(root, "gestureMappingDropdown")
+        rows = find(root, "gestureActionEditor").property("menuRows").toVariant()
+        assert rows[0]["label"] == "无"
+        assert all(row.get("category") != "voice" for row in rows)
+        find(root, "menuActionSearch").setProperty("text", "语音")
+        QTest.qWait(40)
+        assert find(root, "gestureActionEditor").property("menuRows").toVariant() == []
+        QMetaObject.invokeMethod(find(root, "gestureMappingMenu"), "close")
+
+
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+def test_voice_function_picker_has_gestures_and_keyboard_choice_auto_saves(mapping_ui, tmp_path, size):
+    from pathlib import Path
+    from PySide6.QtQml import QQmlExpression, QQmlEngine
+    import os
+    c, _, root, _, _, _, _ = mapping_ui
+    root.resize(*size)
+    root.setProperty("currentPage", 1)
+    click(root, "openVoiceGestureSettingsButton")
+    QTest.qWait(180)
+    picker = find(root, "voiceFunctionGestures_send")
+    position = picker.mapToScene(QPointF())
+    assert 0 <= position.y() and position.y() + picker.height() < root.height() - 60
+    pointer_click(root, "voiceFunctionGestures_send")
+    QTest.qWait(100)
+    def menu_visible():
+        expression = QQmlExpression(QQmlEngine.contextForObject(picker), picker, "gestureMenu.visible")
+        value = expression.evaluate()[0]
+        assert not expression.hasError(), expression.error().toString()
+        return value
+    assert menu_visible()
+    for gesture in c.voiceGestureActions:
+        assert find(root, "voiceFunctionGestures_" + gesture["voiceAction"])
+    first = find(root, "voiceFunctionGesture_send_tap")
+    assert first.property("text") == "点击" and not first.property("selected")
+    assert find(root, "voiceFunctionGesture_send_swipe-up").property("selected")
+    option = find(root, "voiceFunctionGesture_send_circle-counterclockwise")
+    for item in (first, option):
+        pos = item.mapToScene(QPointF())
+        assert 0 <= pos.y() and pos.y() + item.height() <= root.height()
+        assert 0 <= pos.x() and pos.x() + item.width() <= root.width()
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"voice-picker-{size[0]}.png"))
+    option.forceActiveFocus()
+    QTest.keyClick(root, Qt.Key_Space)
     QTest.qWait(40)
-    assert find(root, "gestureActionEditor").property("menuRows").toVariant() == []
+    assert c.voiceGestureAction("circle-counterclockwise")["voiceAction"] == "send"
+    assert c.gestureBindings["send"] == ["circle-counterclockwise", ""]
+    assert not c.voiceGestureAction("swipe-up")
+    assert not menu_visible()
+
+
+def test_voice_function_reassignment_and_failed_save_keep_rows_in_sync(mapping_ui):
+    c, _, root, _, _, _, _ = mapping_ui
+    root.setProperty("currentPage", 1)
+    click(root, "openVoiceGestureSettingsButton")
+    idle(c)
+    before = c.gestureBindings
+    choose_voice_gesture(root, "polish", "swipe-up")
+    assert find(root, "voiceFunctionGestures_send").property("text") == "无"
+    assert find(root, "voiceFunctionGestures_polish").property("text") == "上滑"
+    click(root, "undoVoiceGestureMappingButton")
+    assert c.gestureBindings == before
+    assert find(root, "voiceFunctionGestures_send").property("text") == "上滑"
+    assert c.appGestures.setInputSourceGesture("snap")
+    choose_voice_gesture(root, "polish", "snap")
+    assert c.gestureBindings == before
+    assert find(root, "voiceFunctionGestures_send").property("text") == "上滑"
+    assert find(root, "voiceFunctionGestures_polish").property("text") == "下滑"
+    assert find(root, "voiceGestureSettingsCard").property("feedback")
+    idle(c)
 
 
 def test_v5_cards_show_saved_mapping_for_scope_and_single_double_trigger(mapping_ui):
@@ -132,9 +216,9 @@ def test_v5_cards_show_saved_mapping_for_scope_and_single_double_trigger(mapping
         assert label("tap").property("text") == catalog.bindings[BUNDLE][key]["label"]
     add("com.example.Other")
     assert label("snap").property("text") == "全局动作"
-    root.setProperty("currentPage", 1)
+    c._recognition_enabled = True
+    c.recognitionEnabledChanged.emit()
     QTest.qWait(40)
-    pointer_click(root, "openVoiceGestureSettingsButton")
     for key in ("tap", "double-tap"):
         pointer_click(root, "gestureSingle_tap" if key == "tap" else "gestureCard_double-tap")
         voice_label = find(root, "gestureVoiceMappingLabel_tap")
@@ -164,7 +248,7 @@ def test_enabled_voice_bindings_are_visible_with_each_scopes_saved_functions(map
     c.recognitionEnabledChanged.emit()
     for scope in ("globalGestureScope", "gestureApplication_" + BUNDLE, "gestureApplication_com.example.Other"):
         pointer_click(root, scope)
-        for key in ("swipe-up", "swipe-down", "swipe-left", "swipe-right", "tap", "snap"):
+        for key in ("swipe-up", "swipe-down", "swipe-right", "tap", "snap"):
             label = find(root, "gestureVoiceMappingLabel_" + key)
             assert label.isVisible() and label.property("text") == c.voiceGestureAction(key)["label"]
             assert find(root, "gestureVoiceContext_" + key).property("text") == "输入时"
@@ -174,11 +258,10 @@ def test_enabled_voice_bindings_are_visible_with_each_scopes_saved_functions(map
         expected = catalog.bindings[BUNDLE]["swipe-up"]["label"] if scope.endswith(BUNDLE) else catalog.globalOccupancy["swipe-up"]
         assert ordinary.isVisible() and ordinary.property("text") == expected
         pointer_click(root, "gestureVoiceMappingLabel_swipe-up")
-        assert find(root, "gestureActionEditor").property("voiceScope") == (scope == "globalGestureScope")
-        if scope == "globalGestureScope":
-            assert find(root, "gestureActionEditor").property("savedId") == "voice:send"
+        assert not up.property("voiceEditable")
+        assert not find(root, "gestureActionEditor").property("savedId").startswith("voice:")
         pointer_click(root, "gestureMappingLabel_swipe-up")
-        assert not find(root, "gestureActionEditor").property("voiceScope")
+        assert not find(root, "gestureActionEditor").property("savedId").startswith("voice:")
         assert "同一次手势只执行其中一个功能" in up.property("hint")
         # Neither the two captions nor neighboring cards may overlap at either size.
         voice = find(root, "gestureVoiceMappingLabel_swipe-up")

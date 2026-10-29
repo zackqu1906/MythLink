@@ -1,8 +1,9 @@
 """Descriptive signal checks; never a wearer-VAD classifier.
 
 IMU columns: aligned host seconds, receipt seconds, unwrapped device seconds,
-sample index, packet sequence, ax/ay/az (m/s²), gx/gy/gz (deg/s), six raw LSBs.
-Audio columns: ADC midpoint seconds, receipt seconds, WAV frame offset, frames,
+sample index, packet sequence, six values (T1–T6 token units or raw-mode axes),
+six raw LSBs (NaN for tokens).
+Audio columns: aligned midpoint seconds, receipt seconds, WAV frame offset, frames,
 linear RMS (full scale=1), peak, status flag. Timing is approximate across devices.
 """
 from __future__ import annotations

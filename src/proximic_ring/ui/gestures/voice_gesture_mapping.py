@@ -1,8 +1,4 @@
-"""Gesture-first presentation adapter for the existing voice binding settings.
-
-Each gesture chooses one voice operation; an operation may use many gestures.
-App/global profiles remain independent, and start/end may share a gesture.
-"""
+"""Single-gesture voice configuration; app/global profiles remain independent."""
 from ...gestures.gesture_settings import GestureBindings, GESTURE_LABELS
 
 
@@ -15,6 +11,22 @@ VOICE_ACTIONS = (
     ("undo", "取消 / 撤回", ("undo",)),
     ("send", "发送文本", ("send",)),
 )
+
+VOICE_GESTURES = (
+    ("tap", "点击"), ("double-tap", "双击"),
+    ("swipe-up", "上滑"), ("swipe-down", "下滑"),
+    ("swipe-left", "左滑"), ("swipe-right", "右滑"),
+    ("index-pinch", "食拇捏合"), ("double-index-pinch", "双次食拇捏合"),
+    ("middle-pinch", "中拇捏合"), ("double-middle-pinch", "双次中拇捏合"),
+    ("clench", "握拳"), ("snap", "响指"),
+    ("circle-clockwise", "顺时针"), ("circle-counterclockwise", "逆时针"),
+)
+
+
+def single_bindings(bindings):
+    """Keep the first saved choice when upgrading an older multi-gesture setting."""
+    return GestureBindings(**{key: (next((value for value in values if value), ""), "")
+                              for key, values in bindings.as_dict().items()})
 
 
 def action_for(bindings, gesture):
@@ -31,14 +43,10 @@ def with_action(bindings, gesture, action):
     if action and targets is None:
         raise ValueError("请选择有效的语音功能")
     targets = targets or ()
-    values = bindings.as_dict()
+    values = single_bindings(bindings).as_dict()
     for key, slots in values.items():
         if key not in targets:
             values[key] = ["" if value == gesture else value for value in slots]
     for key in targets:
-        if gesture not in values[key]:
-            if "" not in values[key]:
-                values[key].append(gesture)
-            else:
-                values[key][values[key].index("")] = gesture
+        values[key] = [gesture, ""]
     return GestureBindings(**{key: tuple(slots) for key, slots in values.items()})

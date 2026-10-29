@@ -761,7 +761,6 @@ ApplicationWindow {
         onHomeRequested: root.currentPage = 0
         onHistoryRequested: root.showVoice(true)
         onTutorialRequested: tutorialPreview.open()
-        onGesturesRequested: { root.currentPage = 2; gesturesPage.configureVoice() }
     }
 
     LockPage {
@@ -980,13 +979,13 @@ ApplicationWindow {
                             }
                             Label {
                                 Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28
-                                text: "每个手势可选择任意语音操作，同一功能可绑定多个手势。语音绑定在全局默认中统一配置，应用中只读显示，修改后自动保存。"
+                                text: "每个手势可选择任意语音操作，同一功能可绑定多个手势。语音绑定在语音页的「配置手势」中统一配置，手势页只读显示，修改后自动保存。"
                                 color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                             }
                             FigmaAction {
                                 objectName: "configureGlobalVoiceGesturesButton"
                                 Layout.leftMargin: 28; text: "配置语音手势"
-                                onClicked: { runtimeSettingsDialog.close(); root.currentPage = 2; gesturesPage.configureVoice() }
+                                onClicked: { runtimeSettingsDialog.close(); root.showVoice(false); mainPageScroll.configureGestures() }
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 28

@@ -42,8 +42,6 @@ def test_advanced_settings_matches_preferences_and_sidebar_commits_current_edit(
 def test_tutorial_renders_all_current_gestures_and_updates_when_they_are_removed(inline_ui, size):
     controller, _, _, root, _ = inline_ui
     root.resize(*size)
-    for gesture in GESTURES:
-        assert controller.setVoiceGestureAction(gesture, "polish")
     dialog = item(root, "tutorialPreviewDialog")
     root.show()
     QMetaObject.invokeMethod(dialog, "open")
@@ -52,8 +50,10 @@ def test_tutorial_renders_all_current_gestures_and_updates_when_they_are_removed
     dialog.setProperty("step", 3)
     QTest.qWait(200)
     preview = find(root, "tutorialCurrentGesture")
-    assert set(preview.property("gestures").toVariant()) == set(GESTURES)
     for gesture in GESTURES:
+        assert controller.setVoiceGestureAction(gesture, "polish")
+        QTest.qWait(20)
+        assert [g for g in preview.property("gestures").toVariant() if g] == [gesture]
         graphic = visual_child(preview, "voicePreviewGesture_" + gesture)
         ready = QQmlExpression(QQmlEngine.contextForObject(graphic), graphic, "status === Image.Ready")
         assert ready.evaluate()[0], gesture
@@ -64,12 +64,9 @@ def test_tutorial_renders_all_current_gestures_and_updates_when_they_are_removed
         assert count.isVisible() == gesture.startswith("double-")
     content = find(root, "tutorialHintContent")
     assert preview.width() <= content.width()
-    assert preview.height() > 32  # Many alternatives wrap inside the hint card.
     assert controller.setVoiceGestureAction("snap", "send")
     QTest.qWait(40)
     assert "snap" not in preview.property("gestures").toVariant()
-    for gesture in GESTURES[:-1]:
-        assert controller.setVoiceGestureAction(gesture, "")
     QTest.qWait(200)
     assert not preview.property("visible")
     assert "尚未绑定手势" in find(root, "tutorialHintTitle").property("text")

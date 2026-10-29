@@ -14,12 +14,11 @@ UiScrollView {
     readonly property bool historyFiltered: historySearch.text.trim().length > 0
         || historyModel.modeFilter !== "all" || historyModel.outcomeFilter !== "all"
         || historyModel.applicationFilter !== "all" || historyModel.timeFilter !== "all"
-    onVisibleChanged: if (!visible && controller) controller.voicePractice.cancel()
-    onHistoryOnlyChanged: if (historyOnly && controller) controller.voicePractice.cancel()
+    onVisibleChanged: if (!visible && controller) { controller.voicePractice.cancel(); voiceGestureDialog.close() }
+    onHistoryOnlyChanged: if (historyOnly && controller) { controller.voicePractice.cancel(); voiceGestureDialog.close() }
     signal homeRequested()
     signal historyRequested()
     signal tutorialRequested()
-    signal gesturesRequested()
     FigmaTheme { id: theme }
     VoiceHistoryTheme { id: historyTheme }
     objectName: "mainPageScroll"
@@ -49,18 +48,34 @@ UiScrollView {
         interval: 160
         onTriggered: page.historyModel.searchText = historySearch.text
     }
-    function scrollToGestures() { gesturesRequested() }
+    function configureGestures() { voiceGestureDialog.open() }
+    FigmaDialog {
+        id: voiceGestureDialog
+        objectName: "voiceGestureBindingDialog"
+        title: "配置语音手势"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(960, parent.width - 48)
+        height: Math.min(680, parent.height - 48)
+        modal: true; popupType: Popup.Item
+        contentItem: Loader {
+            active: voiceGestureDialog.visible
+            sourceComponent: VoiceGestureSettingsCard { controller: page.controller }
+        }
+    }
     function scrollToHistory() { historyRequested() }
     function toggleHotwords() {
         hotwordsExpanded = !hotwordsExpanded
         if (hotwordsExpanded) hotwordDialog.open()
         else { hotwordLibrary.cancelDrag(); hotwordDialog.close() }
     }
-    function bindingLabel(action) {
-        return controller.gestureButtonHints[action] || "未配置"
-    }
-    function bindingIcon(action) {
-        return (controller.gestureBindings[action] || []).filter(function(v) { return v.length > 0 })[0] || ""
+    readonly property var currentVoiceBindings: {
+        var rows = controller.voiceGestureConfiguration
+        var combined = rows.some(function(row) { return row.voiceAction === "start_end" && row.gesture.length > 0 })
+        var order = ["start_end", "confirm", "end", "send", "polish", "undo", "switch_mode"]
+        return rows.filter(function(row) {
+            return combined ? row.voiceAction !== "confirm" && row.voiceAction !== "end" : row.voiceAction !== "start_end"
+        }).sort(function(a, b) { return order.indexOf(a.voiceAction) - order.indexOf(b.voiceAction) })
     }
     function statusColor(): color {
         if (!controller.connected) return "#919BB0"
@@ -97,7 +112,7 @@ UiScrollView {
                     }
                     Item { Layout.fillWidth: true }
                     WorkbenchNavigation { objectName: "voiceHotwordLibraryButton"; Layout.alignment: Qt.AlignTop; text: "热词库"; onClicked: page.toggleHotwords() }
-                    WorkbenchNavigation { objectName: "openVoiceGestureSettingsButton"; Layout.alignment: Qt.AlignTop; text: "配置手势"; onClicked: page.scrollToGestures() }
+                    WorkbenchNavigation { objectName: "openVoiceGestureSettingsButton"; Layout.alignment: Qt.AlignTop; text: "配置手势"; onClicked: page.configureGestures() }
                 }
                 Label {
                     objectName: "voiceStatusDetail"; Layout.fillWidth: true; wrapMode: Text.Wrap
@@ -105,42 +120,65 @@ UiScrollView {
                     text: "触摸板使用期间麦克风已暂停，停止后恢复原来的语音设置。"
                     color: theme.muted; font.pixelSize: 13
                 }
-                Grid {
+                Flow {
                     id: gestureBindings
                     objectName: "voiceCurrentBindings"
                     Layout.fillWidth: true
-                    columns: width >= 880 ? 5 : 3
-                    columnSpacing: 12; rowSpacing: 8
+                    spacing: 12
                     Repeater {
-                        model: [
-                            { icon: page.bindingIcon("confirm") || page.bindingIcon("end"), title: page.bindingLabel("confirm") === page.bindingLabel("end") ? page.bindingLabel("confirm") : page.bindingLabel("confirm") + "\n" + page.bindingLabel("end"), detail: page.bindingLabel("confirm") === page.bindingLabel("end") ? "开始 / 定稿" : "开始\n定稿" },
-                            { icon: page.bindingIcon("send"), title: page.bindingLabel("send"), detail: "发送文本" },
-                            { icon: page.bindingIcon("polish"), title: page.bindingLabel("polish"), detail: "润色当前句" },
-                            { icon: page.bindingIcon("undo"), title: page.bindingLabel("undo"), detail: "取消 / 撤回" },
-                            { icon: page.bindingIcon("switch_mode"), title: page.bindingLabel("switch_mode"), detail: "语音修改" }
-                        ]
+                        model: page.currentVoiceBindings
                         Item {
+                            id: bindingItem
                             required property var modelData
-                            required property int index
-                            objectName: "voiceCurrentBinding" + index
-                            width: (gestureBindings.width - (gestureBindings.columns - 1) * gestureBindings.columnSpacing) / gestureBindings.columns
+                            objectName: "voiceCurrentBinding_" + modelData.voiceAction
+                            width: bindingContent.implicitWidth + 16
                             height: 44
-                            RowLayout {
+                            Row {
+                                id: bindingContent
                                 anchors.left: parent.left; anchors.leftMargin: 8
-                                anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 12
-                                FigmaIcon { Layout.preferredWidth: 20; Layout.preferredHeight: 20; visible: modelData.icon.length > 0; asset: modelData.icon ? "../assets/figma/voice-hud/gesture-" + modelData.icon.replace(/^double-/, "") + ".svg" : ""; intrinsicSize: Qt.size(20, 20) }
-                                Label { id: bindingTitle; Layout.maximumWidth: 64; text: modelData.title; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text; lineHeight: 22; lineHeightMode: Text.FixedHeight; elide: Text.ElideRight }
-                                Label { id: bindingDetail; Layout.fillWidth: true; text: modelData.detail; font.pixelSize: 16; color: theme.muted; lineHeight: 22; lineHeightMode: Text.FixedHeight; elide: Text.ElideRight }
+                                Item {
+                                    id: gestureIcon
+                                    objectName: "voiceCurrentPreview_" + bindingItem.modelData.voiceAction
+                                    readonly property var gestures: bindingItem.modelData.gesture ? [bindingItem.modelData.gesture] : []
+                                    readonly property string gesture: bindingItem.modelData.gesture.replace(/^double-/, "")
+                                    readonly property var originalAssets: ({tap: "icon3", "swipe-up": "up", "swipe-down": "down", "swipe-left": "left", "swipe-right": "right"})
+                                    width: 20; height: 20
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Image {
+                                        objectName: "voicePreviewGesture_" + bindingItem.modelData.gesture
+                                        anchors.centerIn: parent
+                                        // Original exported SVG geometry inside the Figma 20px slot.
+                                        source: !gestureIcon.gesture ? "" : gestureIcon.originalAssets[gestureIcon.gesture]
+                                            ? "../assets/figma/redesign-567-32820-" + gestureIcon.originalAssets[gestureIcon.gesture] + ".svg"
+                                            : "../assets/figma/voice-hud/gesture-" + gestureIcon.gesture + ".svg"
+                                    }
+                                    Text {
+                                        objectName: "voicePreviewCount_" + bindingItem.modelData.gesture
+                                        visible: bindingItem.modelData.gesture.indexOf("double-") === 0
+                                        anchors.right: parent.right; anchors.bottom: parent.bottom
+                                        text: "2"; font.pixelSize: 10; font.bold: true; color: theme.muted
+                                    }
+                                    Text { anchors.centerIn: parent; visible: !gestureIcon.gesture; text: "—"; color: theme.muted; font.pixelSize: 16 }
+                                }
+                                Label {
+                                    objectName: "voiceCurrentGesture_" + bindingItem.modelData.voiceAction
+                                    text: bindingItem.modelData.gestureLabel
+                                    font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium
+                                    color: theme.text; lineHeight: 24; lineHeightMode: Text.FixedHeight
+                                }
+                                Label {
+                                    objectName: "voiceCurrentFunction_" + bindingItem.modelData.voiceAction
+                                    text: bindingItem.modelData.label
+                                    font.family: theme.family; font.pixelSize: 16
+                                    color: theme.muted; lineHeight: 24; lineHeightMode: Text.FixedHeight
+                                }
                             }
-                            HoverHandler { id: bindingHover }
-                            ToolTip.visible: bindingHover.hovered && (bindingTitle.truncated || bindingDetail.truncated)
-                            ToolTip.delay: 500
-                            ToolTip.text: modelData.title.replace(/\n/g, " / ") + "：" + modelData.detail.replace(/\n/g, " / ")
                         }
                     }
                 }
+
                 RowLayout {
                     visible: !page.controller.connected || page.controller.statusKind === "error" || !page.controller.inlineInput.ready
                     Layout.fillWidth: true

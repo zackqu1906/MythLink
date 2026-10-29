@@ -56,7 +56,7 @@ def test_saved_single_tap_default_migrates_to_double_start_single_end(tmp_path, 
         assert not migrated.setGestureBinding("undo", 1, "tap")
         assert migrated.setGestureBinding("end", 0, "double-tap")
         assert migrated.setGestureBinding("undo", 1, "tap")
-        assert migrated.gestureBindings["undo"] == ["swipe-left", "tap"]
+        assert migrated.gestureBindings["undo"] == ["tap", ""]
     finally:
         _close(migrated)
 
@@ -181,3 +181,19 @@ def test_corrupt_saved_configuration_recovers_as_one_consistent_default(tmp_path
         assert GestureBindings.from_json(recovered._settings.value("input/gestureBindings")) == GestureBindings()
     finally:
         _close(recovered)
+
+
+def test_multi_gesture_settings_migrate_once_with_original_backup(tmp_path, monkeypatch):
+    original = GestureBindings(confirm=("snap", "clench"), end=("snap", "clench"), undo=("swipe-left", "tap"))
+    controller = _controller(tmp_path, monkeypatch)
+    controller._settings.setValue("input/gestureBindings", original.to_json())
+    _close(controller)
+    for _ in range(2):
+        controller = _controller(tmp_path, monkeypatch)
+        try:
+            assert controller.gestureBindings["confirm"] == controller.gestureBindings["end"] == ["snap", ""]
+            assert controller.gestureBindings["undo"] == ["swipe-left", ""]
+            assert GestureBindings.from_json(controller._settings.value("input/gestureBindingsBeforeSingleGesture")) == original
+            assert GestureBindings.from_json(controller._settings.value("input/gestureBindings")) == controller._gesture_bindings
+        finally:
+            _close(controller)

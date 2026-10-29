@@ -13,6 +13,7 @@ import threading
 import time
 import wave
 import webbrowser
+from urllib.parse import urlparse, parse_qs
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -27,9 +28,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 IMU_HEADER = "t,host_t,device_s,sample_index,packet_seq,ax,ay,az,gx,gy,gz,raw_ax,raw_ay,raw_az,raw_gx,raw_gy,raw_gz"
 AUDIO_HEADER = "t,host_t,wav_frame,frames,rms,peak,status_flag"
-TIMING_NOTE = ("IMU 包内时间由 SDK 按请求速率回填；实测速率来自相邻包末时间戳。"
-               "IMU 首包按接收时刻减去包跨度对齐，电脑麦克风使用 ADC 时间映射。"
-               "两者不是硬件同步，仍含未知 BLE 延迟与时钟漂移；相关延迟不可当作传播时间。")
+TIMING_NOTE = ("IMU 与戒指麦克风共用戒指 uptime 时钟，保留原始时间戳、包序号和主机接收时间。"
+               "IMU 包内时间由 SDK 回填；音频暂按块末时间戳向前回填 16 kHz PCM。"
+               "音频块时间戳的采样边界尚未经固件确认，可能有一个块（通常 100 ms）的固定偏移；"
+               "可在回看中调整音频对齐偏移。共享时间轴不代表已完成精密硬件同步，相关延迟不可当作传播时间。")
 
 
 def save_json(path, value):
@@ -49,7 +51,7 @@ class Config:
     accel_fs: int = 2
     gyro_fs: int = 250
     frames_per_packet: int = 10
-    mic: str = "default"
+    mic: str = "ring"
     audio_rate: int = 16000
     note: str = "手放桌面，正常佩戴"
 
@@ -64,17 +66,29 @@ class Config:
             raise ValueError("项目 token 模式固定使用 200 Hz、16 g、2000 °/s 启动参数；通道单位未知。")
         if c.hz not in (100, 200, 500, 1000) or c.accel_fs not in (2, 4, 8, 16) or c.gyro_fs not in (125, 250, 500, 1000, 2000):
             raise ValueError("采样率或量程无效")
-        if c.frames_per_packet != 10 or c.audio_rate not in (16000, 48000):
+        if c.frames_per_packet != 10 or c.audio_rate != 16000:
             raise ValueError("包大小或音频采样率无效")
         if not isinstance(c.name, str) or not c.name.strip() or len(c.name) > 128:
             raise ValueError("请输入戒指名称或地址")
-        if not isinstance(c.mic, str) or not isinstance(c.note, str) or len(c.note) > 500:
+        if c.mic not in ("ring", "none") or not isinstance(c.note, str) or len(c.note) > 500:
             raise ValueError("麦克风或备注无效")
         return c
 
 
+class DeviceClock:
+    """One device-to-host anchor, shared across independently arriving streams."""
+    def __init__(self):
+        self.base = self.anchor = None
+
+    def map(self, uptime_ms, host_t, backfill_s=0.):
+        if self.base is None:
+            self.base, self.anchor = float(uptime_ms), host_t - backfill_s
+        delta = (float(uptime_ms) - self.base + 2**31) % 2**32 - 2**31
+        return self.anchor + delta / 1000
+
+
 class Recorder:
-    """One bounded writer queue; no disk I/O in the PortAudio callback."""
+    """One bounded writer queue; no disk I/O in BLE callbacks."""
     def __init__(self, path: Path, config: Config, hardware=None):
         self.path, self.config = path, config
         path.mkdir(parents=True, exist_ok=False)
@@ -87,6 +101,14 @@ class Recorder:
         self.audio_count = 0
         self.audio_status = 0
         self.last_audio_host = None
+        self.clock = DeviceClock()
+        self.audio_previous_uptime = None
+        self.audio_previous_seq = None
+        self.audio_previous_end = None
+        self.audio_zero_samples = 0
+        self.audio_nonzero_samples = 0
+        self.audio_missing_blocks = 0
+        self.audio_blocks = 0
         self.error = ""
         self.previous_uptime = None
         self.device_seconds = 0.
@@ -94,7 +116,7 @@ class Recorder:
         self.elapsed = 0.
         self.closed = False
         self.q = queue.Queue(maxsize=10000)
-        self.meta = {"schema": 1, "created": datetime.now().astimezone().isoformat(),
+        self.meta = {"schema": 2, "created": datetime.now().astimezone().isoformat(),
                      "config": asdict(config), "hardware": hardware or {},
                      "timing": TIMING_NOTE, "status": "recording", "synthetic": config.demo,
                      "units": ({"t1_t6": "firmware token units; unverified preprocessing", "audio": "full scale = 1"}
@@ -118,24 +140,55 @@ class Recorder:
             self.error = "收到非原始六轴帧；请使用支持 raw IMU 的固件。"
             return
         current = float(sample.uptime_ms)
-        if self.previous_uptime is None:
-            self.anchor = host - (self.config.frames_per_packet - 1) / self.config.hz
-        else:
+        if self.previous_uptime is not None:
             delta = (current - self.previous_uptime + 2**31) % 2**32 - 2**31
             if delta <= 0 or delta > 10000:
                 self.error = "设备时间重复、回退或长时间中断；已停止，避免生成错误频谱。"
                 return
             self.device_seconds += delta / 1000
         self.previous_uptime = current
-        self.submit("imu", [self.anchor + self.device_seconds, host, self.device_seconds,
+        aligned = self.clock.map(current, host, (self.config.frames_per_packet - 1) / self.config.hz)
+        self.submit("imu", [aligned, host, self.device_seconds,
                             sample.sample_index, sample.packet_seq, *sample.accel_ms2,
                             *sample.gyro_dps, *(sample.raw if sample.raw is not None else [float("nan")] * 6)])
 
-    def on_audio(self, data, frames, timing, status):
+    def on_ring_audio(self, frame):
+        """Preserve SDK-decoded PCM and device timestamps, including gaps."""
         host = time.monotonic() - self.start
-        adc_t = host - float(timing.currentTime - timing.inputBufferAdcTime)
-        self.submit("audio", (adc_t + frames / (2 * self.config.audio_rate), host,
-                              np.array(data[:, 0], dtype=np.float32, copy=True), str(status)))
+        pcm = np.frombuffer(frame.pcm, dtype="<i2").astype(np.float32) / 32768.
+        if not len(pcm) or frame.sample_rate != 16000:
+            self.error = "戒指音频格式不符合 16 kHz PCM16 协议"
+            return
+        if self.audio_previous_uptime is not None:
+            dt = (frame.uptime_ms - self.audio_previous_uptime + 2**31) % 2**32 - 2**31
+            if dt <= 0 or dt > 10000:
+                self.error = "戒指音频设备时间回退或长时间中断；已停止"
+                return
+            self.audio_missing_blocks += max(0, ((frame.sequence - self.audio_previous_seq) & 65535) - 1)
+        end = self.clock.map(frame.uptime_ms, host)
+        start = end - len(pcm) / 16000
+        # A header timestamp describes a block, not the arrival of each sample.
+        # Sub-millisecond rounding is tolerated; real overlap is never hidden.
+        if self.audio_previous_end is not None and start < self.audio_previous_end - .002:
+            self.error = "戒指音频时间戳与 PCM 长度重叠；已停止，保留原始数据"
+            return
+        self.audio_previous_uptime, self.audio_previous_seq = frame.uptime_ms, frame.sequence
+        self.audio_previous_end = end
+        self.audio_blocks += 1
+        nonzero = int(np.count_nonzero(pcm))
+        self.audio_nonzero_samples += nonzero
+        self.audio_zero_samples = 0 if nonzero else self.audio_zero_samples + len(pcm)
+        self.submit("audio_block", [host, frame.sequence, frame.uptime_ms, start, end, len(pcm), self.audio_missing_blocks])
+        for offset in range(0, len(pcm), 320):
+            part = pcm[offset:offset + 320]
+            self.submit("audio", (start + (offset + len(part) / 2) / 16000, host, part, ""))
+
+    def audio_health(self):
+        return {"source": "synthetic" if self.config.demo else self.config.mic,
+                "blocks": self.audio_blocks, "nonzero_samples": self.audio_nonzero_samples,
+                "zero_run_s": self.audio_zero_samples / 16000,
+                "missing_blocks": self.audio_missing_blocks,
+                "ready": self.config.demo or (self.audio_nonzero_samples > 0 and self.audio_zero_samples < 32000)}
 
     def mark(self, label, note=""):
         if label not in LABELS or self.closed:
@@ -149,6 +202,7 @@ class Recorder:
             with (self.path / "imu.csv").open("w", newline="") as fi, \
                  (self.path / "audio.csv").open("w", newline="") as fa, \
                  (self.path / "audio_events.csv").open("w", newline="") as fe, \
+                 (self.path / "ring_audio_blocks.csv").open("w", newline="") as fb, \
                  wave.open(str(self.path / "audio.wav"), "wb") as wav:
                 wi, wa, we = csv.writer(fi), csv.writer(fa), csv.writer(fe)
                 header = IMU_HEADER
@@ -156,6 +210,8 @@ class Recorder:
                     header = header.replace("ax,ay,az,gx,gy,gz,", "t1,t2,t3,t4,t5,t6,", 1)
                 wi.writerow(header.split(",")); wa.writerow(AUDIO_HEADER.split(","))
                 we.writerow(["host_t", "status"])
+                wb = csv.writer(fb)
+                wb.writerow(["host_t", "block_seq", "device_uptime_ms", "start_t", "end_t", "frames", "missing_blocks_total"])
                 wav.setparams((1, 2, self.config.audio_rate, 0, "NONE", "not compressed"))
                 last_flush = time.monotonic()
                 while True:
@@ -168,12 +224,14 @@ class Recorder:
                             wi.writerow(data)
                             self.imu.append(data)
                             self.count += 1
+                        elif kind == "audio_block":
+                            wb.writerow(data)
                         else:
                             t, host, pcm, status = data
                             row = [t, host, self.audio_count, len(pcm),
                                    float(np.sqrt(np.mean(pcm.astype(float) ** 2))), float(np.max(np.abs(pcm))), int(bool(status))]
                             wa.writerow(row)
-                            wav.writeframesraw((np.clip(pcm, -1, 1) * 32767).astype("<i2").tobytes())
+                            wav.writeframesraw(np.clip(np.rint(pcm * 32768), -32768, 32767).astype("<i2").tobytes())
                             self.audio.append(row)
                             self.audio_count += len(pcm)
                             self.last_audio_host = host
@@ -181,7 +239,7 @@ class Recorder:
                                 self.audio_status += 1
                                 we.writerow([host, status])
                     if time.monotonic() - last_flush > 1:
-                        fi.flush(); fa.flush(); fe.flush()
+                        fi.flush(); fa.flush(); fe.flush(); fb.flush()
                         last_flush = time.monotonic()
         except Exception as exc:
             self.error = f"数据写入失败: {exc}"
@@ -207,7 +265,7 @@ class Recorder:
         self.meta.update(status="error" if error or self.error else "complete",
                          error=error or self.error, duration_s=self.elapsed,
                          imu_samples=self.count, audio_frames=self.audio_count,
-                         audio_status_events=self.audio_status)
+                         audio_status_events=self.audio_status, audio_health=self.audio_health())
         save_json(self.path / "metadata.json", self.meta)
 
 
@@ -232,7 +290,8 @@ def plot_rows(imu):
 def charts(imu, audio, hz):
     q = quality(imu, hz)
     f = features(imu, audio, hz) if q["timing_ok"] else np.empty((0, 4))
-    return {"imu": plot_rows(imu), "audio": audio[:, [0, 4]].tolist(),
+    return {"imu": imu[:, np.r_[0, 5:11]].tolist(),
+            "audio": audio[:, [0, 4, 5, 2, 3, 6]].tolist(),
             "features": f.tolist(), "spectrum": spectrum(imu, hz) if q["timing_ok"] else {},
             "quality": q, "acc_correlation": correlation(f), "gyro_correlation": correlation(f, 2)}
 
@@ -271,6 +330,27 @@ async def start_project_tokens(session, on_sample):
         session._imu_starting = False
 
 
+def dashboard_html():
+    return Path(__file__).with_name("dashboard.html").read_text().replace(
+        "/*DASHBOARD_SCRIPT*/", Path(__file__).with_name("dashboard.js").read_text())
+
+
+def review_state(path, summary=None):
+    meta = json.loads((path / "metadata.json").read_text())
+    markers = json.loads((path / "markers.json").read_text())
+    imu, audio = load_csv(path / "imu.csv", 17), load_csv(path / "audio.csv", 7)
+    hz = meta["config"]["hz"]
+    if summary is None:
+        summary = json.loads((path / "summary.json").read_text())
+    return {"status": "已保存", "active": False, "review": True,
+            "error": meta.get("error", ""), "demo": meta["synthetic"],
+            "session_id": path.name, "path": str(path), "config": meta["config"],
+            "hardware": meta["hardware"], "count": len(imu),
+            "audio_frames": meta.get("audio_frames", 0), "audio_health": meta.get("audio_health", {}),
+            "elapsed": meta.get("duration_s", 0), "markers": markers,
+            "summary": summary, "timing": meta.get("timing", TIMING_NOTE), **charts(imu, audio, hz)}
+
+
 def make_report(path):
     meta = json.loads((path / "metadata.json").read_text())
     markers = json.loads((path / "markers.json").read_text())
@@ -286,15 +366,8 @@ def make_report(path):
         if summary["conditions"]:
             writer = csv.DictWriter(f, fieldnames=list(summary["conditions"][0]))
             writer.writeheader(); writer.writerows(summary["conditions"])
-    # Report plots show the last 30s, statistics cover every saved sample.
-    tail = imu[imu[:, 0] >= imu[-1, 0] - 30] if len(imu) else imu
-    a = audio[audio[:, 0] >= tail[0, 0]] if len(tail) and len(audio) else audio
-    state = {"status": "已保存", "error": meta.get("error", ""), "demo": meta["synthetic"],
-             "path": str(path), "config": meta["config"], "hardware": meta["hardware"],
-             "count": len(imu), "audio_frames": meta.get("audio_frames", 0),
-             "elapsed": meta.get("duration_s", 0), "markers": markers,
-             "summary": summary, "timing": TIMING_NOTE, **charts(tail, a, hz)}
-    html = (Path(__file__).with_name("dashboard.html")).read_text()
+    state = review_state(path, summary)
+    html = dashboard_html()
     payload = json.dumps(json_safe(state), ensure_ascii=False, allow_nan=False).replace("<", "\\u003c")
     html = html.replace("/*BOOTSTRAP*/null", payload)
     (path / "report.html").write_text(html, encoding="utf-8")
@@ -350,15 +423,21 @@ class Lab:
     async def _capture(self):
         c = self.config
         path = self.output / (datetime.now().strftime("%Y%m%d_%H%M%S_") + secrets.token_hex(3) + ("_DEMO" if c.demo else ""))
-        session, mic = None, None
+        session = None
         try:
             hardware = {}
             if not c.demo:
                 from ring_python_sdk import RingSession
+                from ring_python_sdk.public_protocol import MicBlockAssembler
                 lab = self
+                audio_assembler = MicBlockAssembler()
 
                 class ObservedSession(RingSession):
                     def _demux(self, sender, data):
+                        if c.mic == "ring" and data[:2] == b"\x20\x03" and self.mic_active:
+                            frame = audio_assembler.accept(bytes(data))
+                            if frame is not None and lab.recorder:
+                                lab.recorder.on_ring_audio(frame)
                         if c.stream == "token" and data[:2] == b"\x21\x05" and self.imu is not None:
                             from ring_python_sdk.touchpad.core import parse_tokens
                             try:
@@ -417,14 +496,11 @@ class Lab:
                 self.status = "演示数据采集中"
                 await self._demo(r)
                 return
-            if c.mic != "none":
-                import sounddevice as sd
-                device = None if c.mic == "default" else int(c.mic)
-                info = sd.query_devices(device, "input")
-                r.meta["hardware"]["microphone"] = dict(info)
-                mic = sd.InputStream(device=device, channels=1, samplerate=c.audio_rate,
-                                     blocksize=c.audio_rate // 50, dtype="float32", callback=r.on_audio)
-                mic.start()
+            if c.mic == "ring":
+                r.meta["hardware"]["microphone"] = {"source": "ring", "name": session.target_name,
+                    "codec": "adpcm", "sample_rate": 16000, "channels": 1, "software_gain": 1.0}
+                await asyncio.sleep(1.)  # same connection settling used by the product
+                await session.mic_on("adpcm")
             else:
                 r.meta["hardware"]["microphone"] = "disabled"
             save_json(path / "metadata.json", r.meta)
@@ -434,7 +510,7 @@ class Lab:
                 await session.imu_on(gyro_hz=c.hz, accel_hz=c.hz, gyro_fs=c.gyro_fs,
                                      accel_fs=c.accel_fs, frames_per_packet=10, encode_mode=0,
                                      lp=False, on_sample=r.on_imu)
-            self.status = "采集中"
+            self.status = "正在检查戒指音频" if c.mic == "ring" else "采集中"
             no_data_deadline = time.monotonic() + 8
             while not self.stop.is_set():
                 if r.error:
@@ -443,28 +519,34 @@ class Lab:
                     raise RuntimeError("戒指连接已断开；当前实验已结束，请重新开始。")
                 self.sdk_stats = asdict(session.imu.stats) if session.imu else self.sdk_stats
                 now = time.monotonic() - r.start
+                if c.mic == "ring":
+                    if r.audio_zero_samples >= 32000:
+                        raise RuntimeError("戒指麦克风连续输出 2 秒全零 PCM；已保存数据并停止，不能开始语音对照实验。")
+                    if r.audio_health()["ready"]:
+                        self.status = "采集中"
                 if time.monotonic() > no_data_deadline:
                     if not r.count or (r.imu and now - r.imu[-1][1] > 3):
                         raise RuntimeError("3 秒以上无 IMU 数据；请检查连接或降低请求采样率。")
-                    if mic and (r.last_audio_host is None or now - r.last_audio_host > 3):
-                        raise RuntimeError("麦克风没有持续输出；请检查系统麦克风权限与输入设备。")
+                    if c.mic == "ring" and (r.last_audio_host is None or now - r.last_audio_host > 3):
+                        raise RuntimeError("戒指麦克风没有持续输出；已停止。请检查固件是否允许音频与 IMU 同时传输。")
                 await asyncio.sleep(.1)
         finally:
-            if mic is not None:
-                try:
-                    mic.stop(); mic.close()
-                except Exception as exc:
-                    self.error = self.error or f"麦克风关闭失败: {exc}"
             if session:
-                if self.recorder:
-                    if session.imu:
-                        self.sdk_stats = asdict(session.imu.stats)
-                    self.recorder.meta["sdk_stats"] = self.sdk_stats
-                    self.recorder.meta["protocol_events"] = self.protocol_events
+                imu_processor, audio_processor = session.imu, session.mic
                 try:
                     await asyncio.wait_for(session.disconnect(), timeout=8)
                 except Exception as exc:
                     self.error = self.error or f"断开戒指时发生错误: {exc}"
+                finally:
+                    if self.recorder:
+                        # STOP can receive a final packet before closing. Snapshot
+                        # the retained processors after shutdown, not before it.
+                        if imu_processor:
+                            self.sdk_stats = asdict(imu_processor.stats)
+                        self.recorder.meta["sdk_stats"] = self.sdk_stats
+                        self.recorder.meta["protocol_events"] = self.protocol_events
+                        if audio_processor:
+                            self.recorder.meta["audio_sdk_stats"] = asdict(audio_processor.stats)
 
     async def _demo(self, r):
         rng = np.random.default_rng(20261023)
@@ -506,14 +588,13 @@ class Lab:
             result.update(charts(imu, audio, self.config.hz))
             result.update(path=str(r.path), count=r.count, audio_frames=r.audio_count,
                           elapsed=r.elapsed if r.closed else time.monotonic() - r.start,
-                          hardware=r.meta["hardware"], markers=list(r.markers), audio_status=r.audio_status)
+                          hardware=r.meta["hardware"], markers=list(r.markers), audio_status=r.audio_status,
+                          audio_health=r.audio_health())
         return json_safe(result)
 
 
 def serve(lab, port=8766, open_browser=True):
     token = secrets.token_urlsafe(24)
-    html = Path(__file__).with_name("dashboard.html").read_text()
-
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
             pass
@@ -539,18 +620,40 @@ def serve(lab, port=8766, open_browser=True):
             if not self.allowed_host():
                 return self.respond({"error": "Invalid Host"}, 403)
             if self.path == "/":
-                return self.respond(html.replace("/*TOKEN*/''", json.dumps(token)), kind="text/html; charset=utf-8")
+                return self.respond(dashboard_html().replace("/*TOKEN*/''", json.dumps(token)), kind="text/html; charset=utf-8")
             if self.headers.get("X-Lab-Token") != token:
                 return self.respond({"error": "Invalid token"}, 403)
             if self.path == "/api/state":
                 return self.respond(lab.snapshot())
-            if self.path == "/api/devices":
+            route = urlparse(self.path)
+            if route.path == "/api/sessions":
+                sessions = []
+                for path in sorted(lab.output.glob("*/metadata.json"), reverse=True):
+                    if not (path.parent / "summary.json").exists():
+                        continue
+                    meta = json.loads(path.read_text())
+                    sessions.append({"id": path.parent.name, "created": meta.get("created"),
+                                     "samples": meta.get("imu_samples", 0), "synthetic": meta.get("synthetic", False),
+                                     "mic": meta.get("config", {}).get("mic", "unknown")})
+                return self.respond({"sessions": sessions})
+            if route.path in ("/api/review", "/api/wav"):
                 try:
-                    import sounddevice as sd
-                    items = [{"id": i, "name": d["name"]} for i, d in enumerate(sd.query_devices()) if d["max_input_channels"]]
-                    return self.respond({"devices": items})
-                except Exception as exc:
-                    return self.respond({"devices": [], "error": str(exc)})
+                    sid = parse_qs(route.query).get("session", [""])[0]
+                    if not re.fullmatch(r"\d{8}_\d{6}_[a-f0-9]{6}(?:_DEMO)?", sid):
+                        raise ValueError("实验目录无效")
+                    path = (lab.output / sid).resolve()
+                    if path.parent != lab.output.resolve() or not (path / "summary.json").exists():
+                        raise ValueError("实验尚未保存或不存在")
+                    if route.path == "/api/review":
+                        return self.respond(review_state(path))
+                    content = (path / "audio.wav").read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/wav")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers(); self.wfile.write(content)
+                    return
+                except (ValueError, OSError, KeyError) as exc:
+                    return self.respond({"error": str(exc)}, 400)
             return self.respond({"error": "Not found"}, 404)
 
         def do_POST(self):

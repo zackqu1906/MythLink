@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from tools.imu_speech_lab.analysis import correlation, features, packet_rate, quality, spectrum, summarize
-from tools.imu_speech_lab.app import Config, Lab, Recorder, imu_response_error, make_report, plot_rows
+from tools.imu_speech_lab.app import Config, DeviceClock, Lab, Recorder, imu_response_error, make_report, plot_rows, review_state
 
 
 def signal_data(seconds=10, hz=200, frequency=31):
@@ -197,3 +197,75 @@ def test_token_mode_matches_project_start_parameters():
     with pytest.raises(ValueError):
         Config.parse({"stream": "token", "hz": 1000})
     assert Config.parse({"stream": "token", "accel_fs": 16, "gyro_fs": 2000}).hz == 200
+
+
+def test_ring_clock_shares_anchor_across_streams_and_wrap():
+    clock = DeviceClock()
+    assert clock.map(2**32-50, 1.0) == 1.0
+    # Different BLE arrival times cannot move the shared device clock.
+    assert clock.map(0, 1.3) == pytest.approx(1.05)
+    assert clock.map(25, 1.1) == pytest.approx(1.075)
+
+
+def test_ring_pcm_roundtrip_and_real_gap(tmp_path):
+    from ring_python_sdk.public_protocol import AudioFrame
+    r = Recorder(tmp_path / 'ring', Config())
+    pcm = np.tile(np.array([-32768, -1, 0, 1, 32767], dtype='<i2'), 320)
+    r.on_ring_audio(AudioFrame(65535, 2**32-100, pcm.tobytes()))
+    r.on_ring_audio(AudioFrame(1, 100, pcm.tobytes()))  # one 100 ms block missing
+    r.close()
+    a = np.loadtxt(r.path / 'audio.csv', delimiter=',', skiprows=1)
+    assert len(a) == 10
+    assert a[5, 0] - a[4, 0] == pytest.approx(.12)
+    assert r.audio_missing_blocks == 1
+    assert r.audio_health()['ready']
+    with wave.open(str(r.path / 'audio.wav')) as wav:
+        np.testing.assert_array_equal(np.frombuffer(wav.readframes(3200), dtype='<i2'), np.tile(pcm, 2))
+    blocks = np.loadtxt(r.path / 'ring_audio_blocks.csv', delimiter=',', skiprows=1)
+    assert blocks[0, 2] == 2**32-100
+    assert blocks[1, 2] == 100
+
+
+def test_ring_audio_and_imu_same_uptime_align(tmp_path):
+    from ring_python_sdk.public_protocol import AudioFrame
+    r = Recorder(tmp_path / 'alignment', Config())
+    r.on_ring_audio(AudioFrame(0, 1000, np.ones(1600, dtype='<i2').tobytes()))
+    sample = SimpleNamespace(uptime_ms=1000, sample_index=1, packet_seq=1,
+        accel_ms2=(0,0,0), gyro_dps=(0,0,0), raw=(0,)*6)
+    r.on_imu(sample)
+    r.close()
+    a = np.loadtxt(r.path / 'audio.csv', delimiter=',', skiprows=1)
+    imu = np.loadtxt(r.path / 'imu.csv', delimiter=',', skiprows=1, ndmin=2)
+    assert a[-1, 0] + .01 == pytest.approx(imu[0, 0])
+
+
+def test_zero_audio_does_not_pass_health_and_computer_input_rejected(tmp_path):
+    from ring_python_sdk.public_protocol import AudioFrame
+    for source in ['default', '0', 'computer']:
+        with pytest.raises(ValueError):
+            Config.parse({'mic': source})
+    r = Recorder(tmp_path / 'zero', Config())
+    for n in range(20):
+        r.on_ring_audio(AudioFrame(n, n*100, bytes(3200)))
+    r.close()
+    assert not r.audio_health()['ready']
+    assert r.audio_health()['zero_run_s'] == 2
+
+
+def test_review_keeps_full_session_and_earliest_samples(tmp_path):
+    r = Recorder(tmp_path / 'full', Config(demo=True))
+    imu, audio = signal_data(seconds=65)
+    for row in imu:
+        r.submit('imu', row.tolist())
+        if r.q.qsize() > 1000:
+            time.sleep(.01)
+    r.close()
+    summary = make_report(r.path)
+    state = review_state(r.path, summary)
+    assert state['review']
+    assert len(state['imu']) == 13000
+    assert state['imu'][0][0] == 0
+    assert state['imu'][-1][0] > 64
+    html = (r.path / 'report.html').read_text()
+    assert '/*DASHBOARD_SCRIPT*/' not in html
+    assert 'clampRange' in html

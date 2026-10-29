@@ -543,6 +543,13 @@ class AppController(QObject):
                     self._gesture_bindings = replace(self._gesture_bindings, confirm=("double-tap", ""))
                     self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
                 self._settings.setValue("gestures/doubleTapDefaultMigrated", True)
+            from .gestures.voice_gesture_mapping import single_bindings
+            single = single_bindings(self._gesture_bindings)
+            if single != self._gesture_bindings:
+                if not self._settings.contains("input/gestureBindingsBeforeSingleGesture"):
+                    self._settings.setValue("input/gestureBindingsBeforeSingleGesture", self._gesture_bindings.to_json())
+                self._gesture_bindings = single
+                self._settings.setValue("input/gestureBindings", single.to_json())
         except (ValueError, TypeError):
             self._gesture_bindings = GestureBindings()
             self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
@@ -2939,7 +2946,9 @@ class AppController(QObject):
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
-            bindings = self._gesture_bindings.with_slot(action, slot, name)
+            if action not in self._gesture_bindings.as_dict() or slot not in (0, 1):
+                raise ValueError("无效的手势设置位置")
+            bindings = replace(self._gesture_bindings, **{action: (name, "")})
             self._app_gestures.validate_voice(bindings)
         except ValueError as exc:
             self._gesture_settings_error = str(exc)
@@ -2953,6 +2962,22 @@ class AppController(QObject):
         from .gestures.voice_gesture_mapping import VOICE_ACTIONS
         return [dict(id="voice:" + key, label=label, voiceAction=key, shortcut="", path="语音输入")
                 for key, label, _ in VOICE_ACTIONS]
+
+    @Property("QVariantList", constant=True)
+    def voiceGestureOptions(self):
+        from .gestures.voice_gesture_mapping import VOICE_GESTURES
+        return [dict(key=key, title=title) for key, title in VOICE_GESTURES]
+
+    @Property("QVariantList", notify=gestureSettingsChanged)
+    def voiceGestureConfiguration(self):
+        from .gestures.voice_gesture_mapping import action_for, VOICE_GESTURES
+        assigned = {}
+        for gesture, title in VOICE_GESTURES:
+            action = action_for(self._gesture_bindings, gesture)
+            if action:
+                assigned[action["id"]] = dict(gesture=gesture, gestureLabel=title)
+        return [{**action, **assigned.get(action["id"], dict(gesture="", gestureLabel="无"))}
+                for action in self.voiceGestureActions]
 
     @Property(QObject, constant=True)
     def gestureMappingHistory(self):

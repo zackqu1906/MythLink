@@ -16,7 +16,7 @@ Basic.ComboBox {
     background: Rectangle { radius: 8; color: control.down ? theme.selection : control.hovered ? theme.subtle : theme.background; border.width: control.activeFocus ? 2 : 1; border.color: control.activeFocus ? theme.primary : theme.line }
     delegate: ItemDelegate {
         width: control.width; height: 40
-        text: control.textRole ? (Array.isArray(control.model) ? modelData[control.textRole] : model[control.textRole]) : modelData
+        text: control.textAt(index)
         font: control.font
         highlighted: control.highlightedIndex === index
         contentItem: Text { text: parent.text; font: control.font; color: theme.text; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }

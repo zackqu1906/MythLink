@@ -165,7 +165,7 @@ def test_restore_defaults_and_removing_application_invalidate_undo(mapping_ui):
     assert not find(root, "undoMenuMappingButton").property("enabled")
 
 
-def test_hover_is_stable_and_voice_category_expands_in_place(mapping_ui):
+def test_hover_is_stable_and_global_menu_excludes_voice_actions(mapping_ui):
     _, _, root, _, _, _, _ = mapping_ui
     chip = find(root, "gestureCard_snap")
     pos = chip.mapToScene(QPointF(chip.width()/2, chip.height()/2)).toPoint()
@@ -175,10 +175,12 @@ def test_hover_is_stable_and_voice_category_expands_in_place(mapping_ui):
     QTest.qWait(700)
     assert chip.property("hovered") and chip.property("background").property("color") == color
     click(root, "gestureMappingDropdown")
-    click(root, "gestureCategory_voice")
-    assert root.findChild(QObject, "voiceGestureBindingDialog") is None
     assert find(root, "gestureMappingMenu").property("visible")
-    assert find(root, "menuAction_voice:start_end").property("visible")
+    assert rows(root)[0]['label'] == '无'
+    assert not any(row.get('category') == 'voice' for row in rows(root))
+    find(root, "menuActionSearch").setProperty("text", "语音")
+    QTest.qWait(30)
+    assert not any(row.get('voiceAction') for row in rows(root))
     QMetaObject.invokeMethod(find(root, "gestureMappingMenu"), "close")
 
 

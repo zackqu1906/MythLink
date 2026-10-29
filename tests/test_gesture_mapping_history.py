@@ -28,7 +28,7 @@ def test_voice_auto_save_undo_and_external_change_invalidation(route):
     before = c._gesture_bindings
     assert history.apply('voice', '', 'regular', 'tap', {'voiceAction': 'send'})
     assert c._gesture_bindings.end == ('', '')
-    assert c._gesture_bindings.send == ('swipe-up', 'tap')
+    assert c._gesture_bindings.send == ('tap', '')
     assert GestureBindings.from_json(c._settings.value('input/gestureBindings')) == c._gesture_bindings
     assert history.undo('voice/tap')
     assert GestureBindings.from_json(c._settings.value('input/gestureBindings')) == before

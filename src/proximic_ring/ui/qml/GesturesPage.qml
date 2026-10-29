@@ -17,7 +17,7 @@ UiScrollView {
     readonly property string applicationTabsJson: JSON.stringify(catalog.apps)
     readonly property var applicationTabsModel: JSON.parse(applicationTabsJson)
     readonly property bool sceneScope: applicationScope && catalog.selectedScene !== "regular"
-    readonly property bool showVoiceMappings: controller.recognitionEnabled || actionEditor.voiceScope
+    readonly property bool showVoiceMappings: controller.recognitionEnabled
     readonly property var selectedApplication: catalog.apps.filter(function(app) { return app.value === page.selectedApp })[0] || null
     property string managementFeedback: ""
     onSelectedAppChanged: {
@@ -26,17 +26,10 @@ UiScrollView {
     }
     function selectApplication(bundle) {
         managementFeedback = ""
-        actionEditor.voiceScope = false
         applicationScope = true
         if (selectedApp !== bundle) catalog.selectApplication(bundle)
     }
     function addApplication() { addDialog.open() }
-    function configureVoice() {
-        applicationScope = false
-        selectedGesture = controller.gestureBindings.confirm.filter(function(g) { return g.length > 0 })[0] || "tap"
-        actionEditor.voiceScope = true
-        contentItem.contentY = 0
-    }
     readonly property var gestures: [
         {key: "circle-clockwise", title: "顺时针", row: 0, col: 0},
         {key: "clench", title: "握拳", row: 0, col: 1},
@@ -55,9 +48,6 @@ UiScrollView {
     ]
     readonly property string selectedTitle: (gestures.filter(function(g) { return g.key === selectedGesture })[0] || {}).title || ""
     function description(key) {
-        if (actionEditor.voiceScope) {
-            return voiceDescription(key) || "未配置语音操作"
-        }
         return regularDescription(key) || "未配置映射"
     }
     function voiceDescription(key) {
@@ -83,7 +73,7 @@ UiScrollView {
         return (controller.recognitionEnabled ? "输入框内或语音操作中：" : "语音绑定（已关闭）：") + voice
             + (ordinary ? "\n其他时候：" + ordinaryHint : "")
             + "\n语音与普通功能独立保存，同一次手势只执行其中一个功能。"
-            + (applicationScope ? "\n语音绑定在此处只读，请到全局默认中修改。" : "")
+            + "\n语音绑定在此处只读，请到语音页的「配置手势」中修改。"
     }
     function locked(key) { return applicationScope && sceneScope && catalog.isSharedNavigation(key) }
     function sourceLabel(key) {
@@ -113,7 +103,7 @@ UiScrollView {
             Label { Layout.fillWidth: true; text: "已绑定的语音手势优先执行输入功能；语音会话进行中继续由本次输入接管。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
             Label { text: "其他手势"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
             Label { Layout.fillWidth: true; text: "未与语音绑定重叠的手势仍按应用配置优先、全局配置兜底执行，无需输入框失焦。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
-            Label { Layout.fillWidth: true; text: "语音绑定仅在全局默认中修改，对所有应用生效。同一语音功能可绑定多个手势；同一事件只执行一次。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
+            Label { Layout.fillWidth: true; text: "语音绑定在语音页的「配置手势」中修改，对所有应用生效。同一语音功能可绑定多个手势；同一事件只执行一次。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
             FigmaAction { Layout.fillWidth: true; text: "知道了"; font.pixelSize: 16; onClicked: priorityRules.close() }
         }
     }
@@ -233,14 +223,14 @@ UiScrollView {
             selectedGesture: page.selectedGesture
             voiceOverview: page.showVoiceMappings
             voiceActive: page.controller.recognitionEnabled
-            voiceEditable: !page.applicationScope
+            voiceEditable: false
             describeGesture: function(gesture) {
                 return page.regularDescription(gesture).replace(/^沿用(应用|全局) · /, "")
             }
             describeVoiceGesture: function(gesture) { return page.showVoiceMappings ? page.voiceDescription(gesture) : "" }
             gestureHint: function(gesture) { return page.mappingHint(gesture) }
             onGestureChosen: function(gesture) { page.selectedGesture = gesture }
-            onMappingChosen: function(gesture, voice) { page.selectedGesture = gesture; actionEditor.voiceScope = voice && !page.applicationScope }
+            onMappingChosen: function(gesture, voice) { page.selectedGesture = gesture }
             cornerContent: Component {
                 Rectangle {
                     objectName: "gestureVoicePriorityCard"
@@ -252,7 +242,7 @@ UiScrollView {
                             Label { Layout.fillWidth: true; text: "语音输入"; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text }
                             VoiceRecognitionControl { objectName: "gestureVoiceRecognitionButton"; controller: page.controller }
                         }
-                        Label { Layout.fillWidth: true; Layout.fillHeight: true; text: page.controller.recognitionEnabled ? (page.applicationScope ? "语音绑定跟随全局，请到「全局默认」中修改。" : "两行表示不同场景下的功能，同一次手势只执行一个。") : "开启后，语音绑定会显示在所有应用和全局配置中。"; font.family: theme.family; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
+                        Label { Layout.fillWidth: true; Layout.fillHeight: true; text: page.controller.recognitionEnabled ? "语音绑定在此处只读，请到语音页的「配置手势」中修改。" : "开启后，语音绑定会显示在所有应用和全局配置中。"; font.family: theme.family; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
                         FigmaAction {
                             objectName: "voiceGesturePriorityRulesButton"
                             Layout.fillWidth: true; Layout.preferredHeight: 32
@@ -268,7 +258,7 @@ UiScrollView {
             FigmaAction {
                 objectName: "globalGestureScope"; text: "全局默认"; primary: !page.applicationScope
                 Layout.preferredWidth: 120; Layout.preferredHeight: 40; font.pixelSize: 16
-                onClicked: { page.applicationScope = false; actionEditor.voiceScope = false }
+                onClicked: page.applicationScope = false
             }
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: 44

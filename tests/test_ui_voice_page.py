@@ -48,12 +48,11 @@ def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_
     click(root, "openVoiceGestureSettingsButton")
     QTest.qWait(100)
     dialog = root.findChild(QObject, "runtimeSettingsDialog")
-    assert not dialog.property("visible") and root.property("currentPage") == 2
-    editor = root.findChild(QObject, "gestureActionEditor")
-    assert editor.property("voiceScope")
-    assert root.findChild(QObject, "voiceGestureBindingDialog") is None
+    assert not dialog.property("visible") and root.property("currentPage") == 1
+    voice_dialog = root.findChild(QObject, "voiceGestureBindingDialog")
+    assert voice_dialog.property("visible")
     assert controller.gestureBindings == before and bridge.messages == messages
-    card = visual_child(root.contentItem(), "gestureVoicePriorityCard")
+    card = root.findChild(QObject, "voiceGestureSettingsCard")
     position = card.mapToScene(QPointF())
     assert position.y() >= 0 and position.y() + card.height() <= root.height()
     directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
@@ -77,10 +76,10 @@ def test_voice_overview_follows_global_bindings_and_settings_routes_to_same_edit
     assert controller.setVoiceGestureAction('swipe-down', 'send')
     assert controller.setVoiceGestureAction('clench', 'polish')
     QTest.qWait(30)
-    send = visual_child(root.contentItem(), 'voiceCurrentBinding1').property('modelData')
-    polish = visual_child(root.contentItem(), 'voiceCurrentBinding2').property('modelData')
-    assert send['title'] == '上滑/下滑' and polish['title'] == '握拳'
-    assert polish['icon'] == 'clench'
+    send = visual_child(root.contentItem(), 'voiceCurrentBinding_send').property('modelData')
+    polish = visual_child(root.contentItem(), 'voiceCurrentBinding_polish').property('modelData')
+    assert send['gestureLabel'] == '下滑' and polish['gestureLabel'] == '握拳'
+    assert polish['gesture'] == 'clench'
     assert (controller.inlineInput._view, controller.inlineInput._utterance_id,
             controller.inlineInput._seq, controller.recognitionEnabled) == before
     assert [m['type'] for m in bridge.messages] == ['configure_hud', 'configure_hud']
@@ -92,9 +91,9 @@ def test_voice_overview_follows_global_bindings_and_settings_routes_to_same_edit
     QTest.qWait(50)
     click(root, 'configureGlobalVoiceGesturesButton')
     QTest.qWait(250)
-    assert not dialog.property('visible') and root.property('currentPage') == 2
-    assert root.findChild(QObject, 'gestureActionEditor').property('voiceScope')
-    assert not root.findChild(QObject, 'gestureActionEditor').property('applicationScope')
+    assert not dialog.property('visible') and root.property('currentPage') == 1
+    assert root.findChild(QObject, 'voiceGestureBindingDialog').property('visible')
+    assert root.findChild(QObject, 'voiceGestureSettingsCard') is not None
 
 
 def test_voice_preview_assets_match_the_native_figma_originals():
@@ -352,3 +351,102 @@ def test_history_clear_requires_explicit_confirmation(inline_ui, monkeypatch):
     QMetaObject.invokeMethod(dialog, "accept")
     assert cleared == [True]
     assert controller.voiceHistoryEntries == []
+
+
+@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+def test_voice_overview_shows_complete_current_functions_names_and_icons(inline_ui, tmp_path, size):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtTest import QTest
+    from test_ui_gesture_hand import find
+    controller, bridge, _, root, _ = inline_ui
+    root.resize(*size)
+    root.setProperty("currentPage", 1)
+    root.show()
+    assignments = {
+        "confirm": ("double-index-pinch", "双次食拇捏合"),
+        "end": ("double-middle-pinch", "双次中拇捏合"),
+        "polish": ("circle-clockwise", "顺时针"),
+        "switch_mode": ("circle-counterclockwise", "逆时针"),
+        "undo": ("index-pinch", "食拇捏合"),
+        "send": ("middle-pinch", "中拇捏合"),
+    }
+    before_input = controller.inlineInput._view.copy(), controller.inlineInput._seq
+    bridge.messages.clear()
+    for action, (gesture, _) in assignments.items():
+        assert controller.setVoiceGestureAction(gesture, action)
+    QTest.qWait(180)
+    assert visual_child(root.contentItem(), "voiceCurrentBinding_start_end") is None
+    cards = []
+    for action, (gesture, title) in assignments.items():
+        card = find(root, "voiceCurrentBinding_" + action)
+        name = find(root, "voiceCurrentGesture_" + action)
+        assert name.property("text") == title and not name.property("truncated")
+        assert not find(root, "voiceCurrentFunction_" + action).property("truncated")
+        preview = find(root, "voiceCurrentPreview_" + action)
+        assert preview.property("gestures").toVariant() == [gesture]
+        assert visual_child(preview, "voicePreviewCount_" + gesture).isVisible() == gesture.startswith("double-")
+        point = card.mapToScene(QPointF())
+        assert 0 <= point.x() and point.x() + card.width() <= root.width()
+        assert 0 <= point.y() and point.y() + card.height() <= root.height()
+        cards.append((point.x(), point.y(), card.width(), card.height()))
+    for i, (x, y, w, h) in enumerate(cards):
+        for bx, by, bw, bh in cards[i + 1:]:
+            assert x + w <= bx or bx + bw <= x or y + h <= by or by + bh <= y
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"voice-overview-{size[0]}.png"))
+    assert (controller.inlineInput._view, controller.inlineInput._seq) == before_input
+    assert all(message["type"] == "configure_hud" for message in bridge.messages)
+    saved = controller.gestureBindings
+    history = controller.gestureMappingHistory
+    assert history.apply("voice", "", "regular", "snap", {"voiceAction": "start_end"})
+    QTest.qWait(40)
+    assert find(root, "voiceCurrentGesture_start_end").property("text") == "响指"
+    assert visual_child(root.contentItem(), "voiceCurrentBinding_confirm") is None
+    assert visual_child(root.contentItem(), "voiceCurrentBinding_end") is None
+    assert history.undo(history.contextKey)
+    QTest.qWait(40)
+    assert controller.gestureBindings == saved
+    assert find(root, "voiceCurrentGesture_confirm").property("text") == "双次食拇捏合"
+    assert history.apply("voice", "", "regular", "double-index-pinch", {"voiceAction": ""})
+    QTest.qWait(40)
+    assert find(root, "voiceCurrentGesture_confirm").property("text") == "无"
+    assert find(root, "voiceCurrentPreview_confirm").property("gestures").toVariant() == []
+
+
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+def test_voice_binding_summary_matches_figma_inline_style(inline_ui, tmp_path, size):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtQml import QQmlEngine, QQmlExpression
+    from PySide6.QtTest import QTest
+    from test_ui_gesture_hand import find
+    controller, _, _, root, _ = inline_ui
+    root.resize(*size)
+    root.setProperty("currentPage", 1)
+    controller._connected = True
+    controller.connectedChanged.emit()
+    assert controller.setVoiceGestureAction("tap", "start_end")
+    root.show()
+    QTest.qWait(180)
+    for action in ("start_end", "send", "polish", "undo", "switch_mode"):
+        entry = find(root, "voiceCurrentBinding_" + action)
+        assert entry.height() == 44
+        assert entry.property("color") is None  # Plain inline entries, without card surfaces.
+        icon = find(root, "voiceCurrentPreview_" + action)
+        name = find(root, "voiceCurrentGesture_" + action)
+        function = find(root, "voiceCurrentFunction_" + action)
+        assert (icon.width(), icon.height()) == (20, 20)
+        assert name.property("font").pixelSize() == function.property("font").pixelSize() == 16
+        assert name.mapToScene(QPointF()).y() == function.mapToScene(QPointF()).y()
+        assert not name.property("truncated") and not function.property("truncated")
+        image = visual_child(icon, "voicePreviewGesture_" + entry.property("modelData")["gesture"])
+        ready = QQmlExpression(QQmlEngine.contextForObject(image), image, "status === Image.Ready")
+        assert ready.evaluate()[0]
+        assert "redesign-567-32820-" in image.property("source").toString()
+        assert 0 < image.width() <= 20 and 0 < image.height() <= 20
+    if size[0] == 1200:
+        assert find(root, "voiceCurrentBindings").height() == 44
+        assert find(root, "voiceInputCard").height() == 136
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"voice-figma-default-{size[0]}.png"))
