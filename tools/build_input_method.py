@@ -41,7 +41,7 @@ def input_fingerprint(root):
     digest = hashlib.sha256(source_fingerprint(root).encode())
     settings = {
         'architecture': platform.machine(),
-        'deployment_target': os.environ.get('MACOSX_DEPLOYMENT_TARGET', '15.0'),
+        'deployment_target': os.environ.get('MACOSX_DEPLOYMENT_TARGET', '13.3'),
         'swift': subprocess.check_output(['xcrun', 'swiftc', '--version'], text=True).strip(),
         'sdk': subprocess.check_output(['xcrun', '--show-sdk-version'], text=True).strip(),
     }
@@ -111,6 +111,7 @@ def build(root):
             Path('/Library/Input Methods/ProxiMicInput.app/Contents/Info.plist'),
         ], fingerprint)
         info[FINGERPRINT_KEY] = fingerprint
+        info['LSMinimumSystemVersion'] = os.environ.get('MACOSX_DEPLOYMENT_TARGET', '13.3')
         info['MythlinkInputMethodSourceFingerprint'] = source_fingerprint(root)
         with tempfile.TemporaryDirectory(prefix='.build-', dir=output) as directory:
             stage = Path(directory)

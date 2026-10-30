@@ -138,10 +138,13 @@ class WindowCapture:
             config.setQueueDepth_(3)
             config.setShowsCursor_(False)
             config.setCapturesAudio_(False)
-            config.setCaptureMicrophone_(False)
-            config.setPreservesAspectRatio_(True)
-            config.setIgnoreShadowsSingleWindow_(True)
-            config.setIncludeChildWindows_(False)
+            # These options were added in macOS 14/15; Ventura uses the defaults.
+            for selector, value in (("setCaptureMicrophone_", False),
+                                    ("setPreservesAspectRatio_", True),
+                                    ("setIgnoreShadowsSingleWindow_", True),
+                                    ("setIncludeChildWindows_", False)):
+                setter = getattr(config, selector, None)
+                if setter is not None: setter(value)
             content_filter = self.SC.SCContentFilter.alloc().initWithDesktopIndependentWindow_(window)
             stream = self.SC.SCStream.alloc().initWithFilter_configuration_delegate_(content_filter, config, None)
             output = self.Output.alloc().init()

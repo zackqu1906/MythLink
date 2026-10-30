@@ -7,10 +7,11 @@ funasr==1.4.2
 modelscope==1.39.1
 modelscope-hub==0.3.0
 transformers==5.15.0
-PySide6==6.11.1
-PySide6-Addons==6.11.1
-PySide6-Essentials==6.11.1
-shiboken6==6.11.1
+# 6.10/6.11 binding wheels contain Mach-O binaries requiring macOS 15.
+PySide6==6.9.3
+PySide6-Addons==6.9.3
+PySide6-Essentials==6.9.3
+shiboken6==6.9.3
 pyobjc-framework-Quartz==12.2.2
 pyobjc-framework-ApplicationServices==12.2.2
 pyobjc-framework-CoreText==12.2.2

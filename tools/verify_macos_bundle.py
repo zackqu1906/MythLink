@@ -23,7 +23,8 @@ def _run(*args: str | Path) -> str:
 
 
 def _version(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in value.split("."))
+    parts = tuple(int(part) for part in value.split("."))
+    return parts + (0,) * (3 - len(parts))
 
 
 def verify_bundle(app: Path, minimum_macos: str) -> list[str]:
@@ -38,25 +39,40 @@ def verify_bundle(app: Path, minimum_macos: str) -> list[str]:
             browser = plistlib.load(stream)
         if browser.get("LSUIElement") is not True or browser.get("LSBackgroundOnly"):
             errors.append("MythlinkBrowser must start as LSUIElement; periodic status checks must not enter the Dock")
-    executable_root = app / "Contents" / "MacOS"
     resources_root = app / "Contents" / "Resources"
-    files = [item for item in app.rglob("*") if item.is_file()]
+    files = [item for item in app.rglob("*") if not item.is_symlink() and item.is_file()]
+    allowed_version = _version(minimum_macos)
+    for path in files:
+        if path.name != "Info.plist":
+            continue
+        with path.open("rb") as stream:
+            bundle_info = plistlib.load(stream)
+        declarations = [bundle_info.get("LSMinimumSystemVersion")]
+        declarations.append(bundle_info.get("LSMinimumSystemVersionByArchitecture", {}).get("arm64"))
+        for actual in declarations:
+            if actual and _version(actual) > allowed_version:
+                errors.append(
+                    f"declares macOS {actual}, above target {minimum_macos}: {path.relative_to(app)}"
+                )
     mach_o_files = [
         item for item in files if "Mach-O" in _run("/usr/bin/file", item)
     ]
     if not mach_o_files:
-        return [f"no Mach-O files found in {app}"]
+        return errors + [f"no Mach-O files found in {app}"]
 
-    allowed_version = _version(minimum_macos)
     for binary in mach_o_files:
         relative = binary.relative_to(app)
         description = _run("/usr/bin/file", binary)
-        if binary.parent == executable_root and "arm64" not in description:
-            errors.append(f"main executable is not arm64: {relative}")
+        if "arm64" not in description:
+            errors.append(f"Mach-O binary is not arm64: {relative}")
 
         load_commands = _run("/usr/bin/otool", "-l", binary)
-        for match in re.finditer(r"\bminos\s+(\d+(?:\.\d+)+)", load_commands):
-            actual = match.group(1)
+        minimum_versions = re.findall(r"\bminos\s+(\d+(?:\.\d+)*)", load_commands)
+        minimum_versions += re.findall(
+            r"\bLC_VERSION_MIN_MACOSX\s+cmdsize\s+\d+\s+version\s+(\d+(?:\.\d+)*)",
+            load_commands,
+        )
+        for actual in minimum_versions:
             if _version(actual) > allowed_version:
                 errors.append(
                     f"requires macOS {actual}, above declared {minimum_macos}: {relative}"

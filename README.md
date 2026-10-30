@@ -105,11 +105,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1 -
 新的安装包会覆盖 `dist\installer\` 中的同名文件。如果修改了 `pyproject.toml`、
 依赖锁文件或新增依赖，应先重新执行 `setup.ps1 -Compute cpu -SkipLocalLLM`，再构建安装包。
 
-### Apple Silicon macOS 15+：从源码生成 `.dmg`
+### Apple Silicon macOS 13.3+：从源码生成 `.dmg`
 
 当前只提供 Apple Silicon（M1/M2/M3/M4 等 arm64）构建，不支持 Intel Mac。
 构建机需要联网并安装 Xcode Command Line Tools；构建脚本会在项目目录自动准备固定版本的
-Python 3.11，不要求 Homebrew，也不会修改系统 Python：
+便携 Python 3.11，不要求 Homebrew，也不会修改系统 Python。打包环境独立保存在
+`.build/packaging-venv-macos13`；Qt 绑定固定为兼容旧系统的 6.9.3，所有内嵌二进制和
+辅助程序都会检查最低系统版本。macOS 13.3 的截图使用 CoreGraphics，较新系统继续使用
+ScreenCaptureKit 的截图接口：
 
 ```bash
 xcode-select --install

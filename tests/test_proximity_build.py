@@ -1,6 +1,7 @@
 """Check incremental builds with fake tools; never rebuild or sign the live helper."""
 import os
 from pathlib import Path
+import plistlib
 import shutil
 import subprocess
 
@@ -16,8 +17,9 @@ def test_unchanged_helper_is_not_resigned(tmp_path):
     shutil.copyfile(repo / "scripts/macos-signing-env.sh", scripts / "macos-signing-env.sh")
     native = tmp_path / "native/ProxiMicPresence"
     native.mkdir(parents=True)
-    for name in ("Policy.swift", "Calibration.swift", "UnlockSecret.swift", "ReturnWakePolicy.swift", "main.swift", "Info.plist"):
+    for name in ("Policy.swift", "Calibration.swift", "UnlockSecret.swift", "ReturnWakePolicy.swift", "main.swift"):
         (native / name).write_text("fixture")
+    (native / "Info.plist").write_bytes(plistlib.dumps({"LSMinimumSystemVersion": "15.0"}))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "xcrun").write_text('''#!/bin/zsh
@@ -38,7 +40,7 @@ exit 0
     calls = tmp_path / "calls"
     env = {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
            "BUILD_CALLS": str(calls), "PROXIMIC_ALLOW_ADHOC_SIGNING": "1",
-           "APPLE_SIGNING_IDENTITY": "-"}
+           "APPLE_SIGNING_IDENTITY": "-", "MACOSX_DEPLOYMENT_TARGET": "13.3"}
     def run(path):
         return subprocess.run(["/bin/zsh", str(path)], cwd=tmp_path, env=env,
                               text=True, capture_output=True, check=True).stdout
@@ -49,3 +51,9 @@ exit 0
     (native / "Calibration.swift").write_text("changed")
     run(scripts / "build-proximity.sh")
     assert calls.read_text().splitlines() == ["compile", "sign", "compile", "sign"]
+    info = tmp_path / ".build/proximity/ProxiMicPresence.app/Contents/Info.plist"
+    assert plistlib.loads(info.read_bytes())["LSMinimumSystemVersion"] == "13.3"
+    env["MACOSX_DEPLOYMENT_TARGET"] = "14.0"
+    run(scripts / "build-proximity.sh")
+    assert calls.read_text().splitlines() == ["compile", "sign"] * 3
+    assert plistlib.loads(info.read_bytes())["LSMinimumSystemVersion"] == "14.0"
