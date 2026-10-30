@@ -14,14 +14,22 @@ def tool(name):
     return module
 
 
-def test_builder_declares_helper_as_agent_before_signing(tmp_path, monkeypatch):
+@pytest.mark.parametrize('target', [None, '14.0'])
+def test_builder_declares_helper_as_agent_before_signing(tmp_path, monkeypatch, target):
     builder = tool('build_browser_extension')
+    if target is None:
+        monkeypatch.delenv('MACOSX_DEPLOYMENT_TARGET', raising=False)
+    else:
+        monkeypatch.setenv('MACOSX_DEPLOYMENT_TARGET', target)
     monkeypatch.setattr(builder.subprocess, 'check_output', lambda *a, **k: '/test/sdk')
     checked = []
     def run(argv, **kwargs):
+        if argv[0] == 'xcrun':
+            assert argv[argv.index('-target') + 1] == f"arm64-apple-macosx{target or '13.3'}"
         if argv[0] == 'codesign':
             info = plistlib.loads((tmp_path/'MythlinkBrowser.app/Contents/Info.plist').read_bytes())
             assert info['LSUIElement'] is True
+            assert info['LSMinimumSystemVersion'] == (target or '13.3')
             assert not info.get('LSBackgroundOnly')  # The explicit UI may still open a window.
             checked.append(argv)
     monkeypatch.setattr(builder.subprocess, 'run', run)

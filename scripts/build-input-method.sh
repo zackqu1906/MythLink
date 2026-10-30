@@ -17,7 +17,7 @@ mkdir -p "$BUILD_ROOT/module-cache" "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Co
 export CLANG_MODULE_CACHE_PATH="$BUILD_ROOT/module-cache"
 export SWIFT_MODULECACHE_PATH="$BUILD_ROOT/module-cache"
 TARGET_ARCH="$(uname -m)"
-DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
+DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.3}"
 xcrun swiftc -swift-version 5 -O -module-cache-path "$BUILD_ROOT/module-cache" \
   -target "$TARGET_ARCH-apple-macosx$DEPLOYMENT_TARGET" \
   -framework AppKit -framework InputMethodKit -framework Carbon \

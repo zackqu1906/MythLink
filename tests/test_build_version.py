@@ -89,7 +89,7 @@ def test_macos_entry_selects_version_before_packaging(tmp_path, args, expected):
     (tmp_path / 'tools').mkdir()
     shutil.copyfile(ROOT / 'tools/build_version.py', tmp_path / 'tools/build_version.py')
     (tmp_path / 'pyproject.toml').write_text('[project]\nversion = "0.6.9"\n')
-    python = tmp_path / '.build/packaging-venv/bin/python'
+    python = tmp_path / '.build/packaging-venv-macos13/bin/python'
     python.parent.mkdir(parents=True)
     # Run real version selection, then stop at the dependency-install boundary.
     python.write_text('#!/bin/bash\nif [[ "$1" == tools/build_version.py ]]; then\n'

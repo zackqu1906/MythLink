@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import time
 
-from .capture_backend import _await, CapturePermissionError
+from .capture_backend import _await, _image_from_cg, CapturePermissionError
 
 # Bound the actual frame acquisition, not PNG encoding or model latency.
 MAX_CAPTURE_DELAY = 1.0
@@ -48,8 +48,6 @@ def capture_window(target, cancelled, *, deadline=None):
     import objc
     import Quartz as CG
     import ScreenCaptureKit as SC
-    from Foundation import NSMutableData
-    from PySide6.QtGui import QImage
     if not CG.CGPreflightScreenCaptureAccess():
         raise CapturePermissionError('自动截图需要屏幕录制权限')
     with objc.autorelease_pool():
@@ -67,30 +65,36 @@ def capture_window(target, cancelled, *, deadline=None):
         target.update(window_title=str(window.title() or ''),
                       app=str(app.applicationName() or ''), bundle=str(app.bundleIdentifier() or ''))
         target.pop('document_url', None)  # A previous page's URL is not current evidence.
-        content_filter = SC.SCContentFilter.alloc().initWithDesktopIndependentWindow_(window)
-        rect = window.frame()
-        scale = float(content_filter.pointPixelScale())
-        width, height = round(rect.size.width*scale), round(rect.size.height*scale)
-        if width <= 0 or height <= 0:
-            raise ValueError('原窗口尺寸无效')
-        # Preserve readable text while bounding unexpectedly large windows.
-        ratio = min(1, 4096/max(width,height))
-        config = SC.SCStreamConfiguration.alloc().init()
-        config.setWidth_(max(1,round(width*ratio)))
-        config.setHeight_(max(1,round(height*ratio)))
-        config.setShowsCursor_(False)
-        config.setCapturesAudio_(False)
-        cg_image = _await(lambda cb: SC.SCScreenshotManager
-            .captureImageWithFilter_configuration_completionHandler_(content_filter,config,cb),
-            cancelled,timeout=remaining())
+        if hasattr(SC, 'SCScreenshotManager'):
+            content_filter = SC.SCContentFilter.alloc().initWithDesktopIndependentWindow_(window)
+            rect = window.frame()
+            scale = float(content_filter.pointPixelScale())
+            width, height = round(rect.size.width*scale), round(rect.size.height*scale)
+            if width <= 0 or height <= 0:
+                raise ValueError('原窗口尺寸无效')
+            # Preserve readable text while bounding unexpectedly large windows.
+            ratio = min(1, 4096/max(width,height))
+            config = SC.SCStreamConfiguration.alloc().init()
+            config.setWidth_(max(1,round(width*ratio)))
+            config.setHeight_(max(1,round(height*ratio)))
+            config.setShowsCursor_(False)
+            config.setCapturesAudio_(False)
+            cg_image = _await(lambda cb: SC.SCScreenshotManager
+                .captureImageWithFilter_configuration_completionHandler_(content_filter,config,cb),
+                cancelled,timeout=remaining())
+        else:
+            # Ventura has no SCScreenshotManager or pointPixelScale selector.
+            remaining()
+            if cancelled.is_set():raise InterruptedError('截图已取消')
+            cg_image = CG.CGWindowListCreateImage(CG.CGRectNull,
+                CG.kCGWindowListOptionIncludingWindow, int(window.windowID()),
+                CG.kCGWindowImageBoundsIgnoreFraming | CG.kCGWindowImageBestResolution)
+        if cancelled.is_set():raise InterruptedError('截图已取消')
         remaining()  # Never label a delayed system callback as a send-time frame.
         target['captured_at']=datetime.now(timezone.utc).isoformat()
         target['captured_monotonic']=time.monotonic()
-        data = NSMutableData.data()
-        dest = CG.CGImageDestinationCreateWithData(data, 'public.png', 1, None)
-        CG.CGImageDestinationAddImage(dest, cg_image, None)
-        if not CG.CGImageDestinationFinalize(dest):
-            raise RuntimeError('无法保存窗口截图')
-        image = QImage.fromData(bytes(data), 'PNG')
-        if image.isNull(): raise RuntimeError('窗口截图为空')
+        image = _image_from_cg(cg_image)
+        if max(image.width(), image.height()) > 4096:
+            from PySide6.QtCore import Qt
+            image = image.scaled(4096, 4096, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         return image

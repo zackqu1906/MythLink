@@ -232,7 +232,7 @@ if platform.system() == "Darwin":
             "CFBundleDisplayName": "Mythlink",
             "CFBundleShortVersionString": app_version,
             "CFBundleVersion": app_version,
-            "LSMinimumSystemVersion": "15.0",
+            "LSMinimumSystemVersion": os.environ.get("MACOSX_DEPLOYMENT_TARGET", "13.3"),
             # The same executable also runs permission/gesture workers. Start
             # without a Dock icon; ui.main promotes only the normal Qt host.
             "LSUIElement": True,

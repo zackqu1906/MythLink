@@ -1,9 +1,10 @@
-"""One full-resolution ScreenCaptureKit frame per display, in memory only.
+"""One full-resolution frame per display, in memory only.
 
 Runs off the Qt/BLE threads. Excludes the Agent and capture windows by native
 window ID, so showing an interactive loading cover does not contaminate the
 snapshot or require an unowned focus gap. Only confirmed crops are saved.
 Apple API: https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager/captureimage(contentfilter:configuration:completionhandler:)
+macOS 13 uses CoreGraphics window-list capture with the same overlay exclusions.
 """
 import threading
 import time
@@ -11,6 +12,46 @@ from PySide6.QtGui import QImage
 
 
 class CapturePermissionError(PermissionError):pass
+
+
+def _image_from_cg(cg_image):
+    import Quartz as CG
+    from Foundation import NSMutableData
+    if cg_image is None:raise RuntimeError('系统返回了空截图')
+    data=NSMutableData.data()
+    destination=CG.CGImageDestinationCreateWithData(data,'public.png',1,None)
+    CG.CGImageDestinationAddImage(destination,cg_image,None)
+    if not CG.CGImageDestinationFinalize(destination):raise RuntimeError('无法转换屏幕图像')
+    image=QImage.fromData(bytes(data),'PNG')
+    if image.isNull():raise RuntimeError('无法读取屏幕图像')
+    return image
+
+
+def _display_for_geometry(content,geometry):
+    for display in content.displays():
+        rect=display.frame();frame=(rect.origin.x,rect.origin.y,rect.size.width,rect.size.height)
+        if all(abs(a-b)<2 for a,b in zip(frame,geometry)):return display
+    raise RuntimeError('显示器布局已变化，请重新截图')
+
+
+def _capture_screens_legacy(specs,excluded_ids,cancelled,content):
+    import Quartz as CG
+    from PySide6.QtCore import Qt
+    windows=CG.CGWindowListCreate(CG.kCGWindowListOptionOnScreenOnly,0)
+    if windows is None:raise RuntimeError('无法读取屏幕窗口列表')
+    included=[int(window) for window in windows if int(window) not in excluded_ids]
+    images=[]
+    for spec in specs:
+        if cancelled.is_set():raise InterruptedError('截图已取消')
+        _display_for_geometry(content,spec['geometry'])
+        x,y,w,h=spec['geometry']
+        cg_image=CG.CGWindowListCreateImageFromArray(((x,y),(w,h)),included,
+                                                   CG.kCGWindowImageBestResolution)
+        if cancelled.is_set():raise InterruptedError('截图已取消')
+        image=_image_from_cg(cg_image)
+        images.append(image.scaled(round(w*spec['scale']),round(h*spec['scale']),
+                                   Qt.IgnoreAspectRatio,Qt.SmoothTransformation))
+    return images
 
 
 def _await(start,cancelled,*,timeout=10):
@@ -33,18 +74,16 @@ def capture_screens(specs,excluded_ids,cancelled):
     import objc
     import ScreenCaptureKit as SC
     import Quartz as CG
-    from Foundation import NSMutableData
     if not CG.CGPreflightScreenCaptureAccess():raise CapturePermissionError('需要屏幕录制权限才能截图')
     with objc.autorelease_pool():
         content=_await(lambda cb:SC.SCShareableContent.getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_(False,True,cb),cancelled)
+        if not hasattr(SC,'SCScreenshotManager'):
+            return _capture_screens_legacy(specs,excluded_ids,cancelled,content)
         excluded=[w for w in content.windows() if int(w.windowID()) in excluded_ids]
         images=[]
         for spec in specs:
-            x,y,w,h=spec['geometry'];target=None
-            for display in content.displays():
-                rect=display.frame();frame=(rect.origin.x,rect.origin.y,rect.size.width,rect.size.height)
-                if all(abs(a-b)<2 for a,b in zip(frame,(x,y,w,h))):target=display;break
-            if target is None:raise RuntimeError('显示器布局已变化，请重新截图')
+            x,y,w,h=spec['geometry']
+            target=_display_for_geometry(content,spec['geometry'])
             config=SC.SCStreamConfiguration.alloc().init()
             width,height=round(w*spec['scale']),round(h*spec['scale'])
             config.setWidth_(width);config.setHeight_(height)
@@ -52,11 +91,5 @@ def capture_screens(specs,excluded_ids,cancelled):
             config.setPixelFormat_(CG.kCVPixelFormatType_32BGRA)
             screen_filter=SC.SCContentFilter.alloc().initWithDisplay_excludingWindows_(target,excluded)
             cg_image=_await(lambda cb:SC.SCScreenshotManager.captureImageWithFilter_configuration_completionHandler_(screen_filter,config,cb),cancelled)
-            data=NSMutableData.data()
-            destination=CG.CGImageDestinationCreateWithData(data,'public.png',1,None)
-            CG.CGImageDestinationAddImage(destination,cg_image,None)
-            if not CG.CGImageDestinationFinalize(destination):raise RuntimeError('无法转换屏幕图像')
-            image=QImage.fromData(bytes(data),'PNG')
-            if image.isNull():raise RuntimeError('无法读取屏幕图像')
-            images.append(image)
+            images.append(_image_from_cg(cg_image))
         return images

@@ -113,6 +113,16 @@ def test_installed_build_survives_clean_output(build_repo):
     assert payload_info(build_repo)['CFBundleVersion'] == '8'
 
 
+@pytest.mark.parametrize('target', [None, '14.0'])
+def test_bundle_minimum_matches_deployment_target(build_repo, monkeypatch, target):
+    if target is None:
+        monkeypatch.delenv('MACOSX_DEPLOYMENT_TARGET', raising=False)
+    else:
+        monkeypatch.setenv('MACOSX_DEPLOYMENT_TARGET', target)
+    builder.build(build_repo)
+    assert payload_info(build_repo)['LSMinimumSystemVersion'] == (target or '13.3')
+
+
 def test_shell_entry_serializes_concurrent_builds(build_repo):
     env = {**os.environ, 'PROXIMIC_PYTHON': sys.executable}
     command = ['/bin/zsh', str(build_repo / 'scripts/build-input-method.sh')]

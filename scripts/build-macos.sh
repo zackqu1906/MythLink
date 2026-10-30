@@ -22,7 +22,7 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "The macOS package must be built on Apple Silicon." >&2
     exit 1
 fi
-export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.3}"
 source "$PROJECT_ROOT/scripts/macos-signing-env.sh"
 REQUIRE_SIGNED_RELEASE="${PROXIMIC_REQUIRE_SIGNED_RELEASE:-0}"
 if [[ "$REQUIRE_SIGNED_RELEASE" == "1" ]]; then
@@ -33,13 +33,13 @@ if [[ "$REQUIRE_SIGNED_RELEASE" == "1" ]]; then
 fi
 if [[ -n "${PROXIMIC_PYTHON:-}" ]]; then
     PYTHON_BIN="$PROXIMIC_PYTHON"
-elif command -v python3.11 >/dev/null 2>&1; then
-    PYTHON_BIN="python3.11"
 else
-    "$PROJECT_ROOT/scripts/install-python-macos.sh"
+    # A Homebrew Python can require the builder's OS even with a lower target.
+    [[ -x "$PROJECT_ROOT/.runtime/python-bin/python3.11" ]] || "$PROJECT_ROOT/scripts/install-python-macos.sh"
     PYTHON_BIN="$PROJECT_ROOT/.runtime/python-bin/python3.11"
 fi
-VENV_ROOT="$PROJECT_ROOT/.build/packaging-venv"
+PYTHON_BIN="$("$PYTHON_BIN" -c 'from pathlib import Path; import sys; print(Path(sys.executable).resolve())')"
+VENV_ROOT="$PROJECT_ROOT/.build/packaging-venv-macos13"
 [[ -x "$VENV_ROOT/bin/python" ]] || "$PYTHON_BIN" -m venv "$VENV_ROOT"
 PYTHON="$VENV_ROOT/bin/python"
 # macOS ships Bash 3.2, where an empty array under nounset needs this guard.
@@ -77,7 +77,7 @@ ditto "$PROJECT_ROOT/.build/browser-extension/MythlinkBrowser.app" "$APP/Content
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 plutil -lint "$APP/Contents/Info.plist"
-"$PYTHON" tools/verify_macos_bundle.py "$APP" --minimum-macos 15.0
+"$PYTHON" tools/verify_macos_bundle.py "$APP" --minimum-macos "$MACOSX_DEPLOYMENT_TARGET"
 APP_EXECUTABLE="$APP/Contents/MacOS/Mythlink"
 if ! file "$APP_EXECUTABLE" | grep -q "arm64"; then
     echo "Packaged executable is not Apple Silicon arm64: $APP_EXECUTABLE" >&2
