@@ -100,9 +100,9 @@ def test_window_guard_remains_independent_of_ax_text_focus(monkeypatch, case):
 def test_activation_notification_can_match_only_the_proved_client(imk_route, monkeypatch, changed_again):
     c, _, inline, _, sent, messages, _, data = imk_route
     original = inline.capture_start_focus
-    def activate():
+    def activate(**options):
         data['state'].update(client_id='new-activation', utterance_id='')
-        return original()
+        return original(**options)
     monkeypatch.setattr(inline, 'capture_start_focus', activate)
     request(c, 'swipe-left', deliver=False)
     # Activation notification reaches Qt before the queued gesture.

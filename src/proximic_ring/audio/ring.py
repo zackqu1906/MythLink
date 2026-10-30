@@ -224,10 +224,11 @@ class RingAudioSource(AudioSource):
             raise RuntimeError(f"Failed to connect to the selected Ring: {err}") from err
 
     def start_stream(self, *, buffer_audio: bool = True) -> None:
-        """Start microphone audio and require the first usable PCM block.
+        """Start Ring endpoints; require PCM only when Ring is the audio input.
 
         ``buffer_audio=False`` validates the physical stream without filling the
-        inference queue while models are still loading.
+        inference queue while models are still loading. With audio disabled,
+        readiness means the gesture endpoints are ready, with MIC kept off.
         """
         if self._thread is None:
             self.connect()
@@ -236,16 +237,17 @@ class RingAudioSource(AudioSource):
         else:
             self._buffer_audio.clear()
         self._start_stream.set()
+        endpoint = "Ring microphone audio" if self.audio_enabled else "Ring gesture endpoints"
         wait_s = max(6.0, _INITIAL_PCM_TIMEOUT_S + 2.0)
         if not self._ready.wait(timeout=wait_s):
             self.close()
             raise TimeoutError(
-                f"Timed out waiting for Ring microphone audio after {wait_s:.1f}s"
+                f"Timed out waiting for {endpoint} after {wait_s:.1f}s"
             )
         if self._error is not None:
             err = self._error
             self.close()
-            raise RuntimeError(f"Failed to start Ring microphone audio: {err}") from err
+            raise RuntimeError(f"Failed to start {endpoint}: {err}") from err
         if buffer_audio and self.audio_enabled:
             self._watchdog_armed.set()
 
@@ -255,6 +257,10 @@ class RingAudioSource(AudioSource):
             raise RuntimeError("请先停止触摸板，再启用 Ring 麦克风")
         if self._error is not None:
             raise RuntimeError(f"Ring audio stream failed: {self._error}") from self._error
+        if not self.audio_enabled:
+            # Generic resume paths must not enable/probe a microphone that the
+            # selected input does not use (some rings have no microphone).
+            return
         self._clear_queue()
         self._pending = np.empty(0, dtype=np.float32)
         self._pending_start_monotonic_ns = None
@@ -932,7 +938,7 @@ class RingAudioSource(AudioSource):
                         f"[DIAG] {sdk_diag}"
                     )
 
-                if self._pause_stream_requested.is_set() or self._stream_paused.is_set():
+                if not self.audio_enabled or self._pause_stream_requested.is_set() or self._stream_paused.is_set():
                     self._watchdog_armed.clear()
                     if session.mic_active:
                         await session.mic_off()
@@ -940,7 +946,7 @@ class RingAudioSource(AudioSource):
                     self._stream_paused.set()
                     while (
                         not self._stop.is_set()
-                        and self._pause_stream_requested.is_set()
+                        and (not self.audio_enabled or self._pause_stream_requested.is_set())
                     ):
                         client = getattr(session, "client", None)
                         if client is not None and not bool(getattr(client, "is_connected", False)):

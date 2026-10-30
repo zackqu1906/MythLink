@@ -924,8 +924,9 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            on_state("模型加载完成，正在启动并确认实时音频…")
-            source.start_stream(buffer_audio=True)
+            on_state("模型加载完成，正在启动电脑麦克风与 Ring 手势…" if microphone is not None
+                     else "模型加载完成，正在启动并确认实时音频…")
+            source.start_stream(buffer_audio=microphone is None)
             if on_ring_source is not None and not disconnect_event.is_set():
                 on_ring_source(source)
             if disconnect_event.is_set():

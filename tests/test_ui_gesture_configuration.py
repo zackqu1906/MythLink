@@ -15,7 +15,7 @@ def pointer_click(root, name):
     QTest.qWait(40)
 
 
-def test_voice_configuration_navigation_and_shared_enable_state(mapping_ui):
+def test_voice_configuration_navigation_and_voice_page_enable_state(mapping_ui):
     c, bridge, root, _, _, _, _ = mapping_ui
     before = c.gestureBindings, list(bridge.messages)
     root.setProperty("currentPage", 1)
@@ -29,8 +29,8 @@ def test_voice_configuration_navigation_and_shared_enable_state(mapping_ui):
         c._recognition_enabled = enabled
         c.recognitionEnabledChanged.emit()
         QTest.qWait(20)
-        for name in ("voiceRecognitionButton", "gestureVoiceRecognitionButton"):
-            assert find(root, name).property("checked") == enabled
+        assert find(root, "voiceRecognitionButton").property("checked") == enabled
+        assert root.findChild(QObject, "gestureVoiceRecognitionButton") is None
     assert (c.gestureBindings, list(bridge.messages)) == before
 
 
@@ -267,9 +267,13 @@ def test_enabled_voice_bindings_are_visible_with_each_scopes_saved_functions(map
         voice = find(root, "gestureVoiceMappingLabel_swipe-up")
         assert voice.y() + voice.height() <= ordinary.y()
         assert ordinary.y() + ordinary.height() <= up.height() - 6
-        for upper, lower in (("swipe-up", "swipe-down"), ("swipe-left", "swipe-right"), ("middle-pinch", "clench")):
+        for upper, lower in (("swipe-up", "tap"), ("tap", "swipe-down"), ("middle-pinch", "clench")):
             a, b = find(root, "gestureCard_" + upper), find(root, "gestureCard_" + lower)
             assert a.y() + a.height() + 6 <= b.y()
+        left, tap, right = [find(root, "gestureCard_" + key) for key in ("swipe-left", "tap", "swipe-right")]
+        assert left.y() == tap.y() == right.y()
+        assert left.x() + left.width() + 6 <= tap.x()
+        assert tap.x() + tap.width() + 6 <= right.x()
         pointer_click(root, "gestureCard_double-tap")
         assert find(root, "gestureVoiceMappingLabel_tap").property("text") == c.voiceGestureAction("double-tap")["label"]
         pointer_click(root, "gestureSingle_tap")

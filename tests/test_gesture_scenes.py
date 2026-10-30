@@ -271,7 +271,7 @@ def test_all_known_presenters_get_scene_and_standard_gesture_defaults(route, mon
     catalog = configure(s, monkeypatch, bundle)
     assert catalog.supportsPresentation and catalog.selectedScene == "regular"
     catalog.selectScene("regular")
-    assert catalog.bindingCount(bundle) == 4
+    assert catalog.bindingCount(bundle) == 6
     assert catalog.scene_bundles() == [bundle]
     presets = [a for a in catalog.actions if a.get("preset")]
     assert all(a["id"].startswith(profile + ":") for a in presets)
@@ -383,9 +383,9 @@ def test_existing_wps_record_gains_scene_without_readding_or_changing_bindings(r
     monkeypatch.setattr(restored, "_request", lambda *args: None)
     try:
         restored.selectApplication(bundle)
-        assert restored.supportsPresentation and restored.bindingCount(bundle) == 4
+        assert restored.supportsPresentation and restored.bindingCount(bundle) == 6
         restored.selectScene(PRESENTATION)
-        assert restored.canBind("tap") and set(restored.bindings[bundle]) == {"swipe-left", "swipe-right", "snap"}
+        assert restored.canBind("tap") and set(restored.bindings[bundle]) == {"swipe-left", "swipe-right", "swipe-up", "swipe-down", "snap"}
         assert restored.regularBindings[bundle] == original[bundle]["bindings"]
         assert c._settings.value(SETTINGS_KEY) == raw  # Migration discovery alone never writes settings.
     finally:

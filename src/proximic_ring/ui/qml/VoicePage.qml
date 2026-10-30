@@ -207,17 +207,11 @@ UiScrollView {
                     Label { Layout.preferredHeight: 24; verticalAlignment: Text.AlignVCenter; text: "输入源"; color: theme.text; font.pixelSize: 16 }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 8
-                        FigmaSelect {
-                            id: voiceAudioSource
+                        AudioInputSelect {
                             objectName: "voiceAudioSourceCombo"
                             Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredWidth: 1
                             leftPadding: 16; font.pixelSize: 16; font.weight: Font.Medium
-                            model: page.controller.audioInputs; textRole: "label"; valueRole: "value"
-                            enabled: !page.controller.busy
-                            currentIndex: page.controller.audioInputs.map(function(item) { return item.value }).indexOf(page.controller.audioInputSelection)
-                            displayText: currentIndex >= 0 ? currentText : page.controller.audioInputLabel
-                            onActivated: page.controller.selectAudioInput(currentValue)
-                            Connections { target: voiceAudioSource.popup; function onAboutToShow() { page.controller.refreshMicrophones() } }
+                            controller: page.controller
                         }
                         VoiceAudioTest {
                             id: voiceSoundCheck

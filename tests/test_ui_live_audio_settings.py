@@ -129,10 +129,12 @@ def test_disconnect_discards_pending_selection_without_persisting_it(connected_u
     assert "取消" in c.audioSettingsStatus
 
 
-def test_single_menu_selects_a_real_device_in_one_request(connected_ui):
+@pytest.mark.parametrize("combo_name", ["settingsVoiceInputDeviceCombo", "audioSourceCombo", "voiceAudioSourceCombo"])
+def test_single_menu_selects_a_real_device_in_one_request(connected_ui, combo_name):
     c, _, root, busy, row, initial = connected_ui
     busy[0] = False
-    combo = item(root, "audioSourceCombo")
+    combo = item(root, combo_name)
+    assert item(root, "settingsVoiceInputDeviceCombo").property("visible")
     assert c.audioInputs == [{"label": "Ring 麦克风", "value": "ring"},
                              {"label": row["name"], "value": row["value"]}]
     assert root.findChild(QObject, "microphoneDeviceRow") is None
@@ -144,6 +146,10 @@ def test_single_menu_selects_a_real_device_in_one_request(connected_ui):
     assert request.configuration == AudioConfiguration("microphone", row["value"], "gesture")
     assert c._active_audio_configuration() == initial
     assert combo.property("displayText") == row["name"]
+    for name in ("settingsVoiceInputDeviceCombo", "audioSourceCombo", "voiceAudioSourceCombo"):
+        assert item(root, name).property("displayText") == row["name"]
+    c._audio_configuration_started(changes)
+    assert item(root, "settingsVoiceInputDeviceStatus").property("text") == c.audioSettingsStatus
 
 
 def test_device_refresh_keeps_selection_and_does_not_offer_missing_inputs(connected_ui):
@@ -174,3 +180,16 @@ def test_duplicate_device_names_have_distinct_menu_labels(connected_ui):
     c._apply_microphone_scan_finished([row, duplicate, another_api], "")
     labels = [item["label"] for item in c.audioInputs]
     assert len(set(labels)) == 4
+
+
+def test_settings_home_device_choice_autosaves_for_next_connection(connected_ui):
+    c, _, root, _, row, _ = connected_ui
+    c._apply_runtime_finished("")
+    combo = item(root, "settingsVoiceInputDeviceCombo")
+    combo.setProperty("currentIndex", 1)
+    QMetaObject.invokeMethod(combo, "activated", Q_ARG("int", 1))
+    assert c._settings.value("audio/source") == "microphone"
+    assert c._settings.value("audio/microphoneDevice") == row["value"]
+    c._selector = "test-ring-without-microphone"
+    settings = c._runtime_settings()
+    assert settings.audio_source == "microphone" and settings.microphone_device == row["value"]

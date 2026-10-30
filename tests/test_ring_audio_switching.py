@@ -9,10 +9,11 @@ from proximic_ring.audio import ring as module
 
 
 @pytest.fixture
-def ring(monkeypatch, tmp_path):
+def ring(monkeypatch, tmp_path, request):
     import ring_python_sdk
 
-    state = dict(connect=0, disconnect=0, gestures=0, callbacks=[], fail="", touchpad_fail="")
+    state = dict(connect=0, disconnect=0, gestures=0, mic_on=0, callbacks=[],
+                 fail=getattr(request, "param", ""), touchpad_fail="")
 
     class Session:
         def __init__(self, **kwargs):
@@ -27,6 +28,7 @@ def ring(monkeypatch, tmp_path):
             return True
 
         async def mic_on(self, encoding, *, on_pcm):
+            state["mic_on"] += 1
             if state["fail"] == "throws":
                 raise RuntimeError("MIC ON failed")
             self.mic_active = True
@@ -74,6 +76,23 @@ def ring(monkeypatch, tmp_path):
     yield source, state
     source.close()
     assert state["connect"] == state["disconnect"] == 1
+
+
+@pytest.mark.parametrize("ring", ["throws", "no-pcm"], indirect=True)
+def test_computer_input_never_probes_a_micless_ring_or_restarts_its_audio(ring, monkeypatch):
+    source, state = ring
+    monkeypatch.setattr(module, "_EARLY_STARTUP_STALL_S", .01)
+    monkeypatch.setattr(module, "_WATCHDOG_STALL_S", .02)
+    monkeypatch.setattr(module, "_WATCHDOG_CONFIRM_S", .01)
+    source.begin_buffering()  # Generic resume must respect the selected input.
+    # Even a stale resume signal must not override the explicit source choice.
+    source._pause_stream_requested.clear()
+    threading.Event().wait(.2)
+    assert source.error is None and source.pcm_callbacks == 0
+    assert state["mic_on"] == 0 and not state["callbacks"]
+    assert not source._watchdog_armed.is_set() and not source._buffer_audio.is_set()
+    assert source.gestures_active and state["gestures"] == 1
+    assert state["session"].client.is_connected and state["disconnect"] == 0
 
 
 def test_computer_to_ring_and_back_reuses_ble_and_discards_late_old_pcm(ring):

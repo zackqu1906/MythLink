@@ -6,5 +6,5 @@ for candidate in .build/packaging-venv/bin/python .venv/bin/python python3; do
     exec "$candidate" tools/imu_speech.py "$@"
   fi
 done
-print '未找到完整 Python 环境。请在项目虚拟环境中安装 numpy、bleak、cryptography 后重试。'
+print '未找到完整 Python 环境。请在项目虚拟环境中安装 numpy、bleak 后重试。'
 exit 1

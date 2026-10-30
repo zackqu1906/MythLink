@@ -40,6 +40,23 @@ ColumnLayout {
     PreferenceSection {
         Layout.fillWidth: true; title: "功能偏好"
         PreferenceRow {
+            Layout.fillWidth: true; title: "语音输入设备"
+            description: pane.controller.microphoneDevicesError || "选择电脑麦克风时，Ring 仅提供手势，无需内置麦克风。"
+            AudioInputSelect {
+                objectName: "settingsVoiceInputDeviceCombo"
+                Layout.fillWidth: true
+                controller: pane.controller
+            }
+        }
+        UiNotice {
+            objectName: "settingsVoiceInputDeviceStatus"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: pane.controller.audioSettingsStatus
+            warning: pane.controller.audioSettingsError
+            font.pixelSize: 13; wrapMode: Text.Wrap
+        }
+        PreferenceRow {
             Layout.fillWidth: true; title: "听写偏好"; description: "麦克风、输入方式、语音快捷键与个性化。"; linked: true
             FigmaAction { objectName: "settingsAudioEntry"; text: "前往设置"; navigation: true; implicitHeight: 32; implicitWidth: 100; font.pixelSize: 14; leftPadding: 8; rightPadding: 8; onClicked: pane.audioRequested() }
         }

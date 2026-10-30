@@ -8,7 +8,7 @@ from .adapters.browser import NAVIGATION, shared_navigation
 from .resolver import resolve_action
 from .menus import start_action
 
-DEFAULTS_VERSION = 2
+DEFAULTS_VERSION = 3
 
 AUTO_ADD_PROFILES = frozenset({"codex", "workbuddy", "wps", "powerpoint"})
 

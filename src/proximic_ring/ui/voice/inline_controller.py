@@ -370,18 +370,25 @@ class InlineInputController(QObject):
         target = (*expected, front[1])
         return target if self.same_gesture_target(target) else None
 
-    def capture_start_focus(self):
-        """Shared gesture focus: activate if needed, then use live IMK selection."""
+    def capture_start_focus(self, *, native_fallback=None):
+        """Prefer live IMK text; confirmed shows may tolerate unavailable focus."""
         from ...voice.ime.focus_probe import probe_input_focus, InputFocus
         from ...voice.ime.system_input_source import activate_voice_input_source
         if (not self.enabled or self._closed or self._installing or self.stroke_mode
                 or not callable(getattr(self._bridge, "focus_state", None))):
+            if native_fallback is not None and not self._closed:
+                front = self._foreground_identity()
+                target = native_fallback(front) if front and front[1] > 0 else None
+                if target is not None and self._foreground_identity() == front:
+                    return InputFocus("outside", ("", "", "", *front, ()),
+                                      "presentation_focus_fallback", native_target=target)
             return InputFocus("unavailable", reason="input_method_not_ready")
-        return probe_input_focus(self._bridge, self._foreground_identity, activate_voice_input_source)
+        return probe_input_focus(self._bridge, self._foreground_identity, activate_voice_input_source,
+                                 native_fallback=native_fallback)
 
     def same_input_focus(self, proof):
         from ...voice.ime.focus_probe import same_input_focus
-        return bool(self.enabled and not self._closed and not self.stroke_mode
+        return bool(proof and not self._closed and (proof.native_target is not None or (self.enabled and not self.stroke_mode))
                     and same_input_focus(self._bridge, self._foreground_identity, proof))
 
     def pin_start_focus(self, target, created):

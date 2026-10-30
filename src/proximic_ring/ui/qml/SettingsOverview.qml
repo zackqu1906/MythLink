@@ -45,30 +45,14 @@ ColumnLayout {
         }
         FigmaFormRow {
             preferenceStyle: true
-            title: "音频来源"
+            title: "语音输入设备"
             description: pane.controller.microphoneDevicesError.length > 0
                 ? pane.controller.microphoneDevicesError
-                : "直接选择 Ring 或已检测到的音频输入设备。"
-            FigmaSelect {
-                id: audioInputCombo
+                : "选择电脑麦克风时，Ring 仅提供手势，无需内置麦克风。"
+            AudioInputSelect {
                 objectName: "audioSourceCombo"
                 Layout.fillWidth: true
-                Accessible.name: "音频来源"
-                model: pane.controller.audioInputs
-                textRole: "label"; valueRole: "value"
-                enabled: !pane.controller.busy
-                currentIndex: {
-                    var rows = pane.controller.audioInputs
-                    for (var i = 0; i < rows.length; ++i)
-                        if (rows[i].value === pane.controller.audioInputSelection) return i
-                    return -1
-                }
-                displayText: currentIndex >= 0 ? currentText : pane.controller.audioInputLabel
-                onActivated: pane.controller.selectAudioInput(currentValue)
-                Connections {
-                    target: audioInputCombo.popup
-                    function onAboutToShow() { pane.controller.refreshMicrophones() }
-                }
+                controller: pane.controller
             }
             FigmaAction {
                 objectName: "refreshMicrophonesButton"

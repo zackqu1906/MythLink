@@ -1,7 +1,11 @@
 const assert=require('node:assert/strict');
-const {rangeSpectrum,thinPoints,shiftedFeatures,corrWindow,timeToAudio,audioToTime,clampRange}=require('../tools/imu_speech_lab/dashboard.js');
+const {signalNames,rangeSpectrum,thinPoints,shiftedFeatures,corrWindow,timeToAudio,audioToTime,clampRange}=require('../tools/imu_speech_lab/dashboard.js');
+assert.deepEqual(signalNames('raw').axes,['ax','ay','az','gx','gy','gz']);
+assert.equal(signalNames('token').acc,'T1–T3');
 const hz=200, rows=Array.from({length:2000},(_,i)=>[i/hz,Math.sin(2*Math.PI*25*i/hz),0,0,3*Math.sin(2*Math.PI*12.5*i/hz),0,0]);
 const psd=rangeSpectrum(rows,hz);
+// Preserving the six int16 columns in review rows must not affect the FFT.
+assert.deepEqual(rangeSpectrum(rows.map(r=>r.concat([2048,0,0,164,0,0])),hz),psd);
 assert.equal(psd.hz[psd.acc.indexOf(Math.max(...psd.acc))],25);
 assert.ok(Math.abs(psd.acc.reduce((s,v)=>s+10**(v/10)*hz/256,0)-.5)<.01);
 const broken=rows.slice(0,150).concat(rows.slice(1900));
@@ -23,3 +27,17 @@ const energy=Array.from({length:100},(_,i)=>Math.sin(i*1.23)**2+.1);
 const corr=energy.map((v,i)=>[i*.2+.1,i>1?energy[i-2]:0,0,v]);
 assert.ok(corrWindow(corr,1).r>.99999);assert.equal(corrWindow(corr,1).lag,.4);
 console.log('Review: FFT power/frequency, gaps, extrema, audio offset, playback mapping, range clamp and lag passed.');
+
+const {speechIntervals,speechRange,rowsInSpeech,sessionTitle}=require('../tools/imu_speech_lab/dashboard.js');
+const detected={status:'ready',segments:[{start:1,end:2},{start:4,end:6}]};
+const segments=speechIntervals(detected,.1);
+assert.deepEqual(segments.map(s=>[s.start,s.end]),[[1.1,2.1],[4.1,6.1]]);
+assert.deepEqual(speechRange(segments[0],[0,10],2),[0,4.1]);
+assert.deepEqual(speechRange(segments[1],[0,6],1),[3.0999999999999996,6]);
+assert.deepEqual(rowsInSpeech([[.5],[1.5],[2.5],[4.5],[7]],segments),[[1.5],[4.5]]);
+assert.deepEqual(speechIntervals({status:'unavailable',segments:detected.segments}),[]);
+assert.equal(sessionTitle('20261029_144146_4f7b5c'),'2026-10-29 14:41:46');
+// Selecting separated speech windows must not fabricate a continuous FFT window.
+const shortSpeech=speechIntervals({status:'ready',segments:[{start:1,end:1.5},{start:3,end:3.5}]});
+assert.equal(rangeSpectrum(rowsInSpeech(rows,shortSpeech),hz).count,0);
+console.log('Speech review: synchronized offsets, context bounds, missing-data/PSD boundaries and history titles passed.');

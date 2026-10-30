@@ -54,9 +54,10 @@ def resolve_input_device(selection: str) -> dict:
         if preferred:
             matches = preferred
     if not matches:
-        raise RuntimeError("未找到选定的麦克风，请连接 DJI 并在设置中刷新输入设备；不会改用其他麦克风")
+        raise RuntimeError("未找到选定的麦克风，请检查设备连接并在设置中刷新输入设备；不会改用其他麦克风")
     if len(matches) != 1:
-        raise RuntimeError("检测到多个 DJI 输入，请在设置中选择具体麦克风")
+        label = "同名" if selection else "DJI"
+        raise RuntimeError(f"检测到多个 {label} 输入，请在设置中选择具体麦克风")
     return matches[0]
 
 
@@ -169,7 +170,7 @@ class MicrophoneSource(AudioSource):
 
     def _on_finished(self) -> None:
         if not self._stopped.is_set() and not self._capture_paused.is_set() and self._error is None:
-            self._error = RuntimeError("麦克风连接已中断，请检查 DJI 接收器并重新连接")
+            self._error = RuntimeError("麦克风连接已中断，请检查所选输入设备并重新连接")
 
     def pause_capture(self) -> None:
         """Stop the OS stream without retiring this selected microphone."""

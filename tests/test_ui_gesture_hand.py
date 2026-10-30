@@ -1,4 +1,4 @@
-"""The v5 hand workbench shows automatically saved mappings with one-step undo."""
+"""The v6 hand workbench shows automatically saved mappings with one-step undo."""
 import pytest
 from PySide6.QtCore import QObject, QMetaObject, QPointF, Qt
 from PySide6.QtTest import QTest
@@ -53,10 +53,29 @@ def test_hand_layout_starts_unselected_and_all_triggers_are_reachable(mapping_ui
     from PySide6.QtQml import QQmlExpression, QQmlEngine
     expression = QQmlExpression(QQmlEngine.contextForObject(hand), hand, "status === Image.Ready")
     assert expression.evaluate()[0] and hand.property("mirror")
-    assert (hand.width(), hand.height()) == (432, 432)
+    assert hand.width() == hand.height() and hand.width() >= 380
     corner = find(root, "gestureVoicePriorityCard")
     hand_right = hand.mapToScene(QPointF(hand.width(), 0)).x()
     assert corner.mapToScene(QPointF()).x() >= hand_right + 8
+    assert root.findChild(QObject, "gestureVoiceRecognitionButton") is None
+    panel = find(root, "gestureMappingPanel")
+    from PySide6.QtCore import QRectF
+    # Top-level cards must stay disjoint and inside the scaled workbench.
+    cards = [find(root, "gestureCard_" + key) for key in (
+        "circle-clockwise", "circle-counterclockwise", "tap", "swipe-up",
+        "swipe-down", "swipe-left", "swipe-right", "index-pinch", "middle-pinch", "clench", "snap")]
+    rectangles = []
+    for card in cards + [corner]:
+        rect = card.mapRectToItem(panel, QRectF(0, 0, card.width(), card.height()))
+        assert rect.left() >= -0.01 and rect.top() >= -0.01
+        assert rect.right() <= panel.width() + 0.01 and rect.bottom() <= panel.height() + 0.01
+        assert not any(rect.intersects(other) for other in rectangles)
+        rectangles.append(rect)
+    assert len({card.height() for card in cards}) == 1
+    click(root, "voiceGesturePriorityRulesButton")
+    assert find(root, "voiceGesturePriorityRules").property("visible")
+    QMetaObject.invokeMethod(find(root, "voiceGesturePriorityRules"), "close")
+    QTest.qWait(100)
     for name in ("gestureMappingDropdown", "undoMenuMappingButton", "gestureAutoSaveStatus"):
         control = find(root, name)
         pos = control.mapToScene(QPointF())
@@ -70,6 +89,11 @@ def test_hand_layout_starts_unselected_and_all_triggers_are_reachable(mapping_ui
         QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, pos)
         QTest.qWait(20)
         assert page.property("selectedGesture") == key
+        group = ("rotate" if key.startswith("circle-") else "index" if "index-pinch" in key
+                 else "middle" if "middle-pinch" in key else "fist" if key == "clench"
+                 else "touch" if key in ("tap", "double-tap") or key.startswith("swipe-") else "")
+        if group:
+            assert find(root, "gestureConnector_" + group).property("highlighted")
     assert (dict(c.ringGestures.globalBindings), c.gestureBindings, list(bridge.messages)) == before
 
 

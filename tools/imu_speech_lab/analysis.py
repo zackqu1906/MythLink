@@ -32,8 +32,8 @@ def packet_rate(imu: np.ndarray) -> float | None:
     a, b = imu[ends[:-1]], imu[ends[1:]]
     dt = b[:, 2] - a[:, 2]
     good = (np.mod(b[:, 4] - a[:, 4], 65536) == 1) & (dt > 0)
-    rates = (b[:, 3] - a[:, 3])[good] / dt[good]
-    return float(np.median(rates)) if len(rates) else None
+    counts = (b[:, 3] - a[:, 3])[good]
+    return float(np.sum(counts) / np.sum(dt[good])) if len(counts) else None
 
 
 def quality(imu: np.ndarray, requested_hz: float) -> dict:

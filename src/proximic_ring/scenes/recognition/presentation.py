@@ -39,7 +39,11 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
         return attr(node, key)
 
     def focus_context():
-        snapshot = inspect_focus(window, focus, read)
+        try:
+            snapshot = inspect_focus(window, focus, read)
+        except TimeoutError:
+            details["focus_reason"] = "focus_validation_timeout"
+            return "unknown"
         details["focus_reason"] = snapshot.reason
         return snapshot.context
 

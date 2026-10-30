@@ -170,8 +170,8 @@ def test_pointer_blocks_voice_until_touchpad_stops(inline_ui, enabled):
     assert tp.blocksVoice and not c._recognition_event.is_set()
     source.future.set_result(None); QTest.qWait(20)
     assert tp.blocksVoice and not c._recognition_event.is_set()
-    for name in ('voiceRecognitionButton', 'gestureVoiceRecognitionButton'):
-        assert not root.findChild(QObject, name).property('enabled')
+    assert not root.findChild(QObject, 'voiceRecognitionButton').property('enabled')
+    assert root.findChild(QObject, 'gestureVoiceRecognitionButton') is None
     assert root.findChild(QObject, 'voiceStatusTitle').property('text') == '语音识别已暂停'
     c._apply_runtime_status('[ASR] START t=2.000s')
     assert c._cancel_utterance_event.is_set()

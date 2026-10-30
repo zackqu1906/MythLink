@@ -23,7 +23,8 @@ def gestures(**items):
 
 
 SCENES = MappingProxyType({
-    PRESENTATION: SceneDefinition("放映", gestures(swipe_left="previous", swipe_right="next", snap="end"),
+    PRESENTATION: SceneDefinition("放映", gestures(swipe_left="previous", swipe_right="next",
+        swipe_up="up", swipe_down="down", snap="end"),
         gestures(snap=("start-current", "start-first")), resolution="preset_first", pending_format="pendingStart"),
     PDF: SceneDefinition("PDF 阅读", gestures(swipe_left="previous", swipe_right="next")),
     VIDEO: SceneDefinition("视频播放", gestures(tap="play", swipe_left="backward", swipe_right="forward",

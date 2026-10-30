@@ -141,7 +141,7 @@ def route(tmp_path, monkeypatch):
     # Routing tests model the same scene as IMK metadata. Dedicated focus tests
     # vary AX and IMK independently and exercise the real probe/revalidation.
     from proximic_ring.voice.ime.focus_probe import InputFocus
-    def imk_focus():
+    def imk_focus(**_):
         target = getattr(service.backend, "target", None)
         if target is None or target.input_context == "unknown":
             return InputFocus("unavailable", reason="input_method_not_ready")

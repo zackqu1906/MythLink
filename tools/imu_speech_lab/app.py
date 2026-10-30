@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from .analysis import LABELS, correlation, features, json_safe, quality, spectrum, summarize
+from .speech import detect_speech
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
@@ -44,12 +45,12 @@ def save_json(path, value):
 @dataclass
 class Config:
     demo: bool = False
-    name: str = "Ringo"
+    name: str = "Ringo8F56"
     chip: str = "auto"
     stream: str = "raw"
     hz: int = 200
-    accel_fs: int = 2
-    gyro_fs: int = 250
+    accel_fs: int = 16
+    gyro_fs: int = 2000
     frames_per_packet: int = 10
     mic: str = "ring"
     audio_rate: int = 16000
@@ -60,12 +61,10 @@ class Config:
         c = cls(**data)
         if type(c.demo) is not bool or c.chip not in ("auto", "icm42688", "icm45686"):
             raise ValueError("芯片配置无效")
-        if c.stream not in ("raw", "token"):
-            raise ValueError("IMU 数据模式无效")
-        if c.stream == "token" and (c.hz, c.accel_fs, c.gyro_fs) != (200, 16, 2000):
-            raise ValueError("项目 token 模式固定使用 200 Hz、16 g、2000 °/s 启动参数；通道单位未知。")
-        if c.hz not in (100, 200, 500, 1000) or c.accel_fs not in (2, 4, 8, 16) or c.gyro_fs not in (125, 250, 500, 1000, 2000):
-            raise ValueError("采样率或量程无效")
+        if c.stream != "raw":
+            raise ValueError("新实验只采集新 SDK 的原始六轴；历史 token 实验仍可回看。")
+        if (c.hz, c.accel_fs, c.gyro_fs) != (200, 16, 2000) or c.chip != "auto":
+            raise ValueError("新 SDK 固定使用 200 Hz、±16 g、±2000 °/s；不能修改量程后沿用固定解码比例。")
         if c.frames_per_packet != 10 or c.audio_rate != 16000:
             raise ValueError("包大小或音频采样率无效")
         if not isinstance(c.name, str) or not c.name.strip() or len(c.name) > 128:
@@ -116,7 +115,7 @@ class Recorder:
         self.elapsed = 0.
         self.closed = False
         self.q = queue.Queue(maxsize=10000)
-        self.meta = {"schema": 2, "created": datetime.now().astimezone().isoformat(),
+        self.meta = {"schema": 3, "created": datetime.now().astimezone().isoformat(),
                      "config": asdict(config), "hardware": hardware or {},
                      "timing": TIMING_NOTE, "status": "recording", "synthetic": config.demo,
                      "units": ({"t1_t6": "firmware token units; unverified preprocessing", "audio": "full scale = 1"}
@@ -133,6 +132,10 @@ class Recorder:
             self.q.put_nowait((kind, data))
         except queue.Full:
             self.error = "磁盘写入队列已满；实验中止，已有数据保留。"
+
+    def on_wire(self, direction, data):
+        self.submit("packet", {"host_t": time.monotonic() - self.start,
+                               "direction": direction, "hex": bytes(data).hex()})
 
     def on_imu(self, sample):
         host = time.monotonic() - self.start
@@ -203,6 +206,7 @@ class Recorder:
                  (self.path / "audio.csv").open("w", newline="") as fa, \
                  (self.path / "audio_events.csv").open("w", newline="") as fe, \
                  (self.path / "ring_audio_blocks.csv").open("w", newline="") as fb, \
+                 (self.path / "ble_packets.jsonl").open("w") as fp, \
                  wave.open(str(self.path / "audio.wav"), "wb") as wav:
                 wi, wa, we = csv.writer(fi), csv.writer(fa), csv.writer(fe)
                 header = IMU_HEADER
@@ -220,7 +224,9 @@ class Recorder:
                         break
                     kind, data = item
                     with self.lock:
-                        if kind == "imu":
+                        if kind == "packet":
+                            fp.write(json.dumps(data) + "\n")
+                        elif kind == "imu":
                             wi.writerow(data)
                             self.imu.append(data)
                             self.count += 1
@@ -239,7 +245,7 @@ class Recorder:
                                 self.audio_status += 1
                                 we.writerow([host, status])
                     if time.monotonic() - last_flush > 1:
-                        fi.flush(); fa.flush(); fe.flush(); fb.flush()
+                        fi.flush(); fa.flush(); fe.flush(); fb.flush(); fp.flush()
                         last_flush = time.monotonic()
         except Exception as exc:
             self.error = f"数据写入失败: {exc}"
@@ -290,9 +296,9 @@ def plot_rows(imu):
 def charts(imu, audio, hz):
     q = quality(imu, hz)
     f = features(imu, audio, hz) if q["timing_ok"] else np.empty((0, 4))
-    return {"imu": imu[:, np.r_[0, 5:11]].tolist(),
+    return {"imu": imu[:, np.r_[0, 5:17]].tolist(),
             "audio": audio[:, [0, 4, 5, 2, 3, 6]].tolist(),
-            "features": f.tolist(), "spectrum": spectrum(imu, hz) if q["timing_ok"] else {},
+            "features": f.tolist(), "spectrum": spectrum(imu, q["packet_hz"]) if q["timing_ok"] else {},
             "quality": q, "acc_correlation": correlation(f), "gyro_correlation": correlation(f, 2)}
 
 
@@ -303,31 +309,10 @@ def imu_response_error(data, stream="raw"):
     """
     if bytes(data[:2]) == b"\x21\x09" and len(data) >= 3 and data[2] != 0:
         return (f"IMU {stream} 请求收到固件状态 {bytes(data).hex(' ')}，未获得所选数据流。"
-                "raw 不支持时可选择项目同款 token 模式作探索；token 的单位与预处理尚未确认。")
+                "请检查是否已升级到支持 raw 的 public_dev 固件。")
     if bytes(data[:2]) == b"\x21\x0a" or (stream == "raw" and bytes(data[:2]) == b"\x21\x05"):
         return "raw 请求返回了 token/四元数流，无法按原始六轴分析；请检查固件模式。"
     return ""
-
-
-async def start_project_tokens(session, on_sample):
-    """Same START as project touchpad; observe tokens without MNN/cursor output.
-
-    Current SDK's generic demux reserves 21 05 for touchpad_active. Our local
-    ObservedSession explicitly sends those packets to its existing IMU decoder.
-    No SDK or product file is changed.
-    """
-    from ring_python_sdk.imu import ImuProcessor
-    from ring_python_sdk.touchpad.core import START
-    if session.imu_active or session.touchpad_active or session.quaternion_active:
-        raise RuntimeError("请先停止已有 IMU 流")
-    session.imu = ImuProcessor(session._seg_path("imu", "ring_tokens.csv"), None, False,
-                               2000, 16, 200, 200, 10, encode_mode="token", on_sample=on_sample)
-    session.imu_active = True
-    session._imu_starting = True
-    try:
-        await session.client.write_gatt_char(session.rx_uuid, START, response=False)
-    finally:
-        session._imu_starting = False
 
 
 def dashboard_html():
@@ -342,7 +327,8 @@ def review_state(path, summary=None):
     hz = meta["config"]["hz"]
     if summary is None:
         summary = json.loads((path / "summary.json").read_text())
-    return {"status": "已保存", "active": False, "review": True,
+    speech = detect_speech(path, audio, 'synthetic' if meta['synthetic'] else meta['config'].get('mic'))
+    return {"status": "已保存", "active": False, "review": True, "speech": speech,
             "error": meta.get("error", ""), "demo": meta["synthetic"],
             "session_id": path.name, "path": str(path), "config": meta["config"],
             "hardware": meta["hardware"], "count": len(imu),
@@ -367,6 +353,7 @@ def make_report(path):
             writer = csv.DictWriter(f, fieldnames=list(summary["conditions"][0]))
             writer.writeheader(); writer.writerows(summary["conditions"])
     state = review_state(path, summary)
+    save_json(path / 'speech_segments.json', state['speech'])
     html = dashboard_html()
     payload = json.dumps(json_safe(state), ensure_ascii=False, allow_nan=False).replace("<", "\\u003c")
     html = html.replace("/*BOOTSTRAP*/null", payload)
@@ -383,12 +370,13 @@ class Lab:
         self.stop = threading.Event()
         self.status = "待开始"
         self.error = ""
-        self.config = Config(stream="token", accel_fs=16, gyro_fs=2000)
+        self.config = Config()
         self.summary = None
         self.sdk_stats = {}
         self.protocol_events = []
 
     def start(self, config):
+        config = Config.parse(asdict(config))
         with self.lock:
             if self.thread and self.thread.is_alive():
                 raise ValueError("当前实验还未结束")
@@ -425,99 +413,34 @@ class Lab:
         path = self.output / (datetime.now().strftime("%Y%m%d_%H%M%S_") + secrets.token_hex(3) + ("_DEMO" if c.demo else ""))
         session = None
         try:
-            hardware = {}
-            if not c.demo:
-                from ring_python_sdk import RingSession
-                from ring_python_sdk.public_protocol import MicBlockAssembler
-                lab = self
-                audio_assembler = MicBlockAssembler()
-
-                class ObservedSession(RingSession):
-                    def _demux(self, sender, data):
-                        if c.mic == "ring" and data[:2] == b"\x20\x03" and self.mic_active:
-                            frame = audio_assembler.accept(bytes(data))
-                            if frame is not None and lab.recorder:
-                                lab.recorder.on_ring_audio(frame)
-                        if c.stream == "token" and data[:2] == b"\x21\x05" and self.imu is not None:
-                            from ring_python_sdk.touchpad.core import parse_tokens
-                            try:
-                                parse_tokens(bytes(data))  # same validity checks as the project
-                            except ValueError:
-                                self.imu.stats.invalid_packet_count += 1
-                                return
-                            self.imu.handle_notification(sender, data)
-                            return
-                        if (self.imu is not None and data and data[0] == 0x21 and
-                                (len(data) < 9 or data[1] not in (2, 4))):
-                            event = {"host_monotonic": time.monotonic(), "packet_hex": bytes(data[:24]).hex(" ")}
-                            lab.protocol_events = (lab.protocol_events + [event])[-32:]
-                            reason = imu_response_error(data, c.stream)
-                            if reason and lab.recorder:
-                                lab.recorder.error = reason
-                        super()._demux(sender, data)
-
-                session = ObservedSession(name_keyword=c.name, timeout_s=5,
-                                      data_root=path.parent / "sdk", battery_poll_enabled=False)
-                if re.fullmatch(r"[0-9a-fA-F:-]{17,36}", c.name):
-                    connected = await session.connect_target(c.name)
-                else:
-                    devices = await session.scan(quiet=True)
-                    exact = [d for d in devices if (d.name or "").lower() == c.name.lower()]
-                    matches = exact or devices
-                    if len(matches) > 1:
-                        raise RuntimeError("发现多枚戒指，请填写完整名称后重试：" + "、".join(d.name or d.address for d in matches))
-                    connected = bool(matches) and await session.connect_device(matches[0])
-                if not connected:
-                    raise RuntimeError("未找到戒指。请确认开机，并在占用它的 Mythlink/SDK 中断开连接后重试。")
-                # query_info() sends only; the INFO notification is asynchronous.
-                deadline = time.monotonic() + 2
-                while session.device_info is None and time.monotonic() < deadline and not self.stop.is_set():
-                    await asyncio.sleep(.05)
-                if self.stop.is_set():
-                    return
-                from ring_python_sdk.core.device_info import format_device_info
-                import ring_python_sdk
-                hardware = {"name": session.target_name, "address": session.target_address,
-                            "info": format_device_info(session.device_info), "sdk_path": ring_python_sdk.__file__,
-                            "stream": c.stream}
-                component = session.device_info.component(1) if session.device_info else None
-                reported = {1: "icm42688", 2: "icm45686"}.get(component.model) if component and component.present else None
-                if c.stream == "raw" and c.chip == "auto" and not reported:
-                    raise RuntimeError("固件未报告可识别的 IMU 型号；请选择实际芯片后重试，避免错误单位换算。")
-                if c.chip != "auto" and reported and c.chip != reported:
-                    raise RuntimeError(f"手动芯片配置与设备报告 {reported} 不一致，请修正。")
-                session.imu_chip = reported or (c.chip if c.chip != "auto" else "icm42688")
-                hardware.update(chip=reported or (c.chip if c.chip != "auto" else "unknown"), chip_source="device_info" if reported else "manual_or_unknown",
-                                sdk_capture=str(session.session_dir))
-                if self.stop.is_set():
-                    return
-            r = self.recorder = Recorder(path, c, hardware)
             if c.demo:
+                r = self.recorder = Recorder(path, c)
                 self.status = "演示数据采集中"
                 await self._demo(r)
                 return
-            if c.mic == "ring":
-                r.meta["hardware"]["microphone"] = {"source": "ring", "name": session.target_name,
-                    "codec": "adpcm", "sample_rate": 16000, "channels": 1, "software_gain": 1.0}
-                await asyncio.sleep(1.)  # same connection settling used by the product
-                await session.mic_on("adpcm")
-            else:
-                r.meta["hardware"]["microphone"] = "disabled"
+            from .raw_sdk import RawSession
+            session = RawSession(
+                lambda sample: self.recorder.on_imu(sample) if self.recorder else None,
+                lambda frame: self.recorder.on_ring_audio(frame) if self.recorder else None,
+                lambda direction, data: self.recorder.on_wire(direction, data) if self.recorder else None)
+            await session.connect(c.name)
+            if self.stop.is_set():
+                return
+            r = self.recorder = Recorder(path, c, session.hardware)
+            r.meta["hardware"]["microphone"] = ({"source": "ring", "name": session.hardware["name"],
+                "codec": "adpcm", "sample_rate": 16000, "channels": 1, "software_gain": 1.0}
+                if c.mic == "ring" else "disabled")
+            await session.start(microphone=c.mic == "ring")
             save_json(path / "metadata.json", r.meta)
-            if c.stream == "token":
-                await start_project_tokens(session, r.on_imu)
-            else:
-                await session.imu_on(gyro_hz=c.hz, accel_hz=c.hz, gyro_fs=c.gyro_fs,
-                                     accel_fs=c.accel_fs, frames_per_packet=10, encode_mode=0,
-                                     lp=False, on_sample=r.on_imu)
             self.status = "正在检查戒指音频" if c.mic == "ring" else "采集中"
             no_data_deadline = time.monotonic() + 8
             while not self.stop.is_set():
-                if r.error:
-                    raise RuntimeError(r.error)
-                if not session.client or not session.client.is_connected:
+                session.drain()
+                if r.error or session.error:
+                    raise RuntimeError(r.error or session.error)
+                if not session.connected:
                     raise RuntimeError("戒指连接已断开；当前实验已结束，请重新开始。")
-                self.sdk_stats = asdict(session.imu.stats) if session.imu else self.sdk_stats
+                self.sdk_stats = dict(session.stats)
                 now = time.monotonic() - r.start
                 if c.mic == "ring":
                     if r.audio_zero_samples >= 32000:
@@ -526,27 +449,23 @@ class Lab:
                         self.status = "采集中"
                 if time.monotonic() > no_data_deadline:
                     if not r.count or (r.imu and now - r.imu[-1][1] > 3):
-                        raise RuntimeError("3 秒以上无 IMU 数据；请检查连接或降低请求采样率。")
+                        raise RuntimeError("3 秒以上无 IMU 数据；请检查连接。")
                     if c.mic == "ring" and (r.last_audio_host is None or now - r.last_audio_host > 3):
                         raise RuntimeError("戒指麦克风没有持续输出；已停止。请检查固件是否允许音频与 IMU 同时传输。")
                 await asyncio.sleep(.1)
         finally:
             if session:
-                imu_processor, audio_processor = session.imu, session.mic
                 try:
-                    await asyncio.wait_for(session.disconnect(), timeout=8)
+                    await session.disconnect()
                 except Exception as exc:
                     self.error = self.error or f"断开戒指时发生错误: {exc}"
                 finally:
+                    self.error = self.error or session.error
                     if self.recorder:
-                        # STOP can receive a final packet before closing. Snapshot
-                        # the retained processors after shutdown, not before it.
-                        if imu_processor:
-                            self.sdk_stats = asdict(imu_processor.stats)
+                        self.sdk_stats = dict(session.stats)
                         self.recorder.meta["sdk_stats"] = self.sdk_stats
-                        self.recorder.meta["protocol_events"] = self.protocol_events
-                        if audio_processor:
-                            self.recorder.meta["audio_sdk_stats"] = asdict(audio_processor.stats)
+                        self.recorder.meta["audio_sdk_stats"] = dict(session.audio_stats)
+                        self.recorder.meta["packet_types"] = dict(session.packet_types)
 
     async def _demo(self, r):
         rng = np.random.default_rng(20261023)
@@ -564,7 +483,7 @@ class Lab:
                 vibration = (.02 if own else .001) * env * np.sin(2 * np.pi * 31 * t)
                 motion = .8 * np.sin(2 * np.pi * 2 * t) if label == "movement" else 0
                 values = rng.normal(0, .001, 6) + [vibration + motion, 0, 9.80665, vibration * 5 + motion * 5, 0, 0]
-                raw = np.r_[values[:3] / 9.80665 * 16384, values[3:] * 131]
+                raw = np.rint(np.r_[values[:3] / 9.80665 * 2048, values[3:] * 16.4])
                 r.submit("imu", [t, elapsed, t, i, i // 10, *values, *raw])
                 i += 1
             n = c.audio_rate // 50
@@ -634,7 +553,8 @@ def serve(lab, port=8766, open_browser=True):
                     meta = json.loads(path.read_text())
                     sessions.append({"id": path.parent.name, "created": meta.get("created"),
                                      "samples": meta.get("imu_samples", 0), "synthetic": meta.get("synthetic", False),
-                                     "mic": meta.get("config", {}).get("mic", "unknown")})
+                                     "mic": meta.get("config", {}).get("mic", "unknown"),
+                                     "stream": meta.get("config", {}).get("stream", "unknown")})
                 return self.respond({"sessions": sessions})
             if route.path in ("/api/review", "/api/wav"):
                 try:

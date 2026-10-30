@@ -1,0 +1,17 @@
+{
+  "archive": "ring-studio-ringo-lab-firmware-20261014.zip",
+  "archive_sha256": "6c3e61f857a1bc5202be88ab86998e150f0d5dba4bca16b21d2f3e8b41d0741f",
+  "files_sha256": {
+    "ring/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "ring/product.py": "d6ffdd5dff57d5ac8dc6a7a5c72dc866f5fb7afa77239272251a0747c8e0aeba",
+    "ring/drivers/__init__.py": "b80f7b1747f791162f7d7669fe93f127c13044beb14bbda83a179fd12d05d731",
+    "ring/drivers/base.py": "5db2c3152726a8c493fec84db25afdc714677c32480d25292714acc602155c87",
+    "ring/drivers/nus.py": "bd94fe942f670de835c8ef9cf20763700ccc68941a45b34660f5b092870bb7fb",
+    "ring/drivers/nus_protocol.py": "3fc2653717add7a1ba9c5abf47c921bd2ab5972631cd77aee7e37148fc019860",
+    "ring/drivers/ringo.py": "0417857d8a343a46b4270ff25fb23a31f76cd9cf1fe4e6638466d9ce9c01a141",
+    "ring/drivers/ringo_protocol.py": "346895b00af82a1141bf4d8079d5fe7f64f373dde8dfb7e18f4cfb35b9f701d0",
+    "ring/apps/ringo_lab/adpcm.py": "3354b418e80c48c8bfcc3219018d0f8a4d8ec45aeeafa2849d0ad6dae74d4818",
+    "ring/apps/ringo_lab/audio.py": "f3a3dcac3fa8e3b0bf23b48c8d081a9c8f317d4e15c88061800b4b97a6bf8ec5"
+  },
+  "note": "Unmodified source subset from the user-supplied SDK. Desktop Qt UI and firmware updater are not loaded."
+}

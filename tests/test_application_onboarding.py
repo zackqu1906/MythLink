@@ -36,7 +36,7 @@ def test_unknown_apps_use_declared_category_or_explicit_purpose_and_browsers_kee
     profiles = {'pdf':'generic', 'music':'generic', 'video':'generic'}
     assert primary_scene('test.player', profiles, category='public.app-category.music') == 'music'
     assert primary_scene('test.player', profiles, 'video') == 'video'
-    assert enabled_profiles('com.apple.Safari', profiles) == {'pdf':'generic','video':'generic'}
+    assert enabled_profiles('com.apple.Safari', profiles) == {'video':'generic','music':'generic'}
     metadata=dict(CFBundleIdentifier='test.music', LSApplicationCategoryType='public.app-category.music')
     assert application_scene_profiles('test.music',metadata)=={'music':'generic'}
     assert application_scene_profiles('other.app',metadata)=={}
@@ -172,6 +172,8 @@ def test_complete_application_menu_replaces_only_untouched_factory_keys(route, m
 
 @pytest.mark.parametrize('scene,bundle,gesture,shortcut', [
     ('presentation','com.microsoft.Powerpoint','swipe-right','Right'),
+    ('presentation','com.microsoft.Powerpoint','swipe-up','Up'),
+    ('presentation','com.microsoft.Powerpoint','swipe-down','Down'),
     ('music','com.apple.Music','swipe-right','Right'),
     ('video','com.colliderli.iina','swipe-right','Right'),
     ('pdf','com.apple.Preview','swipe-right','Alt+Down'),
@@ -181,6 +183,8 @@ def test_each_primary_scene_routes_only_live_nontext_target(presentation,monkeyp
     c,service,inline,backend,_,sent,_=presentation
     catalog=add(service,monkeypatch,bundle)
     assert catalog.setPrimaryScene(scene)
+    if scene=='presentation':
+        assert catalog.restoreDefaultMappings(bundle)  # The fixture starts with custom scene bindings.
     if scene=='image': catalog.setCustomBinding(bundle,gesture,'下一张',shortcut)
     backend.target=replace(backend.target,bundle=bundle,scene=scene,input_context='nontext')
     before=c.gestureBindings
@@ -190,5 +194,7 @@ def test_each_primary_scene_routes_only_live_nontext_target(presentation,monkeyp
         backend.target=replace(original,**change)
         service._last_dispatch=None
         request(c,gesture)
-        assert sent==[(bundle,shortcut)]
+        # Text-context voice actions (e.g. swipe-up sends Return) remain valid;
+        # the slideshow direction key must never escape its nontext scene.
+        assert [item for item in sent if item[1] == shortcut] == [(bundle,shortcut)]
     assert c.gestureBindings==before

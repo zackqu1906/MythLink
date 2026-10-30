@@ -31,6 +31,12 @@ def upgrade_defaults(apps, defaults_for):
                     if scene in {"regular", PRESENTATION}}
         if not defaults:
             continue
+        if app.get("defaultsVersion", 0) >= 2:
+            # Version 3 only adds vertical swipes to a populated slideshow.
+            # Never restore a deleted old binding or an explicitly cleared scope.
+            vertical = {gesture: action for gesture, action in defaults.get(PRESENTATION, {}).items()
+                        if gesture in {"swipe-up", "swipe-down"}}
+            defaults = {PRESENTATION: vertical} if app.get("scenes", {}).get(PRESENTATION) else {}
         if app.get("bindings") or any(app.get("scenes", {}).values()):
             for scene, items in defaults.items():
                 existing = app.get("bindings") if scene == "regular" else app.get("scenes", {}).get(scene)

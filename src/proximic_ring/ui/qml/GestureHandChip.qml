@@ -23,7 +23,7 @@ Basic.Button {
     readonly property string currentGesture: segmented && doubleTrigger ? definition.doubleKey : definition.key
     onSelectedGestureChanged: if (selectedGesture === definition.key || selectedGesture === definition.doubleKey) doubleTrigger = selectedGesture === definition.doubleKey
     objectName: "gestureCard_" + definition.key
-    width: definition.width; height: dualMapping ? 84 : 76
+    width: definition.width; height: 76
     padding: 0; hoverEnabled: true
     topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
     Accessible.name: definition.title + (segmented ? (doubleTrigger ? "，双次" : "，单次") : "") + "，" + hint
@@ -42,7 +42,7 @@ Basic.Button {
     }
     contentItem: Item {
         Item {
-            x: 12; y: chip.dualMapping ? 10 : 16; width: 24; height: 24
+            x: 10; y: 6; width: 24; height: 24
             Image {
                 objectName: "gestureGlyph_" + chip.definition.key
                 anchors.centerIn: parent
@@ -54,14 +54,14 @@ Basic.Button {
             }
         }
         Label {
-            x: 44; y: chip.dualMapping ? 8 : 14; height: 28
-            text: chip.definition.title; font.family: theme.family; font.pixelSize: 18; font.weight: Font.Medium
+            x: 38; y: 6; height: 24
+            text: chip.definition.title; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium
             color: theme.text; verticalAlignment: Text.AlignVCenter
         }
         Rectangle {
             visible: chip.segmented
-            anchors.right: parent.right; anchors.rightMargin: 12; y: chip.dualMapping ? 6 : 12
-            width: chip.definition.key === "tap" ? 56 : 59; height: 32; radius: 8; color: theme.sidebar
+            anchors.right: parent.right; anchors.rightMargin: 10; y: 4
+            width: 52; height: 32; radius: 8; color: theme.sidebar
             Row {
                 anchors.fill: parent; anchors.margins: 4
                 Repeater {
@@ -84,7 +84,7 @@ Basic.Button {
         Label {
             objectName: "gestureVoiceContext_" + chip.definition.key
             visible: chip.hasVoice
-            x: 12; y: chip.dualMapping ? 40 : 42; width: 36; height: chip.dualMapping ? 18 : 22
+            x: 10; y: chip.dualMapping ? 34 : 40; width: 36; height: chip.dualMapping ? 18 : 22
             text: chip.voiceActive ? "输入时" : "语音"
             font.family: theme.family; font.pixelSize: 12; color: theme.primary
             verticalAlignment: Text.AlignVCenter
@@ -94,7 +94,7 @@ Basic.Button {
         Label {
             objectName: "gestureVoiceMappingLabel_" + chip.definition.key
             visible: chip.hasVoice
-            x: 54; y: chip.dualMapping ? 40 : 42; width: parent.width - x - 12; height: chip.dualMapping ? 18 : 22
+            x: 50; y: chip.dualMapping ? 34 : 40; width: parent.width - x - 10; height: chip.dualMapping ? 18 : 22
             text: chip.voiceMappingLabel
             font.family: theme.family; font.pixelSize: chip.dualMapping ? 13 : 14; color: theme.primary
             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
@@ -104,7 +104,7 @@ Basic.Button {
         Label {
             objectName: "gestureRegularContext_" + chip.definition.key
             visible: chip.dualMapping
-            x: 12; y: 58; width: 36; height: 18
+            x: 10; y: 52; width: 36; height: 18
             text: chip.voiceActive ? "其他时" : "常规"
             font.family: theme.family; font.pixelSize: 12; color: theme.muted
             verticalAlignment: Text.AlignVCenter
@@ -114,8 +114,8 @@ Basic.Button {
         Label {
             objectName: "gestureMappingLabel_" + chip.definition.key
             visible: !chip.hasVoice || chip.dualMapping
-            x: chip.dualMapping ? 54 : 44; y: chip.dualMapping ? 58 : 42
-            width: parent.width - x - 12; height: chip.dualMapping ? 18 : 22
+            x: chip.dualMapping ? 50 : 38; y: chip.dualMapping ? 52 : 40
+            width: parent.width - x - 10; height: chip.dualMapping ? 18 : 22
             text: chip.mappingLabel || "未配置"
             font.family: theme.family; font.pixelSize: chip.dualMapping ? 13 : 14; color: theme.muted
             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight

@@ -436,7 +436,7 @@ class ApplicationMappingController(QObject):
         if self.isBrowser and self._scene in {"pdf", "image"}:
             return "浏览器扩展目前自动识别视频和音频；此处保留已有绑定，暂不自动进入网页 PDF 或图片场景。"
         if self.supportsPresentation and self._apps.get(self._bundle, {}).get("pendingStart"):
-            return "放映中已默认设置左右翻页、响指结束。响指开始放映等待读取此应用的快捷键：打开应用后刷新快捷键，或手动绑定。"
+            return "放映中已默认设置左右翻页、上下方向键、响指结束。响指开始放映等待读取此应用的快捷键：打开应用后刷新快捷键，或手动绑定。"
         if self.pendingBindings:
             return "场景预设已保存，等待读取此应用的快捷键：" + "、".join(self.pendingBindings.values()) + "。打开应用后刷新快捷键，或手动绑定。"
         return ""

@@ -208,7 +208,7 @@ class LocalMacAppShortcuts:
         # A window is optional for explicit mappings, not for legacy chat keys.
         # Preserve the stricter focus guard for legacy chat navigation, while
         # genuine dialogs/sheets and open menus still block all app shortcuts.
-        scene_dialog = scene and active_scene == PRESENTATION and input_context == "nontext"
+        scene_dialog = scene and active_scene == PRESENTATION and input_context != "text"
         host_workspace = (menu_action and pid == self.host_pid
                           and subrole == "AXSystemDialog"
                           and attr(window, "AXTitle") in HOST_WORKSPACE_TITLES)
@@ -273,7 +273,12 @@ class LocalMacAppShortcuts:
                         info["focus_reason"] = ("browser_accessibility_initializing" if browser_scene
                                                 else "focus_accessibility_initializing")
             except TimeoutError:
-                return finish("focus_validation_timeout")
+                if active_scene != PRESENTATION:
+                    return finish("focus_validation_timeout")
+                # The show is already identified. A failed focus inspection
+                # must not turn its navigation gesture into an IME error.
+                input_context = "unknown"
+                info.update(input_context=input_context, focus_reason="focus_validation_timeout")
             latest = frontmost_application()
             if latest is None or application_identity(latest, identity_pid) != (bundle, pid):
                 return finish("foreground_changed")
@@ -347,7 +352,11 @@ class LocalMacAppShortcuts:
             return outcome("foreground_changed")
         if current.blocked:
             return outcome(current.diagnostic.get("reason", "blocked_window"))
-        if target.focus_sensitive and target.menu_action and current.input_context != target.input_context:
+        presentation_focus = target.focus_sensitive and target.scene_checked and target.scene == PRESENTATION
+        if presentation_focus and current.input_context == "text":
+            return outcome("text_focus")
+        if (target.focus_sensitive and target.menu_action and not presentation_focus
+                and current.input_context != target.input_context):
             return outcome("focus_changed")
         if (target.window is not None or target.menu_action) and current.window != target.window:
             return outcome("window_changed")
@@ -358,9 +367,11 @@ class LocalMacAppShortcuts:
         if target.scene_checked and current.document_key != target.document_key:
             return outcome("document_changed")
         if target.scene_checked and (current.scene != target.scene
-                                     or (target.focus_sensitive and target.scene and current.input_context != target.input_context)):
+                                     or (target.focus_sensitive and target.scene and not presentation_focus
+                                         and current.input_context != target.input_context)):
             return outcome("scene_changed")
-        if target.focus_sensitive and (require_focus or (target.scene_checked and target.scene)) and target.focus is not None and current.focus != target.focus:
+        if (target.focus_sensitive and (require_focus or (target.scene_checked and target.scene and not presentation_focus))
+                and target.focus is not None and current.focus != target.focus):
             return outcome("focus_changed")
         return outcome("target_verified", True)
 

@@ -146,6 +146,8 @@ def test_demo_lifecycle_and_offline_report(tmp_path):
     p = lab.recorder.path
     assert json.loads((p / "metadata.json").read_text())["synthetic"] is True
     assert (p / "report.html").exists()
+    assert json.loads((p / 'speech_segments.json').read_text())['method'] == 'webrtcvad'
+    assert 'speechSelect' in (p / 'report.html').read_text()
     assert "/*BOOTSTRAP*/null" not in (p / "report.html").read_text()
     assert "NaN" not in (p / "summary.json").read_text()
     with wave.open(str(p / "audio.wav")) as w:
@@ -193,10 +195,14 @@ def test_project_token_parity_and_units(tmp_path):
     assert not imu_response_error(packet, "token")
 
 
-def test_token_mode_matches_project_start_parameters():
+def test_new_captures_require_supplied_raw_configuration():
     with pytest.raises(ValueError):
         Config.parse({"stream": "token", "hz": 1000})
-    assert Config.parse({"stream": "token", "accel_fs": 16, "gyro_fs": 2000}).hz == 200
+    for change in ({'stream': 'token'}, {'hz': 1000}, {'accel_fs': 2}, {'gyro_fs': 250}, {'chip': 'icm45686'}):
+        with pytest.raises(ValueError):
+            Config.parse(change)
+    config = Config.parse({})
+    assert (config.stream, config.hz, config.accel_fs, config.gyro_fs, config.mic) == ('raw', 200, 16, 2000, 'ring')
 
 
 def test_ring_clock_shares_anchor_across_streams_and_wrap():
@@ -269,3 +275,152 @@ def test_review_keeps_full_session_and_earliest_samples(tmp_path):
     html = (r.path / 'report.html').read_text()
     assert '/*DASHBOARD_SCRIPT*/' not in html
     assert 'clampRange' in html
+
+
+def raw_packet(seq, uptime, values=(2048, 0, 0, 164, -164, 0)):
+    return b'\x21\x02' + struct.pack('<HBI', seq, 10, uptime) + struct.pack('<6h', *values) * 10
+
+
+def test_new_sdk_raw_units_loss_wrap_and_saved_integers(tmp_path):
+    from tools.imu_speech_lab.raw_sdk import RawSession, IMU_START
+    r = Recorder(tmp_path / 'new_sdk', Config(mic='none'))
+    session = RawSession(r.on_imu, r.on_ring_audio, r.on_wire)
+    assert IMU_START.hex() == '2100c800c800d007100a0000'
+    session.accept(raw_packet(65535, 1000))
+    session.accept(raw_packet(0, 1050))
+    session.accept(raw_packet(0, 1050))  # Duplicate must not create samples.
+    session.accept(raw_packet(2, 1150))  # One missing packet.
+    r.close()
+    rows = np.loadtxt(r.path / 'imu.csv', delimiter=',', skiprows=1)
+    assert not session.error
+    assert session.stats['sample_count'] == 30
+    assert session.stats['estimated_lost_samples'] == 10
+    assert session.stats['dropped_packet_count'] == 1
+    np.testing.assert_array_equal(rows[:, 11:], np.tile([2048, 0, 0, 164, -164, 0], (30, 1)))
+    np.testing.assert_allclose(rows[:, 5], 9.80665)
+    np.testing.assert_allclose(rows[:, 8:11], np.tile([10, -10, 0], (30, 1)))
+    assert rows[-1, 3] == 39
+    assert rows[-1, 2] == pytest.approx(.195)
+    assert len((r.path / 'ble_packets.jsonl').read_text().splitlines()) == 4
+
+
+def audio_fragments(seq, uptime, predictor=100):
+    block = struct.pack('<hBBH', predictor, 0, 0, 1600) + bytes(800)
+    chunks = [block[:200], block[200:600], block[600:]]
+    return [b'\x20\x03' + struct.pack('<HHHI', seq, i, 3, uptime) + chunk for i, chunk in enumerate(chunks)]
+
+
+def test_new_sdk_fragmented_audio_shares_raw_clock_and_preserves_gap(tmp_path):
+    from tools.imu_speech_lab.raw_sdk import RawSession
+    r = Recorder(tmp_path / 'new_audio', Config())
+    session = RawSession(r.on_imu, r.on_ring_audio, r.on_wire)
+    session.mic_enabled = True
+    session.accept(raw_packet(0, 1000))
+    first = audio_fragments(0, 1000)
+    for fragment in [first[2], first[1], first[1], first[0]]:
+        session.accept(fragment)
+    for fragment in audio_fragments(2, 1200, 200):  # Missing seq 1.
+        session.accept(fragment)
+    session.drain(force=True)
+    r.close()
+    assert not session.error and not r.error
+    assert r.audio_blocks == 2 and r.audio_missing_blocks == 1
+    assert r.audio_health()['ready']
+    imu = np.loadtxt(r.path / 'imu.csv', delimiter=',', skiprows=1)
+    audio = np.loadtxt(r.path / 'audio.csv', delimiter=',', skiprows=1)
+    assert audio[4, 0] + .01 == pytest.approx(imu[-1, 0])
+    assert audio[5, 0] - audio[4, 0] == pytest.approx(.12)
+    with wave.open(str(r.path / 'audio.wav')) as wav:
+        pcm = np.frombuffer(wav.readframes(3200), dtype='<i2')
+    np.testing.assert_array_equal(pcm[:1600], np.full(1600, 100))
+    np.testing.assert_array_equal(pcm[1600:], np.full(1600, 200))
+    assert session.audio_stats['gap_events'] == 1
+
+
+def test_new_sdk_rejects_tokens_and_conflicting_microphone_fragments():
+    from tools.imu_speech_lab.raw_sdk import RawSession
+    samples = []
+    session = RawSession(samples.append, lambda _: None, lambda *_: None)
+    session.accept(b'\x21\x05' + bytes(128))
+    assert 'token' in session.error and not samples
+    session = RawSession(samples.append, lambda _: None, lambda *_: None)
+    session.mic_enabled = True
+    fragment = audio_fragments(0, 1000)[0]
+    session.accept(fragment)
+    session.accept(fragment[:-1] + b'\x01')
+    assert '分片冲突' in session.error
+    assert session.audio_stats['invalid_packets'] == 1
+
+
+def test_packet_rate_averages_rounded_packet_timestamps():
+    imu, _ = signal_data()
+    ends = np.round(np.arange(1, 201) * (10000 / 202.8)) / 1000
+    imu[:, 2] = np.repeat(ends, 10) - np.tile(np.arange(9, -1, -1) / 200, 200)
+    assert packet_rate(imu) == pytest.approx(202.8, abs=.03)
+
+
+def test_speech_segments_keep_pauses_and_never_bridge_missing_frames():
+    from tools.imu_speech_lab.speech import group_speech_frames
+    # A real 100 ms pause may join speech, but a 100 ms missing interval may not.
+    frames = [(i*.02, (i+1)*.02, i < 10 or i >= 15) for i in range(25)]
+    joined = group_speech_frames(frames)
+    assert len(joined) == 1
+    assert joined[0]['voiced_seconds'] == pytest.approx(.4)
+    missing = group_speech_frames(frames[:10] + frames[15:])
+    assert len(missing) == 2
+    assert missing[0]['end'] == pytest.approx(.2)
+    assert missing[1]['start'] == pytest.approx(.3)
+    assert group_speech_frames(frames[:4]) == []  # transient under 180 ms
+
+
+def test_speech_uses_wav_offsets_and_device_times_not_wall_clock(tmp_path, monkeypatch):
+    import sys
+    from tools.imu_speech_lab.speech import detect_speech
+    class FakeVad:
+        def __init__(self, mode):
+            assert mode == 2
+        def is_speech(self, frame, rate):
+            assert len(frame) == 640 and rate == 16000
+            return True
+    monkeypatch.setitem(sys.modules, 'webrtcvad', SimpleNamespace(Vad=FakeVad))
+    with wave.open(str(tmp_path/'audio.wav'), 'wb') as wav:
+        wav.setparams((1, 2, 16000, 0, 'NONE', 'NONE'))
+        wav.writeframes(np.full(6400, 3277, dtype='<i2').tobytes())
+    _, audio = signal_data(seconds=.4)
+    audio[:, 0] += 7.3  # shared device time, unrelated to WAV index zero
+    audio[10:, 0] += .1  # missing block: do not extend/merge across it
+    speech = detect_speech(tmp_path, audio)
+    assert speech['status'] == 'ready'
+    assert len(speech['segments']) == 2
+    assert speech['segments'][0]['start'] == pytest.approx(7.3)
+    assert speech['segments'][0]['end'] == pytest.approx(7.5)
+    assert speech['segments'][1]['start'] == pytest.approx(7.6)
+    # All-zero and status-flagged audio are never speech, even if VAD returns True.
+    audio[:, 4] = 0
+    assert detect_speech(tmp_path, audio)['segments'] == []
+    audio[:, 4] = .05
+    audio[:, 6] = 1
+    assert detect_speech(tmp_path, audio)['segments'] == []
+    assert detect_speech(tmp_path, audio, 'computer')['status'] == 'unavailable'
+
+
+def test_speech_missing_dependency_is_explicit(tmp_path, monkeypatch):
+    import sys
+    from tools.imu_speech_lab.speech import detect_speech
+    monkeypatch.setitem(sys.modules, 'webrtcvad', None)
+    _, audio = signal_data(seconds=1)
+    result = detect_speech(tmp_path, audio)
+    assert result['status'] == 'unavailable'
+    assert 'webrtcvad-wheels' in result['reason']
+    assert result['segments'] == []
+
+
+def test_real_vad_does_not_label_digital_silence(tmp_path):
+    pytest.importorskip('webrtcvad')
+    from tools.imu_speech_lab.speech import detect_speech
+    with wave.open(str(tmp_path/'audio.wav'), 'wb') as wav:
+        wav.setparams((1, 2, 16000, 0, 'NONE', 'NONE'))
+        wav.writeframes(bytes(32000))
+    _, audio = signal_data(seconds=1)
+    audio[:, 4] = 0
+    assert detect_speech(tmp_path, audio)['segments'] == []

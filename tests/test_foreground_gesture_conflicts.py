@@ -13,7 +13,7 @@ from proximic_ring.voice.ime.focus_probe import InputFocus
 
 
 def live_text(inline, monkeypatch, target):
-    monkeypatch.setattr(inline, 'capture_start_focus', lambda: InputFocus('text',
+    monkeypatch.setattr(inline, 'capture_start_focus', lambda **_: InputFocus('text',
         ('e', 'client', '', target.bundle, target.pid, (0, 0))))
 
 
@@ -110,7 +110,7 @@ def test_scene_scope_cannot_follow_a_changed_or_unknown_foreground(route, monkey
     original = (backend.target.bundle, backend.target.pid)
     # IMK proves nontext for the original foreground, then native capture sees
     # a changed process/window. No AX text classification is involved.
-    monkeypatch.setattr(inline, 'capture_start_focus', lambda: InputFocus('nontext',
+    monkeypatch.setattr(inline, 'capture_start_focus', lambda **_: InputFocus('nontext',
         ('e', 'client', '', original[0], original[1], (-1, -1))))
     monkeypatch.setattr(service, "foreground_identity", lambda: None if change == "unavailable" else original)
     if change == "application":

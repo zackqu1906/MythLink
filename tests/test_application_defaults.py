@@ -19,7 +19,7 @@ WORKBUDDY = "com.tencent.workbuddy.mac"
 
 
 @pytest.mark.parametrize("bundle,label,count", [
-    (WPS, "WPS Office", 4), (WPS + ".global", "WPS Office", 4), (POWERPOINT, "PowerPoint", 4),
+    (WPS, "WPS Office", 6), (WPS + ".global", "WPS Office", 6), (POWERPOINT, "PowerPoint", 6),
     (CODEX, "Codex", 2), (WORKBUDDY, "WorkBuddy", 2),
     ("vendor.WorkBuddy", "WorkBuddy", 2), ("com.example.Editor", "Editor", 0),
     ("com.example.Viewer", "WorkBuddy Helper", 0),
@@ -112,7 +112,7 @@ def test_restore_and_readd_are_explicit_and_leave_other_apps_untouched(route, mo
     catalog.removeApplication(WPS)
     assert not catalog.restoreDefaultMappings(WPS)
     catalog.addApplication(WPS)
-    assert catalog.bindingCount(WPS) == 4
+    assert catalog.bindingCount(WPS) == 6
     assert catalog.regularBindings[CODEX] == other
 
 
@@ -156,13 +156,13 @@ def test_wps_defaults_route_only_in_their_own_app_and_scene(presentation, monkey
     assert not request(c, "snap")  # Outside actions dispatch through the focus route.
     assert sent == [(WPS, "Shift+F5")]
     backend.target = replace(backend.target, scene=PRESENTATION)
-    for gesture in ("swipe-left", "swipe-right", "snap"):
+    for gesture in ("swipe-left", "swipe-right", "swipe-up", "swipe-down", "snap"):
         assert not request(c, gesture)
-    assert sent == [(WPS, "Shift+F5"), (WPS, "Backspace"), (WPS, "Right"), (WPS, "Escape")]
+    assert sent == [(WPS, "Shift+F5"), (WPS, "Backspace"), (WPS, "Right"), (WPS, "Up"), (WPS, "Down"), (WPS, "Escape")]
     assert not catalog.voice_overridden(WPS)  # Scene swipes do not suppress regular voice.
     backend.target = replace(backend.target, bundle="other.app", profile="", scene="")
     request(c, "swipe-left")
-    assert len(sent) == 4
+    assert len(sent) == 6
 
 
 def test_installed_scan_only_discovers_candidates_until_user_adds_an_application(route, monkeypatch):
@@ -188,7 +188,7 @@ def test_installed_scan_only_discovers_candidates_until_user_adds_an_application
     assert c._settings.value(SETTINGS_KEY) == saved
     assert catalog.addApplication(WPS)
     assert catalog.addApplication(CODEX)
-    assert catalog.bindingCount(WPS) == 4 and catalog.bindingCount(CODEX) == 2
+    assert catalog.bindingCount(WPS) == 6 and catalog.bindingCount(CODEX) == 2
     catalog.removeApplication(WPS)
     catalog.clearApplicationBindings(CODEX)
     catalog._apply_result("apps", catalog._generation["apps"], "", dict(candidates=candidates), "")
@@ -250,6 +250,42 @@ def test_existing_wps_template_gains_end_show_once_and_custom_keys_survive(route
         catalog.close()
 
 
+@pytest.mark.parametrize("state", ["populated", "empty", "removed"])
+def test_vertical_swipe_upgrade_preserves_custom_and_deleted_bindings(route, monkeypatch, state):
+    c, service, *_ = route
+    defaults = default_mappings(POWERPOINT)
+    scene = defaults[PRESENTATION]
+    scene.pop("swipe-left")  # A deliberately deleted v2 default must stay deleted.
+    scene.pop("swipe-down")  # Not offered by the v2 template.
+    custom = dict(id="custom:up", label="自定义", path="自定", shortcut="Ctrl+Up")
+    scene["swipe-up"] = custom
+    if state == "empty":
+        scene.clear()
+    saved = dict(label="PowerPoint", defaultsVersion=2, bindings=defaults["regular"],
+                 scenes={PRESENTATION: scene}, removed=state == "removed")
+    c._settings.setValue(SETTINGS_KEY, json.dumps({POWERPOINT: saved}))
+    catalog = ApplicationMappingController(service)
+    monkeypatch.setattr(catalog, "_request", lambda *args: None)
+    try:
+        bindings = catalog._bindings_for(POWERPOINT, PRESENTATION)
+        if state != "populated":
+            assert not bindings
+            return
+        assert bindings["swipe-up"] == custom and bindings["swipe-down"]["shortcut"] == "Down"
+        assert "swipe-left" not in bindings
+        catalog.selectApplication(POWERPOINT)
+        catalog.selectScene(PRESENTATION)
+        assert catalog.setBinding(POWERPOINT, "swipe-down", "")
+        restored = ApplicationMappingController(service)
+        try:
+            assert "swipe-down" not in restored._bindings_for(POWERPOINT, PRESENTATION)
+            assert restored._apps[POWERPOINT]["defaultsVersion"] == DEFAULTS_VERSION
+        finally:
+            restored.close()
+    finally:
+        catalog.close()
+
+
 @pytest.mark.parametrize("change", ["none", "custom", "delete", "clear", "remove"])
 def test_generic_presenter_resolves_actual_start_menu_without_overwriting_user_action(route, monkeypatch, change):
     c, service, _, _, _, _, _ = route
@@ -258,8 +294,8 @@ def test_generic_presenter_resolves_actual_start_menu_without_overwriting_user_a
     bundle = "test.generic.slides"
     catalog._candidates = [dict(value=bundle, label="Slides", presentationProfile="generic")]
     catalog.addApplication(bundle)
-    assert catalog.bindingCount(bundle) == 3 and catalog.defaultMappingNotice
-    assert set(catalog.for_scene(bundle, PRESENTATION)) == {"scene:swipe-left", "scene:swipe-right", "scene:snap"}
+    assert catalog.bindingCount(bundle) == 5 and catalog.defaultMappingNotice
+    assert set(catalog.for_scene(bundle, PRESENTATION)) == {"scene:swipe-left", "scene:swipe-right", "scene:swipe-up", "scene:swipe-down", "scene:snap"}
     catalog.selectScene(PRESENTATION)
     assert {item["shortcut"] for item in catalog.actions if item.get("preset")} >= {"Left", "Right", "Escape"}
     catalog.selectScene("regular")
@@ -271,7 +307,7 @@ def test_generic_presenter_resolves_actual_start_menu_without_overwriting_user_a
     catalog._apply_result("menu", catalog._generation["menu"], bundle, dict(actions=[menu]), "")
     if change == "none":
         assert catalog.for_target(bundle)["menu:snap"].shortcut == "Ctrl+Shift+F5"
-        assert not catalog.defaultMappingNotice and catalog.bindingCount(bundle) == 4
+        assert not catalog.defaultMappingNotice and catalog.bindingCount(bundle) == 6
     elif change == "custom": assert catalog.for_target(bundle)["menu:snap"].shortcut == "Cmd+Alt+P"
     else: assert not catalog.for_target(bundle)
     restored = ApplicationMappingController(service)

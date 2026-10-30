@@ -57,6 +57,25 @@ def test_dji_resolution_uses_identity_after_reorder_and_never_default_fallback(m
             module.resolve_input_device(selection)
 
 
+def test_enumeration_includes_all_computer_inputs_and_keeps_explicit_selection(monkeypatch):
+    devices = [
+        dict(name="MacBook 麦克风", hostapi=0, max_input_channels=1, default_samplerate=48000),
+        dict(name="扬声器", hostapi=0, max_input_channels=0, default_samplerate=48000),
+        dict(name="USB 麦克风", hostapi=0, max_input_channels=2, default_samplerate=44100),
+    ]
+    monkeypatch.setattr(module, "_sounddevice", lambda: SimpleNamespace(
+        query_hostapis=lambda: [{"name": "Core Audio"}], query_devices=lambda: devices))
+    rows = module.input_device_choices()
+    assert [row["name"] for row in rows] == ["MacBook 麦克风", "USB 麦克风"]
+    selected = rows[0]["value"]
+    devices.reverse()
+    assert module.resolve_input_device(selected)["index"] == 2
+    devices.pop()
+    with pytest.raises(RuntimeError, match="未找到选定的麦克风") as error:
+        module.resolve_input_device(selected)
+    assert "DJI" not in str(error.value)  # A missing input must not select USB or Ring.
+
+
 @pytest.mark.parametrize("rate", [16000, 44100, 48000, 96000])
 def test_resampling_has_no_drift_or_callback_boundary_discontinuities(rate):
     t = np.arange(rate * 2) / rate

@@ -103,7 +103,7 @@ UiScrollView {
             Label { Layout.fillWidth: true; text: "已绑定的语音手势优先执行输入功能；语音会话进行中继续由本次输入接管。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
             Label { text: "其他手势"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
             Label { Layout.fillWidth: true; text: "未与语音绑定重叠的手势仍按应用配置优先、全局配置兜底执行，无需输入框失焦。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
-            Label { Layout.fillWidth: true; text: "语音绑定在语音页的「配置手势」中修改，对所有应用生效。同一语音功能可绑定多个手势；同一事件只执行一次。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
+            Label { Layout.fillWidth: true; text: "语音绑定在语音页的「配置手势」中修改，对所有应用生效。每个语音功能只绑定一个手势；同一事件只执行一次。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
             FigmaAction { Layout.fillWidth: true; text: "知道了"; font.pixelSize: 16; onClicked: priorityRules.close() }
         }
     }
@@ -221,7 +221,6 @@ UiScrollView {
         GestureHandMap {
             Layout.fillWidth: true; Layout.preferredHeight: implicitHeight
             selectedGesture: page.selectedGesture
-            voiceOverview: page.showVoiceMappings
             voiceActive: page.controller.recognitionEnabled
             voiceEditable: false
             describeGesture: function(gesture) {
@@ -234,19 +233,15 @@ UiScrollView {
             cornerContent: Component {
                 Rectangle {
                     objectName: "gestureVoicePriorityCard"
-                    radius: 12; color: "transparent"; border.color: theme.line
+                    radius: 12; color: theme.surface; border.color: theme.line
                     ColumnLayout {
                         anchors.fill: parent; anchors.margins: 13; spacing: 8
-                        RowLayout {
-                            Layout.fillWidth: true; spacing: 12
-                            Label { Layout.fillWidth: true; text: "语音输入"; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text }
-                            VoiceRecognitionControl { objectName: "gestureVoiceRecognitionButton"; controller: page.controller }
-                        }
-                        Label { Layout.fillWidth: true; Layout.fillHeight: true; text: page.controller.recognitionEnabled ? "语音绑定在此处只读，请到语音页的「配置手势」中修改。" : "开启后，语音绑定会显示在所有应用和全局配置中。"; font.family: theme.family; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
+                        Label { Layout.fillWidth: true; text: "语音输入规则"; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text }
+                        Label { Layout.fillWidth: true; Layout.fillHeight: true; text: "输入时优先使用语音手势，其他时候使用应用或全局功能。"; font.family: theme.family; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
                         FigmaAction {
                             objectName: "voiceGesturePriorityRulesButton"
                             Layout.fillWidth: true; Layout.preferredHeight: 32
-                            text: "查看优先规则"; navigation: true; font.pixelSize: 14; leftPadding: 8
+                            text: "查看语音输入规则"; navigation: true; font.pixelSize: 14; leftPadding: 8
                             onClicked: priorityRules.open()
                         }
                     }

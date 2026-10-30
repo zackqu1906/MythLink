@@ -19,7 +19,7 @@ from ...platforms.macos.mac_permissions import MacPermissionError
 from ...diagnostics.scene_diagnostics import SceneActionError, SceneDiagnostics, new_trace_id, reason_message, exception_details
 from ...gestures.gesture_settings import BoundGestureEvent, GESTURE_LABELS
 from ...voice.ime.input_source_switch import foreground_pid, select_voice_input_source
-from ...scenes.registry import SCENE_LABELS
+from ...scenes.registry import SCENE_LABELS, PRESENTATION
 from ...platforms.macos.wechat_setup import (KEYBOARD_SETTINGS_URL, MENU_TITLES,
                             KeyboardShortcutsNavigator, detect_wechat_menu)
 from .shortcut_recorder import shortcut_from_event, shortcut_from_key
@@ -542,6 +542,19 @@ class AppGestureController(QObject):
         return {"phase": phase, "composing": bool(view.get("has_composition")),
                 "writing": writing, "edit_requested": bool(view.get("edit_requested")) and phase not in {"edited", "dictated", "undone", "idle"}}
 
+    def _presentation_fallback_target(self, gesture, front):
+        # Only an enabled, configured show action can bypass source activation.
+        # A presenter application or a fullscreen window alone is not proof.
+        if (not self._catalog.uses_scene(gesture, bundle=front[0])
+                or "scene:" + gesture not in self._catalog.for_scene(front[0], PRESENTATION)):
+            return None
+        target = self.backend.capture(menu_action=True, scene=True, focus_sensitive=True)
+        if (target is not None and (target.bundle, target.pid) == front and not target.blocked
+                and target.scene == PRESENTATION and target.input_context != "text"
+                and target.scene_checked and target.focus_sensitive):
+            return target
+        return None
+
     def envelope(self, event, *, audio_busy=False, start_focus=None, input_only=False):
         """Only gestures sharing an input binding need focus-based arbitration."""
         source = event.event if isinstance(event, BoundGestureEvent) else event
@@ -571,7 +584,9 @@ class AppGestureController(QObject):
             # or ready flag alone must never override application focus.
             if input_priority and not busy:
                 if start_focus is None:
-                    start_focus = inline.capture_start_focus()
+                    options = ({"native_fallback": lambda front: self._presentation_fallback_target(name, front)}
+                               if not input_only and self._catalog.uses_scene(name) else {})
+                    start_focus = inline.capture_start_focus(**options)
                 if start_focus is None:
                     raise SceneActionError("input_method_not_ready")
                 if start_focus is not None:
@@ -583,6 +598,8 @@ class AppGestureController(QObject):
                         raise SceneActionError(start_focus.reason)
                     elif input_only:
                         raise SceneActionError("input_method_no_focus")
+                    if start_focus.native_target is not None:
+                        target = start_focus.native_target
             if busy and input_priority and name in bindings.send + bindings.polish:
                 input_method_target = inline.capture_gesture_target()
                 if input_method_target is None:
@@ -597,7 +614,7 @@ class AppGestureController(QObject):
                     if (target is None or (target.bundle, target.pid) !=
                             (input_method_target[3], input_method_target[4])):
                         target, input_method_target = None, None
-            elif not busy or name in bindings.send + bindings.polish:
+            elif target is None and (not busy or name in bindings.send + bindings.polish):
                 front = None
                 scene_capture = False
                 if self._catalog.uses_scene(name):
@@ -630,12 +647,14 @@ class AppGestureController(QObject):
             # cached text classification cannot override a fresh IMK rejection.
             context = "nontext"
         available = target is not None and not target.blocked
+        presentation_fallback = start_focus is not None and start_focus.native_target is not None
         route = ("blocked" if error is not None else
                  "input" if input_method_target is not None or busy else
-                 "outside" if available and (not input_priority or context == "nontext") else "blocked")
+                 "outside" if available and (not input_priority or context == "nontext" or presentation_fallback) else "blocked")
         scene = (target.scene if route == "outside" and target.scene in
                  self._catalog.configured_scenes().get(target.bundle, []) else "")
-        self._trace(trace_id, "route", "input_method_focus" if input_method_target is not None else "speech_busy" if busy else context if input_priority else "no_input_conflict",
+        self._trace(trace_id, "route", "input_method_focus" if input_method_target is not None else "speech_busy" if busy else
+                    "presentation_focus_fallback" if presentation_fallback else context if input_priority else "no_input_conflict",
                     target=target, gesture=name, owner=route, active_scene=scene)
         return AppGestureEvent(BoundGestureEvent(source, bindings),
             target, generation, created, sentence=sentence, capture_error=capture_error,
@@ -714,7 +733,9 @@ class AppGestureController(QObject):
             return
         source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
         name = str(getattr(source, "name", ""))
-        if target.focus_sensitive and target.input_context != "nontext":
+        presentation_fallback = event.input_focus is not None and event.input_focus.native_target is not None
+        if (target.focus_sensitive and target.input_context != "nontext"
+                and not (presentation_fallback and target.input_context == "unknown")):
             self._stop_trace(event, "text_focus" if target.input_context == "text" else "unknown_focus")
             return
         selected = self.outside_binding(event)
@@ -733,7 +754,8 @@ class AppGestureController(QObject):
                   "blocked_window" if target.blocked else
                   "scene_changed" if not event.scene or target.scene != event.scene else
                   "text_focus" if target.focus_sensitive and target.input_context == "text" else
-                  "unknown_focus" if target.focus_sensitive and target.input_context != "nontext" else
+                  "unknown_focus" if (target.focus_sensitive and target.input_context != "nontext"
+                                      and not (event.input_focus and event.input_focus.native_target is not None)) else
                   self._override_stop_reason(event) or
                   ("speech_busy" if self.owner._ring_gestures.speech_busy() else ""))
         if not reason and action_phase("next", phase=event.phase, composing=event.composing,

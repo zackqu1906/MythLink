@@ -10,6 +10,58 @@ from proximic_ring.audio.live_audio_settings import AudioConfiguration, LiveAudi
 from proximic_ring.gestures.gesture_settings import GestureBindings
 
 
+def test_computer_input_startup_and_recognition_do_not_read_ring_audio(monkeypatch):
+    processed, statuses, devices = [], [], []
+
+    class Ring:
+        error = None
+        def __init__(self, **kwargs):
+            assert kwargs["audio_enabled"] is False
+        def connect(self): pass
+        def start_stream(self, *, buffer_audio):
+            assert buffer_audio is False
+        def read(self, frames): pytest.fail("Computer input must never wait for Ring PCM")
+        def close(self): pass
+
+    class Mic:
+        error = None
+        device_name = "MacBook 麦克风"
+        def __init__(self, *, selection):
+            devices.append(selection)
+            self.reads = 0
+        def open(self): pass
+        def close(self): pass
+        def read(self, frames):
+            self.reads += 1
+            return np.full(frames, .25, np.float32) if self.reads <= 3 else None
+
+    class Detector:
+        def reset(self): pass
+        def feed(self, block): return []
+
+    class Controller:
+        active = False
+        def reset(self): pass
+        def process(self, block, *args, **kwargs): processed.append(block.copy())
+        def close(self): pass
+
+    monkeypatch.setattr(app_runtime, "RingAudioSource", Ring)
+    monkeypatch.setattr(app_runtime, "MicrophoneSource", Mic)
+    monkeypatch.setattr(app_runtime, "_build_detector", lambda *_: Detector())
+    monkeypatch.setattr(app_runtime, "_build_session_controller", lambda *args, **kwargs: Controller())
+    enabled = threading.Event()
+    enabled.set()
+    app_runtime.RecognitionRuntime(app_runtime.RuntimeSettings(
+        audio_source="microphone", microphone_device="selected-computer-input",
+        speech_control_mode="proximity", asr_end_on_tap=False, push_to_talk=False,
+    )).run(threading.Event(), enabled, on_update=lambda _: None, on_state=statuses.append,
+           on_connected=lambda: None, on_disconnected=lambda: None, on_started=lambda: None)
+    assert devices == ["selected-computer-input"]
+    assert len(processed) == 2 and all(np.allclose(block, .25) for block in processed)
+    assert any("MacBook 麦克风" in message for message in statuses)
+    assert not any("ERROR" in message or "没有音频" in message for message in statuses)
+
+
 @pytest.mark.parametrize('startup_failed', [False, True])
 def test_touchpad_suspends_computer_capture_and_remote_pipeline_even_if_startup_fails(monkeypatch, startup_failed):
     state, processed, calls = {}, [], []

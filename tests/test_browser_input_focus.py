@@ -125,7 +125,7 @@ def test_shared_voice_gesture_routes_to_input_without_media_extension(browser_fo
     target = backend.capture(menu_action=True, scene=True)
     proof = InputFocus('text', ('e', 'c', '', target.bundle, target.pid, (0, 0)))
     current = {'proof': proof}
-    inline = SimpleNamespace(capture_start_focus=lambda: current['proof'],
+    inline = SimpleNamespace(capture_start_focus=lambda **_: current['proof'],
                              same_gesture_target=lambda value: value == current['proof'].target)
     owner = SimpleNamespace(_inline_input=inline, _gesture_bindings=GestureBindings(confirm=('tap',)),
                             _ring_gestures=SimpleNamespace(speech_busy=lambda: False))

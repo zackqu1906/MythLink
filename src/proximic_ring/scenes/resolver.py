@@ -13,8 +13,11 @@ def _presentation_action(bundle, action, profile, menus, *, entry=False):
     scope = "regular" if entry else PRESENTATION
     actions = {item["id"].split(":")[-1]: item for item in scene_actions(bundle, scope, profile=profile)}
     if not entry:
-        # Existing generic slideshow fallbacks, unchanged by this refactor.
-        for key, title, shortcut in [("previous", "上一页", "Left"), ("next", "下一页", "Right"), ("end", "结束放映", "Escape")]:
+        # Direction keys are shared across slideshow apps; app presets retain
+        # their own previous/next commands (e.g. WPS uses Backspace).
+        for key, title, shortcut in [("previous", "上一页", "Left"), ("next", "下一页", "Right"),
+                                     ("up", "向上", "Up"), ("down", "向下", "Down"),
+                                     ("end", "结束放映", "Escape")]:
             actions.setdefault(key, dict(id="presentation:" + key, label=title,
                                         path="放映通用快捷键", shortcut=shortcut))
     else:
