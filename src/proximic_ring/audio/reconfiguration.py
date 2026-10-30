@@ -43,8 +43,18 @@ class AudioInputPipeline:
                 self._extra_hotkey = self._manual_active = None
 
     def initialize_controls(self):
-        if self.settings.push_to_talk:
+        if self.controller is not None and self.settings.push_to_talk:
             self._configure_gate(self.configuration, self.detector)
+
+    def attach_voice(self, controller, detector, settings, stop):
+        """Start capture after a previously unavailable model becomes ready."""
+        self.controller, self.detector = controller, detector
+        self.settings = settings
+        self._cached_detector = detector
+        self._manual_active = getattr(controller, "manual_active", None)
+        self.close_microphone()
+        self._open_capture(self.configuration, stop)
+        self.initialize_controls()
 
     def _check_connected(self, stop):
         if stop.is_set():
@@ -100,6 +110,12 @@ class AudioInputPipeline:
         """
         previous = self.configuration
         previous_detector = self.detector
+        if self.controller is None:
+            # Keep preferences editable while voice setup is incomplete. MIC
+            # stays off until a successful explicit voice retry opens capture.
+            self._check_connected(stop)
+            self.configuration = configuration
+            return ""
         if self.controller.gesture_busy:
             raise RuntimeError("当前语句尚未结束，不能切换音频设置")
         if (configuration.audio_source == previous.audio_source == "ring"

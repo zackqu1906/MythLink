@@ -276,7 +276,7 @@ def test_ignored_gesture_logs_reason_and_health_does_not_replace_ui_status(contr
     from proximic_ring.desktop.app_shortcuts import ShortcutTarget
     from proximic_ring.voice.ime.focus_probe import InputFocus
     proof = ('epoch', 'client', '', 'test.editor', 42, (0, 0))
-    monkeypatch.setattr(controller._inline_input, 'capture_start_focus', lambda: InputFocus('text', proof))
+    monkeypatch.setattr(controller._inline_input, 'capture_start_focus', lambda **_: InputFocus('text', proof))
     monkeypatch.setattr(controller._inline_input, 'same_gesture_target', lambda target: target == proof)
     target = ShortcutTarget("test.editor", 42, "test.editor", input_context="text")
     monkeypatch.setattr(controller._app_gestures.backend, "capture", lambda **kwargs: target)

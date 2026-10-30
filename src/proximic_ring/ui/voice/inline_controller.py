@@ -19,6 +19,7 @@ from ...desktop.desktop_target import DesktopTargetRef
 from ...voice.ime.ime_bridge import IMEBridge, IMEBridgeInUseError
 from ..permissions.mac_permissions_controller import MacPermissionsController
 from .input_source_activation import INPUT_ACTIVATION_TIMEOUT_MS, InputSourceActivation, warm_input_method
+from .gesture_source_activation import GestureSourceActivation
 
 
 class InlineInputController(QObject):
@@ -86,6 +87,7 @@ class InlineInputController(QObject):
         self._installationFinished.connect(self._installation_finished)
         self._reply_stage = ""
         self._source_switch_factory = source_switch_factory or InputSourceActivation
+        self._gesture_source_activation = GestureSourceActivation(self, foreground=lambda: self._foreground_identity())
         self._warm_enabled = bridge_factory is None
         self._source_activation = None
         self._source_pending = False
@@ -383,7 +385,14 @@ class InlineInputController(QObject):
                     return InputFocus("outside", ("", "", "", *front, ()),
                                       "presentation_focus_fallback", native_target=target)
             return InputFocus("unavailable", reason="input_method_not_ready")
-        return probe_input_focus(self._bridge, self._foreground_identity, activate_voice_input_source,
+        def native_activate(origin, **options):
+            self.diagnostic.emit({"type": "gesture_source_activation",
+                                  "reason": "system_shortcut_unavailable",
+                                  "application": origin[0], "pid": origin[1]})
+            return self._gesture_source_activation.activate(origin, **options)
+        def select_source(pid, **options):
+            return activate_voice_input_source(pid, native_activate=native_activate, **options)
+        return probe_input_focus(self._bridge, self._foreground_identity, select_source,
                                  native_fallback=native_fallback)
 
     def same_input_focus(self, proof):
@@ -1474,6 +1483,7 @@ class InlineInputController(QObject):
         self.reset()
         self._clear_startup()
         self._closed = True
+        self._gesture_source_activation.close()
         self._transport_retry_timer.stop()
         self._permissions.close()
         from ...platforms.macos.native_access import native_access

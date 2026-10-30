@@ -8,7 +8,7 @@ import pytest
 from proximic_ring.scenes.recognition.focus import inspect_focus, WINDOW_SHORTCUT_CONTAINERS, MAX_FOCUS_DEPTH
 from proximic_ring.scenes.recognition.engine import detect_scene
 from proximic_ring.scenes.models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
-from proximic_ring.diagnostics.scene_diagnostics import SceneActionError
+from proximic_ring.diagnostics.scene_diagnostics import SceneActionError, reason_message
 from test_presentation_portability import native_backend
 from test_activity_scenes import content, metadata
 from test_gesture_scenes import window_tree, presentation
@@ -151,6 +151,12 @@ def test_real_gesture_route_sends_bound_window_command_without_clicking_another_
     assert catalog.setCustomBinding(bundle, gesture, 'Window command', 'Cmd+Return')
     window, focus = activation_snapshot(focused=focused)
     service.backend, _, _ = native_backend(monkeypatch, window, focus, bundle=bundle)
+    # This native backend has no synthetic .target for route's IMK fixture.
+    # Supply the live nontext client independently of the AX window snapshot.
+    from proximic_ring.voice.ime.focus_probe import InputFocus
+    proof = InputFocus('nontext', ('e', 'c', 'u', bundle, 42, (-1, -1)))
+    monkeypatch.setattr(inline, 'capture_start_focus', lambda **_: proof)
+    monkeypatch.setattr(inline, 'same_input_focus', lambda current: current == proof)
     c.ringGestures._mode = mode
     before_voice = dict(inline._view)
     if request(c, gesture):
@@ -162,9 +168,8 @@ def test_real_gesture_route_sends_bound_window_command_without_clicking_another_
     outcome = service._diagnostics.recent(bundle)[-1]
     assert outcome['reason'] == 'shortcut_posted'
     observed = outcome['native']['validation']['observed']
-    assert observed['focus_sensitive'] is (gesture == 'tap')
-    if gesture == 'tap':
-        assert observed['disabled_containers'] == ['AXLayoutArea']
+    assert not observed['focus_sensitive']  # IMK owns text arbitration; AX still guards the window.
+    assert observed['disabled_containers'] == ['AXLayoutArea']
 
 
 @pytest.mark.parametrize('role,expected', [('AXTextField','text'), ('AXTextArea','text'),
@@ -255,13 +260,20 @@ def test_codex_missing_focus_blocks_shortcuts_then_editor_wins_and_blur_restores
     window, editor = activation_snapshot('AXTextArea')
     editor['AXEnabled'] = True
     service.backend, root, _ = native_backend(monkeypatch, window, None, bundle=bundle)
+    from proximic_ring.voice.ime.focus_probe import InputFocus
+    current = {'proof': InputFocus('unavailable', reason='input_method_not_ready')}
+    monkeypatch.setattr(inline, 'capture_start_focus', lambda **_: current['proof'])
+    monkeypatch.setattr(inline, 'same_input_focus', lambda proof: proof == current['proof'])
+    monkeypatch.setattr(inline, 'same_gesture_target', lambda target: target == current['proof'].target)
     request(c, gesture)
     assert not state.sent and not starts
-    assert '焦点' in service.notice
+    assert service.notice == reason_message('input_method_not_ready')
     root['AXFocusedUIElement'] = editor
+    current['proof'] = InputFocus('text', ('e', 'c', 'u', bundle, 42, (0, 0)))
     request(c, gesture)  # No undo/convert available; never fall through.
     assert not state.sent and not starts and not messages
     root['AXFocusedUIElement'] = dict(AXRole='AXGroup', AXFocused=True, AXWindow=window, AXParent=window)
+    current['proof'] = InputFocus('nontext', ('e', 'c', 'u', bundle, 42, (-1, -1)))
     request(c, gesture)
     assert bool(state.sent) == (scope == 'application')
     assert bool(starts) == (scope == 'global')
@@ -302,14 +314,17 @@ def test_codex_31_level_focus_chain_reaches_window_without_skipping_ancestor_gua
 
 
 @pytest.mark.mac_only
-def test_independent_native_shortcut_never_reads_focus_and_survives_focus_change(monkeypatch, desktop):
+def test_independent_native_shortcut_keeps_window_guards_and_survives_focus_change(monkeypatch, desktop):
     _, state, _ = desktop
     window, editor = activation_snapshot('AXTextArea')
+    editor['AXEnabled'] = True
     backend, root, _ = native_backend(monkeypatch, window, editor, bundle='com.openai.codex')
     bridge = sys.modules['ApplicationServices']
     read = bridge.AXUIElementCopyAttributeValue
     def metadata_only(node, key, output):
-        assert key not in {'AXFocusedUIElement', 'AXParent', 'AXEditable', 'AXIsEditable', 'AXValue', 'AXSelectedText'}
+        # Focus metadata is still needed to reject menus, sheets and dialogs;
+        # the independent shortcut must not read the user's text content.
+        assert key not in {'AXValue', 'AXSelectedText', 'AXSelectedTextRange'}
         return read(node, key, output)
     monkeypatch.setattr(bridge, 'AXUIElementCopyAttributeValue', metadata_only)
     target = backend.capture(menu_action=True, focus_sensitive=False)

@@ -6,6 +6,8 @@ ColumnLayout {
     id: pane
     required property var controller
     property bool deviceSettingsLocked: false
+    readonly property bool voiceSettingsLocked: deviceSettingsLocked
+        && (controller.voiceRuntimeError.length === 0 || controller.voiceRetryPending || controller.busy)
     readonly property bool online: controller.asrBackend === "volcengine"
     readonly property bool local: ["streaming_sensevoice", "funasr_nano"].indexOf(controller.asrBackend) >= 0
     signal gpuSetupRequested()
@@ -15,7 +17,9 @@ ColumnLayout {
     FigmaFormGroup {
         flat: true
         title: "语音识别"; symbol: "microphone"
-        description: pane.deviceSettingsLocked
+        description: pane.controller.voiceRuntimeError.length > 0
+            ? (pane.controller.voiceRetryPending ? "正在重新检查语音配置，Ring 保持连接。" : "补齐语音配置后再次开启语音，无需断开 Ring。")
+            : pane.deviceSettingsLocked
             ? "设备已连接，灰色选项需在首页断开戒指后修改。"
             : "识别服务与语言在下次连接戒指时生效。"
         FigmaFormRow {
@@ -29,7 +33,7 @@ ColumnLayout {
                 objectName: "asrBackendCombo"
                 Layout.fillWidth: true
                 Accessible.name: "识别服务"
-                enabled: !pane.deviceSettingsLocked
+                enabled: !pane.voiceSettingsLocked
                 model: ["实时识别（推荐）", "本地高精度", "在线识别"]
                 currentIndex: ["streaming_sensevoice", "funasr_nano", "volcengine"].indexOf(pane.controller.asrBackend)
                 displayText: currentIndex < 0 ? "当前配置：" + pane.controller.asrBackend : currentText
@@ -44,7 +48,7 @@ ColumnLayout {
                 objectName: "asrLanguageCombo"
                 Layout.fillWidth: true
                 Accessible.name: "识别语言"
-                enabled: !pane.deviceSettingsLocked
+                enabled: !pane.voiceSettingsLocked
                 model: ["中文", "自动", "英语", "粤语", "日语", "韩语"]
                 currentIndex: ["zh", "auto", "en", "yue", "ja", "ko"].indexOf(pane.controller.asrLanguage)
                 displayText: currentIndex < 0 ? pane.controller.asrLanguage : currentText
@@ -66,7 +70,7 @@ ColumnLayout {
             controlWidth: pane.width >= 760 ? 340 : 220
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
-                enabled: !pane.deviceSettingsLocked
+                enabled: !pane.voiceSettingsLocked
                 FigmaTextField {
                     objectName: "asrApiKeyField"
                     Layout.fillWidth: true; Layout.minimumWidth: 0
@@ -92,12 +96,12 @@ ColumnLayout {
         objectName: "asrHotwordsGroup"
         visible: pane.controller.asrBackend === "funasr_nano"
         title: "识别热词"
-        description: "添加常用人名或专有名词，每行一个；也支持逗号、分号分隔。重新连接戒指后生效。"
+        description: "添加常用人名或专有名词，每行一个；也支持逗号、分号分隔。"
         UiScrollView {
             ScrollBar.vertical.policy: ScrollBar.AlwaysOff
             id: hotwordsScroll
             Layout.fillWidth: true; Layout.preferredHeight: 116
-            enabled: !pane.deviceSettingsLocked
+            enabled: !pane.voiceSettingsLocked
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             UiTextArea {
@@ -126,7 +130,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Accessible.name: "本地识别性能"
                 visible: pane.controller.computeDevices.length > 1
-                enabled: !pane.deviceSettingsLocked
+                enabled: !pane.voiceSettingsLocked
                 model: pane.controller.computeDevices
                 textRole: "label"; valueRole: "value"
                 currentIndex: indexOfValue(pane.controller.asrDevice)
@@ -144,7 +148,7 @@ ColumnLayout {
                 Layout.alignment: Qt.AlignRight
                 text: "安装 NVIDIA 加速"
                 visible: pane.controller.gpuInstallerAvailable
-                enabled: !pane.deviceSettingsLocked
+                enabled: !pane.voiceSettingsLocked
                 onClicked: pane.gpuSetupRequested()
             }
         }

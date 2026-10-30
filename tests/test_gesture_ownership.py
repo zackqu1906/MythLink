@@ -72,23 +72,26 @@ def test_independent_gestures_ignore_input_focus_for_application_and_global_acti
 
 
 @pytest.mark.parametrize("slot", [0, 1])
-def test_input_conflicts_follow_primary_and_alternate_bindings(route, monkeypatch, slot):
+def test_voice_reassignment_releases_previous_gesture_for_application(route, monkeypatch, slot):
     c, service, _, backend, sent, _, _ = route
     catalog = configure(service, monkeypatch)
     backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE)
     for gesture in ("swipe-left", "snap"):
         assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
     assert c.setGestureBinding("undo", slot, "snap")
+    # Both legacy slot values now replace the function's single gesture.
+    assert c._gesture_bindings.undo == ("snap", "")
     assert "snap" in catalog.voiceGestures
+    assert "swipe-left" not in catalog.voiceGestures
     request(c, "snap")  # Current input binding wins even when undo is unavailable.
     assert not sent
     request(c, "swipe-left")
-    assert len(sent) == (1 if slot == 0 else 0)
+    assert len(sent) == 1
     c.resetGestureBindings()
     service._last_dispatch = None
     assert "snap" not in catalog.voiceGestures
     request(c, "snap")
-    assert len(sent) == (2 if slot == 0 else 1)
+    assert len(sent) == 2
 
 
 def test_left_swipe_undo_with_focus_and_application_action_after_blur(route, monkeypatch):

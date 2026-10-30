@@ -172,14 +172,15 @@ def test_hint_transitions_are_fast_and_do_not_restart_for_each_partial(inline_ui
     QMetaObject.invokeMethod(dialog, 'close')
 
 
-def test_polish_lesson_follows_reassigned_and_repeated_voice_gestures(inline_ui):
+def test_polish_lesson_updates_to_the_latest_single_voice_gesture(inline_ui):
     controller, _, _, _, event = inline_ui
     tutorial = start_lesson(controller, event)
     tutorial._stage = 1
     assert controller.setVoiceGestureAction('swipe-down', 'send')
     assert controller.setVoiceGestureAction('snap', 'polish')
-    assert controller.setVoiceGestureAction('clench', 'polish')
     begin_sentence(controller, event)
     event(phase='listening', ready=True, raw='识别到的文字')
-    assert tutorial.hint['gestures'] == ['snap', 'clench']
+    assert tutorial.hint['gestures'] == ['snap']
+    assert controller.setVoiceGestureAction('clench', 'polish')
+    assert tutorial.hint['gestures'] == ['clench']
     assert '下滑' not in tutorial.hint['text']

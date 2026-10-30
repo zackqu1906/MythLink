@@ -7,6 +7,7 @@ import pytest
 
 from proximic_ring.voice.ime.system_input_source import cycle_to_source, SystemInputSources
 from proximic_ring.voice.ime.system_input_source import _read_on_main_queue
+from proximic_ring.voice.ime.system_input_source import InputSourceUnavailable
 
 
 ORIGIN = ('editor', 42)
@@ -47,6 +48,51 @@ def test_disabled_target_cannot_emit_a_shortcut():
     with pytest.raises(RuntimeError, match='尚未启用'):
         cycle_to_source(sources, ORIGIN, 'absent', timeout=.1)
     assert sources.advances == 0
+
+
+def unavailable_shortcut():
+    raise InputSourceUnavailable('input_method_source_shortcut_unavailable')
+
+
+def test_disabled_shortcut_uses_native_selection_without_keyboard_events():
+    sources = Sources(['abc'])
+    sources.shortcut = unavailable_shortcut
+    calls = []
+    def activate(origin, *, timeout):
+        calls.append((origin, timeout))
+        sources.selected = 'voice'
+    cycle_to_source(sources, ORIGIN, 'voice', timeout=.2, native_activate=activate)
+    assert len(calls) == 1 and calls[0][0] == ORIGIN and 0 < calls[0][1] <= .2
+    assert sources.advances == 0
+
+
+@pytest.mark.parametrize('change', ['before', 'after', 'wrong_source', 'expired'])
+def test_native_fallback_rejects_changed_target_or_deadline(change):
+    sources = Sources(['abc'])
+    sources.shortcut = unavailable_shortcut
+    calls = []
+    if change == 'before': sources.front = ('other', 99)
+    def activate(origin, *, timeout):
+        calls.append(origin)
+        sources.selected = 'voice'
+        if change == 'after': sources.front = ('other', 99)
+        if change == 'wrong_source': sources.selected = 'pinyin'
+    with pytest.raises((RuntimeError, TimeoutError)):
+        cycle_to_source(sources, ORIGIN, 'voice', timeout=0 if change == 'expired' else .2,
+                        native_activate=activate)
+    assert not sources.advances
+    assert bool(calls) == (change in {'after', 'wrong_source'})
+
+
+@pytest.mark.parametrize('reason', ['input_method_source_event_permission', 'input_method_source_modifiers_held'])
+def test_native_fallback_does_not_hide_other_activation_failures(reason):
+    sources = Sources(['abc'])
+    def fail(): raise InputSourceUnavailable(reason)
+    sources.shortcut = fail
+    with pytest.raises(InputSourceUnavailable, match=reason):
+        cycle_to_source(sources, ORIGIN, 'voice', timeout=.2,
+                        native_activate=lambda *_a, **_k: pytest.fail('unexpected fallback'))
+    assert not sources.advances
 
 
 def test_changed_foreground_cannot_emit_another_shortcut():

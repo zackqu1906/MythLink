@@ -46,6 +46,10 @@ def test_app_gesture_settings_layout_and_shortcut_recorder(inline_ui, tmp_path, 
     QTest.qWait(30)
     # The legacy editor remains covered independently of the new menu mapping UI.
     QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 7))
+    QTest.qWait(200)  # Let the preferences close transition finish.
+    assert root.property("currentPage") == 2 and not dialog.property("visible")
+    QMetaObject.invokeMethod(dialog, "navigate", Q_ARG("QVariant", 7))
+    QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(30)
     assert dialog.property("currentPage") == 7
     section_pos = section.mapToScene(QPointF(0, 0))
@@ -150,6 +154,10 @@ def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_
     root.setProperty("currentPage", 2)
     QTest.qWait(30)
     QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 7))
+    QTest.qWait(200)  # Let the preferences close transition finish.
+    assert root.property("currentPage") == 2 and not dialog.property("visible")
+    QMetaObject.invokeMethod(dialog, "navigate", Q_ARG("QVariant", 7))
+    QMetaObject.invokeMethod(dialog, "open")
     QTest.qWait(150)
     def field():
         section = root.findChild(QObject, "appGestureSettingsSection")

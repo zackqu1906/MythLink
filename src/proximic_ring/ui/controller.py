@@ -377,6 +377,8 @@ class AppController(QObject):
     _runtimeDisconnected = Signal(object)
     _runtimeStopping = Signal(object)
     _runtimeStarted = Signal(object)
+    _runtimeVoiceAvailability = Signal(object, str)
+    voiceAvailabilityChanged = Signal()
     _runtimeSessionStarted = Signal(int)
     _runtimeUpdate = Signal(str, bool, str, int)
     _runtimeFinished = Signal(str, object)
@@ -411,6 +413,9 @@ class AppController(QObject):
         self._battery_charge_status = -1
         self._battery_query_complete = False
         self._recognition_enabled = False
+        self._voice_runtime_error = ""
+        self._voice_retry_pending = False
+        self._retry_voice_event = threading.Event()
         self._input_restore_connection = None
         self._input_restore_pending: set[str] = set()
         self._input_paused_for_lock = False
@@ -856,6 +861,7 @@ class AppController(QObject):
         self._runtimeDisconnected.connect(self._apply_runtime_disconnected)
         self._runtimeStopping.connect(self._apply_runtime_stopping)
         self._runtimeStarted.connect(self._apply_runtime_started)
+        self._runtimeVoiceAvailability.connect(self._apply_runtime_voice_availability)
         self._runtimeSessionStarted.connect(self._apply_runtime_session_started)
         self._runtimeUpdate.connect(self._apply_runtime_update)
         self._runtimeFinished.connect(self._apply_runtime_finished)
@@ -3680,6 +3686,10 @@ class AppController(QObject):
         self._busy = True
         self._audio_input_failed = False
         self.busyChanged.emit()
+        self._voice_runtime_error = ""
+        self._voice_retry_pending = False
+        self._retry_voice_event = threading.Event()
+        self.voiceAvailabilityChanged.emit()
         self._set_status(
             "正在连接设备",
             f"正在连接 {self._device_name}",
@@ -3719,6 +3729,9 @@ class AppController(QObject):
                     on_disconnected=lambda: self._runtimeDisconnected.emit(gesture_connection),
                     on_stopping=lambda: self._runtimeStopping.emit(gesture_connection),
                     on_started=lambda: self._runtimeStarted.emit(gesture_connection),
+                    retry_voice_event=self._retry_voice_event,
+                    voice_settings_provider=self._runtime_settings,
+                    on_voice_availability=lambda error: self._runtimeVoiceAvailability.emit(gesture_connection, error),
                     on_session_started=self._runtimeSessionStarted.emit,
                     on_session_ended=self._suspend_recognition_for_interaction,
                     on_push_to_talk=self._pushToTalkChanged.emit,
@@ -3894,6 +3907,15 @@ class AppController(QObject):
             return
         if remember:
             self._remember_input_setting("input/voiceEnabled", True)
+        if self._voice_runtime_error:
+            if remember and not self._voice_retry_pending:
+                self._voice_retry_pending = True
+                self.voiceAvailabilityChanged.emit()
+                self._retry_voice_event.set()
+                self._set_status("正在准备语音", "正在重新检查语音配置，Ring 保持连接", "starting")
+            elif not self._voice_retry_pending:
+                self._set_status("语音暂不可用", self._voice_runtime_error, "error")
+            return
         self._interaction_recognition_suspended = False
         if not self._touchpad.blocksVoice:
             self._recognition_event.set()
@@ -5073,6 +5095,30 @@ class AppController(QObject):
             user_requested=self._disconnect_requested_by_user,
         )
 
+    @Slot(object, str)
+    def _apply_runtime_voice_availability(self, connection, error: str) -> None:
+        if (connection is not self._disconnect_event or connection.is_set()
+                or not self._runtime_active or self._quitting):
+            return
+        retrying = self._voice_retry_pending
+        self._voice_retry_pending = False
+        self._voice_runtime_error = str(error).strip()
+        self.voiceAvailabilityChanged.emit()
+        if self._voice_runtime_error:
+            self.pauseRecognition(remember=False)
+            self._recognition_event.clear()
+            self._set_status("语音暂不可用", self._voice_runtime_error + "；请检查模型配置后再次开启语音，Ring 保持连接。", "error")
+        elif retrying:
+            self.startRecognition(remember=False)
+
+    @Property(str, notify=voiceAvailabilityChanged)
+    def voiceRuntimeError(self):
+        return self._voice_runtime_error
+
+    @Property(bool, notify=voiceAvailabilityChanged)
+    def voiceRetryPending(self):
+        return self._voice_retry_pending
+
     @Slot(object)
     def _apply_runtime_started(self, connection=None) -> None:
         if ((connection is not None and connection is not self._disconnect_event)
@@ -5094,6 +5140,8 @@ class AppController(QObject):
                         voice_enabled=self._bool_setting("input/voiceEnabled", True),
                         touchpad_enabled=self._bool_setting("touchpad/enabled", True))
         self._restore_input_preferences()
+        if self._voice_runtime_error:
+            self._set_status("语音暂不可用", self._voice_runtime_error + "；配置后可再次开启语音，Ring 保持连接。", "error")
 
     @Slot(str, bool, str, int)
     def _apply_runtime_update(
@@ -8456,21 +8504,10 @@ class AppController(QObject):
 
     def _runtime_settings(self) -> RuntimeSettings:
         model = self._path_or_none(self._model_path)
-        if self._speech_control_mode != "gesture" and model is not None and not model.is_file():
-            raise ValueError(f"检测模型不存在：{model}")
+        # Model paths are checked by the optional voice pipeline after BLE
+        # connects. An incomplete voice setup must not block Ring gestures.
         repo = self._path_or_none(self._streaming_repo)
-        if (
-            self._asr_backend == "streaming_sensevoice"
-            and repo is not None
-            and not repo.is_dir()
-        ):
-            raise ValueError(f"streaming-sensevoice 目录不存在：{repo}")
         funasr_repo = self._path_or_none(self._funasr_repo)
-        if self._asr_backend == "funasr_nano":
-            if funasr_repo is None:
-                raise ValueError("Fun-ASR-Nano 必须配置 Fun-ASR-main 目录")
-            if not (funasr_repo / "model.py").is_file():
-                raise ValueError(f"Fun-ASR 目录中没有 model.py：{funasr_repo}")
         if not self._selector.strip():
             raise ValueError("请先扫描并选择要连接的设备")
         if self._stage1_threshold <= 0:

@@ -10,7 +10,7 @@ from __future__ import annotations
 from argparse import Namespace
 from collections import deque
 import ctypes
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
@@ -474,6 +474,19 @@ class RuntimeSettings:
     collect_imu: bool = False
     imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
 
+    def validate_voice_configuration(self) -> None:
+        """Voice configuration must not gate the physical Ring connection."""
+        if self.speech_control_mode != "gesture" and self.detector_model is not None and not self.detector_model.is_file():
+            raise ValueError(f"检测模型不存在：{self.detector_model}")
+        if (self.asr_backend == "streaming_sensevoice" and self.streaming_sensevoice_repo is not None
+                and not self.streaming_sensevoice_repo.is_dir()):
+            raise ValueError(f"streaming-sensevoice 目录不存在：{self.streaming_sensevoice_repo}")
+        if self.asr_backend == "funasr_nano":
+            if self.funasr_nano_repo is None:
+                raise ValueError("Fun-ASR-Nano 必须配置 Fun-ASR-main 目录")
+            if not (self.funasr_nano_repo / "model.py").is_file():
+                raise ValueError(f"Fun-ASR 目录中没有 model.py：{self.funasr_nano_repo}")
+
     def to_namespace(self) -> Namespace:
         if self.audio_source not in {"ring", "microphone"}:
             raise ValueError("未知音频来源")
@@ -589,6 +602,9 @@ class RecognitionRuntime:
         on_ring_source: Callable[[object], None] | None = None,
         on_audio_configuring: Callable[[], None] | None = None,
         on_audio_configured: Callable[[object, str], None] | None = None,
+        retry_voice_event: threading.Event | None = None,
+        voice_settings_provider: Callable[[], RuntimeSettings] | None = None,
+        on_voice_availability: Callable[[str], None] | None = None,
         practice_active: Callable[[], bool] | None = None,
         practice_audio_consumer: Callable[[object, bool], bool] | None = None,
     ) -> None:
@@ -647,6 +663,62 @@ class RecognitionRuntime:
         source_close_lock = threading.Lock()
         audio_change_lock = threading.Lock()
         input_pipeline = None
+
+        def report_voice_unavailable(error):
+            recognition_event.clear()
+            detail = (str(error).strip() or type(error).__name__)[:1000]
+            on_state(f"[VOICE_UNAVAILABLE] {detail}")
+            if on_voice_availability is not None:
+                on_voice_availability(detail)
+
+        def load_voice(*, retry=False):
+            nonlocal args, detector, controller, gesture_control, end_on_gesture, asr_context_provider
+            try:
+                if retry and voice_settings_provider is not None:
+                    settings = voice_settings_provider()
+                    if input_pipeline is not None:
+                        configuration = input_pipeline.configuration
+                        settings = replace(settings, audio_source=configuration.audio_source,
+                                           microphone_device=configuration.microphone_device,
+                                           speech_control_mode=configuration.speech_control_mode)
+                    self.settings = settings
+                self.settings.validate_voice_configuration()
+                args = self.settings.to_namespace()
+                if audio_settings is not None:
+                    args.push_to_talk = False
+                gesture_control = self.settings.speech_control_mode == "gesture"
+                end_on_gesture = bool(args.asr_end_on_tap)
+                asr_context_provider = (_volcengine_context_provider(ime_context_provider)
+                                        if args.asr[0] == "volcengine" else None)
+                if asr_context_provider is not None and asr_hotwords_provider is not None:
+                    asr_context_provider = _with_hotwords(asr_context_provider, asr_hotwords_provider)
+                if gesture_control:
+                    on_state("纯手势启停：已跳过近点检测模型")
+                    detector = None
+                else:
+                    on_state("正在加载 ProxiMic 检测模型…")
+                    detector = _build_detector(args)
+                if disconnect_event.is_set() or source.error is not None:
+                    return False
+                on_state(f"正在加载语音模型 {args.asr[0]}…")
+                controller = _build_session_controller(
+                    args, detector, streaming_observer=on_update,
+                    desktop_overlay=SilentTranscriptOverlay(), on_state=on_state,
+                    show_streaming_console=False,
+                    push_to_talk_observer=(lambda active: on_push_to_talk(active) if not gesture_control else None)
+                        if on_push_to_talk is not None else None,
+                    desktop_should_inject=external_window_has_focus,
+                    backend_cache=self.asr_backend_cache,
+                    raw_audio_observer=publish_raw_utterance if on_raw_audio is not None or on_raw_imu is not None else None,
+                    raw_session_start_observer=session_started, session_end_observer=session_ended,
+                    asr_context_provider=asr_context_provider, asr_context_observer=on_asr_context,
+                )
+                return True
+            except Exception as exc:
+                detector = controller = None
+                if not disconnect_event.is_set() and source.error is None:
+                    report_voice_unavailable(exc)
+                return False
 
         def current_microphone():
             return input_pipeline.microphone if input_pipeline is not None else microphone
@@ -769,38 +841,7 @@ class RecognitionRuntime:
 
             if disconnect_event.is_set():
                 return
-            if gesture_control:
-                on_state("纯手势启停：已跳过近点检测模型")
-            else:
-                on_state("正在加载 ProxiMic 检测模型…")
-                detector = _build_detector(args)
-            if source.error is not None:
-                raise RuntimeError(str(source.error)) from source.error
-            if disconnect_event.is_set():
-                return
-
-            on_state(f"正在加载语音模型 {args.asr[0]}…")
-            controller = _build_session_controller(
-                args,
-                detector,
-                streaming_observer=on_update,
-                desktop_overlay=SilentTranscriptOverlay(),
-                on_state=on_state,
-                show_streaming_console=False,
-                push_to_talk_observer=(lambda active: on_push_to_talk(active) if not gesture_control else None)
-                    if on_push_to_talk is not None else None,
-                desktop_should_inject=external_window_has_focus,
-                backend_cache=self.asr_backend_cache,
-                raw_audio_observer=(
-                    publish_raw_utterance
-                    if on_raw_audio is not None or on_raw_imu is not None
-                    else None
-                ),
-                raw_session_start_observer=session_started,
-                session_end_observer=session_ended,
-                asr_context_provider=asr_context_provider,
-                asr_context_observer=on_asr_context,
-            )
+            load_voice()
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error
             if disconnect_event.is_set():
@@ -842,7 +883,7 @@ class RecognitionRuntime:
                             # The audio producer owns END and closes the normal
                             # interaction gate before submitting final ASR.
                             can_request = (
-                                recognition_event.is_set()
+                                controller is not None and recognition_event.is_set()
                                 and not (audio_settings is not None and audio_settings.applying)
                                 and not (
                                     cancel_utterance_event is not None
@@ -924,14 +965,20 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            on_state("模型加载完成，正在启动电脑麦克风与 Ring 手势…" if microphone is not None
-                     else "模型加载完成，正在启动并确认实时音频…")
-            source.start_stream(buffer_audio=microphone is None)
+            if controller is None:
+                # Endpoints have not started yet. Keep MIC off while starting
+                # independent firmware gesture/battery traffic on this BLE link.
+                source.audio_enabled = False
+                on_state("语音暂不可用，正在启动 Ring 手势；设备将保持连接")
+            else:
+                on_state("模型加载完成，正在启动电脑麦克风与 Ring 手势…" if microphone is not None
+                         else "模型加载完成，正在启动并确认实时音频…")
+            source.start_stream(buffer_audio=controller is not None and microphone is None)
             if on_ring_source is not None and not disconnect_event.is_set():
                 on_ring_source(source)
             if disconnect_event.is_set():
                 return
-            if microphone is not None:
+            if controller is not None and microphone is not None:
                 try:
                     microphone.open()
                     if microphone.read(320) is None or disconnect_event.is_set():
@@ -940,9 +987,9 @@ class RecognitionRuntime:
                     on_state(f"[AUDIO_INPUT_ERROR] {exc}")
                     raise
                 on_state(f"音频来源：{microphone.device_name}（电脑麦克风）；Ring 仅提供手势")
-            else:
+            elif controller is not None:
                 on_state("音频来源：Ring 麦克风")
-            if audio_settings is not None:
+            if audio_settings is not None or controller is None:
                 input_pipeline = AudioInputPipeline(
                     source, microphone, detector, controller, self.settings,
                     microphone_factory=MicrophoneSource, detector_factory=_build_detector,
@@ -973,75 +1020,9 @@ class RecognitionRuntime:
                         and audio_settings.pending and not audio_settings.applying
                         and audio_settings.allowed.is_set() and safe_to_change_audio())
 
-            on_started()
-            while not disconnect_event.is_set():
-                if touchpad_audio_paused():
-                    if not touchpad_was_active:
-                        pause_touchpad_microphone()
-                        for method in ('discard_current', 'cancel_pending'):
-                            callback = getattr(controller, method, None)
-                            if callable(callback):
-                                callback()
-                        if detector is not None:
-                            detector.reset()
-                        if cancel_utterance_event is not None:
-                            cancel_utterance_event.clear()
-                        on_state("[ASR] CANCELLED reason=touchpad")
-                        recognition_was_enabled = False
-                    touchpad_was_active = True
-                    disconnect_event.wait(.05)
-                    continue
-                mic = current_microphone()
-                capture_gate = getattr(mic, '_capture_paused', None)
-                if touchpad_was_active or (capture_gate is not None and capture_gate.is_set()):
-                    if mic is not None:
-                        mic.resume_capture()
-                    touchpad_was_active = False
-                if utterance_commands is not None:
-                    with audio_change_lock:
-                        utterance_commands.drain(controller,allowed=(recognition_event.is_set()
-                            and not (practice_active is not None and practice_active())
-                            and source.error is None
-                            and not (current_microphone() is not None and current_microphone().error is not None)
-                            and not (audio_settings is not None and audio_settings.applying)
-                            and not (cancel_utterance_event is not None and cancel_utterance_event.is_set())))
-                if input_pipeline is not None:
-                    with audio_change_lock:
-                        request = audio_settings.claim() if safe_to_change_audio() else None
-                    if request is not None:
-                        if on_audio_configuring is not None:
-                            on_audio_configuring()
-                        error = input_pipeline.apply(request.configuration, disconnect_event)
-                        if disconnect_event.is_set():
-                            break
-                        detector = input_pipeline.detector
-                        audio_source = input_pipeline.audio_source
-                        gesture_control = input_pipeline.configuration.speech_control_mode == "gesture"
-                        end_on_gesture = bool(self.settings.asr_end_on_tap or gesture_control)
-                        recognition_was_enabled = False
-                        if audio_settings.complete(request, success=not error):
-                            if on_audio_configured is not None:
-                                on_audio_configured(request, error)
-                            else:
-                                audio_settings.acknowledge(request)
-                        continue  # Never process an old-source block after switching.
-                try:
-                    interruptible_read = getattr(audio_source, "read_interruptible", None)
-                    if callable(interruptible_read):
-                        try:
-                            block = interruptible_read(320, should_interrupt=interrupt_idle_audio_read)
-                        except InterruptedError:
-                            continue
-                    else:
-                        block = audio_source.read(320)
-                except Exception as exc:
-                    if current_microphone() is not None:
-                        on_state(f"[AUDIO_INPUT_ERROR] {exc}")
-                    raise
-                if block is None:
-                    break
-                if disconnect_event.is_set():
-                    break
+            def publish_gesture_health():
+                nonlocal gesture_error_reported, next_gesture_status_at, next_gesture_health_at
+                nonlocal last_gesture_health_sent, last_gesture_status, last_gesture_health
                 if gesture_worker is not None and not gesture_error_reported:
                     gesture_error = gesture_worker.error or getattr(source, "gesture_error", None)
                     if gesture_error is not None:
@@ -1077,6 +1058,95 @@ class RecognitionRuntime:
                     last_gesture_status = stats["status"]
                     last_gesture_health = healthy
                     next_gesture_health_at = gesture_now + GESTURE_HEALTH_INTERVAL_S
+
+            on_started()
+            while not disconnect_event.is_set():
+                if touchpad_audio_paused():
+                    if not touchpad_was_active:
+                        pause_touchpad_microphone()
+                        for method in ('discard_current', 'cancel_pending'):
+                            callback = getattr(controller, method, None)
+                            if callable(callback):
+                                callback()
+                        if detector is not None:
+                            detector.reset()
+                        if cancel_utterance_event is not None:
+                            cancel_utterance_event.clear()
+                        on_state("[ASR] CANCELLED reason=touchpad")
+                        recognition_was_enabled = False
+                    touchpad_was_active = True
+                    disconnect_event.wait(.05)
+                    continue
+                mic = current_microphone()
+                capture_gate = getattr(mic, '_capture_paused', None)
+                if touchpad_was_active or (capture_gate is not None and capture_gate.is_set()):
+                    if mic is not None and controller is not None:
+                        mic.resume_capture()
+                    touchpad_was_active = False
+                if utterance_commands is not None:
+                    with audio_change_lock:
+                        utterance_commands.drain(controller,allowed=(controller is not None and recognition_event.is_set()
+                            and not (practice_active is not None and practice_active())
+                            and source.error is None
+                            and not (current_microphone() is not None and current_microphone().error is not None)
+                            and not (audio_settings is not None and audio_settings.applying)
+                            and not (cancel_utterance_event is not None and cancel_utterance_event.is_set())))
+                if input_pipeline is not None and audio_settings is not None:
+                    with audio_change_lock:
+                        request = audio_settings.claim() if safe_to_change_audio() else None
+                    if request is not None:
+                        if on_audio_configuring is not None:
+                            on_audio_configuring()
+                        error = input_pipeline.apply(request.configuration, disconnect_event)
+                        if disconnect_event.is_set():
+                            break
+                        detector = input_pipeline.detector
+                        audio_source = input_pipeline.audio_source
+                        gesture_control = input_pipeline.configuration.speech_control_mode == "gesture"
+                        end_on_gesture = bool(self.settings.asr_end_on_tap or gesture_control)
+                        recognition_was_enabled = False
+                        if audio_settings.complete(request, success=not error):
+                            if on_audio_configured is not None:
+                                on_audio_configured(request, error)
+                            else:
+                                audio_settings.acknowledge(request)
+                        continue  # Never process an old-source block after switching.
+                if controller is None:
+                    publish_gesture_health()
+                    if cancel_utterance_event is not None:
+                        cancel_utterance_event.clear()
+                    if finish_utterance_event is not None:
+                        finish_utterance_event.clear()
+                    if retry_voice_event is not None and retry_voice_event.is_set():
+                        retry_voice_event.clear()
+                        if load_voice(retry=True) and not disconnect_event.is_set() and source.error is None:
+                            input_pipeline.attach_voice(controller, detector, self.settings, disconnect_event)
+                            audio_source = input_pipeline.audio_source
+                            recognition_was_enabled = False
+                            if on_voice_availability is not None:
+                                on_voice_availability("")
+                            on_state("语音模型已就绪，Ring 连接保持不变")
+                        continue
+                    disconnect_event.wait(.05)
+                    continue
+                try:
+                    interruptible_read = getattr(audio_source, "read_interruptible", None)
+                    if callable(interruptible_read):
+                        try:
+                            block = interruptible_read(320, should_interrupt=interrupt_idle_audio_read)
+                        except InterruptedError:
+                            continue
+                    else:
+                        block = audio_source.read(320)
+                except Exception as exc:
+                    if current_microphone() is not None:
+                        on_state(f"[AUDIO_INPUT_ERROR] {exc}")
+                    raise
+                if block is None:
+                    break
+                if disconnect_event.is_set():
+                    break
+                publish_gesture_health()
                 block_end_monotonic_ns = int(
                     getattr(audio_source, "last_read_end_monotonic_ns", 0)
                     or time.monotonic_ns()

@@ -70,7 +70,9 @@ def test_first_connection_enables_both_once_and_logs_actual_state(controllers, t
     c = controllers()
     source = connect(c, source_first=source_first)
     wait_until(lambda: c.touchpad.state == 'running')
-    assert c.recognitionEnabled and c._recognition_event.is_set()
+    # Both choices restore, but the active touchpad owns the audio gate.
+    assert c.recognitionEnabled and c.touchpad.blocksVoice
+    assert not c._recognition_event.is_set()
     assert c.touchpad.inputMode == 'pointer' and len(source.starts) == 1
     c._apply_runtime_started()
     c.touchpad.changed.emit()
@@ -79,6 +81,18 @@ def test_first_connection_enables_both_once_and_logs_actual_state(controllers, t
     assert '[EVENT INPUT_PREFERENCES_RESTORE]' in log
     assert 'voice_enabled=true touchpad_enabled=true' in log
     assert '[EVENT TOUCHPAD_STATE]' in log and 'state="running"' in log
+
+
+def test_voice_setup_failure_still_restores_touchpad_without_erasing_voice_choice(controllers):
+    c = controllers()
+    c._settings.setValue('input/voiceEnabled', True)
+    c._voice_runtime_error = '尚未配置线上语音模型 API Key'
+    source = connect(c)
+    wait_until(lambda: c.touchpad.state == 'running')
+    assert c.connected and not c.recognitionEnabled
+    assert c.touchpad.active and len(source.starts) == 1
+    assert c._bool_setting('input/voiceEnabled', False)
+    assert not c._retry_voice_event.is_set() and not c._disconnect_event.is_set()
 
 
 @pytest.mark.parametrize('voice,touchpad', [(True, True), (False, True), (True, False), (False, False)])

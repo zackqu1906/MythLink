@@ -59,7 +59,7 @@ def _read_on_main_queue(read, *, timeout):
     return result
 
 
-def cycle_to_source(backend, origin, target, *, timeout):
+def cycle_to_source(backend, origin, target, *, timeout, native_activate=None):
     """At most one source cycle, sharing the caller's activation deadline."""
     deadline = time.monotonic() + timeout
 
@@ -69,7 +69,23 @@ def cycle_to_source(backend, origin, target, *, timeout):
     allowed = read(backend.sources)
     if target not in allowed:
         raise RuntimeError('Mythlink 输入法尚未启用')
-    shortcut = backend.shortcut()
+    try:
+        shortcut = backend.shortcut()
+    except InputSourceUnavailable as exc:
+        # A disabled/missing shortcut is a machine preference, not a voice
+        # prerequisite. Use the existing native activation transaction before
+        # posting any keys; its caller still requires a fresh IMK focus proof.
+        if exc.reason != 'input_method_source_shortcut_unavailable' or native_activate is None:
+            raise
+        if backend.foreground() != origin:
+            raise RuntimeError('前台应用已变化')
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('输入法切换超时')
+        native_activate(origin, timeout=remaining)
+        if backend.foreground() != origin or read(backend.current) != target:
+            raise RuntimeError('前台应用或输入法已变化')
+        return
     current = read(backend.current)
     if not current or current not in allowed:
         raise RuntimeError('无法确认当前输入法')
@@ -243,11 +259,11 @@ class SystemInputSources:
                     post(modifier, False, current_flags)
 
 
-def activate_voice_input_source(pid, *, timeout=.8):
+def activate_voice_input_source(pid, *, timeout=.8, native_activate=None):
     deadline = time.monotonic() + timeout
     backend = SystemInputSources()
     origin = backend.foreground()
     if not origin or origin[1] != pid:
         raise RuntimeError('前台应用已变化')
     cycle_to_source(backend, origin, BUNDLE_ID + '.dictation',
-                    timeout=max(0, deadline - time.monotonic()))
+                    timeout=max(0, deadline - time.monotonic()), native_activate=native_activate)
