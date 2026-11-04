@@ -40,10 +40,9 @@ def test_bundle_verifier_rejects_dock_visible_browser_helper(tmp_path, monkeypat
     helper = app/'Contents/Helpers/MythlinkBrowser.app/Contents/Info.plist'
     helper.parent.mkdir(parents=True)
     helper.write_bytes(plistlib.dumps({'LSUIElement': background}))
-    def run(command, *args):
-        if command.endswith('/file'): return 'Mach-O arm64' if str(args[0]).endswith('/Mythlink') else 'data'
-        return ''
-    monkeypatch.setattr(verifier, '_run', run)
+    monkeypatch.setattr(verifier, 'inspect_macho', lambda path: [dict(
+        architecture='arm64', minimum_macos='13.0.0', dependencies=[], rpaths=[])]
+        if path.name == 'Mythlink' else [])
     errors = verifier.verify_bundle(app, '15.0')
     assert bool(errors) is not background
     if errors: assert 'MythlinkBrowser' in errors[0]

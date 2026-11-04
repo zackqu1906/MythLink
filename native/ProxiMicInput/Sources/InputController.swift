@@ -489,6 +489,7 @@ final class ProxiMicInputController: IMKInputController {
             traceLifecycle("begin_snapshot")
             do {
                 let next = try CompositionSession(client: adapter, utteranceID: utteranceID, sequence: sequence)
+                next.automaticMode = message["automatic_mode"] as? Bool ?? false
                 guard activated, ownsActivation, currentClientID == requestedClientID, self.adapter === adapter else { return }
                 undoHistory.begin(next.original)
                 undoSourceUtteranceID = nil
@@ -565,7 +566,12 @@ final class ProxiMicInputController: IMKInputController {
                 if let error = message["error"] as? String, !error.isEmpty { session.failASR(error) }
                 else if let text = message["text"] as? String {
                     if (text as NSString).length > 65_536 { session.failASR("本句超过长度限制，已保留当前听写") }
-                    else { session.update(text, final: message["final"] as? Bool ?? false) }
+                    else {
+                        if message["final"] as? Bool == true, let task = message["automatic_task"] as? String {
+                            session.setAutomaticTask(task, allowEmptySource: message["automatic_allow_empty"] as? Bool ?? false)
+                        }
+                        session.update(text, final: message["final"] as? Bool ?? false)
+                    }
                 }
             case "convert": session.convert()
             case "finish": session.finish()
@@ -851,6 +857,10 @@ final class ProxiMicInputController: IMKInputController {
                                     "multi_undo_enabled": undoHistory.enabled,
                                     "edit_context_available": session?.editContextAvailable ?? false,
                                     "edit_scope": session?.editScope ?? "unavailable",
+                                    "automatic_mode": session?.automaticMode ?? false,
+                                    "automatic_task": session?.automaticTask ?? "",
+                                    "automatic_routing_version": 2,
+                                    "edit_source_text": session?.editRequestText ?? "",
                                     "context_complete": complete]
         // A sentence snapshot is stable. Fresh idle snapshots only answer explicit refreshes.
         if includeSnapshot {

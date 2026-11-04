@@ -6,6 +6,9 @@ import QtQuick.Layouts
 ColumnLayout {
     id: editor
     required property var practice
+    required property var controller
+    readonly property bool testing: practice.active && practice.mode !== "audio"
+    property bool applyingPracticeText: false
     property bool showActions: true
     property string editorName: "voiceTrialEditor"
     property bool attempted: false
@@ -21,8 +24,11 @@ ColumnLayout {
             Basic.TextArea {
                 id: input
                 objectName: editor.editorName
-                text: editor.practice.text
-                onTextChanged: if (text !== editor.practice.text) editor.practice.setText(text)
+                // Keep the editable document and its native undo/IME state local.
+                // Practice results are explicit edits, never a live text binding.
+                textFormat: TextEdit.PlainText
+                Component.onCompleted: text = editor.practice.text
+                onTextChanged: if (!editor.applyingPracticeText && text !== editor.practice.text) editor.practice.setText(text)
                 readOnly: editor.practice.recording || editor.practice.processing
                 placeholderText: "随便说些什么……"
                 font.family: theme.family; font.pixelSize: 14
@@ -32,6 +38,15 @@ ColumnLayout {
             }
         }
     }
+    Connections {
+        target: editor.practice
+        function onTextChanged() {
+            if (input.text === editor.practice.text) return
+            editor.applyingPracticeText = true
+            editor.practice.replaceEditorText(input, editor.practice.text)
+            editor.applyingPracticeText = false
+        }
+    }
     Label {
         objectName: "voicePracticeStatus"
         visible: (editor.attempted || editor.practice.active) && editor.practice.mode !== "audio"
@@ -39,11 +54,34 @@ ColumnLayout {
         color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap
     }
     Flow {
-        visible: editor.showActions && editor.practice.text.length > 0
+        visible: editor.showActions && (input.length > 0 || (!editor.testing
+                 && input.activeFocus && editor.controller.inlineInput.active))
         Layout.fillWidth: true; spacing: 8
-        FigmaAction { text: "润色当前句"; symbol: "swipe-down"; enabled: !editor.practice.recording && !editor.practice.processing && !editor.practice.playing; onClicked: editor.practice.polish() }
-        FigmaAction { text: "语音修改"; symbol: "swipe-right"; enabled: !editor.practice.recording && !editor.practice.processing && !editor.practice.playing; onClicked: editor.practice.start("edit") }
-        FigmaAction { text: "撤回"; enabled: !editor.practice.playing; onClicked: editor.practice.undo() }
+        FigmaAction {
+            objectName: "voiceEditorPolishButton"
+            text: "润色当前句"; symbol: "swipe-down"; focusPolicy: Qt.NoFocus
+            enabled: !editor.practice.recording && !editor.practice.processing && !editor.practice.playing
+                     && (editor.testing || (input.activeFocus && editor.controller.inlineInput.canPolish))
+            onClicked: editor.testing ? editor.practice.polish() : editor.controller.inlineInput.polish()
+        }
+        FigmaAction {
+            objectName: "voiceEditorEditButton"
+            text: "语音修改"; symbol: "swipe-right"; focusPolicy: Qt.NoFocus
+            enabled: editor.testing ? !editor.practice.recording && !editor.practice.processing && !editor.practice.playing
+                     : input.activeFocus && editor.controller.inlineInput.canRequestConversion
+            onClicked: editor.testing ? editor.practice.start("edit") : editor.controller.dispatchVoiceAction("edit")
+        }
+        FigmaAction {
+            objectName: "voiceEditorUndoButton"
+            text: "撤回"; focusPolicy: Qt.NoFocus
+            enabled: !editor.practice.playing && (editor.testing || (input.activeFocus
+                     && (editor.controller.inlineInput.canUndo || input.canUndo)))
+            onClicked: {
+                if (editor.testing) editor.practice.undo()
+                else if (editor.controller.inlineInput.canUndo) editor.controller.undoLastApplied()
+                else input.undo()
+            }
+        }
     }
     RowLayout {
         visible: editor.showActions

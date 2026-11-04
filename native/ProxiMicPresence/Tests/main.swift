@@ -1,5 +1,8 @@
 import Foundation
 
+// These regressions isolate departure and lock/unlock handshakes with zero delay.
+// Countdown/main.swift exercises the production five-second warning phase.
+
 var count = 0
 func check(_ condition: @autoclosure () -> Bool, _ label: String) {
     count += 1
@@ -13,7 +16,7 @@ func arm(_ p: inout PresencePolicy, start: Int = 0) {
     for t in start...(start + 3) { p.sample(-50, now: Double(t)); check(step(&p, Double(t)) == nil, "arming does not act") }
     check(p.armed, "arms after nearby confirmation")
 }
-var p = PresencePolicy()
+var p = PresencePolicy(lockCountdownDuration: 0)
 check(step(&p, 100, false, false) == nil, "never seen ring cannot lock")
 p.sample(127, now: 100); check(p.smoothedRSSI == nil, "invalid CoreBluetooth RSSI rejected")
 p.sample(Double.nan, now: 100); check(p.smoothedRSSI == nil, "NaN rejected")
@@ -30,7 +33,7 @@ check(p.requestGestureUnlock(now: 24, locked: true, connected: true, permitted: 
 check(step(&p, 30, true) == nil && p.failed, "failed unlock stops retries")
 check(step(&p, 31, false) == nil && !p.failed && !p.ownsLock, "manual unlock clears ownership/failure")
 
-p = PresencePolicy(); arm(&p)
+p = PresencePolicy(lockCountdownDuration: 0); arm(&p)
 p.sample(-110, now: 3.1); p.sample(-110, now: 3.5)
 p.disconnected(now: 4)
 check(step(&p, 4, false, false) == nil, "start disconnect grace")
@@ -38,17 +41,17 @@ check(step(&p, 18.9, false, false) == nil, "disconnect grace not expired")
 check(step(&p, 19, false, false) == nil, "weak disconnect timeout never locks")
 check(step(&p, 1000, false, false) == nil && !p.failed && !p.armed, "long disconnect remains paused")
 
-p = PresencePolicy(); arm(&p)
+p = PresencePolicy(lockCountdownDuration: 0); arm(&p)
 check(step(&p, 50, false, true) == nil, "connected with stale RSSI does not falsely lock")
 p.disconnected(now: 51); check(step(&p, 51, false, false) == nil, "disconnect starts its own clock")
 p.sample(-50, now: 55); check(step(&p, 55) == nil, "brief disconnect recovered")
 check(step(&p, 90) == nil, "old disconnect cannot lock new connection")
 
-p = PresencePolicy(); arm(&p)
+p = PresencePolicy(lockCountdownDuration: 0); arm(&p)
 check(step(&p, 4, true) == nil && !p.ownsLock, "manual lock not owned")
 for t in 5...12 { p.sample(-40, now: Double(t)); check(step(&p, Double(t), true) == nil, "nearby never unlocks manual lock") }
 
-p = PresencePolicy(); arm(&p)
+p = PresencePolicy(lockCountdownDuration: 0); arm(&p)
 for t in 4...30 {
     p.sample(-90, now: Double(t))
     check(step(&p, Double(t), nil) == nil, "unknown session never acts")
@@ -58,13 +61,13 @@ p.suspend(); check(!p.armed, "sleep requires fresh arming")
 check(step(&p, 200, false, false) == nil, "wake while ring missing does not instant-lock")
 check(step(&p, 201, true, true, true, false) == nil, "sleep never unlocks")
 
-p = PresencePolicy(); arm(&p)
+p = PresencePolicy(lockCountdownDuration: 0); arm(&p)
 for t in 4...30 { p.sample(-70, now: Double(t)); check(step(&p, Double(t)) == nil, "hysteresis band holds") }
 
 
 // Regression: connected, but never stronger than the unlock threshold.
 // Previously this stayed unarmed forever and ignored an actual disconnect.
-p = PresencePolicy(lockRSSI: -70, unlockRSSI: -64, awaySamples: 5, lostDelay: 5)
+p = PresencePolicy(lockRSSI: -70, unlockRSSI: -64, awaySamples: 5, lostDelay: 5, lockCountdownDuration: 0)
 for t in 0...3 {
     p.sample(-67, now: Double(t))
     check(step(&p, Double(t)) == nil, "middle-strength connection should not lock")
@@ -85,7 +88,7 @@ for t in 16...23 {
     let action = step(&p, Double(t), true)
     check(action == nil, "strong signal never unlocks")
 }
-p = PresencePolicy(lostDelay: 5)
+p = PresencePolicy(lostDelay: 5, lockCountdownDuration: 0)
 check(step(&p, 0) == nil && p.armed, "connection without RSSI still arms disconnect detection")
 p.disconnected(now: 1)
 check(step(&p, 1, false, false) == nil, "missing RSSI does not skip disconnect grace")
@@ -117,7 +120,7 @@ check(!secret.prepare(locked: false, load: { nil }), "denied Keychain access pre
 print("Presence policy and credential lease: \(count) assertions passed; no system effects")
 
 // Local input must prevent both weak-signal and disconnected false locks.
-p = PresencePolicy(lostDelay: 5); arm(&p)
+p = PresencePolicy(lostDelay: 5, lockCountdownDuration: 0); arm(&p)
 for t in 4...24 {
     p.sample(-95, now: Double(t))
     check(p.step(now: Double(t), locked: false, connected: true, permitted: true, awake: true, locallyActive: true) == nil, "typing vetoes weak-signal lock")
@@ -131,11 +134,11 @@ check(step(&p, 46, false, false) == nil, "idle after activity still cannot lock 
 p.sample(-95, now: 47); check(step(&p, 47) == nil, "first fresh callback after reconnect cannot lock")
 p.sample(-95, now: 48); check(step(&p, 48) == .lock, "reconnect resumes normal consecutive weak samples")
 check(p.lastLockReason == "weak_signal", "only connected weak signal triggers lock")
-p = PresencePolicy(lostDelay: 5); arm(&p); p.disconnected(now: 4)
+p = PresencePolicy(lostDelay: 5, lockCountdownDuration: 0); arm(&p); p.disconnected(now: 4)
 check(p.disconnectEvidence == "near", "strong disconnect recorded")
 check(step(&p, 4, false, false) == nil, "near disconnect does not start departure")
 check(step(&p, 1000, false, false) == nil, "near disconnect never becomes a departure by timeout")
-p = PresencePolicy(awaySamples: 3); arm(&p)
+p = PresencePolicy(awaySamples: 3, lockCountdownDuration: 0); arm(&p)
 p.sample(-100, now: 4); _ = step(&p, 4)
 p.sample(-100, now: 5); _ = step(&p, 5)
 p.sample(-100, now: 9)
@@ -145,23 +148,23 @@ check(step(&p, 10) == nil, "new thresholds need fresh dwell")
 print("Extended presence policy: \(count) assertions passed; no system effects")
 
 for level in [-65.0, -80.0] {
-    p = PresencePolicy(lostDelay: 5)
+    p = PresencePolicy(lostDelay: 5, lockCountdownDuration: 0)
     p.sample(level, now: 0); _ = step(&p, 0)
     p.disconnected(now: 10)
     check(step(&p, 10, false, false) == nil, "expired evidence is unknown")
     check(step(&p, 50, false, false) == nil, "old signal does not cause lock")
 }
-p = PresencePolicy(lostDelay: 5); p.sample(-70, now: 0); _ = step(&p, 0)
+p = PresencePolicy(lostDelay: 5, lockCountdownDuration: 0); p.sample(-70, now: 0); _ = step(&p, 0)
 p.disconnected(now: 1)
 check(step(&p, 20, false, false) == nil, "hysteresis band disconnect is not proven far")
-p = PresencePolicy(lostDelay: 5); p.sample(-90, now: 0); _ = step(&p, 0)
+p = PresencePolicy(lostDelay: 5, lockCountdownDuration: 0); p.sample(-90, now: 0); _ = step(&p, 0)
 p.disconnected(now: 1); _ = step(&p, 1, false, false)
 p.disconnected(now: 3)
 check(step(&p, 6, false, false) == nil && p.disconnectEvidence == "weak", "repeated failures retain return evidence without locking")
-p = PresencePolicy(lostDelay: 5); p.sample(-90, now: 0); _ = step(&p, 0)
+p = PresencePolicy(lostDelay: 5, lockCountdownDuration: 0); p.sample(-90, now: 0); _ = step(&p, 0)
 _ = step(&p, 1, false, false)
 check(step(&p, 6, false, false) == nil && !p.armed, "tick pauses locking even before disconnect callback")
-p = PresencePolicy(); p.thresholdsReady = false
+p = PresencePolicy(lockCountdownDuration: 0); p.thresholdsReady = false
 for t in 0...30 {
     p.sample(-100, now: Double(t))
     check(step(&p, Double(t)) == nil, "uncalibrated mode cannot lock")
@@ -170,7 +173,7 @@ print("Automatic-only presence policy: \(count) assertions passed; no system eff
 
 // Boundary replay with the tighter automatically learned thresholds.
 for (signal, departs) in [(-75.0, true), (-74.0, true), (-73.9, false), (-72.0, false), (-71.0, false)] {
-    var boundary = PresencePolicy(lockRSSI: -75, unlockRSSI: -72, lostDelay: 5)
+    var boundary = PresencePolicy(lockRSSI: -75, unlockRSSI: -72, lostDelay: 5, lockCountdownDuration: 0)
     boundary.sample(signal, now: 0)
     check(step(&boundary, 0) == nil, "boundary starts connected")
     boundary.disconnected(now: 1)
@@ -187,7 +190,7 @@ host.update(connected: true, now: 1)
 check(host.isConnected(now: 3.9) && !host.isConnected(now: 4), "host heartbeat must remain fresh")
 host.update(connected: false, now: 5)
 check(!host.isConnected(now: 5), "explicit host disconnect takes effect immediately")
-p = PresencePolicy(awaySamples: 2)
+p = PresencePolicy(awaySamples: 2, lockCountdownDuration: 0)
 p.sample(-90, now: 0); _ = step(&p, 0)
 p.sample(-90, now: 1); check(step(&p, 1) == .lock && p.lockPending, "prepare a pending lock")
 p.setLockingEnabled(false)
@@ -206,7 +209,7 @@ check(step(&p, 200, false, false) == nil && !p.failed, "cancelled handshake cann
 
 // Only an explicit gesture can unlock a monitored session, regardless of RSSI or lock origin.
 func lockedPolicy() -> PresencePolicy {
-    var p = PresencePolicy(lockRSSI: -75, unlockRSSI: -62, awaySamples: 3)
+    var p = PresencePolicy(lockRSSI: -75, unlockRSSI: -62, awaySamples: 3, lockCountdownDuration: 0)
     for t in 0...3 { p.sample(-90, now: Double(t)); _ = step(&p, Double(t)) }
     check(step(&p, 3.1, true) == nil && p.ownsLock, "test owns lock")
     return p
@@ -226,7 +229,7 @@ for (locked, connected, permitted, awake) in [(nil as Bool?, true, true, true), 
     gesture = lockedPolicy()
     check(gesture.requestGestureUnlock(now: 4, locked: locked, connected: connected, permitted: permitted, awake: awake) == nil, "invalid live session cannot unlock")
 }
-gesture = PresencePolicy()
+gesture = PresencePolicy(lockCountdownDuration: 0)
 _ = step(&gesture, 0, true)
 check(gesture.requestGestureUnlock(now: 1, locked: true, connected: true, permitted: true, awake: true) == nil, "process started locked has no observed unlocked session")
 gesture = lockedPolicy()
@@ -236,7 +239,7 @@ print("Gesture unlock final: \(count) assertions passed; no system effects")
 
 // The user can lock in place, without any departure or return transition.
 for signal in [-40.0, -68.0, -95.0] {
-    var manual = PresencePolicy()
+    var manual = PresencePolicy(lockCountdownDuration: 0)
     let prepared = UnlockSecret()
     manual.sample(signal, now: 0)
     _ = manual.step(now: 0, locked: false, connected: true, permitted: true, awake: true, locallyActive: true)
@@ -259,7 +262,7 @@ for signal in [-40.0, -68.0, -95.0] {
     _ = step(&manual, 10, true)
     check(!manual.awaitingGesture && !prepared.isPrepared, "unknown/other user session revokes unlock eligibility")
 }
-var sleeping = PresencePolicy()
+var sleeping = PresencePolicy(lockCountdownDuration: 0)
 _ = step(&sleeping, 0, false)
 sleeping.suspend()
 _ = step(&sleeping, 1, true, true, true, false)
@@ -284,30 +287,30 @@ check(returned.requestGestureUnlock(now: 23, locked: true, connected: true, perm
 print("Reconnect policy final: \(count) assertions passed; no system effects")
 
 // The default is two actual far callbacks, independent of timer polling rate.
-p = PresencePolicy(lockRSSI: -72, unlockRSSI: -68)
+p = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, lockCountdownDuration: 0)
 p.sample(-80, now: 0)
 for tick in 0...4 { check(step(&p, Double(tick) * 0.25) == nil, "one far callback cannot lock through repeated ticks") }
 p.sample(-80, now: 1.05)
 check(step(&p, 1.05) == .lock, "default locks on second actual far callback")
 for required in [1, 3, 5, 60] {
-    p = PresencePolicy(awaySamples: required)
+    p = PresencePolicy(awaySamples: required, lockCountdownDuration: 0)
     for i in 0..<required {
         let t = Double(i) * 0.25
         p.sample(-90, now: t)
         check(step(&p, t) == (i == required - 1 ? .lock : nil), "configured count never substitutes elapsed seconds")
     }
 }
-p = PresencePolicy(lockRSSI: -72, unlockRSSI: -68)
+p = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, lockCountdownDuration: 0)
 p.sample(-80, now: 0); _ = step(&p, 0)
 p.sample(-50, now: 1); check(step(&p, 1) == nil, "recovered signal breaks far streak")
 p.sample(-100, now: 2); check(step(&p, 2) == nil, "far streak starts again after recovery")
 p.sample(-100, now: 3.05); check(step(&p, 3.05) == .lock, "new far pair locks")
-p = PresencePolicy()
+p = PresencePolicy(lockCountdownDuration: 0)
 p.sample(-90, now: 0); _ = step(&p, 0)
 p.sample(.nan, now: 0.5); p.sample(-90, now: 1)
 check(step(&p, 1) == nil, "invalid callback between timer ticks clears departure count")
 p.sample(-90, now: 2.05); check(step(&p, 2.05) == .lock, "pair after invalid callback locks")
-p = PresencePolicy()
+p = PresencePolicy(lockCountdownDuration: 0)
 p.sample(-90, now: 0); _ = step(&p, 0)
 p.disconnected(now: 0.5); p.sample(-90, now: 1)
 check(step(&p, 1) == nil, "reconnect clears partial departure count")
@@ -316,12 +319,12 @@ p.sample(-90, now: 5.15); check(step(&p, 5.15) == .lock, "slow fresh callback ca
 print("Callback-count departure final: \(count) assertions passed; no system effects")
 
 // Every callback matters even when several arrive between timer ticks.
-p = PresencePolicy(lockRSSI: -72, unlockRSSI: -68)
+p = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, lockCountdownDuration: 0)
 p.sample(-80, now: 0); _ = step(&p, 0)
 p.sample(-50, now: 0.1); p.sample(-100, now: 0.2)
 check(step(&p, 0.25) == nil, "a recovered callback between ticks breaks consecutive far readings")
 p.sample(-100, now: 0.3); check(step(&p, 0.5) == .lock, "the next actual far callback completes the pair")
-p = PresencePolicy()
+p = PresencePolicy(lockCountdownDuration: 0)
 p.sample(-90, now: 0.1); p.sample(-90, now: 0.2)
 check(step(&p, 0.25) == .lock, "two real callbacks in one timer interval both count")
 print("All callback departure checks: \(count) assertions passed; no system effects")

@@ -35,7 +35,7 @@ check(!sparse.finish(now: 10), "burst at end is insufficient")
 for invalid in [Double.nan, .infinity, -120, 127] {
     check(!ProximityCalibration(baseline: invalid).qualified, "invalid saved baseline rejected")
 }
-var p = PresencePolicy()
+var p = PresencePolicy(lockCountdownDuration: 0)
 p.thresholdsReady = false
 p.sample(-90, now: 0)
 check(p.step(now: 0, locked: false, connected: true, permitted: true, awake: true) == nil, "uncalibrated never locks")

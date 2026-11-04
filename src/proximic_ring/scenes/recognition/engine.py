@@ -17,7 +17,9 @@ def detect_scene(bundle, profiles, window, focus, attr, *, budget=.48,
                  screen_frames=(), application_name="", application_category="", observation=False):
     """Return one SceneResult; preserve current evidence priority and time limits.
 
-    Browser and native adapters return the same scene/focus/identity contract.
+    Browser and native adapters return the same scene/identity contract.
+    The focus argument is retained for callers but is not inspected; native
+    input_context stays unknown and gesture input ownership comes from IMK.
     Browser evidence is restricted to the current page; native slideshow evidence
     precedes reading/media in multi-purpose apps. Each adapter has at most 300 ms
     inside the total budget. No result is cached across calls.

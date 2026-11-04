@@ -10,6 +10,7 @@ ColumnLayout {
     readonly property real permissionsPosition: permissionsGroup.y
     signal generalRequested()
     signal agentRequested()
+    signal browserRequested()
     signal advancedRequested()
     signal logRequested()
     spacing: 32
@@ -85,8 +86,13 @@ ColumnLayout {
             FigmaAction { objectName: "settingsGeneralEntry"; text: "前往设置"; navigation: true; onClicked: pane.generalRequested() }
         }
         PreferenceRow {
-            Layout.fillWidth: true; title: "Agent 与浏览器"; description: "连接 Agent 与浏览器扩展。"; linked: true
+            Layout.fillWidth: true; title: "Agent"; description: "连接 Codex，设置任务与推荐偏好。"; linked: true
             FigmaAction { objectName: "settingsAgentEntry"; text: "前往设置"; navigation: true; onClicked: pane.agentRequested() }
+        }
+        PreferenceRow {
+            visible: Qt.platform.os === "osx"
+            Layout.fillWidth: true; title: "浏览器"; description: "安装浏览器插件，连接网页媒体控制。"; linked: true
+            FigmaAction { objectName: "settingsBrowserEntry"; text: "前往设置"; navigation: true; onClicked: pane.browserRequested() }
         }
         PreferenceRow {
             Layout.fillWidth: true; title: "高级设置"; description: "识别服务、文本模型与性能。"; linked: true

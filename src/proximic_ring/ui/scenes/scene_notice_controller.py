@@ -179,11 +179,9 @@ class SceneNoticeController(QObject):
         configured = self.catalog.configured_scenes().get(front['value'], [])
         native = target.get('diagnostic') or {}
         context = target.get('input_context', 'unknown')
-        reason = ('text_focus' if context == 'text' and not (browser and page) else
-                  native.get('reason', 'blocked_window') if target.get('blocked') else
+        reason = (native.get('reason', 'blocked_window') if target.get('blocked') else
                   native.get('reason', 'no_content_evidence') if not scene else
-                  'unconfigured_scene' if scene not in configured else
-                  'unknown_focus' if context != 'nontext' and not (browser and page) else 'ready')
+                  'unconfigured_scene' if scene not in configured else 'ready')
         # Keep failed automatic observations traceable without writing every
         # idle poll, timestamps, control labels or user content to the log.
         observation = (scene, context, bool(target.get('blocked')), reason, page)
@@ -193,9 +191,9 @@ class SceneNoticeController(QObject):
                       scene=scene, input_context=context, reason_code=reason,
                       page_changed=page_changed,
                       configured_scenes=configured, native_trace=target.get('trace_id', ''), native=native)
-        # Focus interruptions pause feedback without announcing repeated entry
-        # when the same player's search field or modal is dismissed.
-        if target.get('blocked') or (context == 'text' and not (browser and page)):
+        # Window blockers pause feedback without announcing repeated entry.
+        # Input ownership is resolved by IMK when a gesture actually arrives.
+        if target.get('blocked'):
             self._candidate, self._hits, self._misses = None, 0, 0
             self._absence_since = None
             self.hide()
@@ -229,10 +227,6 @@ class SceneNoticeController(QObject):
             return
         self._misses = 0
         self._absence_since = None
-        if target.get('input_context') != 'nontext' and not (browser and page):
-            self._candidate, self._hits = None, 0
-            self.hide()
-            return
         key = (front['value'], front['pid'], scene, page)
         if key == self._active:
             self._candidate, self._hits = None, 0

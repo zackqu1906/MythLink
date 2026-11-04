@@ -77,11 +77,15 @@ UiScrollView {
                         }
                         FigmaAction {
                             objectName: "homeConnectionButton"
-                            text: page.controller.connected
-                                  ? (page.controller.statusKind === "stopping" ? "正在断开…" : "断开设备")
+                            readonly property bool disconnectAction: page.controller.connected || page.controller.statusKind === "stopping"
+                            text: page.controller.statusKind === "stopping" ? "正在断开…"
+                                  : page.controller.connected ? "断开设备"
                                   : page.controller.busy ? "正在连接…" : page.controller.scanBusy ? "正在搜索…"
                                   : page.controller.canReconnect ? "重新连接" : "蓝牙连接"
-                            primary: !page.controller.connected
+                            primary: true
+                            primaryColor: disconnectAction ? "#B44852" : theme.primary
+                            primaryHoverColor: disconnectAction ? "#C35A64" : theme.primaryHover
+                            primaryPressedColor: disconnectAction ? "#933843" : theme.primaryPressed
                             enabled: page.controller.connected ? page.controller.statusKind !== "stopping" : !page.controller.busy && !page.controller.scanBusy
                             onClicked: page.connectionRequested()
                         }
@@ -91,7 +95,7 @@ UiScrollView {
                             quiet: true
                             visible: page.controller.canReconnect || page.controller.connected
                             enabled: !page.controller.connected && !page.controller.busy && !page.controller.scanBusy
-                            ToolTip.visible: hovered
+                            ToolTip.visible: (enabled && hovered)
                             ToolTip.text: page.controller.connected ? "请先断开当前设备，再选择其他戒指" : "搜索并选择其他戒指"
                             onClicked: page.devicePickerRequested()
                         }
@@ -147,7 +151,7 @@ UiScrollView {
                     delegate: AbstractButton {
                         required property var modelData
                         Layout.fillWidth: true; Layout.preferredWidth: 280; implicitHeight: 144
-                        hoverEnabled: true
+                        hoverEnabled: enabled
                         Accessible.name: modelData.title
                         onClicked: { if (modelData.target === "gestures") page.gesturesRequested(); else if (modelData.target === "voice") page.tutorialRequested() }
                         background: Rectangle { radius: 12; color: theme.surface; border.color: theme.line }
@@ -160,7 +164,7 @@ UiScrollView {
                             }
                             Label { Layout.fillWidth: true; text: modelData.detail; color: theme.muted; font.pixelSize: 16; wrapMode: Text.Wrap }
                             Item { Layout.fillHeight: true }
-                            FigmaAction { Layout.fillWidth: true; implicitHeight: 32; navigation: true; text: modelData.link; enabled: modelData.target !== "touchpad"; onClicked: { if (modelData.target === "voice") page.tutorialRequested(); else page.gesturesRequested() } ToolTip.visible: hovered && !enabled; ToolTip.text: "教学功能暂未开放" }
+                            FigmaAction { Layout.fillWidth: true; implicitHeight: 32; navigation: true; text: modelData.link; enabled: modelData.target !== "touchpad"; onClicked: { if (modelData.target === "voice") page.tutorialRequested(); else page.gesturesRequested() } }
                         }
                     }
                 }

@@ -6,13 +6,13 @@ AbstractButton {
     id: control
     // Checked follows the controller; a click requests a transition, never fabricates state.
     implicitWidth: 128; implicitHeight: 30
-    hoverEnabled: true
+    hoverEnabled: enabled
     opacity: enabled ? 1 : 0.45
     FigmaTheme { id: theme }
     background: Rectangle {
         radius: 16
-        color: control.down ? theme.selection : control.hovered ? "#E3E5EC" : "#E9E9EB"
-        border.width: control.visualFocus ? 2 : 0; border.color: theme.primary
+        color: control.enabled && control.down ? theme.selection : control.enabled && control.hovered ? "#E3E5EC" : "#E9E9EB"
+        border.width: control.enabled && control.visualFocus ? 2 : 0; border.color: theme.primary
     }
     contentItem: Row {
         padding: 3; spacing: 0

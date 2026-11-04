@@ -41,12 +41,17 @@ def input_fingerprint(root):
     digest = hashlib.sha256(source_fingerprint(root).encode())
     settings = {
         'architecture': platform.machine(),
-        'deployment_target': os.environ.get('MACOSX_DEPLOYMENT_TARGET', '15.0'),
+        'deployment_target': deployment_target(root),
         'swift': subprocess.check_output(['xcrun', 'swiftc', '--version'], text=True).strip(),
         'sdk': subprocess.check_output(['xcrun', '--show-sdk-version'], text=True).strip(),
     }
     digest.update(json.dumps(settings, sort_keys=True).encode())
     return digest.hexdigest()
+
+
+def deployment_target(root):
+    return os.environ.get('MACOSX_DEPLOYMENT_TARGET',
+                          (root / 'packaging/macos-target.txt').read_text().strip())
 
 
 def next_build_number(template, previous, fingerprint=None):
@@ -104,6 +109,7 @@ def build(root):
         fcntl.flock(lock, fcntl.LOCK_EX)
         with (root / 'native/ProxiMicInput/Info.plist').open('rb') as stream:
             info = plistlib.load(stream)
+        info['LSMinimumSystemVersion'] = deployment_target(root)
         fingerprint = input_fingerprint(root)
         info['CFBundleVersion'] = next_build_number(info, [
             output / 'ProxiMicInput.app/Contents/Info.plist',

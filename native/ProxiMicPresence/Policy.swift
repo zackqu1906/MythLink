@@ -39,6 +39,7 @@ struct PresencePolicy {
     var awaySamples = 2
     // Used only by return detection; a disconnected device can never lock.
     var lostDelay = 15.0
+    let lockCountdownDuration: Double
     var thresholdsReady = true
     private(set) var lockingEnabled = true
     private var wasConnected = false
@@ -50,6 +51,7 @@ struct PresencePolicy {
     private(set) var smoothedRSSI: Double?
     private var lastSample: Double?
     private var departure = DepartureEvidence()
+    private var lockCountdownStartedAt: Double?
     private var lockRequestedAt: Double?
     private var unlockRequestedAt: Double?
     private var previouslyLocked = false
@@ -60,10 +62,17 @@ struct PresencePolicy {
         if let previous = lastSample, now - previous > DepartureEvidence.maxSampleGap { invalidateSignal() }
         smoothedRSSI = smoothedRSSI.map { $0 * 0.6 + rssi * 0.4 } ?? rssi
         lastSample = now
+        // Cancel on the first near raw reading, without waiting for the EMA to
+        // catch up. Also cover a return racing the host's final acknowledgement.
+        if (lockCountdownStartedAt != nil || lockPending),
+           rssi >= unlockRSSI || smoothedRSSI! >= lockRSSI {
+            cancelLockRequest()
+            return
+        }
         departure.observe(smoothedRSSI!, at: now, threshold: lockRSSI)
     }
     mutating func invalidateSignal() {
-        lastSample = nil; smoothedRSSI = nil; departure.reset()
+        lastSample = nil; smoothedRSSI = nil; cancelLockRequest()
     }
     mutating func disconnected(now: Double) {
         // Latch evidence once, before clearing the last live sample. Repeated
@@ -95,22 +104,34 @@ struct PresencePolicy {
     mutating func reset() {
         let ready = thresholdsReady, enabled = lockingEnabled
         self = PresencePolicy(lockRSSI: lockRSSI, unlockRSSI: unlockRSSI,
-                              awaySamples: awaySamples, lostDelay: lostDelay)
+                              awaySamples: awaySamples, lostDelay: lostDelay,
+                              lockCountdownDuration: lockCountdownDuration)
         thresholdsReady = ready
         lockingEnabled = enabled
     }
     init(lockRSSI: Double = -78, unlockRSSI: Double = -62, awaySamples: Int = 2,
-         lostDelay: Double = 15) {
+         lostDelay: Double = 15, lockCountdownDuration: Double = 5) {
         self.lockRSSI = lockRSSI; self.unlockRSSI = unlockRSSI
         self.awaySamples = awaySamples; self.lostDelay = lostDelay
+        self.lockCountdownDuration = lockCountdownDuration
     }
-    mutating func fail() { failed = true; lockRequestedAt = nil; unlockRequestedAt = nil }
-    mutating func cancelLockRequest() { lockRequestedAt = nil; departure.reset() }
+    mutating func fail() { failed = true; cancelLockRequest(); unlockRequestedAt = nil }
+    mutating func cancelLockRequest() {
+        lockRequestedAt = nil; lockCountdownStartedAt = nil; departure.reset()
+    }
     mutating func setThresholds(lock: Double, unlock: Double) {
-        if lock != lockRSSI || unlock != unlockRSSI { departure.reset() }
+        if lock != lockRSSI || unlock != unlockRSSI { cancelLockRequest() }
         lockRSSI = lock; unlockRSSI = unlock
     }
     var lockPending: Bool { lockRequestedAt != nil }
+    func lockCountdownRemaining(now: Double) -> Int {
+        guard let started = lockCountdownStartedAt else { return 0 }
+        return Int(ceil(max(0, lockCountdownDuration - max(0, now - started))))
+    }
+    func hasFreshDeparture(now: Double) -> Bool {
+        lastSample.map { now >= $0 && now - $0 <= DepartureEvidence.maxSampleGap } == true
+            && departure.samples >= awaySamples
+    }
     var awaitingGesture: Bool { previouslyLocked && observedUnlockedSession && !failed && unlockRequestedAt == nil }
     var unlockPending: Bool { unlockRequestedAt != nil && !failed }
 
@@ -131,15 +152,15 @@ struct PresencePolicy {
         if locked == nil { observedUnlockedSession = false; unlockRequestedAt = nil }
         else if awake && locked == false { observedUnlockedSession = true }
         guard awake, permitted, let locked else {
-            departure.reset()
+            cancelLockRequest()
             return nil
         }
         if locked && !previouslyLocked {
             ownsLock = lockRequestedAt.map { now - $0 <= 4 } ?? false
-            lockRequestedAt = nil
+            cancelLockRequest()
         } else if !locked && previouslyLocked {
             ownsLock = false; armed = false; failed = false
-            departure.reset(); unlockRequestedAt = nil
+            cancelLockRequest(); unlockRequestedAt = nil
         }
         previouslyLocked = locked
         if !locked && locallyActive { cancelLockRequest() }
@@ -147,7 +168,6 @@ struct PresencePolicy {
         if let since = unlockRequestedAt, now - since > 5 { fail() }
         guard !failed else { return nil }
         guard connected, lockingEnabled, thresholdsReady else { cancelLockRequest(); return nil }
-        let fresh = connected && lastSample.map { now >= $0 && now - $0 <= DepartureEvidence.maxSampleGap } == true
         if locked { return nil } // Signal strength never grants unlock.
         // Locking requires both live connections. Dropped-link evidence belongs
         // only to return detection, never to a delayed lock request.
@@ -155,9 +175,17 @@ struct PresencePolicy {
         guard armed, lockRequestedAt == nil else { return nil }
         // A local user is still at the computer. This veto does not grant unlock.
         if locallyActive { departure.reset(); return nil }
-        if !fresh { departure.reset() }
-        if departure.samples >= awaySamples {
+        guard hasFreshDeparture(now: now) else {
+            lockCountdownStartedAt = nil
+            if lastSample.map({ now < $0 || now - $0 > DepartureEvidence.maxSampleGap }) != false {
+                departure.reset()
+            }
+            return nil
+        }
+        if lockCountdownStartedAt == nil { lockCountdownStartedAt = now }
+        if now - lockCountdownStartedAt! >= lockCountdownDuration {
             lastLockReason = "weak_signal"
+            lockCountdownStartedAt = nil
             lockRequestedAt = now
             return .lock
         }

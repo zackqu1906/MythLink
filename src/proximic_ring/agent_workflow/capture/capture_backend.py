@@ -1,4 +1,4 @@
-"""One full-resolution ScreenCaptureKit frame per display, in memory only.
+"""One full-resolution frame per display, in memory only (macOS 13+).
 
 Runs off the Qt/BLE threads. Excludes the Agent and capture windows by native
 window ID, so showing an interactive loading cover does not contaminate the
@@ -8,6 +8,7 @@ Apple API: https://developer.apple.com/documentation/screencapturekit/scscreensh
 import threading
 import time
 from PySide6.QtGui import QImage
+from ...platforms.macos import screen_capture as compatibility
 
 
 class CapturePermissionError(PermissionError):pass
@@ -18,6 +19,7 @@ def _await(start,cancelled,*,timeout=10):
     def complete(value,error):result.extend((value,error));done.set()
     deadline=time.monotonic()+timeout
     if timeout<=0:raise TimeoutError('屏幕截取超时，请重试')
+    if cancelled.is_set():raise InterruptedError('截图已取消')
     start(complete)
     while True:
         if cancelled.is_set():raise InterruptedError('截图已取消')
@@ -36,6 +38,7 @@ def capture_screens(specs,excluded_ids,cancelled):
     from Foundation import NSMutableData
     if not CG.CGPreflightScreenCaptureAccess():raise CapturePermissionError('需要屏幕录制权限才能截图')
     with objc.autorelease_pool():
+        manager=compatibility.screenshot_manager(SC)
         content=_await(lambda cb:SC.SCShareableContent.getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_(False,True,cb),cancelled)
         excluded=[w for w in content.windows() if int(w.windowID()) in excluded_ids]
         images=[]
@@ -51,12 +54,24 @@ def capture_screens(specs,excluded_ids,cancelled):
             config.setShowsCursor_(False);config.setCapturesAudio_(False)
             config.setPixelFormat_(CG.kCVPixelFormatType_32BGRA)
             screen_filter=SC.SCContentFilter.alloc().initWithDisplay_excludingWindows_(target,excluded)
-            cg_image=_await(lambda cb:SC.SCScreenshotManager.captureImageWithFilter_configuration_completionHandler_(screen_filter,config,cb),cancelled)
+            if manager is not None:
+                cg_image=_await(lambda cb:manager.captureImageWithFilter_configuration_completionHandler_(screen_filter,config,cb),cancelled)
+            else:
+                deadline=time.monotonic()+10
+                compatibility.check_capture(cancelled,deadline)
+                cg_image=compatibility.legacy_screen_image(CG,(x,y,w,h),set(excluded_ids))
+                compatibility.check_capture(cancelled,deadline)
+            if cg_image is None:raise RuntimeError('系统返回了空截图，请检查屏幕录制权限')
             data=NSMutableData.data()
             destination=CG.CGImageDestinationCreateWithData(data,'public.png',1,None)
             CG.CGImageDestinationAddImage(destination,cg_image,None)
             if not CG.CGImageDestinationFinalize(destination):raise RuntimeError('无法转换屏幕图像')
             image=QImage.fromData(bytes(data),'PNG')
             if image.isNull():raise RuntimeError('无法读取屏幕图像')
+            if image.width()!=width or image.height()!=height:
+                # CoreGraphics may choose a different pixel scale on mixed-DPI
+                # displays; keep the selection overlay's per-display contract.
+                from PySide6.QtCore import Qt
+                image=image.scaled(width,height,Qt.IgnoreAspectRatio,Qt.SmoothTransformation)
             images.append(image)
         return images

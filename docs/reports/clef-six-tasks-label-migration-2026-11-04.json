@@ -1,0 +1,525 @@
+[
+  {
+    "id": "precise-replace",
+    "utterance": "把咖啡改成牛奶",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "precise-delete",
+    "utterance": "删掉最后一句",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "precise-second-occurrence",
+    "utterance": "只把第二个咖啡改成牛奶",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "redictation-fragment",
+    "utterance": "周四下午",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "redictation-with-command",
+    "utterance": "改成周四下午",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "character-explanation",
+    "utterance": "王字旁的玮",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "spelling",
+    "utterance": "那个软件名拼作 J A V A，首字母大写",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "comma-support",
+    "utterance": "把张伟改成张玮，王字旁的玮",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "literal-insert",
+    "utterance": "最后加一句谢谢配合",
+    "before": [
+      "verbatim_insert"
+    ],
+    "after": [
+      "insert"
+    ]
+  },
+  {
+    "id": "literal-insert-empty",
+    "utterance": "加一句谢谢配合",
+    "before": [
+      "verbatim_insert"
+    ],
+    "after": [
+      "insert"
+    ]
+  },
+  {
+    "id": "comma-in-content",
+    "utterance": "最后加一句，谢谢，辛苦了",
+    "before": [
+      "verbatim_insert"
+    ],
+    "after": [
+      "insert"
+    ]
+  },
+  {
+    "id": "expand",
+    "utterance": "把延期的理由展开说一下",
+    "before": [
+      "expand"
+    ],
+    "after": [
+      "polish"
+    ]
+  },
+  {
+    "id": "condense",
+    "utterance": "缩短一半，保留核心意思",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "polish"
+    ]
+  },
+  {
+    "id": "structure",
+    "utterance": "按原有内容整理成三点",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "move",
+    "utterance": "把结论移到最前面，其他内容不变",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "mixed-precise-polish",
+    "utterance": "把伟改成王字旁的玮，再把语气改客气一点",
+    "before": [
+      "precise_edit",
+      "polish"
+    ],
+    "after": [
+      "modify",
+      "polish"
+    ]
+  },
+  {
+    "id": "mixed-no-comma",
+    "utterance": "删掉第二句再在开头加一句您好",
+    "before": [
+      "precise_edit",
+      "verbatim_insert"
+    ],
+    "after": [
+      "modify",
+      "insert"
+    ]
+  },
+  {
+    "id": "mixed-translate-condense",
+    "utterance": "先翻译成英文，再压缩到一句话",
+    "before": [
+      "organize",
+      "translate"
+    ],
+    "after": [
+      "polish",
+      "translate"
+    ]
+  },
+  {
+    "id": "correction-cancels-polish",
+    "utterance": "改客气一点，不，语气不变，只把咖啡改成牛奶",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "v-edit-replace",
+    "utterance": "把北京换成上海",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "v-edit-delete",
+    "utterance": "去掉开头的称呼",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "v-edit-redictation",
+    "utterance": "下周二上午",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "v-edit-character",
+    "utterance": "是三点水的涵",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "v-edit-insert-empty",
+    "utterance": "加上这句话：祝您周末愉快",
+    "before": [
+      "verbatim_insert"
+    ],
+    "after": [
+      "insert"
+    ]
+  },
+  {
+    "id": "v-edit-condense",
+    "utterance": "压缩到二十个字以内",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "polish"
+    ]
+  },
+  {
+    "id": "v-edit-structure",
+    "utterance": "把这几个步骤改成编号列表",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "fresh-adopted-request",
+    "utterance": "他说要删最后一句，按他说的帮我处理",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "fresh-replace",
+    "utterance": "把周一换成周二，别动其他字",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "fresh-insert",
+    "utterance": "请把这句话放在末尾：期待您的回复",
+    "before": [
+      "verbatim_insert"
+    ],
+    "after": [
+      "insert"
+    ]
+  },
+  {
+    "id": "fresh-correct-time",
+    "utterance": "不是三点，是四点",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "joint-holdout-ordinary-answer",
+    "utterance": "没问题，我带两份过去",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "joint-holdout-correct-fragment",
+    "utterance": "下月十八号",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "joint-holdout-character",
+    "utterance": "不是王伟，是草字头的苇",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "joint-holdout-spelling",
+    "utterance": "编号里是字母I，不是数字1",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "joint-holdout-specific-delete",
+    "utterance": "把括号里的备注删掉",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "joint-holdout-insert",
+    "utterance": "在末尾补上原话：路上注意安全",
+    "before": [
+      "verbatim_insert"
+    ],
+    "after": [
+      "insert"
+    ]
+  },
+  {
+    "id": "joint-holdout-insert-empty",
+    "utterance": "加上这句：文件已收到，谢谢",
+    "before": [
+      "verbatim_insert"
+    ],
+    "after": [
+      "insert"
+    ]
+  },
+  {
+    "id": "joint-holdout-expand",
+    "utterance": "把节省人工检查时间这个好处展开一点",
+    "before": [
+      "expand"
+    ],
+    "after": [
+      "polish"
+    ]
+  },
+  {
+    "id": "joint-holdout-condense",
+    "utterance": "保留关键原因，缩成一句话",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "polish"
+    ]
+  },
+  {
+    "id": "joint-holdout-reorder",
+    "utterance": "把地点移到时间前面，其余不动",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "joint-holdout-mixed-correction-style",
+    "utterance": "把截止日期的十二号改成十四号然后整段客气些",
+    "before": [
+      "precise_edit",
+      "polish"
+    ],
+    "after": [
+      "modify",
+      "polish"
+    ]
+  },
+  {
+    "id": "joint-holdout-mixed-delete-insert",
+    "utterance": "去掉最后的署名然后开头加上各位同事好",
+    "before": [
+      "precise_edit",
+      "verbatim_insert"
+    ],
+    "after": [
+      "modify",
+      "insert"
+    ]
+  },
+  {
+    "id": "organize-format-only",
+    "utterance": "只拆成编号列表，不要精简任何内容",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "organize-move-only",
+    "utterance": "把结论移到开头，不要删任何信息",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "organize-summary",
+    "utterance": "把这段压缩成一句话，保留延期原因和新日期",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "polish"
+    ]
+  },
+  {
+    "id": "organize-summary-list",
+    "utterance": "提炼成两个简短要点",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "polish",
+      "format"
+    ]
+  },
+  {
+    "id": "organize-format-negative",
+    "utterance": "整理成三点，详细信息全部保留，不要摘要",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "organize-cancel-summary",
+    "utterance": "先缩短一点，算了不要缩短，只改成列表",
+    "before": [
+      "organize"
+    ],
+    "after": [
+      "format"
+    ]
+  },
+  {
+    "id": "organize-precise-delete",
+    "utterance": "只删除末尾的谢谢二字，其余不动",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  },
+  {
+    "id": "organize-mixed",
+    "utterance": "把周四改成周五，然后整理成两点，不要丢信息",
+    "before": [
+      "precise_edit",
+      "organize"
+    ],
+    "after": [
+      "modify",
+      "format"
+    ]
+  },
+  {
+    "id": "my-edit-01",
+    "utterance": "把周二改成周三",
+    "before": [
+      "precise_edit"
+    ],
+    "after": [
+      "modify"
+    ]
+  }
+]

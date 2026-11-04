@@ -8,6 +8,8 @@ Rectangle {
     required property var controller
     property bool compact: false
     property bool detailsVisible: false
+    property bool automaticDetailsVisible: false
+    onDetailsVisibleChanged: { if (!detailsVisible) automaticDetailsVisible = false }
     property bool textExpanded: false
     property string displayedId: ""
     readonly property var applicationInfo: controller.historyApplication(String(entry.application || ""))
@@ -18,9 +20,11 @@ Rectangle {
             displayedId = identity
             textExpanded = false
             detailsVisible = false
+            automaticDetailsVisible = false
         }
     }
     readonly property bool editEntry: entry.mode === "edit"
+    readonly property bool routingWarning: Boolean(entry.automaticDetails && entry.automaticDetails.warningText)
     readonly property bool polishEntry: !editEntry && entry.processingMode === "polish"
     readonly property bool nativeUndoSent: entry.outcome === "native_undo_sent"
     readonly property bool undoneEntry: entry.outcome === "undone" || nativeUndoSent
@@ -50,12 +54,13 @@ Rectangle {
     objectName: "voiceHistoryEntry"
     implicitHeight: content.implicitHeight + theme.rowPadding * 2
     height: implicitHeight
-    color: theme.surface; radius: 12; border.color: theme.line
+    color: routingWarning ? theme.warningSurface : theme.surface
+    radius: 12; border.color: routingWarning ? theme.warningBorder : theme.line
     UiWindowDragArea { anchors.fill: parent; z: -1 }
     Rectangle {
         x: 0; y: theme.rowPadding; width: 3; height: 24; radius: 1.5
-        visible: row.outcomeText.length > 0
-        color: row.warningStatus ? theme.warning : theme.neutral
+        visible: row.outcomeText.length > 0 || row.routingWarning
+        color: row.warningStatus || row.routingWarning ? theme.warning : theme.neutral
     }
 
     // Copying history never reuses the live dictation/clipboard pipeline.
@@ -124,6 +129,14 @@ Rectangle {
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
         anchors.margins: theme.rowPadding
         spacing: 12
+        Label {
+            objectName: "voiceHistoryRoutingWarning"
+            Layout.fillWidth: true; Layout.rightMargin: recordActions.width + 12
+            visible: row.routingWarning
+            text: row.entry.automaticDetails ? (row.entry.automaticDetails.warningBadge || "听写分类提示") : ""
+            color: theme.warning; font.family: theme.family; font.pixelSize: theme.detailSize
+            wrapMode: Text.Wrap; textFormat: Text.PlainText
+        }
         ColumnLayout {
             Layout.fillWidth: true; spacing: 8
             Label {
@@ -218,6 +231,22 @@ Rectangle {
                 color: theme.muted; font.family: theme.family; font.pixelSize: theme.detailSize
                 lineHeight: theme.detailLineHeight; lineHeightMode: Text.FixedHeight
                 wrapMode: Text.Wrap; textFormat: Text.PlainText
+            }
+            FigmaAction {
+                objectName: "automaticVoiceDetailsToggle"
+                visible: row.detailsVisible && Boolean(row.entry.automaticDetails && row.entry.automaticDetails.level1Text)
+                text: row.automaticDetailsVisible ? "关闭自动识别完整记录" : "查看自动识别完整记录"
+                quiet: true
+                onClicked: row.automaticDetailsVisible = !row.automaticDetailsVisible
+            }
+            Loader {
+                Layout.fillWidth: true
+                active: row.detailsVisible && row.automaticDetailsVisible && Boolean(row.entry.automaticDetails && row.entry.automaticDetails.level1Text)
+                visible: active
+                sourceComponent: AutomaticVoiceDetails {
+                    details: row.entry.automaticDetails
+                    onCloseRequested: row.automaticDetailsVisible = false
+                }
             }
         }
         RowLayout {

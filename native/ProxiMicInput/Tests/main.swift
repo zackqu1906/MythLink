@@ -1374,4 +1374,75 @@ test("Unchanged polish still has a separate undo when requested after dictation"
     check(client.body == "before " && session.phase == .undone, "second undo failed")
 }
 
+test("Automatic edit preserves before-caret scope and hides conversion") {
+    let client = FakeClient("原文。尾巴", selection: NSRange(location: 3, length: 0))
+    let session = try begin(client)
+    session.automaticMode = true
+    var source = ""
+    session.onEdit = { text, _, _ in source = text }
+    session.update("把原文改成新文", final: false)
+    check(!session.canEdit, "automatic mode exposed conversion")
+    session.setAutomaticTask("edit")
+    session.update("把原文改成新文", final: true)
+    check(source == "原文。", "automatic routing changed editable scope")
+    session.applyEdit(text: "新文。", revision: session.revision, error: nil)
+    check(client.body == "新文。尾巴", "automatic edit changed suffix")
+}
+
+test("Automatic composition accepts an empty prefix without a partial") {
+    let client = FakeClient()
+    let session = try begin(client)
+    session.automaticMode = true
+    var requested = false
+    session.onEdit = { text, _, _ in requested = true; check(text.isEmpty, "empty source changed") }
+    session.setAutomaticTask("edit", allowEmptySource: true)
+    session.update("帮我写一封邮件", final: true)
+    check(requested && session.phase == .editing, "composition did not request generation")
+    session.applyEdit(text: "您好，会议延期。", revision: session.revision, error: nil)
+    check(client.body == "您好，会议延期。", "composition was not inserted")
+}
+
+test("Automatic dictation commits once and late edit routing cannot convert it") {
+    let client = FakeClient("前文")
+    let session = try begin(client)
+    session.automaticMode = true
+    session.setAutomaticTask("dictation")
+    session.update("明天开会", final: true)
+    let writes = client.commitCount
+    session.setAutomaticTask("edit")
+    check(!session.editRequested && client.body == "前文明天开会", "late routing changed committed text")
+    check(client.commitCount == writes && !session.canEdit, "late routing wrote or exposed conversion")
+}
+
+test("Manual sessions ignore automatic route fields") {
+    let client = FakeClient("原文")
+    let session = try begin(client)
+    session.setAutomaticTask("edit", allowEmptySource: true)
+    session.update("普通听写", final: true)
+    check(!session.editRequested && client.body == "原文普通听写", "manual path changed")
+}
+
+test("Automatic editing cannot use an empty source unless the plan permits it") {
+    let client = FakeClient()
+    let session = try begin(client)
+    session.automaticMode = true
+    var requested = false
+    session.onEdit = { _, _, _ in requested = true }
+    session.setAutomaticTask("edit")
+    session.update("精简一下", final: true)
+    check(!requested && session.phase == .dictated, "source requirement bypassed")
+}
+
+test("Automatic insertion into empty text can be undone") {
+    let client = FakeClient()
+    let session = try begin(client)
+    session.automaticMode = true
+    session.setAutomaticTask("edit", allowEmptySource: true)
+    session.update("加一句谢谢", final: true)
+    session.applyEdit(text: "谢谢", revision: session.revision, error: nil)
+    check(client.body == "谢谢", "empty insertion failed")
+    session.cancel()
+    check(client.body == "加一句谢谢", "undo did not restore dictated instruction")
+}
+
 print("\(passed) native composition tests passed")

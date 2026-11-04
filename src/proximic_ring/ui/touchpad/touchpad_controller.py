@@ -434,7 +434,9 @@ class TouchpadController(QObject):
         stroke_changed = stroke_blocked != self._stroke_gate
         self._stroke_gate = stroke_blocked
         self.owner._inline_input.stroke_mode = stroke_blocked
-        blocked = self.active or self.busy or stroke_blocked
+        # Pointer control does not own text input. Only stroke composition
+        # reserves the shared IME client until its text has been settled.
+        blocked = stroke_blocked
         if blocked == self._voice_gate:
             if stroke_changed:
                 self.owner._ring_gestures.input_owner_changed()
@@ -446,7 +448,7 @@ class TouchpadController(QObject):
             self.owner._recognition_event.clear()
             self.owner._cancel_utterance_event.set()
             self.owner._ignore_asr_updates_until_next_start = True
-            self.owner._append_log("触摸板输入期间已暂停语音识别")
+            self.owner._append_log("笔画输入期间已暂停语音识别")
         else:
             if (self.owner.recognitionEnabled
                     and not self._closed and not self.owner._quitting

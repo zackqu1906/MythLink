@@ -504,8 +504,6 @@ class RingGestureController(QObject):
             return "target_unavailable"
         if request.target.blocked:
             return "blocked_window"
-        if request.target.focus_sensitive and request.target.input_context != "nontext":
-            return "input_focus"
         return ""
 
     def _global_trace(self, request, reason, **fields):
@@ -532,7 +530,7 @@ class RingGestureController(QObject):
         # Blocking it on the worker pipe makes same_target time out on Mythlink.
         def verify():
             try:
-                valid = backend.same_target(request.target, require_focus=request.target.focus_sensitive)
+                valid = backend.same_target(request.target)
                 diagnostic = dict(getattr(backend, "last_diagnostic", {}) or {})
                 if valid and request.input_focus is not None:
                     valid = self.owner._inline_input.same_input_focus(request.input_focus)

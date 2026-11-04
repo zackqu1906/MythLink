@@ -1,0 +1,22 @@
+{
+  "archive": "ring-studio-ringo-lab-firmware-20261014.zip",
+  "archive_sha256": "6c3e61f857a1bc5202be88ab86998e150f0d5dba4bca16b21d2f3e8b41d0741f",
+  "files": {
+    "vendor/ring_studio/nus_protocol.py": {
+      "archive_member": "ring-studio-ringo-lab-firmware-20261014/src/ring/drivers/nus_protocol.py",
+      "sha256": "3fc2653717add7a1ba9c5abf47c921bd2ab5972631cd77aee7e37148fc019860"
+    },
+    "vendor/ring_studio/ringo_protocol.py": {
+      "archive_member": "ring-studio-ringo-lab-firmware-20261014/src/ring/drivers/ringo_protocol.py",
+      "sha256": "346895b00af82a1141bf4d8079d5fe7f64f373dde8dfb7e18f4cfb35b9f701d0"
+    },
+    "vendor/API_README.md": {
+      "archive_member": "ring-studio-ringo-lab-firmware-20261014/API_README.md",
+      "sha256": "24b745949fd0878cf60fb4d6e9ccc400f0d843a8b4135e05c1fcb88a8fbd1e1d"
+    },
+    "vendor/ring_studio/adpcm.py": {
+      "archive_member": "ring-studio-ringo-lab-firmware-20261014/src/ring/apps/ringo_lab/adpcm.py",
+      "sha256": "3354b418e80c48c8bfcc3219018d0f8a4d8ec45aeeafa2849d0ad6dae74d4818"
+    }
+  }
+}

@@ -76,3 +76,7 @@ Figma 的 Code Connect 指向 React 设计库组件，当前项目采用 Qt Quic
 `redesign-567-32897-microphone.svg` 是收音测试槽位的原始 16 × 16 图标；`redesign-246-3060-navigation-active.svg` 是导航按钮 Hover / Pressed 的原始 16 × 16 蓝色箭头，沿用设计的旋转角度。其余图标复用已下载的同节点素材。新增文件的节点和 SHA-256 记录在 `redesign-manifest.json`，SVG 未修改。
 
 按用户后续要求保留热词弹窗入口、真实收音波形和录音回放。手势文案读取实际配置；开始和定稿手势不同时，在同一槽位分两行显示。教学里的展开收音卡保持独立布局。
+
+## 自动锁屏倒计时（2026-11-02）
+
+`prelock-*.svg` 来自 [Pre-lock HUD](https://www.figma.com/design/lTJ3fi0mMULAjIsnF8ybwH/1022-MythLink-Ring?node-id=170-2784)。保留 5 / 3 / 1 秒圆环、底环、锁、取消勾选和解锁图标原始 SVG；`ProximityLockNotice.qml` 按原始尺寸与图层位置显示。4 / 2 秒是实时进度的中间状态，沿用原稿的圆环宽度和颜色。倒计时卡 300 × 66，取消卡 230 × 50；使用已随应用打包的思源黑体，数字沿用系统 UI 字体。

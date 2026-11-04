@@ -25,7 +25,7 @@ PRESENTERS = [WPS, POWERPOINT, "com.apple.iWork.Keynote", "org.libreoffice.scrip
 def test_generated_show_title_accepts_document_extension(title):
     window, focus = window_tree(title)
     assert presentation_context(WPS if title.startswith("WPS") else POWERPOINT,
-                                window, focus, metadata) == (PRESENTATION, "nontext")
+                                window, focus, metadata) == (PRESENTATION, "unknown")
 
 
 @pytest.mark.parametrize("bundle", PRESENTERS)
@@ -55,11 +55,11 @@ def test_complete_slide_surface_across_presenters_and_display_layouts(bundle, va
     if variant == "direct_window_reference":
         focus.pop("AXParent"); focus["AXWindow"] = window
     assert presentation_context(bundle, window, focus, metadata, screen_frames=frames,
-                                profile="generic") == (PRESENTATION, "nontext")
+                                profile="generic") == (PRESENTATION, "unknown")
 
 
-@pytest.mark.parametrize("change", ["editor_ribbon", "input", "prompt", "sheet", "offscreen", "small_canvas", "focus_elsewhere"])
-def test_borderless_geometry_never_qualifies_an_editor_or_unrelated_focus(change):
+@pytest.mark.parametrize("change", ["editor_ribbon", "input", "prompt", "sheet", "offscreen", "small_canvas"])
+def test_borderless_geometry_never_qualifies_an_editor_or_incomplete_canvas(change):
     window, focus = wps_window_tree()
     window.pop("AXFullScreen")
     frames = ((0., 0., 1920., 1080.),)
@@ -92,9 +92,9 @@ def test_generic_presenter_needs_no_shortcut_profile_for_shared_detection(eviden
         window["AXChildren"] = [dict(AXRole="AXButton", AXTitle="End Show", AXEnabled=True)]
     if evidence == "canvas": window, focus = wps_window_tree()
     result = detect_presentation(window, focus, metadata, application_names=[name])
-    assert (result.scene, result.input_context) == (PRESENTATION, "nontext")
+    assert (result.scene, result.input_context) == (PRESENTATION, "unknown")
     assert presentation_context("test.independent.slides", window, focus, metadata,
-                                profile="generic", application_name=name) == (PRESENTATION, "nontext")
+                                profile="generic", application_name=name) == (PRESENTATION, "unknown")
     assert not scene_actions("test.independent.slides", PRESENTATION, profile="generic")
     assert presentation_context("test.unrelated.application", window, focus, metadata) == ("", "unknown")
 
@@ -135,21 +135,24 @@ def test_native_shared_evidence_is_available_to_every_presenter(monkeypatch, tmp
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSScreen=SimpleNamespace(screens=lambda: [screen])))
     monkeypatch.setitem(sys.modules, "Quartz", SimpleNamespace(CGDisplayBounds=lambda _: bounds))
     target = backend.capture(menu_action=True, scene=True)
-    assert target.scene == PRESENTATION and target.input_context == "nontext" and not target.blocked
+    assert target.scene == PRESENTATION and target.input_context == "unknown" and not target.blocked
     assert backend.same_target(target)
 
 
 @pytest.mark.mac_only
-def test_scene_uses_actual_focus_window_instead_of_stale_editor_and_revalidates(monkeypatch):
+def test_scene_uses_reported_window_without_following_a_control_into_another_window(monkeypatch):
     editor, _ = window_tree("Review.pptx")
     show, focus = window_tree("PowerPoint Slide Show - Review.pptx")
     focus["AXWindow"] = show
     backend, root, _ = native_backend(monkeypatch, editor, focus)
     target = backend.capture(menu_action=True, scene=True)
-    assert target.window is show and target.scene == PRESENTATION and not target.blocked
+    assert target.window is editor and not target.scene and not target.blocked
     assert backend.same_target(target)
     root["AXFocusedUIElement"] = dict(AXRole="AXTextArea", AXWindow=editor, AXParent=editor)
+    assert backend.same_target(target)
+    root["AXFocusedWindow"] = show
     assert not backend.same_target(target)
+    assert backend.capture(menu_action=True, scene=True).scene == PRESENTATION
 
 
 @pytest.mark.parametrize("kind", ["search_field", "combo_box", "description"])
@@ -164,14 +167,14 @@ def test_explicit_office_shortcut_is_not_subject_to_chat_composer_guard(monkeypa
     assert backend.capture(menu_action=True).blocked
 
 
-def test_capture_caches_only_within_snapshot_and_discards_mid_read_focus_change(monkeypatch):
+def test_capture_caches_window_metadata_without_observing_focus_changes(monkeypatch):
     window, focus = wps_window_tree()
     backend, root, reads = native_backend(monkeypatch, window, focus, bundle=WPS)
     first = backend.capture(menu_action=True, scene=True)
     assert first.scene == PRESENTATION
     # The snapshot cache is reused except for the two identities deliberately
     # checked again at the boundary to reject mid-read document/window changes.
-    revalidated = {(id(window), "AXDocument"), (id(focus), "AXWindow")}
+    revalidated = {(id(window), "AXDocument")}
     assert all(count == (2 if (node, key) in revalidated else 1)
                for (node, key), count in reads.items() if node != id(root))
     focus["AXRole"] = "AXTextField"
@@ -185,7 +188,7 @@ def test_capture_caches_only_within_snapshot_and_discards_mid_read_focus_change(
             root["AXFocusedUIElement"] = dict(AXRole="AXTextField", AXParent=window)
         return result
     ax.AXUIElementCopyAttributeValue = switch
-    assert backend.capture(menu_action=True, scene=True) is None
+    assert backend.capture(menu_action=True, scene=True).scene == PRESENTATION
 
 
 def test_slower_ax_responses_still_identify_wps_without_reusing_a_previous_snapshot(monkeypatch):
@@ -200,7 +203,7 @@ def test_slower_ax_responses_still_identify_wps_without_reusing_a_previous_snaps
     monkeypatch.setattr(scenes.time, "monotonic", lambda: elapsed[0])
     ax.AXUIElementCopyAttributeValue = slow_read
     target = backend.capture(menu_action=True, scene=True)
-    assert target.scene == PRESENTATION and target.input_context == "nontext"
+    assert target.scene == PRESENTATION and target.input_context == "unknown"
     assert elapsed[0] > .08  # The former WPS scene deadline was only 80 ms.
 
 
@@ -214,3 +217,25 @@ def test_office_mapping_block_reports_window_not_chat_input(route, monkeypatch):
     emit("snap")
     assert not sent and not messages
     assert "聊天" not in service.notice and "弹窗" in service.notice
+
+
+@pytest.mark.parametrize('evidence', ['title', 'controls', 'canvas'])
+@pytest.mark.parametrize('focus_state', ['missing', 'detached', 'unfocused', 'foreign'])
+def test_presentation_window_evidence_needs_no_ax_focus(monkeypatch, evidence, focus_state):
+    window, focus = wps_window_tree() if evidence == 'canvas' else window_tree('Slide Show - Deck')
+    if evidence == 'controls':
+        window['AXTitle'] = 'Review.pptx'
+        window['AXChildren'] = [dict(AXRole='AXButton', AXTitle='End Show', AXEnabled=True)]
+    if focus_state == 'missing': focus = None
+    if focus_state == 'detached': focus.pop('AXParent', None)
+    if focus_state == 'unfocused': focus['AXFocused'] = False
+    if focus_state == 'foreign': focus['AXWindow'] = dict(AXRole='AXWindow', AXIdentifier='other')
+    backend, _, _ = native_backend(monkeypatch, window, focus, bundle=WPS)
+    ax = sys.modules['ApplicationServices']; original = ax.AXUIElementCopyAttributeValue
+    def read(node, key, unused):
+        assert key not in {'AXFocusedUIElement', 'AXParent', 'AXFocused', 'AXWindow'}
+        return original(node, key, unused)
+    monkeypatch.setattr(ax, 'AXUIElementCopyAttributeValue', read)
+    target = backend.capture(menu_action=True, scene=True)
+    assert target.scene == PRESENTATION and target.input_context == 'unknown' and not target.blocked
+    assert backend.same_target(target)

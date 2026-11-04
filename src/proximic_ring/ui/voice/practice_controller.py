@@ -134,6 +134,20 @@ class VoicePracticeController(QObject):
             self._text = text
             self.textChanged.emit()
 
+    @Slot(QObject, str)
+    def replaceEditorText(self, editor, text):
+        """Apply an explicit practice result as one ordinary Qt undo step."""
+        from PySide6.QtGui import QTextCursor
+        quick_document = editor.property("textDocument")
+        document = quick_document.textDocument()
+        if document.toPlainText() == text:
+            return
+        cursor = QTextCursor(document)
+        cursor.beginEditBlock()
+        cursor.select(QTextCursor.Document)
+        cursor.insertText(text)
+        cursor.endEditBlock()
+
     @Slot(result=bool)
     def arm(self):
         if self.active:

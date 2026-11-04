@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 import plistlib
 import shutil
@@ -37,6 +38,8 @@ def build(destination, identity="-", *, safari=True):
     report = {"chrome_development_id": chrome_id(), "chrome_submission": "Mythlink-Chrome-0.1.0.zip",
               "safari_signed_release": identity != "-", "version": "0.1.0"}
     if safari:
+        minimum_macos = os.environ.get('MACOSX_DEPLOYMENT_TARGET',
+                                      (ROOT / 'packaging/macos-target.txt').read_text().strip())
         source = ROOT / "native/MythlinkBrowser"
         app = destination / "MythlinkBrowser.app"
         appex = app / "Contents/PlugIns/MythlinkBrowserExtension.appex"
@@ -44,7 +47,7 @@ def build(destination, identity="-", *, safari=True):
             (bundle / "Contents/MacOS").mkdir(parents=True, exist_ok=True)
         common = dict(CFBundleDevelopmentRegion="zh_CN", CFBundleName="Mythlink 浏览器助手",
                       CFBundleDisplayName="Mythlink 浏览器助手", CFBundleVersion="1",
-                      CFBundleShortVersionString="0.1.0", LSMinimumSystemVersion="15.0")
+                      CFBundleShortVersionString="0.1.0", LSMinimumSystemVersion=minimum_macos)
         plist(app / "Contents/Info.plist", {**common, "CFBundleIdentifier": "com.proximic.voice.browserhost",
             "CFBundleExecutable": "MythlinkBrowser", "CFBundlePackageType": "APPL", "NSPrincipalClass": "NSApplication",
             # Status polling starts this bundle every few seconds. AppKit
@@ -61,7 +64,7 @@ def build(destination, identity="-", *, safari=True):
         sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
         cache = ROOT / ".build/swift-browser-cache"
         cache.mkdir(parents=True, exist_ok=True)
-        flags = ["-sdk", sdk, "-target", "arm64-apple-macosx15.0", "-O", "-module-cache-path", str(cache), "-framework", "SafariServices"]
+        flags = ["-sdk", sdk, "-target", f"{platform.machine()}-apple-macosx{minimum_macos}", "-O", "-module-cache-path", str(cache), "-framework", "SafariServices"]
         subprocess.run(["xcrun", "swiftc", *flags, str(source / "main.swift"), "-o", str(app / "Contents/MacOS/MythlinkBrowser")], check=True)
         subprocess.run(["xcrun", "swiftc", *flags, "-parse-as-library", "-application-extension", "-emit-executable",
             "-Xlinker", "-e", "-Xlinker", "_NSExtensionMain", str(source / "SafariWebExtensionHandler.swift"),

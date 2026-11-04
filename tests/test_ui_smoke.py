@@ -394,6 +394,7 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
 
     from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import InputModeRoutingResult
+    from proximic_ring.text_processing.task_routing import EditPlan
     from proximic_ring.ui.controller import AppController
 
     _app = QCoreApplication.instance() or QCoreApplication(["routing-test"])
@@ -413,6 +414,15 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
 
         def submit(self, request):
             submitted.append(request)
+
+        def capture_context(self, target):
+            return {"status": "empty", "messages": []}
+
+        def warmup_router(self):
+            pass
+
+        def cancel_request(self, request_id):
+            pass
 
         def close(self, *, wait=False):
             return None
@@ -446,12 +456,10 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
 
     controller._apply_runtime_update("这是一段要输入的话。", True, "", 701)
     assert len(routed) == 1
-    assert len(submitted) == 1
-    assert submitted[0].mode == "edit"
+    assert not submitted
     assert routed[0].settings.enabled is True
     assert controller.transcriptMode == ""
-    assert controller.transcriptText == "正在判断听写或指令"
-    assert "自动路由判断开始" in controller.logText
+    assert controller.transcriptText == "正在自动判断"
     controller._apply_input_mode_routed(
         InputModeRoutingResult(
             request_id=routed[0].request_id,
@@ -460,12 +468,14 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
             mode="dictation",
             latency_s=0.234,
             model_output="dictation",
+            task_type="dictation",
         )
     )
     assert controller.transcriptMode == ""
-    assert desktop_target.injected == ["这是一段要输入的话。"]
+    assert not desktop_target.injected
+    assert len(submitted) == 1 and submitted[0].task_type == "dictation"
     assert controller._dictation_commit_timer.isActive() is False
-    assert "自动路由判断完成：听写（耗时 0.234s）" in controller.logText
+    assert "自动判断：听写（0.234s）" in controller.logText
 
     controller._apply_runtime_update("把上一句改正式一点", True, "", 702)
     controller._apply_input_mode_routed(
@@ -476,6 +486,8 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
             mode="edit",
             latency_s=0.125,
             model_output="edit",
+            task_type="edit",
+            edit_plan=EditPlan(("polish",)),
         )
     )
     assert controller.transcriptMode == ""
@@ -485,13 +497,8 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     assert len(submitted) == 2
     assert submitted[1].mode == "edit"
     assert submitted[1].target_text == "已有文本。"
-    assert "自动路由判断完成：编辑指令（耗时 0.125s）" in controller.logText
-    assert re.search(
-        r"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}\] "
-        r"\[INFO\] \[runtime\] run=\w+ process=\d+ thread='[^']+' "
-        r"\[session=702 route=\d+\] 自动路由判断完成",
-        controller.logText,
-    )
+    assert "自动判断：编辑（0.125s）" in controller.logText
+    assert submitted[1].edit_plan == EditPlan(("polish",))
     controller._cancel_pending_text_processing()
 
 
@@ -532,6 +539,7 @@ def test_qml_main_window_loads_without_retired_floating_ui(tmp_path, monkeypatch
     from PySide6.QtWidgets import QApplication
     from PySide6.QtQml import QQmlApplicationEngine
     import proximic_ring.ui.controller as module
+    from proximic_ring.ui.desktop.application_icons import install_application_icons
     app = QCoreApplication.instance()
     if app is not None and not isinstance(app, QApplication):
         pytest.skip("QML needs QApplication")
@@ -541,6 +549,7 @@ def test_qml_main_window_loads_without_retired_floating_ui(tmp_path, monkeypatch
     controller = module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
     engine = QQmlApplicationEngine()
+    install_application_icons(engine)
     warnings = []
     engine.warnings.connect(lambda items: warnings.extend(str(i) for i in items))
     engine.rootContext().setContextProperty("appController", controller)
@@ -552,11 +561,11 @@ def test_qml_main_window_loads_without_retired_floating_ui(tmp_path, monkeypatch
     for name in ("voiceHistoryList", "runtimeSettingsDialog", "associationCenterWindow"):
         assert root.findChild(QObject, name) is not None
     mode_label = root.findChild(QObject, "ringGestureModeLabel")
-    assert "输入模式" in mode_label.property("text")
+    assert "输入焦点" in mode_label.property("text")
     controller._connected = controller._runtime_active = True
     controller.ringGestures.filter(SimpleNamespace(name="middle-pinch"), False, controller._disconnect_event)
     QCoreApplication.processEvents()
-    assert "操作模式" in mode_label.property("text")
+    assert "输入焦点" in mode_label.property("text")
     root.hide()
     engine.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)

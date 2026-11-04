@@ -11,7 +11,7 @@ from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from ring_python_sdk.touchpad import TouchpadMove, TouchpadClick
 
 
-def test_dynamic_controls_mute_microphone_before_touchpad_start():
+def test_dynamic_controls_keep_microphone_running_during_touchpad():
     async def run():
         source = RingAudioSource()
         calls = []
@@ -24,7 +24,7 @@ def test_dynamic_controls_mute_microphone_before_touchpad_start():
                 self.mic_active = False
             async def touchpad_on(self, **options):
                 assert asyncio.get_running_loop() is loop
-                assert not self.mic_active and source._pause_stream_requested.is_set()
+                assert self.mic_active and not source._pause_stream_requested.is_set()
                 calls.append(options)
                 self.callback = options['on_stopped']
                 self.touchpad_active = True
@@ -37,12 +37,11 @@ def test_dynamic_controls_mute_microphone_before_touchpad_start():
         events = []
         future = await asyncio.to_thread(source.start_touchpad, on_event=events.append, duration_s=None)
         await asyncio.wrap_future(future)
-        assert source.touchpad_active and calls[0] == 'mic_off' and calls[1]['duration_s'] is None
-        assert source._touchpad_audio_suspended.is_set()
+        assert source.touchpad_active and calls[0]['duration_s'] is None
+        assert 'mic_off' not in calls and session.mic_active
         await asyncio.wrap_future(source.stop_touchpad())
         assert not source.touchpad_active and not source._stop.is_set()
-        assert not source._touchpad_audio_suspended.is_set()
-        assert not source._pause_stream_requested.is_set()  # Watchdog can restore MIC.
+        assert not source._pause_stream_requested.is_set()
         assert not source._touchpad_requests
         source._touchpad_endpoint = None
         with pytest.raises(ConnectionError):
@@ -54,6 +53,7 @@ def test_touchpad_failure_does_not_poison_audio_source():
     async def run():
         source = RingAudioSource()
         class Session:
+            touchpad_active = False
             async def touchpad_on(self, **options): raise RuntimeError('model unavailable')
         source._touchpad_endpoint = (asyncio.get_running_loop(), Session())
         with pytest.raises(RuntimeError, match='model unavailable'):

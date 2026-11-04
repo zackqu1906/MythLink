@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic as Basic
 
 Basic.Switch {
     id: control
-    implicitWidth: 44; implicitHeight: 24; padding: 0; hoverEnabled: true
+    implicitWidth: 44; implicitHeight: 24; padding: 0; hoverEnabled: enabled
     readonly property var assets: ({
         "off": "redesign-257-3465-checked-false-state-default.svg",
         "off-hover": "redesign-257-3465-checked-false-state-hover.svg",

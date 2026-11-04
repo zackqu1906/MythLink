@@ -40,11 +40,26 @@ datas += [
 ]
 
 binaries = []
+if platform.system() == "Darwin":
+    node_root = project_root / ".runtime/node"
+    if not (node_root / "bin/node").is_file():
+        raise RuntimeError("Run bash scripts/install-node-macos.sh before packaging.")
+    binaries.append((str(node_root / "bin/node"), "node/bin"))
+    datas.append((str(node_root / "LICENSE"), "node"))
+    llama_name = "llama-cpp-b10516-macos-arm64"
+    llama_root = project_root / ".runtime" / llama_name
+    if not (llama_root / "llama-server").is_file():
+        raise RuntimeError("Run bash scripts/build-llama-macos.sh before packaging.")
+    binaries += [(str(path), llama_name) for path in llama_root.iterdir()
+                 if path.name == 'llama-server' or path.suffix == '.dylib']
+    datas.append((str(llama_root / "LICENSE"), llama_name))
 notices = project_root / "THIRD_PARTY_NOTICES.md"
 if notices.is_file():
     datas.append((str(notices), "."))
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
+if platform.system() == "Darwin":
+    hiddenimports += ["Vision", "CoreML"]
 if platform.system() in {"Darwin", "Windows"}:
     hiddenimports += ["MNN", "_mnncengine"]
 if platform.system() == "Windows":
@@ -232,7 +247,8 @@ if platform.system() == "Darwin":
             "CFBundleDisplayName": "Mythlink",
             "CFBundleShortVersionString": app_version,
             "CFBundleVersion": app_version,
-            "LSMinimumSystemVersion": "15.0",
+            "LSMinimumSystemVersion": os.environ.get(
+                "MACOSX_DEPLOYMENT_TARGET", (project_root / "packaging/macos-target.txt").read_text().strip()),
             # The same executable also runs permission/gesture workers. Start
             # without a Dock icon; ui.main promotes only the normal Qt host.
             "LSUIElement": True,

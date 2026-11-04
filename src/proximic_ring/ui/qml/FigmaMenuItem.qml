@@ -12,7 +12,7 @@ Basic.MenuItem {
     font.family: theme.family
     font.pixelSize: 14
     font.weight: Font.Normal
-    hoverEnabled: true
+    hoverEnabled: enabled
     contentItem: Text {
         text: item.text
         font: item.font

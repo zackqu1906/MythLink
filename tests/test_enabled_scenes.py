@@ -81,11 +81,11 @@ def test_cleared_scene_stays_empty_but_explicit_new_scene_gets_defaults(route, m
     assert not catalog.for_scene(bundle,'image')
 
 
-def test_new_browser_starts_with_video_and_pdf_and_manual_scopes_are_independent(route, monkeypatch):
+def test_new_browser_starts_with_html_media_and_manual_scopes_are_independent(route, monkeypatch):
     _, service, *_=route
     bundle='com.apple.Safari'; catalog=add(service,monkeypatch,bundle)
-    assert catalog.configured_scenes()[bundle] == ['pdf','video']
-    assert catalog.addScene('pdf') and catalog.addScene('music')
+    assert catalog.configured_scenes()[bundle] == ['video','music']
+    assert catalog.addScene('pdf')
     assert catalog.configured_scenes()[bundle] == ['pdf','video','music']
     assert catalog.disableScene('video')
     assert catalog.configured_scenes()[bundle] == ['pdf','music']

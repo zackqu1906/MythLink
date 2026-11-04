@@ -25,7 +25,7 @@ def notice():
 
 
 def target(scene='presentation',**kw):
-    return dict(bundle='test.player',pid=12,scene=scene,input_context='nontext',blocked=False,**kw)
+    return dict(bundle='test.player',pid=12,scene=scene,input_context='unknown',blocked=False,**kw)
 
 
 def observe(obj,state,scene='presentation',**kw):
@@ -52,14 +52,15 @@ def test_each_mode_entry_is_confirmed_once_then_timeout_does_not_reannounce(noti
     assert obj.visible and len(entered(logs))==2
 
 
-def test_interleaved_modes_and_focus_interruptions_never_count_as_consecutive(notice):
+def test_interleaved_modes_and_window_blockers_never_count_as_consecutive(notice):
     obj,state,logs,_=notice
     observe(obj,state);observe(obj,state);obj.hide()
     observe(obj,state,'music');observe(obj,state);observe(obj,state,'music')
     assert not obj.visible
     observe(obj,state,'music')
     assert obj.notice['scene']=='music' and len(entered(logs))==2
-    for change in [dict(input_context='text'),dict(blocked=True),dict(input_context='unknown')]:
+    obj.hide()
+    for change in [dict(blocked=True),dict(input_context='text'),dict(input_context='unknown')]:
         observe(obj,state,'music',**change)
         observe(obj,state,'music');observe(obj,state,'music')
         assert not obj.visible and len(entered(logs))==2
@@ -215,5 +216,5 @@ def test_failed_observations_log_reason_once_and_record_recovery(notice):
     observe(obj,state,'music',input_context='text')
     observe(obj,state,'music');observe(obj,state,'music')
     results=[item for item in logs if item[0][2]=='observation_result']
-    assert [item[1]['reason_code'] for item in results]==['no_content_evidence','text_focus','ready']
+    assert [item[1]['reason_code'] for item in results]==['no_content_evidence','ready','ready']
     assert obj.visible and obj.notice['scene']=='music'

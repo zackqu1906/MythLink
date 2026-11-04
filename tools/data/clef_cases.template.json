@@ -1,0 +1,33 @@
+[
+  {
+    "id": "my-dictation-01",
+    "utterance": "好的，我明天下午参加",
+    "target": "",
+    "context": {
+      "messages": [
+        {
+          "speaker": "other",
+          "text": "明天下午的讨论你能参加吗？"
+        }
+      ]
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "my-edit-01",
+    "utterance": "把周二改成周三",
+    "target": "我们周二下午开会。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  }
+]

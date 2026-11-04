@@ -20,11 +20,24 @@ _SERVICES = {}
 
 
 def node_path(codex_path):
+    from ...runtime_paths import resource_root, is_frozen
+    from ...platforms.macos.macho import inspect_macho, version_tuple
+    import platform
+    candidates = [resource_root() / ('node/bin/node' if is_frozen() else '.runtime/node/bin/node')]
     for parent in Path(codex_path).parents:
         if parent.name in ('ChatGPT.app', 'Codex.app'):
-            candidate=parent/'Contents/Resources/cua_node/bin/node'
-            if candidate.is_file():return candidate
-    raise RuntimeError('安装的 Codex 缺少后台任务所需的 Node 运行时，请更新 Codex')
+            candidates.append(parent/'Contents/Resources/cua_node/bin/node')
+    for candidate in candidates:
+        if not candidate.is_file():continue
+        if platform.system() == 'Darwin':
+            # Never exec an incompatible binary just to discover its version.
+            records = inspect_macho(candidate)
+            supported = [r for r in records if r['architecture'] == platform.machine()
+                         and r['minimum_macos'] is not None
+                         and version_tuple(r['minimum_macos']) <= version_tuple(platform.mac_ver()[0])]
+            if not supported:continue
+        return candidate
+    raise RuntimeError('缺少兼容当前系统的 Agent 运行组件，请重新安装 Mythlink；源码运行请执行 bash scripts/install-node-macos.sh')
 
 
 def version():

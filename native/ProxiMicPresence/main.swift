@@ -68,7 +68,7 @@ func configurePassword() {
     app.setActivationPolicy(.accessory); app.activate(ignoringOtherApps: true)
     let alert = NSAlert()
     alert.messageText = "设置本机解锁密码"
-    alert.informativeText = "输入当前 Mac 用户的登录密码。密码只保存在这台 Mac 的钥匙串中，识别到弹指（snap）手势时用于解锁。不会发送到模型、戒指或写入日志。"
+    alert.informativeText = "输入当前 Mac 用户的登录密码。密码只保存在这台 Mac 的钥匙串中，识别到设置的解锁手势时用于解锁。不会发送到模型、戒指或写入日志。"
     alert.addButton(withTitle: "保存到钥匙串"); alert.addButton(withTitle: "取消")
     let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 28))
     field.placeholderString = "Mac 登录密码"; alert.accessoryView = field
@@ -124,6 +124,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     var awaitingHost: Double?
     var lastLock: Bool?
     var lastReportAt = -100.0
+    var lastCountdownSeconds = 0
     var connectedSince: Double?
     var rssiSamples = 0
     var lastRawRSSI: Double?
@@ -451,7 +452,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         policy.thresholdsReady = learned != nil
         if let learned { policy.setThresholds(lock: learned.lockRSSI, unlock: learned.unlockRSSI) }
         if locked != lastLock {
-            lastReportAt = -100 // Install the snap route as soon as any lock is observed.
+            lastReportAt = -100 // Install the unlock gesture route as soon as any lock is observed.
             if locked == true { awaitingHost = nil }
             if let locked, lastLock != nil { emit(["event": locked ? "locked" : "unlocked"]) }
             if locked == false && lastLock == true {
@@ -510,14 +511,17 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             if observing { emit(["event": "would_act", "action": "wake_display"]) }
             else { wakeDisplayForReturn() }
         }
-        if didReturn || didWake || now - lastReportAt >= 1 {
+        let countdownSeconds = policy.lockCountdownRemaining(now: now)
+        if didReturn || didWake || countdownSeconds != lastCountdownSeconds || now - lastReportAt >= 1 {
             lastReportAt = now
+            lastCountdownSeconds = countdownSeconds
             let state = !permission ? "需要辅助功能权限" : !awake ? "电脑睡眠中" : policy.failed ? "自动操作已暂停" :
-                    locked == true ? (canOfferGesture ? (unlockReady ? "手势已连接，请弹指（snap）解锁" :
+                    locked == true ? (canOfferGesture ? (unlockReady ? "手势已连接，请使用设置的解锁手势" :
                         "屏幕已锁定，正在恢复戒指手势连接") : "本次锁屏未准备解锁凭据，请先使用系统方式解锁") :
                     !connected ? "戒指已断连，正在重连；远离锁屏已暂停" :
                     !policy.lockingEnabled ? "主程序已断开，远离锁屏已暂停" :
                     locallyActive ? "检测到近期操作，暂缓远离锁屏" :
+                    countdownSeconds > 0 ? "\(countdownSeconds) 秒后锁定屏幕，返回将自动取消" :
                     policy.armed ? "正在监测距离" : "请把戒指靠近电脑，正在确认信号"
             let note = learningNote
             var report: [String: Any] = ["event": "monitor", "permission": permission,
@@ -526,6 +530,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 "reconnect_allowed": canOfferGesture,
                 "gesture_eligible": canOfferGesture,
                 "locked": locked ?? false, "lock_pending": awaitingHost != nil || policy.lockPending,
+                "lock_countdown_seconds": countdownSeconds,
                 "unlock_token": canOfferGesture && gestureReady ? unlockToken : "",
                 "gesture_ready": gestureReady, "unlock_ready": unlockReady,
                 "return_wake_pending": returnWake.returnConfirmed && !returnDisplay.wokeForReturn,
@@ -562,7 +567,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func hostReady() {
         refreshLockingAvailability()
         guard !observing, let requested = awaitingHost, now - requested <= 2,
-              policy.lockPending, lockingConnectionReady,
+              policy.lockPending, policy.hasFreshDeparture(now: now), lockingConnectionReady,
               lockedSession() == false, permitted(), awake else { return }
         if locallyActive {
             awaitingHost = nil; policy.cancelLockRequest(); return
@@ -575,7 +580,9 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard lockedSession() == false, permitted(), awake else {
             fail("锁屏条件已改变，未执行锁屏"); return
         }
-        if locallyActive || !lockingConnectionReady { policy.cancelLockRequest(); return }
+        if locallyActive || !lockingConnectionReady || !policy.hasFreshDeparture(now: now) {
+            policy.cancelLockRequest(); return
+        }
         key(12, flags: [.maskControl, .maskCommand]) // macOS Lock Screen: Control-Command-Q
     }
     func unlock() {
@@ -636,7 +643,7 @@ case "authorize":
     status()
 case "monitor", "observe":
     if args.first == "monitor" && lockedSession() != false {
-        emit(["event": "error", "error": "请先使用系统方式解锁电脑，再开启响指解锁功能"]); exit(2)
+        emit(["event": "error", "error": "请先使用系统方式解锁电脑，再开启手势解锁功能"]); exit(2)
     }
     guard (args.count == 4 || args.count == 5), let uuid = UUID(uuidString: args[1]),
           let away = Int(args[2]), let lost = Int(args[3]),

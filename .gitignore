@@ -48,3 +48,17 @@ Thumbs.db
 # Local previews, diagnostic exports and personal drafts
 /outputs/
 /tmp/
+
+# Public synthetic Clef fixtures; other local data stays private.
+!tools/data/
+tools/data/*
+!tools/data/README.md
+!tools/data/automatic_voice_routing_cases.json
+!tools/data/clef_cases.template.json
+!tools/data/clef_primary_validation_cases.json
+!tools/data/clef_primary_unseen_cases.json
+!tools/data/clef_joint_holdout_cases.json
+!tools/data/clef_hierarchical_baseline_v3.json
+!tools/data/clef_joint_eight_baseline_v2.json
+!tools/data/clef_organize_boundary_cases.json
+!tools/data/clef_six_task_boundary_cases.json

@@ -31,6 +31,103 @@ def seed_history(controller):
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
+def test_automatic_history_details_load_frame_and_keep_live_input_unchanged(inline_ui, tmp_path, size):
+    from PySide6.QtCore import QObject, QMetaObject, QPointF
+    from PySide6.QtGui import QImage, QPainter, QColor, QFont
+    from PySide6.QtTest import QTest
+    from test_automatic_history import record_example
+    controller, bridge, _, root, _ = inline_ui
+    collector, _, _, _ = record_example(tmp_path / "history")
+    record = collector.load_entries()[0]
+    record.update(text="把伟改成王字旁的玮", recognized=True, mode="edit", outcome="applied",
+                  candidateText="请联系张玮", candidateAvailable=True, editBeforeText="请联系张伟")
+    # A synthetic chat layout makes the thumbnail/ROI geometry visible in this UI test.
+    image = QImage(800, 600, QImage.Format_RGB32)
+    image.fill(QColor("#f5f5f5"))
+    painter = QPainter(image)
+    painter.fillRect(0, 0, 240, 600, QColor("#e0e5ea"))
+    painter.fillRect(240, 456, 560, 144, QColor("#ffffff"))
+    painter.setPen(QColor("#303743")); painter.setFont(QFont("PingFang SC", 24))
+    painter.drawText(280, 48, "测试对话 · 合成截图")
+    painter.drawText(280, 220, "请联系张伟")
+    painter.end()
+    image_path = tmp_path / "synthetic-chat.png"
+    assert image.save(str(image_path))
+    record["automaticDetails"]["screenshotUrl"] = image_path.as_uri()
+    record["automaticDetails"]["systemPrompt"] = "测试提示词：只修改指定文字，保留其余原文。\n" * 24
+    record["automaticDetails"]["modelInput"] = '{"utterance":"王字旁的玮","editable_text":"请联系张伟"}'
+    controller._voice_history_entries = [record]
+    controller.voiceHistoryChanged.emit()
+    root.resize(*size); root.setProperty("currentPage", 4); root.show(); QTest.qWait(120)
+    view = root.findChild(QObject, "voiceHistoryList")
+    entry = visual_child(view, "voiceHistoryEntry")
+    before = (list(bridge.messages), controller.inlineInput._view.copy())
+    assert visual_child(entry, "automaticVoiceDetails") is None
+    entry.setProperty("detailsVisible", True)
+    QTest.qWait(30)
+    assert visual_child(entry, "automaticVoiceDetails") is None
+    toggle = visual_child(entry, "automaticVoiceDetailsToggle")
+    assert toggle.property("visible")
+    QMetaObject.invokeMethod(toggle, "click")
+    QTest.qWait(220)
+    panel = visual_child(entry, "automaticVoiceDetails")
+    assert panel is not None
+    screenshot = visual_child(panel, "automaticVoiceScreenshot")
+    assert screenshot.property("paintedWidth") > 0
+    point = screenshot.mapToItem(entry, QPointF())
+    assert point.x() >= 0 and point.x() + screenshot.width() <= entry.width()
+    ocr_text = visual_child(panel, "automaticVoiceOcrText").property("text")
+    assert "请联系张伟" in ocr_text and "16:29" not in ocr_text
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"automatic-history-{size[0]}.png"))
+    assert (bridge.messages, controller.inlineInput._view) == before
+    view.setProperty("contentY", max(0, view.property("contentHeight") - view.height()))
+    QTest.qWait(80)
+    assert root.grabWindow().save(str(directory / f"automatic-history-bottom-{size[0]}.png"))
+    QMetaObject.invokeMethod(visual_child(panel, "automaticVoiceDetailsClose"), "click")
+    QTest.qWait(250)
+    assert visual_child(entry, "automaticVoiceDetails") is None
+    assert entry.property("detailsVisible")
+    assert view.property("contentY") <= max(0, view.property("contentHeight") - view.height()) + 1
+    assert root.grabWindow().save(str(directory / f"automatic-history-collapsed-{size[0]}.png"))
+    QMetaObject.invokeMethod(toggle, "click")
+    QTest.qWait(30)
+    assert visual_child(entry, "automaticVoiceDetails") is not None
+    entry.setProperty("detailsVisible", False)
+    QTest.qWait(30)
+    assert visual_child(entry, "automaticVoiceDetails") is None
+    assert not entry.property("automaticDetailsVisible")
+
+
+def test_dictation_priority_history_is_yellow_without_changing_live_input(inline_ui, tmp_path):
+    from PySide6.QtCore import QObject, QMetaObject
+    from PySide6.QtGui import QColor
+    from PySide6.QtTest import QTest
+    from test_automatic_history import record_example
+    controller, bridge, _, root, _ = inline_ui
+    collector, _, _, _ = record_example(tmp_path / 'history', task='dictation', conflict=True)
+    record = collector.load_entries()[0]
+    record.update(recognized=True, mode='dictation', outcome='applied', candidateText='他说改一下', candidateAvailable=True)
+    controller._voice_history_entries = [record]
+    controller.voiceHistoryChanged.emit()
+    root.resize(1200, 820); root.setProperty('currentPage', 4); root.show(); QTest.qWait(120)
+    before = (list(bridge.messages), controller.inlineInput._view.copy())
+    entry = visual_child(root.findChild(QObject, 'voiceHistoryList'), 'voiceHistoryEntry')
+    assert entry.property('routingWarning')
+    assert entry.property('color') == QColor('#FFF8DB')
+    assert visual_child(entry, 'voiceHistoryRoutingWarning').property('visible')
+    assert '听写' in visual_child(entry, 'voiceHistoryModeLabel').property('text')
+    entry.setProperty('detailsVisible', True); QTest.qWait(30)
+    QMetaObject.invokeMethod(visual_child(entry, 'automaticVoiceDetailsToggle'), 'click'); QTest.qWait(80)
+    assert visual_child(entry, 'automaticVoiceRoutingWarning').property('visible')
+    directory = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / 'automatic-history-warning.png'))
+    assert (bridge.messages, controller.inlineInput._view) == before
+
+
+@pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
 def test_voice_gesture_entry_preserves_defaults_without_sending_commands(inline_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QPointF
     from PySide6.QtTest import QTest
@@ -236,7 +333,8 @@ def test_home_restores_saved_ring_connection_actions(request, tmp_path, monkeypa
 
 
 def test_home_reconnect_and_voice_toggle_use_separate_existing_operations(inline_ui, monkeypatch):
-    from PySide6.QtCore import QObject
+    from types import SimpleNamespace
+    from PySide6.QtCore import QObject, QPointF, Qt
     from PySide6.QtTest import QTest
     controller, _, _, root, _ = inline_ui
     starts = []
@@ -261,6 +359,22 @@ def test_home_reconnect_and_voice_toggle_use_separate_existing_operations(inline
     click(root, "voiceRecognitionButton")
     assert not controller.recognitionEnabled and controller.connected
     assert starts == ["connect"]
+    root.setProperty("currentPage", 0); QTest.qWait(60)
+    button = root.findChild(QObject, "homeConnectionButton")
+    background = button.property("background")
+    assert button.property("text") == "断开设备"
+    assert background.property("color").name() == "#b44852"
+    point = button.mapToScene(QPointF(button.width()/2, button.height()/2)).toPoint()
+    QTest.mouseMove(root, point); QTest.qWait(30)
+    assert background.property("color").name() == "#c35a64"
+    QTest.mousePress(root, Qt.LeftButton, Qt.NoModifier, point)
+    assert background.property("color").name() == "#933843"
+    monkeypatch.setattr(controller, "_worker", SimpleNamespace(is_alive=lambda: True))
+    QTest.mouseRelease(root, Qt.LeftButton, Qt.NoModifier, point)
+    assert not controller.connected and controller.busy
+    assert button.property("text") == "正在断开…"
+    assert not button.property("enabled") and not button.property("hoverEnabled")
+    assert background.property("color").name() == "#b44852"
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])

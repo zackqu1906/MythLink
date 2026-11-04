@@ -6,6 +6,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -15,7 +16,7 @@ import wave
 import numpy as np
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PROMPT_VERSION = "edit-race-v1"
 _MAX_PENDING_SESSIONS = 8
 _FEEDBACK_ACTIONS = {"cancel", "apply_failed", "abandoned"}
@@ -480,6 +481,9 @@ class ModificationDatasetCollector:
 
     def record_routing_request(self, request) -> None:
         from ..text_processing.prompts import INPUT_MODE_ROUTER_PROMPT
+        from ..text_processing.task_routing import DEFAULT_ROUTER_MODEL
+        from ..text_processing.router_prompts import routing_schema, joint_router_input, ROUTER_PROMPT_VERSION
+        clef = getattr(request, "router_backend", "llm") == "clef"
 
         with self._lock:
             session_id = int(getattr(request, "session_id", 0))
@@ -494,9 +498,13 @@ class ModificationDatasetCollector:
                     "fallback": str(getattr(request, "fallback_mode", "")),
                     "router_request_id": request_id,
                     "router_input": str(getattr(request, "raw_text", "")),
-                    "router_system_prompt": INPUT_MODE_ROUTER_PROMPT,
-                    "router_provider": str(getattr(settings, "provider", "")),
-                    "router_model": str(getattr(settings, "model", "")),
+                    "router_system_prompt": "" if clef else INPUT_MODE_ROUTER_PROMPT,
+                    "router_schema": routing_schema() if clef else {},
+                    "router_classification_type": "joint" if clef else "legacy",
+                    "router_rules": joint_router_input("") if clef else "",
+                    "router_prompt_version": ROUTER_PROMPT_VERSION if clef else "legacy",
+                    "router_provider": "clef_server" if clef else str(getattr(settings, "provider", "")),
+                    "router_model": os.environ.get("PROXIMIC_CLEF_MODEL", DEFAULT_ROUTER_MODEL) if clef else str(getattr(settings, "model", "")),
                 }
             )
             record["updated_at"] = _utc_now()
@@ -520,10 +528,21 @@ class ModificationDatasetCollector:
                     int(getattr(result, "session_id", 0))
                 )
             record = self._interaction_data(interaction_id)
+            context = getattr(result, "screen_context", None)
+            self._save_screen_evidence_locked(interaction_id, record, context)
+            raw_output = str(getattr(result, "model_output", "") or "")
+            try:
+                trace = json.loads(raw_output)
+            except (ValueError, TypeError):
+                trace = {}
             record["mode"].update(
                 {
                     "predicted": str(getattr(result, "mode", "")),
-                    "router_output": str(getattr(result, "model_output", "") or ""),
+                    "task_type": str(getattr(result, "task_type", "")),
+                    "edit_plan": result.edit_plan.as_dict() if getattr(result, "edit_plan", None) else None,
+                    "screen_context": dict(context) if isinstance(context, dict) else None,
+                    "router_output": raw_output,
+                    "router_trace": trace if isinstance(trace, dict) else {},
                     "router_latency_ms": round(
                         float(getattr(result, "latency_s", 0.0) or 0.0) * 1000,
                         3,
@@ -544,6 +563,30 @@ class ModificationDatasetCollector:
                     "error": getattr(result, "error", None),
                 },
             )
+
+    def _save_screen_evidence_locked(self, interaction_id, record, context):
+        """Keep the exact OCR frame beside its record; never in model input JSON."""
+        if interaction_id in self._deleted_interactions:
+            return
+        evidence = getattr(context, "evidence", None)
+        if not isinstance(evidence, dict) or not evidence:
+            return
+        saved = {key: value for key, value in evidence.items() if key != "screenshot_png"}
+        saved["capture_id"] = context.get("capture_id", "")
+        png = evidence.get("screenshot_png")
+        if isinstance(png, bytes) and png:
+            capture_id = str(saved["capture_id"])
+            filename = f"screen-{capture_id}.png" if re.fullmatch(r"[a-f0-9]{32}", capture_id) else "screen-context.png"
+            path = self._interaction_dir(interaction_id) / filename
+            try:
+                if not path.exists():
+                    temporary = path.with_suffix(".png.tmp")
+                    temporary.write_bytes(png)
+                    temporary.replace(path)
+                saved["screenshot_file"] = filename
+            except OSError as exc:
+                saved["screenshot_error"] = str(exc)
+        record["screen_evidence"] = saved
 
     def record_inline_edit_intent(self, session_id: int) -> None:
         """Record native-confirmed conversion, including failures before an LLM call."""
@@ -589,6 +632,7 @@ class ModificationDatasetCollector:
 
     def record_text_request(self, request) -> None:
         """Bind every dictation/edit LLM call to the utterance record."""
+        from ..text_processing.automatic_prompts import AUTOMATIC_PROMPT_VERSION, automatic_system_prompt
         request_id = int(getattr(request, "request_id", 0))
         session_id = int(getattr(request, "session_id", 0))
         if request_id <= 0:
@@ -606,12 +650,21 @@ class ModificationDatasetCollector:
                 "provider": str(getattr(settings, "provider", "")),
                 "model": str(getattr(settings, "model", "")),
                 "base_url": str(getattr(settings, "base_url", "")),
-                "prompt_version": PROMPT_VERSION,
-                "input": self._llm_input(mode, raw_text, target_text),
+                "prompt_version": AUTOMATIC_PROMPT_VERSION if getattr(request, "task_type", "") else PROMPT_VERSION,
+                "task_type": str(getattr(request, "task_type", "")),
+                "edit_plan": request.edit_plan.as_dict() if getattr(request, "edit_plan", None) else None,
+                "system_prompt": (automatic_system_prompt(request.task_type, getattr(request, "edit_plan", None))
+                                  if getattr(request, "task_type", "") else ""),
+                "screen_context": getattr(request, "screen_context", None) if isinstance(getattr(request, "screen_context", None), dict) else None,
+                "input": ({"utterance": raw_text, "editable_text": target_text,
+                           "edit_plan": request.edit_plan.as_dict() if getattr(request, "edit_plan", None) else None,
+                           "screen_context": getattr(request, "screen_context", None)}
+                          if getattr(request, "task_type", "") else self._llm_input(mode, raw_text, target_text)),
                 "started_at": _utc_now(),
                 "status": "processing",
             }
             record = self._interaction_data(interaction_id)
+            self._save_screen_evidence_locked(interaction_id, record, getattr(request, "screen_context", None))
             requests = record["llm"].setdefault("requests", [])
             requests[:] = [
                 item for item in requests if int(item.get("request_id", 0)) != request_id
@@ -1657,6 +1710,7 @@ class ModificationDatasetCollector:
 
     @staticmethod
     def _history_entry(interaction_dir: Path, record: dict) -> dict | None:
+        from .automatic_history import automatic_history_details
         audio = record.get("audio", {})
         audio_path = interaction_dir / str(audio.get("file", "audio.wav"))
         if not audio_path.is_file():
@@ -1746,6 +1800,7 @@ class ModificationDatasetCollector:
                 or (asr.get("context") or {}).get("application", "") or ""
             ),
             "preferenceEligible": preference_eligible,
+            "automaticDetails": automatic_history_details(interaction_dir, record),
         }
 
     @staticmethod

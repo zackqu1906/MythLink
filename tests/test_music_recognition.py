@@ -27,7 +27,7 @@ def test_music_apps_with_video_capability_recognize_loaded_or_paused_player(bund
     window, focus = player()
     focus['AXChildren'][0]['AXDescription'] = play_label
     result = recognize(bundle, window, focus)
-    assert (result.scene, result.input_context) == (MUSIC, 'nontext')
+    assert (result.scene, result.input_context) == (MUSIC, 'unknown')
     assert result.diagnostic['evidence'] == 'music_player_controls'
     assert result.diagnostic['music_application'] is True
 
@@ -76,7 +76,7 @@ def test_music_purpose_never_overrides_current_video_evidence(bundle, case):
 
 
 @pytest.mark.parametrize('case', ['search', 'missing', 'stale', 'foreign', 'menu'])
-def test_music_player_still_yields_to_text_or_unconfirmed_focus(case):
+def test_music_scene_does_not_depend_on_focus(case):
     window, focus = player()
     if case == 'search': focus = dict(AXRole='AXSearchField', AXParent=window)
     if case == 'missing': focus = None
@@ -84,7 +84,7 @@ def test_music_player_still_yields_to_text_or_unconfirmed_focus(case):
     if case == 'foreign': focus = dict(AXRole='AXGroup', AXParent=dict(AXRole='AXWindow'))
     if case == 'menu': focus = dict(AXRole='AXMenu', AXParent=window)
     result = recognize('com.apple.Music', window, focus)
-    assert result.input_context == ('text' if case == 'search' else 'unknown')
+    assert result.input_context == 'unknown' and result.scene == MUSIC
 
 
 @pytest.mark.parametrize('bundle', ['org.videolan.vlc', 'com.colliderli.iina', 'com.apple.QuickTimePlayerX', 'test.viewer'])
@@ -109,12 +109,12 @@ def test_native_capture_passes_verified_installed_category_to_recognizer(monkeyp
     from proximic_ring.platforms.macos.mac_workspace import frontmost_application
     frontmost_application().bundleURL = lambda: SimpleNamespace(path=lambda: str(path))
     result = backend.capture(menu_action=True, scene=True)
-    assert result.scene == MUSIC and result.input_context == 'nontext' and not result.blocked
+    assert result.scene == MUSIC and result.input_context == 'unknown' and not result.blocked
     assert set(result.diagnostic['capabilities']) == {VIDEO, MUSIC}
 
 
 @pytest.mark.parametrize('state', ['ready', 'editable', 'text_child', 'hidden', 'disabled', 'stale', 'foreign'])
-def test_album_grid_uses_shared_focus_checks(state):
+def test_album_grid_does_not_drive_input_classification(state):
     window, focus = player()
     grid = dict(AXRole='AXGrid', AXParent=window, AXEnabled=True, AXFocused=True)
     if state == 'editable': grid['AXEditable'] = True
@@ -124,5 +124,5 @@ def test_album_grid_uses_shared_focus_checks(state):
     if state == 'stale': grid['AXFocused'] = False
     if state == 'foreign': grid['AXParent'] = dict(AXRole='AXWindow')
     result = recognize('com.apple.Music', window, grid)
-    expected = 'nontext' if state == 'ready' else 'text' if state in {'editable', 'text_child'} else 'unknown'
+    expected = 'unknown'
     assert result.scene == MUSIC and result.input_context == expected

@@ -386,10 +386,6 @@ class ApplicationMappingController(QObject):
             message = "未识别到对应场景，使用应用常规配置"
         elif target.scene not in self._profiles_for(bundle):
             message = "当前场景未启用，使用应用常规配置"
-        elif target.input_context == "text":
-            message = "当前为文字输入区域，使用应用常规配置"
-        elif target.input_context != "nontext":
-            message = "焦点状态待确认，使用应用常规配置"
         else:
             label = SCENE_LABELS.get(target.scene, target.scene)
             message = f"已识别到{label}，可使用{label}配置"

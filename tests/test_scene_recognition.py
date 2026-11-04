@@ -14,13 +14,13 @@ from test_scene_focus_audit import page, read
 
 @pytest.mark.parametrize('scene', [PRESENTATION, PDF, IMAGE, VIDEO, MUSIC])
 @pytest.mark.parametrize('context', ['nontext', 'text', 'unknown'])
-def test_every_scene_uses_the_same_result_and_input_contract(scene, context):
+def test_native_scene_contract_does_not_infer_input_from_ax(scene, context):
     window, focus = window_tree() if scene == PRESENTATION else content(scene)
     if context == 'text': focus = dict(AXRole='AXTextField', AXParent=window)
     if context == 'unknown': focus = None
     result = detect_scene('com.microsoft.Powerpoint', {scene: 'generic'}, window, focus, metadata)
     assert isinstance(result, SceneResult)
-    assert (result.scene, result.input_context) == (scene, context)
+    assert (result.scene, result.input_context) == (scene, 'unknown')
     assert result.page_key == '' and result.player is None
 
 
@@ -65,7 +65,7 @@ assert detect_scene('', {}, None, None, lambda *args: None) == SceneResult()
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize('entry', ['scene_defaults', 'gesture_scenes', 'browser_shortcuts', 'app_shortcuts', 'scene_capabilities'])
+@pytest.mark.parametrize('entry', ['scene_defaults', 'gesture_scenes', 'browser_shortcuts', 'desktop.app_shortcuts', 'scene_capabilities'])
 def test_configuration_and_runtime_import_order_has_no_cycle(entry):
     result = subprocess.run([sys.executable, '-B', '-c',
         f'import proximic_ring.{entry}; from proximic_ring.scenes.recognition.engine import detect_scene'],

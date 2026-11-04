@@ -12,10 +12,21 @@ ColumnLayout {
     readonly property real permissionsPosition: overview.y + overview.permissionsPosition
     signal detailRequested(int page)
     signal advancedSettingsRequested()
+    signal gpuSetupRequested()
     signal logRequested()
+    signal browserSetupRequested(string browser)
+    readonly property real advancedTextPosition: advancedServices.y + advancedServices.textServicesPosition
     spacing: 18
     FigmaTheme { id: theme }
-    FigmaAction { objectName: "settingsOverviewBackButton"; visible: pane.expandedSection.length > 0; text: "返回所有设置"; navigation: true; onClicked: pane.expandedSection = "" }
+    FigmaAction {
+        objectName: "settingsOverviewBackButton"
+        visible: pane.expandedSection.length > 0
+        text: "返回所有设置"; navigation: true
+        onClicked: {
+            pane.settingsDialog.saveCurrentEditor()
+            pane.expandedSection = ""
+        }
+    }
     PreferencesOverview {
         id: overview
         visible: pane.expandedSection.length === 0
@@ -25,6 +36,7 @@ ColumnLayout {
         onGesturesRequested: pane.detailRequested(12)
         onGeneralRequested: pane.expandedSection = "general"
         onAgentRequested: pane.expandedSection = "agent"
+        onBrowserRequested: pane.expandedSection = "browser"
         onAdvancedRequested: pane.advancedSettingsRequested()
         onLogRequested: pane.logRequested()
     }
@@ -145,6 +157,7 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             title: "类型转换按键"
+            visible: pane.controller.inputRoutingMode !== "auto"
             description: "仅在当前语音结果可以转换时生效，连接期间也可修改。"
             FigmaSelect {
                 objectName: "modeCorrectionShortcutCombo"
@@ -157,16 +170,15 @@ ColumnLayout {
         }
         FigmaFormRow {
             preferenceStyle: true
-            visible: !pane.controller.inlineInput.enabled
-            title: "听写与指令识别"
+            title: "语音处理模式"
             description: pane.controller.inputRoutingMode === "auto"
-                ? "语音结束后自动判断听写或编辑指令。"
-                : "沿用当前选择的听写或编辑模式。"
+                ? "实验模式：自动识别听写、精确编辑、改写或创作，结合当前窗口上文处理。分类准确率仍在验证。"
+                : "先听写，通过转换操作将本句作为编辑指令。"
             FigmaSelect {
                 objectName: "inputRoutingModeCombo"
                 Layout.fillWidth: true
-                Accessible.name: "听写与指令识别"
-                model: ["自动判断", "手动选择"]
+                Accessible.name: "语音处理模式"
+                model: ["自动判断", "手动转换"]
                 currentIndex: pane.controller.inputRoutingMode === "auto" ? 0 : 1
                 onActivated: pane.controller.inputRoutingMode = currentIndex === 0 ? "auto" : "manual"
             }
@@ -218,12 +230,22 @@ ColumnLayout {
         objectName: "settingsAgentGroup"
         visible: pane.expandedSection === "agent"
         title: "Agent"; symbol: "operation"
+        description: "连接 Codex，设置任务与推荐偏好。"
         AgentSetupRows { agent: pane.controller.agent }
     }
 
     BrowserExtensionSettings {
-        visible: pane.expandedSection === "agent"
+        visible: pane.expandedSection === "browser" && Qt.platform.os === "osx"
         bridge: pane.controller.browserExtensions
+        onSetupRequested: function(browser) { pane.browserSetupRequested(browser) }
+    }
+
+    AdvancedSettingsPage {
+        id: advancedServices
+        Layout.fillWidth: true
+        visible: pane.expandedSection === "advanced"
+        controller: pane.controller
+        onGpuSetupRequested: pane.gpuSetupRequested()
     }
 
     FigmaFormGroup {
@@ -302,7 +324,7 @@ ColumnLayout {
             preferenceStyle: true
             visible: Qt.platform.os === "osx"
             title: "离开锁屏"
-            description: "戒指远离时锁屏，也支持手动锁屏后弹指解锁。"
+            description: "戒指远离时锁屏，也支持手动锁屏后使用所选手势解锁。"
             SettingsStatusAction {
                 preferenceStyle: true
                 statusObjectName: "proximityOverviewStatus"

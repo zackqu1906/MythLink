@@ -79,7 +79,7 @@ ScrollView {
                     Label {
                         objectName: "touchpadRunStatus"
                         Layout.fillWidth: true; wrapMode: Text.Wrap
-                        text: page.touchpad.blocksVoice ? "已启用 · " + (page.touchpad.inputMode === "stroke" ? "正在书写笔画" : "正在控制鼠标") + " · 麦克风已暂停，停止后恢复原设置" : "开启触摸板时会暂停麦克风和语音识别。"
+                        text: page.touchpad.active ? "已启用 · " + (page.touchpad.inputMode === "stroke" ? "正在书写笔画" : "正在控制鼠标 · 可同时使用 Ring 或电脑麦克风") : "开启后可控制鼠标，同时使用 Ring 或电脑麦克风。"
                         color: theme.muted; font.pixelSize: 13
                     }
                     PermissionNotice {

@@ -137,7 +137,6 @@ class RingAudioSource(AudioSource):
         self._fresh_pcm = threading.Event()
         self._pause_stream_requested = threading.Event()
         self._stream_paused = threading.Event()
-        self._touchpad_audio_suspended = threading.Event()
         self._ready = threading.Event()
         self._resume_finished = threading.Event()
         self._thread: threading.Thread | None = None
@@ -200,7 +199,6 @@ class RingAudioSource(AudioSource):
         self._fresh_pcm.clear()
         self._pause_stream_requested.clear()
         self._stream_paused.clear()
-        self._touchpad_audio_suspended.clear()
         self._touchpad_control_lock = None
         self._ready.clear()
 
@@ -253,8 +251,6 @@ class RingAudioSource(AudioSource):
 
     def begin_buffering(self) -> None:
         """Resume if paused, require fresh PCM, then arm the watchdog."""
-        if self._touchpad_audio_suspended.is_set():
-            raise RuntimeError("请先停止触摸板，再启用 Ring 麦克风")
         if self._error is not None:
             raise RuntimeError(f"Ring audio stream failed: {self._error}") from self._error
         if not self.audio_enabled:
@@ -1180,8 +1176,9 @@ class RingAudioSource(AudioSource):
                         self.touchpad_error = error
                         if callback is not None:
                             callback(error)
-                    await self._begin_touchpad(session, **options, on_stopped=stopped,
-                                               suspend_audio=True)
+                    if session.touchpad_active:
+                        raise RuntimeError("触摸板正在运行，请先停止")
+                    await self._begin_touchpad(session, **options, on_stopped=stopped)
                     self.touchpad_active = bool(session.touchpad_active)
                     self.touchpad_error = None
                 else:
@@ -1221,15 +1218,11 @@ class RingAudioSource(AudioSource):
             activity.close()
         self._touchpad_activities.clear()
 
-    async def _begin_touchpad(self, session, *, on_stopped, suspend_audio=False, **options):
-        # Keep protection across mouse/stroke mode switches. Only the actual
-        # token stream's lifetime matters, never window visibility or focus.
+    async def _begin_touchpad(self, session, *, on_stopped, **options):
+        # Touchpad and microphone streams share BLE but own separate lifetimes.
         activity = MacActivity('Mythlink touchpad trajectory input', latency_critical=True)
         self._touchpad_activities.add(activity)
         activity.start()
-        restore_audio = False
-        owns_audio_gate = False
-        was_buffering = self._buffer_audio.is_set()
         released = False
         def release():
             nonlocal released
@@ -1238,50 +1231,11 @@ class RingAudioSource(AudioSource):
             released = True
             activity.close()
             self._touchpad_activities.discard(activity)
-            if owns_audio_gate:
-                self._touchpad_audio_suspended.clear()
-                if (restore_audio and self.audio_enabled and not self._stop.is_set()
-                        and getattr(session, 'client', None) is not None
-                        and session.client.is_connected):
-                    if was_buffering:
-                        self._buffer_audio.set()
-                        self._watchdog_armed.set()
-                    # The existing BLE watchdog resumes MIC ON with its settling
-                    # delay and fresh-PCM check, without blocking the UI callback.
-                    self._pause_stream_requested.clear()
-                    print("[TOUCHPAD] Ring microphone resume requested")
         def stopped(error):
             release()
             if on_stopped is not None:
                 on_stopped(error)
         try:
-            if suspend_audio:
-                if self._touchpad_audio_suspended.is_set():
-                    raise RuntimeError("触摸板正在运行，请先停止")
-                self._touchpad_audio_suspended.set()
-                owns_audio_gate = True
-                pause_external = getattr(self, '_pause_external_audio', None)
-                if pause_external is not None:
-                    await asyncio.to_thread(pause_external)
-                restore_audio = (bool(getattr(session, 'mic_active', False))
-                                 and not self._pause_stream_requested.is_set()
-                                 and not self._stream_paused.is_set())
-                if bool(getattr(session, 'mic_active', False)):
-                    self._pcm_generation = object()
-                    self._resume_finished.clear()
-                    self._resume_error = None
-                    self._watchdog_armed.clear()
-                    self._buffer_audio.clear()
-                    self._pause_stream_requested.set()
-                    if self._thread is not None:
-                        await asyncio.to_thread(self.pause_stream)
-                    else:
-                        await session.mic_off()
-                        self._stream_paused.set()
-                    self._clear_queue()
-                    self._pending = np.empty(0, dtype=np.float32)
-                    self._pending_start_monotonic_ns = None
-                    print("[TOUCHPAD] Ring microphone OFF before touchpad START")
             await session.touchpad_on(**options, on_stopped=stopped)
         except BaseException:
             release()

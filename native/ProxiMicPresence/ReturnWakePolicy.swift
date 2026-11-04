@@ -1,6 +1,6 @@
 import Foundation
 
-/// When snap unlock is available, return wake waits for its installed route.
+/// When gesture unlock is available, return wake waits for its installed route.
 /// A session without a prepared credential can still use display-only wake.
 struct ReturnDisplayGate {
     private(set) var wokeForReturn = false

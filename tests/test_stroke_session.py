@@ -101,7 +101,7 @@ def test_double_click_enters_without_any_voice_commands_and_exits_without_source
     tp._run.output.options["on_double_click"]()
     until(lambda: session.phase == "idle" and not tp.busy)
     assert not tp._code and not tp.strokeCandidates
-    assert c.recognitionEnabled and not c._recognition_event.is_set()
+    assert c.recognitionEnabled and c._recognition_event.is_set()
     assert source.stops == 0 and len(source.starts) == 1 and tp.inputMode == "pointer" and tp.active
     assert any(m["type"] == "stroke_end" for m in bridge.messages)
     assert not any(m["type"] == "stroke_commit" for m in bridge.messages)
@@ -268,7 +268,7 @@ def test_reset_during_preparation_restores_pointer_without_a_stuck_voice_gate(st
     c._inline_input.reset()
     session._poll()
     until(lambda: not session.engaged and tp._run.output.active)
-    assert tp.blocksVoice and not c._recognition_event.is_set()
+    assert not tp.blocksVoice and c._recognition_event.is_set()
 
 
 @pytest.mark.parametrize("with_ink", [False, True])
@@ -346,9 +346,9 @@ def test_failed_double_click_handoff_restores_pointer_and_voice(stroke, monkeypa
                 client_id="stroke-editor", stroke_session=session._token, success=True,
                 panel_visible=False, error="浮窗无法显示"))
     until(lambda: not session.engaged and tp._run.output is not output and tp._run.output.active)
-    assert tp.inputMode == "pointer" and tp.active and tp.blocksVoice
+    assert tp.inputMode == "pointer" and tp.active and not tp.blocksVoice
     assert tp._run.switch_pending is None
-    assert c.recognitionEnabled and not c._recognition_event.is_set()
+    assert c.recognitionEnabled and c._recognition_event.is_set()
     assert len(source.starts) == 1 and source.stops == 0
     assert not any(m["type"] in {"begin", "finish", "finish_dictation", "stroke_commit"} for m in bridge.messages)
     assert any(event == "STROKE_SESSION" and fields.get("reason") for event, fields in events)
@@ -417,7 +417,7 @@ def test_enabling_voice_during_strokes_changes_preference_without_listening(stro
     assert c.recognitionEnabled and not c._recognition_event.is_set()
     tp.strokeSession.cancel()
     until(lambda: not tp.busy)
-    assert tp.blocksVoice and not c._recognition_event.is_set()
+    assert not tp.blocksVoice and c._recognition_event.is_set()
     tp.stop()
     until(lambda: not tp.busy)
     assert c._recognition_event.is_set()

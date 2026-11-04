@@ -18,7 +18,7 @@ def browser_focus(monkeypatch, request):
     ax = sys.modules['ApplicationServices']
     original = ax.AXUIElementCopyAttributeValue
     def metadata_only(node, key, unused):
-        assert key not in {'AXChildren', 'AXVisibleChildren', 'AXValue', 'AXSelectedText',
+        assert key not in {'AXFocusedUIElement', 'AXParent', 'AXFocused', 'AXWindow', 'AXChildren', 'AXVisibleChildren', 'AXValue', 'AXSelectedText',
                           'AXSelectedTextRange', 'AXURL', 'AXDocument', 'AXTitle', 'AXDescription'}
         return original(node, key, unused)
     ax.AXUIElementCopyAttributeValue = metadata_only
@@ -28,94 +28,44 @@ def browser_focus(monkeypatch, request):
     return backend, root, window, web, text, extension
 
 
-@pytest.mark.parametrize('reply', [
-    {'error': 'browser_disconnected'}, {'error': 'browser_timeout'},
-    snapshot(authorized=False, input_context='nontext'),
-    snapshot(focused=False, input_context='text'),
-    snapshot(scene='', input_context='unknown', reason='browser_page_unavailable'),
-    snapshot(input_context='nontext'),
-])
-@pytest.mark.parametrize('field', ['AXTextArea', 'AXTextField', 'AXSearchField',
-                                  'AXComboBox', 'contenteditable', 'address_bar'])
-def test_native_editor_keeps_text_focus_without_extension_or_website_permission(browser_focus, reply, field):
+@pytest.mark.parametrize('context', ['text', 'nontext', 'unknown'])
+def test_browser_context_comes_only_from_extension(browser_focus, context):
     backend, root, window, web, text, extension = browser_focus
-    extension['reply'] = reply
-    text['AXRole'] = 'AXGroup' if field == 'contenteditable' else 'AXTextField' if field == 'address_bar' else field
-    if field == 'contenteditable':
-        text['AXIsEditable'] = True
-    if field == 'address_bar':
-        text['AXParent'] = window
-    target = backend.capture(menu_action=True, scene=True)
-    assert not target.blocked and target.input_context == 'text'
-    assert target.focus is text and target.role == text['AXRole']
-    assert target.diagnostic['focus_source'] == 'accessibility'
-    assert backend.same_target(target, require_focus=True)
-    if not reply.get('authorized') or not reply.get('focused'):
-        assert not target.scene  # Input recovery must not invent a media scene.
-
-
-@pytest.mark.parametrize('context', ['text', 'nontext'])
-def test_extension_still_refines_a_web_root_and_retains_media_identity(browser_focus, context):
-    backend, root, window, web, text, extension = browser_focus
-    web['AXFocused'] = False  # WebKit reports its page root after tab navigation.
-    root['AXFocusedUIElement'] = web
     extension['reply'] = snapshot(input_context=context)
+    text.pop('AXParent'); text['AXFocused'] = False
     target = backend.capture(menu_action=True, scene=True)
     assert not target.blocked and target.input_context == context
     assert target.scene == 'video' and target.browser_target == extension['reply']
     assert target.diagnostic['focus_source'] == 'extension'
+    assert target.focus is None and not target.focus_sensitive
 
 
-def test_toolbar_focus_is_not_overridden_by_old_dom_text_focus(browser_focus):
+@pytest.mark.parametrize('reply', [
+    {'error': 'browser_disconnected'}, {'error': 'browser_timeout'},
+    snapshot(authorized=False), snapshot(focused=False),
+])
+def test_extension_failure_does_not_block_regular_browser_commands(browser_focus, reply):
     backend, root, window, web, text, extension = browser_focus
-    root['AXFocusedUIElement'] = dict(AXRole='AXButton', AXParent=window, AXWindow=window)
-    extension['reply'] = snapshot(input_context='text')
+    extension['reply'] = reply
     target = backend.capture(menu_action=True, scene=True)
-    assert not target.blocked and target.input_context == 'nontext'
-    assert target.diagnostic['focus_source'] == 'accessibility'
+    assert not target.blocked and not target.scene and target.input_context == 'unknown'
+    assert backend.same_target(target)
 
 
-@pytest.mark.parametrize('change', ['hidden', 'disabled', 'stale', 'busy', 'menu',
-                                  'dialog', 'foreign_window', 'missing_parent'])
-def test_invalid_native_focus_cannot_be_rescued_by_the_extension(browser_focus, change):
+@pytest.mark.parametrize('change', ['window', 'foreground', 'page'])
+def test_browser_action_rechecks_target_identity(browser_focus, monkeypatch, change):
     backend, root, window, web, text, extension = browser_focus
-    extension['reply'] = snapshot(input_context='text')
-    if change in {'hidden', 'disabled', 'stale', 'busy'}:
-        key = {'hidden': 'AXHidden', 'disabled': 'AXEnabled',
-               'stale': 'AXFocused', 'busy': 'AXElementBusy'}[change]
-        text[key] = change in {'hidden', 'busy'}
-    elif change == 'menu':
-        text['AXParent'] = dict(AXRole='AXMenu', AXParent=window)
-    elif change == 'dialog':
-        text['AXParent'] = dict(AXRole='AXGroup', AXSubrole='AXDialog', AXParent=window)
-    elif change == 'foreign_window':
-        foreign = dict(AXRole='AXWindow', AXIdentifier='other')
-        text.update(AXParent=foreign, AXWindow=foreign)
-    else:
-        text.pop('AXParent')
-        text.pop('AXWindow')
+    extension['reply'] = snapshot()
     target = backend.capture(menu_action=True, scene=True)
-    assert target.blocked or target.input_context == 'unknown'
-
-
-@pytest.mark.parametrize('change', ['focus', 'window', 'foreground', 'during_capture'])
-def test_voice_start_rechecks_the_original_native_target(browser_focus, monkeypatch, change):
-    backend, root, window, web, text, extension = browser_focus
-    target = backend.capture(menu_action=True, scene=True)
-    if change == 'focus':
-        root['AXFocusedUIElement'] = dict(text, AXIdentifier='second-editor')
-    elif change == 'window':
+    if change == 'window':
         root['AXFocusedWindow'] = dict(window, AXIdentifier='second-window')
     elif change == 'foreground':
         monkeypatch.setattr('proximic_ring.platforms.macos.mac_workspace.frontmost_application',
             lambda: SimpleNamespace(bundleIdentifier=lambda: target.bundle, processIdentifier=lambda: 99,
                                     localizedName=lambda: 'Browser'))
     else:
-        def switch(bundle):
-            root['AXFocusedUIElement'] = dict(text, AXIdentifier='second-editor')
-            return extension['reply']
-        monkeypatch.setattr('proximic_ring.scenes.recognition.browser.request', switch)
-    assert not backend.same_target(target, require_focus=True)
+        extension['reply'] = snapshot(page='new-page')
+    assert not backend.same_target(target)
 
 
 def test_shared_voice_gesture_routes_to_input_without_media_extension(browser_focus):

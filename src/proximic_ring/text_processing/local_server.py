@@ -54,6 +54,16 @@ def local_llm_platform_key() -> str:
     return f"{system}-{machine}"
 
 
+def bundled_local_runtime(runtime_id: str) -> Path | None:
+    """The macOS bundle carries a 13.0 build of the catalog's pinned runtime."""
+    if local_llm_platform_key() != 'macos-arm64' or runtime_id != 'llama-cpp-b10516-macos-arm64':
+        return None
+    from ..runtime_paths import resource_root, is_frozen
+    root = resource_root() if is_frozen() else resource_root() / '.runtime'
+    candidate = root / runtime_id / 'llama-server'
+    return candidate if candidate.is_file() else None
+
+
 def resolve_default_local_llm() -> dict[str, str | int]:
     home = default_local_llm_home()
     installed_catalog_path = home / "catalog.json"
@@ -87,7 +97,8 @@ def resolve_default_local_llm() -> dict[str, str | int]:
         "home": str(home),
         "runtime_id": runtime_id,
         "model_id": model_id,
-        "server_path": str(home / "runtimes" / runtime_id / runtime["executable"]),
+        "server_path": str(bundled_local_runtime(runtime_id)
+                           or home / "runtimes" / runtime_id / runtime["executable"]),
         "model_path": model_path_override
         or str(home / "models" / model_id / model["filename"]),
         "api_model": str(model["apiModel"]),
@@ -120,6 +131,11 @@ class LocalModelServer:
         self.base_url = str(base_url)
         self.model_alias = str(model_alias)
         self.server_path = Path(server_path).expanduser()
+        runtime_id = 'llama-cpp-b10516-macos-arm64'
+        # Upgrade an existing default installation without changing custom
+        # server paths or downloading the user's multi-GB model again.
+        if self.server_path == default_local_llm_home() / 'runtimes' / runtime_id / 'llama-server':
+            self.server_path = bundled_local_runtime(runtime_id) or self.server_path
         self.model_path = Path(model_path).expanduser()
         self.context_size = max(512, int(context_size))
         self.reasoning = str(reasoning).strip().lower()

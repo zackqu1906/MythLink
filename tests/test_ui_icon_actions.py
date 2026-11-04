@@ -42,6 +42,11 @@ def test_footer_and_close_icons_are_centered_with_stable_hover(inline_ui, size):
         assert background.property('color').alpha() == 0
 
     for button in buttons:
+        background = button.property('background')
+        assert background.width() == pytest.approx(background.height())
+        center = background.mapToItem(button, QPointF(background.width()/2, background.height()/2))
+        assert center.x() == pytest.approx(button.width()/2)
+        assert center.y() == pytest.approx(button.height()/2)
         check_hover(button)
     QMetaObject.invokeMethod(buttons[1], 'click'); QTest.qWait(200)
     close = root.findChild(QObject, 'settingsApplyButton')

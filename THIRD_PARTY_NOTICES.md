@@ -2,12 +2,22 @@
 
 Mythlink integrates the following third-party components. Most downloaded ASR/LLM weights remain outside Git; the provider-supplied touchpad asset below is bundled for offline SDK use.
 
+## Node.js
+
+- Source: https://nodejs.org/ and https://github.com/nodejs/node
+- macOS bundles include Node.js 22.23.4 for the Agent background service, targeting macOS 11 or later.
+- The official archive URL and SHA-256 are pinned in `scripts/install-node-macos.sh`.
+- License: MIT and bundled dependency notices; the full upstream `LICENSE` is shipped alongside `node/bin/node`.
+
 ## llama.cpp
 
 - Source: https://github.com/ggml-org/llama.cpp
 - Installed location: `.runtime/local-llm/runtimes/` (downloaded during Windows setup)
 - License: MIT
 - The pinned release URL and SHA-256 are recorded in `local_llm_catalog.json`.
+- macOS bundles include a build of b10516 targeting macOS 13.0, with CPU and Metal inference.
+  Its source URL/hash and build options are pinned in `scripts/build-llama-macos.sh`;
+  the full MIT license is shipped in `llama-cpp-b10516-macos-arm64/LICENSE`.
 
 ## Qwen3-4B-Instruct-2507-GGUF
 
@@ -157,3 +167,13 @@ The desktop owner adapter in `src/proximic_ring/agent_workflow/agent/desktop_own
 is derived from [Emanuele-web04/remodex](https://github.com/Emanuele-web04/remodex),
 commit `f67b1499dbd8ace7a23902fad3242cc88f7e9a9e`, licensed under Apache-2.0.
 The license and a description of Mythlink modifications are included alongside the files.
+
+## GLiNER2.5 multilingual Decide (optional local voice router)
+
+The automatic voice mode uses Fastino's `GLiNER2.5-multi-Decide` (287M),
+Apache-2.0, https://huggingface.co/fastino/GLiNER2.5-multi-Decide .
+The setup script pins model revision `e173bca1f0c4217d7a55b3b0c705d5ece8a0218d`.
+Weights are downloaded to a separate local runtime and are not embedded in the app.
+The `gliner2` inference library is Apache-2.0:
+https://github.com/fastino-ai/GLiNER2 . Its dependencies are installed in an
+isolated Python environment; see `requirements-intent-router.txt`.

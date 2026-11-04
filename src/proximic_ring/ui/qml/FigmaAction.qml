@@ -10,6 +10,9 @@ Basic.Button {
     property bool quiet: false
     property bool navigation: false
     property url trailingAsset: ""
+    property color primaryColor: theme.primary
+    property color primaryHoverColor: theme.primaryHover
+    property color primaryPressedColor: theme.primaryPressed
     property color contentColor: primary ? "white" : navigation ? theme.muted : theme.text
     readonly property bool iconOnly: symbol.length > 0 && text.length === 0 && !navigation
     FigmaTheme { id: theme }
@@ -19,17 +22,15 @@ Basic.Button {
     leftPadding: text.length ? (navigation ? 20 : 16) : 0; rightPadding: text.length ? (navigation ? 8 : 16) : 0
     topPadding: 0; bottomPadding: 0
     font.family: theme.family; font.pixelSize: navigation ? 16 : 14; font.weight: Font.Medium
-    hoverEnabled: true
+    hoverEnabled: enabled
     opacity: enabled ? 1 : 0.45
     Accessible.name: text
     background: Rectangle {
         radius: 8
-        color: control.primary ? (control.down ? theme.primaryPressed : control.hovered ? theme.primaryHover : theme.primary)
-            : control.down ? theme.selection : control.hovered ? theme.subtle : control.quiet ? "transparent" : theme.background
-        border.width: control.visualFocus ? 2 : control.primary || control.quiet ? 0 : 1
-        border.color: control.visualFocus ? theme.primary : theme.line
-        // Icon actions keep a single, immediate hover color for the entire stay.
-        Behavior on color { enabled: !control.iconOnly; ColorAnimation { duration: 90 } }
+        color: control.primary ? (control.enabled && control.down ? control.primaryPressedColor : control.enabled && control.hovered ? control.primaryHoverColor : control.primaryColor)
+            : control.enabled && control.down ? theme.selection : control.enabled && control.hovered ? theme.subtle : control.quiet ? "transparent" : theme.background
+        border.width: control.enabled && control.visualFocus ? 2 : control.primary || control.quiet ? 0 : 1
+        border.color: control.visualFocus ? control.primaryColor : theme.line
     }
     contentItem: RowLayout {
         id: content

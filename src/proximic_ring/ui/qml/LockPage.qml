@@ -7,6 +7,8 @@ UiScrollView {
     required property var controller
     readonly property var proximity: controller.proximity
     readonly property bool hasCalibration: proximity.savedCalibration.baseline !== undefined
+    readonly property bool canCalibrate: controller.connected && !controller.busy
+                                        && !controller.scanBusy && !proximity.busy
     signal settingsRequested()
     objectName: "lockPage"
     FigmaTheme { id: theme }
@@ -25,20 +27,21 @@ UiScrollView {
                 spacing: 16
                 RowLayout {
                     Layout.fillWidth: true; spacing: 16
-                    Label { text: "离开锁屏与响指解锁"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
+                    Label { text: "离开锁屏与手势解锁"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
                     FigmaEnableControl {
                         objectName: "lockPageEnabled"
-                        checked: page.proximity.enabled; enabled: !page.proximity.busy
-                        Accessible.name: "离开锁屏与响指解锁"
+                        checked: page.proximity.enabled
+                        enabled: page.controller.connected && !page.controller.busy
+                                 && !page.controller.scanBusy && !page.proximity.busy
+                        Accessible.name: "离开锁屏与手势解锁"
                         onClicked: page.proximity.enabled = !page.proximity.enabled
                     }
                     Item { Layout.fillWidth: true }
-                    FigmaAction { text: "映射调节"; navigation: true; enabled: false }
                 }
                 RowLayout {
                     spacing: 12
-                    FigmaIcon { symbol: "snap" }
-                    Label { text: "响指"; color: theme.text; font.pixelSize: 16; font.weight: Font.Medium }
+                    FigmaIcon { symbol: "lock" }
+                    Label { objectName: "lockCurrentGesture"; text: page.proximity.unlockGestureLabel; color: theme.text; font.pixelSize: 16; font.weight: Font.Medium }
                     Label { text: "解锁屏幕"; color: theme.muted; font.pixelSize: 14 }
                 }
                 Label { Layout.fillWidth: true; visible: text.length > 0; text: page.proximity.error; color: theme.warning; font.pixelSize: 14; wrapMode: Text.Wrap }
@@ -53,12 +56,12 @@ UiScrollView {
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
                 spacing: 16
                 Label { text: "使用准备"; font.pixelSize: 22; font.weight: Font.Medium; color: theme.text }
-                Label { text: "查看准备状态，或重新校准当前 Ring。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                Label { text: "查看准备状态，校准当前 Ring，并选择解锁手势。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 12
                     Label { Layout.fillWidth: true; text: "1. 桌前校准"; color: theme.text; font.pixelSize: 16 }
                     Label { objectName: "lockCalibrationStatus"; text: page.hasCalibration ? "已完成" : "未完成"; color: page.hasCalibration ? theme.success : theme.warning; font.pixelSize: 14 }
-                    FigmaAction { objectName: "lockCalibrateButton"; text: page.hasCalibration ? "重新校准" : "开始校准"; navigation: true; onClicked: calibrationDialog.open() }
+                    FigmaAction { objectName: "lockCalibrateButton"; text: page.hasCalibration ? "重新校准" : "开始校准"; navigation: true; enabled: page.canCalibrate; onClicked: calibrationDialog.open() }
                 }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 12
@@ -72,6 +75,21 @@ UiScrollView {
                     Label { objectName: "lockPermissionStatus"; text: page.proximity.permissionReady ? "已开启" : page.proximity.passwordStatusChecked ? "未开启" : "待确认"; color: page.proximity.permissionReady ? theme.success : theme.warning; font.pixelSize: 14 }
                     FigmaAction { objectName: "lockPermissionButton"; text: "前往设置"; navigation: true; onClicked: page.settingsRequested() }
                 }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 12
+                    Label { Layout.fillWidth: true; text: "4. 解锁手势"; color: theme.text; font.pixelSize: 16 }
+                    FigmaSelect {
+                        id: unlockGestureChoice
+                        objectName: "lockUnlockGestureSelect"
+                        Layout.preferredWidth: 216
+                        Accessible.name: "解锁手势"
+                        model: page.proximity.unlockGestureOptions
+                        textRole: "label"; valueRole: "value"
+                        currentIndex: page.proximity.unlockGestureOptions.map(function(item) { return item.value }).indexOf(page.proximity.unlockGesture)
+                        onActivated: page.proximity.unlockGesture = currentValue
+                    }
+                }
+                Label { Layout.fillWidth: true; text: "更改自动保存，仅在锁屏时用于解锁；平时沿用原有手势映射。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
             }
         }
         Rectangle {
@@ -106,8 +124,12 @@ UiScrollView {
                     FigmaAction { objectName: "lockMessageButton"; text: "设置提示"; navigation: true; onClicked: messageDialog.open() }
                 }
                 Rectangle {
-                    Layout.fillWidth: true; implicitHeight: 48; radius: 8; color: theme.subtle
-                    Label { anchors.fill: parent; anchors.margins: 12; text: "Ring 已连接且功能开启时，可响指解锁。"; verticalAlignment: Text.AlignVCenter; color: theme.text; font.pixelSize: 16 }
+                    Layout.fillWidth: true; implicitHeight: messagePreview.implicitHeight + 24; radius: 8; color: theme.subtle
+                    Label {
+                        id: messagePreview
+                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                        text: page.proximity.lockScreenMessage; color: theme.text; font.pixelSize: 16; wrapMode: Text.Wrap
+                    }
                 }
             }
         }
@@ -122,8 +144,15 @@ UiScrollView {
         contentItem: ColumnLayout {
             spacing: 16
             Label { Layout.fillWidth: true; text: "提示通过系统锁屏留言显示，需手动保存。"; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap }
-            Rectangle { Layout.fillWidth: true; implicitHeight: 86; radius: 8; color: theme.subtle; Label { anchors.fill: parent; anchors.margins: 16; text: "建议留言\nRing 已连接且功能开启时，可响指解锁屏幕。"; color: theme.text; font.pixelSize: 16; wrapMode: Text.Wrap } }
-            Label { Layout.fillWidth: true; text: "1. 复制提示文字。\n2. 打开系统锁屏设置，开启锁定时显示信息。\n3. 粘贴并保存；如有留言，请保留原文后追加。\n\n这是静态留言，手动锁屏或退出应用后仍会显示。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
+            Rectangle {
+                Layout.fillWidth: true; implicitHeight: suggestedMessage.implicitHeight + 32; radius: 8; color: theme.subtle
+                Label {
+                    id: suggestedMessage
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 16 }
+                    text: "建议留言\n" + page.proximity.lockScreenMessage; color: theme.text; font.pixelSize: 16; wrapMode: Text.Wrap
+                }
+            }
+            Label { Layout.fillWidth: true; text: "1. 复制提示文字。\n2. 打开系统锁屏设置，开启锁定时显示信息。\n3. 粘贴并保存；如有留言，请保留原文后追加。\n\n这是静态留言，手动锁屏或退出应用后仍会显示。更换解锁手势后，需重新复制并保存留言。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
             RowLayout {
                 FigmaAction { text: "复制提示文字"; onClicked: page.proximity.copyLockScreenMessage() }
                 FigmaAction { text: "打开系统锁屏设置"; primary: true; onClicked: page.proximity.openLockScreenSettings() }
@@ -185,7 +214,7 @@ UiScrollView {
             Label { Layout.fillWidth: true; text: page.proximity.calibrationStatus; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
             RowLayout {
                 FigmaAction { text: page.proximity.calibrating ? "取消校准" : "关闭"; onClicked: { if (page.proximity.calibrating) page.proximity.cancelCalibration(); calibrationDialog.close() } }
-                FigmaAction { text: "开始 10 秒校准"; primary: true; enabled: !page.proximity.busy; onClicked: page.proximity.startCalibration() }
+                FigmaAction { text: "开始 10 秒校准"; primary: true; enabled: page.canCalibrate; onClicked: page.proximity.startCalibration() }
             }
         }
     }

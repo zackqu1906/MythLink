@@ -1,0 +1,442 @@
+[
+  {
+    "id": "six-replace-sentence",
+    "utterance": "整句替换成：周六下午在北门集合。",
+    "target": "周五上午到南门等候。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ],
+      "modified_text": "周六下午在北门集合。"
+    }
+  },
+  {
+    "id": "six-correct-unit",
+    "utterance": "不是两箱，是两袋",
+    "target": "记得带两箱饼干。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ],
+      "modified_text": "记得带两袋饼干。"
+    }
+  },
+  {
+    "id": "six-explain-name",
+    "utterance": "是木字旁的榆，榆树的榆",
+    "target": "请联系林余。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ],
+      "modified_text": "请联系林榆。"
+    }
+  },
+  {
+    "id": "six-delete-repeat",
+    "utterance": "删掉第二个非常，其他不动",
+    "target": "这个方案非常非常实用。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ],
+      "modified_text": "这个方案非常实用。"
+    }
+  },
+  {
+    "id": "six-insert-opening",
+    "utterance": "在开头加上这句原话：各位同学好。",
+    "target": "下周一交作业。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "insert"
+      ],
+      "modified_text": "各位同学好。下周一交作业。"
+    }
+  },
+  {
+    "id": "six-insert-between",
+    "utterance": "在第一句后面插入：请带学生证。",
+    "target": "九点入场。十点开始。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "insert"
+      ],
+      "modified_text": "九点入场。请带学生证。十点开始。"
+    }
+  },
+  {
+    "id": "six-insert-condition",
+    "utterance": "最后补一句原话：如果下雨就取消。",
+    "target": "周日组织远足。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "insert"
+      ],
+      "modified_text": "周日组织远足。如果下雨就取消。"
+    }
+  },
+  {
+    "id": "six-polish-expand",
+    "utterance": "把延期的原因展开说明，只围绕设备还没到齐，不要增加其他原因",
+    "target": "设备还没到齐，因此需要延期。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "设备",
+        "延期"
+      ]
+    }
+  },
+  {
+    "id": "six-polish-shorten",
+    "utterance": "缩成一句简短的话，保留时间和地点",
+    "target": "这次培训的时间已经确定，是周三下午，地点安排在三楼会议室。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "周三下午",
+        "三楼会议室"
+      ]
+    }
+  },
+  {
+    "id": "six-polish-tone",
+    "utterance": "改成更温和的语气，意思不变",
+    "target": "你现在必须把钥匙还我。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "钥匙"
+      ]
+    }
+  },
+  {
+    "id": "six-format-move",
+    "utterance": "把地点放到时间前面，文字不要改",
+    "target": "时间：周六九点。地点：西门。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "format"
+      ],
+      "modified_text": "地点：西门。时间：周六九点。"
+    }
+  },
+  {
+    "id": "six-format-numbered",
+    "utterance": "只改成编号列表，三项信息一字不漏",
+    "target": "甲负责采购；乙负责安装；丙负责验收。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "format"
+      ],
+      "preserve_text": [
+        "甲负责采购",
+        "乙负责安装",
+        "丙负责验收"
+      ]
+    }
+  },
+  {
+    "id": "six-format-table",
+    "utterance": "把姓名和数量整理成两列表格，不要删减",
+    "target": "小林订了两份，小周订了三份。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "format"
+      ],
+      "preserve_text": [
+        "小林",
+        "两份",
+        "小周",
+        "三份"
+      ]
+    }
+  },
+  {
+    "id": "six-translate-french",
+    "utterance": "翻成法语",
+    "target": "请在周六回复。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "translate"
+      ]
+    }
+  },
+  {
+    "id": "six-translate-name",
+    "utterance": "译成英语，保留Mythlink的拼写",
+    "target": "欢迎试用Mythlink。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "translate"
+      ],
+      "preserve_text": [
+        "Mythlink"
+      ]
+    }
+  },
+  {
+    "id": "six-compose-from-notes",
+    "utterance": "把这些记录当作素材，重新构思一段产品介绍，主体内容由你组织，不必保留原来的句子，不要编造功能",
+    "target": "离线可用。操作步骤少。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ]
+    }
+  },
+  {
+    "id": "six-compose-story",
+    "utterance": "写一个一百字左右的小故事，主角是一只会修钟表的猫，情节由你创作",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ]
+    }
+  },
+  {
+    "id": "six-compose-reply",
+    "utterance": "替我拟个回复，表示可以借给他，但要周五归还",
+    "target": "",
+    "context": {
+      "messages": [
+        {
+          "speaker": "other",
+          "text": "能借你的投影仪用两天吗？"
+        }
+      ]
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ],
+      "preserve_text": [
+        "周五"
+      ]
+    }
+  },
+  {
+    "id": "six-dictation-reported",
+    "utterance": "同事建议把这段话改得温和一些",
+    "target": "你现在必须给我答复。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "six-dictation-plan",
+    "utterance": "我下周准备把这份笔记扩写一下",
+    "target": "实验已经完成。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "six-dictation-literal",
+    "utterance": "逐字记录：把这段扩写成三百字",
+    "target": "今天晴天。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "dictation",
+      "tasks": [],
+      "modified_text": "把这段扩写成三百字"
+    }
+  },
+  {
+    "id": "six-modify-polish",
+    "utterance": "把五公里改成三公里，再压缩成一句话",
+    "target": "我们计划步行五公里，沿途会经过河边和公园，之后返回出发点。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify",
+        "polish"
+      ],
+      "preserve_text": [
+        "三公里",
+        "河边",
+        "公园"
+      ]
+    }
+  },
+  {
+    "id": "six-insert-format",
+    "utterance": "在末尾加上原话：携带水杯。再把全部内容排成编号列表，不要删字",
+    "target": "穿运动鞋。提前十分钟到。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "insert",
+        "format"
+      ],
+      "preserve_text": [
+        "穿运动鞋",
+        "提前十分钟到",
+        "携带水杯"
+      ]
+    }
+  },
+  {
+    "id": "six-polish-format",
+    "utterance": "把每项压缩成短句，再整理成三个编号要点",
+    "target": "第一项工作是购买材料。第二项工作是安装设备。第三项工作是组织验收。",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish",
+        "format"
+      ],
+      "preserve_text": [
+        "购买材料",
+        "安装设备",
+        "组织验收"
+      ]
+    }
+  },
+  {
+    "id": "six-dictation-quantity-no-source",
+    "utterance": "三个工作日",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "six-dictation-name-no-source",
+    "utterance": "我叫林榆，榆树的榆",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "cohort": "new_six_task_boundaries",
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  }
+]

@@ -7,7 +7,6 @@ import time
 
 from ..capabilities import is_music_application
 from ..models import PDF, VIDEO, IMAGE, MUSIC, SceneResult
-from .focus import inspect_focus
 from .playback import PlaybackControls
 from .documents import document_kind
 from .diagnostics import explain, window_rejection
@@ -31,12 +30,9 @@ def detect_content(bundle, profiles, window, focus, attr, *, budget=.30, applica
         rejection = window_rejection(window, read)
         if rejection:
             return done(rejection)
-        snapshot = inspect_focus(window, focus, read)
-        context = snapshot.context
-        details["focus_reason"] = snapshot.reason
-        # Native Electron/WebKit apps may contain embedded web views. Only the
-        # view owning current focus may contribute native-window evidence.
-        web = next((node for node in reversed(snapshot.ancestors) if read(node, "AXRole") == "AXWebArea"), None)
+        # This adapter identifies visible native content, not keyboard focus.
+        # Input arbitration belongs to the live IMK client.
+        context = "unknown"
         document = document_kind(read(window, "AXDocument"))
         # A title alone in a browser/office app is not proof of an open file.
         # Preview does not always expose AXDocument for an image.
@@ -57,8 +53,6 @@ def detect_content(bundle, profiles, window, focus, attr, *, budget=.30, applica
             if read(node, "AXHidden") or read(node, "AXEnabled") is False:
                 continue
             role = read(node, "AXRole")
-            if role == "AXWebArea" and node != web:
-                continue
             labels = " ".join(str(read(node, key) or "") for key in ("AXIdentifier", "AXDescription", "AXSubrole")).casefold()
             controls.observe(node, read)
             play, seek = controls.play, controls.seek

@@ -1,4 +1,9 @@
-"""Single-gesture voice configuration; app/global profiles remain independent."""
+"""Gesture-to-action configuration shared by automatic and manual voice modes.
+
+This maps user bindings, not spoken intent. Automatic mode still uses configured
+start/end/cancel actions; Clef decides the text task after the utterance finishes.
+App/global profiles remain independent.
+"""
 from ...gestures.gesture_settings import GestureBindings, GESTURE_LABELS
 
 

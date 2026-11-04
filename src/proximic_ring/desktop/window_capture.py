@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 
 from .window_selector import same_rect
+from ..platforms.macos.screen_capture import configure_window_preview
 
 MAX_STREAMS = 12
 PREVIEW_FPS = 30
@@ -137,11 +138,7 @@ class WindowCapture:
             config.setMinimumFrameInterval_(self.CM.CMTimeMake(1, PREVIEW_FPS))
             config.setQueueDepth_(3)
             config.setShowsCursor_(False)
-            config.setCapturesAudio_(False)
-            config.setCaptureMicrophone_(False)
-            config.setPreservesAspectRatio_(True)
-            config.setIgnoreShadowsSingleWindow_(True)
-            config.setIncludeChildWindows_(False)
+            configure_window_preview(config)
             content_filter = self.SC.SCContentFilter.alloc().initWithDesktopIndependentWindow_(window)
             stream = self.SC.SCStream.alloc().initWithFilter_configuration_delegate_(content_filter, config, None)
             output = self.Output.alloc().init()

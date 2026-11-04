@@ -24,10 +24,10 @@ Basic.Button {
     onSelectedGestureChanged: if (selectedGesture === definition.key || selectedGesture === definition.doubleKey) doubleTrigger = selectedGesture === definition.doubleKey
     objectName: "gestureCard_" + definition.key
     width: definition.width; height: 76
-    padding: 0; hoverEnabled: true
+    padding: 0; hoverEnabled: enabled
     topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
     Accessible.name: definition.title + (segmented ? (doubleTrigger ? "，双次" : "，单次") : "") + "，" + hint
-    ToolTip.visible: hovered; ToolTip.delay: 450; ToolTip.text: hint
+    ToolTip.visible: (enabled && hovered); ToolTip.delay: 450; ToolTip.text: hint
     function activateGesture() {
         if (voiceEditable && hasVoice && !dualMapping) mappingChosen(currentGesture, true)
         else gestureChosen(currentGesture)
@@ -35,7 +35,7 @@ Basic.Button {
     onClicked: activateGesture()
     background: Rectangle {
         radius: 12
-        color: chip.down ? theme.selection : chip.selected ? theme.selection : chip.hovered ? theme.subtle : chip.definition.touch ? theme.subtle : theme.surface
+        color: chip.down ? theme.selection : chip.selected ? theme.selection : (chip.enabled && chip.hovered) ? theme.subtle : chip.definition.touch ? theme.subtle : theme.surface
         border.color: chip.visualFocus || chip.selected ? theme.primary : chip.definition.outline || theme.line
         border.width: chip.visualFocus ? 2 : 1
         Behavior on color { ColorAnimation { duration: 90 } }
@@ -71,11 +71,11 @@ Basic.Button {
                         required property bool modelData
                         objectName: modelData ? "gestureCard_" + chip.definition.doubleKey : "gestureSingle_" + chip.definition.key
                         width: (parent.width) / 2; height: 24; padding: 0
-                        topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0; hoverEnabled: true
+                        topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0; hoverEnabled: enabled
                         checked: chip.doubleTrigger === modelData
                         Accessible.name: chip.definition.title + (modelData ? "，双次" : "，单次")
                         onClicked: { chip.doubleTrigger = modelData; chip.activateGesture() }
-                        background: Rectangle { radius: 4; color: trigger.down ? theme.selection : trigger.checked ? theme.surface : trigger.hovered ? theme.selection : "transparent"; border.width: trigger.visualFocus ? 1 : 0; border.color: theme.primary }
+                        background: Rectangle { radius: 4; color: trigger.down ? theme.selection : trigger.checked ? theme.surface : (trigger.enabled && trigger.hovered) ? theme.selection : "transparent"; border.width: trigger.visualFocus ? 1 : 0; border.color: theme.primary }
                         contentItem: Label { text: trigger.modelData ? "双" : "单"; font.family: theme.family; font.pixelSize: 14; font.weight: Font.Medium; color: trigger.checked ? theme.primary : theme.muted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     }
                 }

@@ -63,57 +63,40 @@ def test_computer_input_startup_and_recognition_do_not_read_ring_audio(monkeypat
 
 
 @pytest.mark.parametrize('startup_failed', [False, True])
-def test_touchpad_suspends_computer_capture_and_remote_pipeline_even_if_startup_fails(monkeypatch, startup_failed):
-    state, processed, calls = {}, [], []
+def test_touchpad_does_not_interrupt_computer_capture_or_recognition(monkeypatch, startup_failed):
+    state, processed, calls, statuses = {}, [], [], []
     class Ring:
         error = None
-        def __init__(self, **kwargs):
-            self._touchpad_audio_suspended = threading.Event()
-            state['ring'] = self
+        def __init__(self, **kwargs): state['ring'] = self
         def connect(self): pass
         def start_stream(self, **kwargs): pass
         def close(self): pass
     class Mic:
         error = None
         device_name = 'Selected microphone'
-        def __init__(self, **kwargs):
-            self._capture_paused = threading.Event()
-            self.proved = False
-            state['mic'] = self
+        def __init__(self, **kwargs): self.reads = 0
         def open(self): pass
-        def close(self): calls.append('close')
-        def pause_capture(self):
-            self._capture_paused.set()
-            calls.append('pause')
-        def resume_capture(self):
-            self._capture_paused.clear()
-            calls.append('resume')
+        def close(self): pass
+        def pause_capture(self): pytest.fail('Touchpad stopped computer capture')
         def read(self, frames):
-            assert not self._capture_paused.is_set()
-            if not self.proved:
-                self.proved = True
-                return np.ones(frames, np.float32)
-            state['recognition_before_eof'] = enabled.is_set()
-            return None
+            self.reads += 1
+            return np.ones(frames, np.float32) if self.reads <= 3 else None
     class Detector:
         def reset(self): pass
-        def feed(self, block): pytest.fail('Suspended audio reached the detector')
+        def feed(self, block): return []
     class Controller:
         active = False
         def reset(self): pass
         def discard_current(self): calls.append('discard')
         def cancel_pending(self): calls.append('cancel')
-        def process(self, *args, **kwargs): processed.append(args)
+        def process(self, block, *args, **kwargs):
+            assert enabled.is_set()
+            assert state['ring'].touchpad_active == (not startup_failed)
+            processed.append(block.copy())
         def close(self): pass
     def started():
-        state['ring']._touchpad_audio_suspended.set()
-        state['ring']._pause_external_audio()
-        if startup_failed:
-            state['ring']._touchpad_audio_suspended.clear()
-    def status(message):
-        if message == '[ASR] CANCELLED reason=touchpad':
-            assert state['mic']._capture_paused.is_set() and not processed
-            state['ring']._touchpad_audio_suspended.clear()
+        state['ring'].touchpad_active = not startup_failed
+        assert not hasattr(state['ring'], '_pause_external_audio')
     monkeypatch.setattr(app_runtime, 'RingAudioSource', Ring)
     monkeypatch.setattr(app_runtime, 'MicrophoneSource', Mic)
     monkeypatch.setattr(app_runtime, '_build_detector', lambda *_: Detector())
@@ -122,12 +105,10 @@ def test_touchpad_suspends_computer_capture_and_remote_pipeline_even_if_startup_
     app_runtime.RecognitionRuntime(app_runtime.RuntimeSettings(
         audio_source='microphone', speech_control_mode='proximity', asr_end_on_tap=False,
         push_to_talk=False,
-    )).run(threading.Event(), enabled, on_update=lambda _: None, on_state=status,
+    )).run(threading.Event(), enabled, on_update=lambda _: None, on_state=statuses.append,
            on_connected=lambda: None, on_disconnected=lambda: None, on_started=started)
-    assert not processed and 'resume' in calls and calls.index('pause') < calls.index('resume')
-    assert state['recognition_before_eof']  # EOF itself closes the recognition gate.
-    if not startup_failed:
-        assert calls.count('discard') == calls.count('cancel') == 1
+    assert len(processed) == 2 and not calls
+    assert not any('reason=touchpad' in message for message in statuses)
 
 
 def test_runtime_finishes_old_turn_waits_for_commit_and_keeps_gestures_and_session_ids(monkeypatch):

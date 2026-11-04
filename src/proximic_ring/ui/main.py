@@ -133,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     scene_notice = SceneNoticeController(controller.appGestures, app,
         busy=lambda: feedback_block_reason(controller, suggestion=application_onboarding))
     scene_notice_overlay = SceneNoticeOverlay(scene_notice, app)
+    from .proximity.proximity_lock_overlay import ProximityLockOverlay
+    proximity_lock_overlay = ProximityLockOverlay(controller.proximity, app)
     # Load model weights and seed both stable prompt prefixes after the first
     # frame instead of making the user's first utterance pay this cost.
     if startup_probe:

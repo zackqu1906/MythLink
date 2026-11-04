@@ -15,6 +15,9 @@ from proximic_ring.text_processing import (
 
 
 def test_default_local_llm_catalog_is_pinned_and_relocatable(tmp_path, monkeypatch):
+    from proximic_ring.text_processing import local_server
+
+    monkeypatch.setattr(local_server, "bundled_local_runtime", lambda _runtime: None)
     catalog = load_local_llm_catalog()
     runtime = catalog["runtimes"][catalog["defaultRuntime"]]
     model = catalog["models"][catalog["defaultModel"]]

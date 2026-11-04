@@ -7,15 +7,23 @@ import QtQuick.Window
 UiScrollView {
     id: page
     required property var controller
+    signal browserSetupRequested(string browser)
     FigmaTheme { id: theme }
     objectName: "gesturesPage"
     property bool applicationScope: false
     property string selectedGesture: ""
     readonly property var catalog: controller.appGestures.catalog
     readonly property string selectedApp: catalog.selectedApp
+    readonly property string extensionBrowser: selectedApp.toLowerCase() === "com.google.chrome" ? "chrome"
+                                               : selectedApp.toLowerCase() === "com.apple.safari" ? "safari" : ""
+    readonly property bool browserConnected: extensionBrowser === "chrome" ? controller.browserExtensions.chromeConnected
+                                            : extensionBrowser === "safari" && controller.browserExtensions.safariConnected
     // Catalog state/menu refreshes must not recreate a pressed application tab.
     readonly property string applicationTabsJson: JSON.stringify(catalog.apps)
     readonly property var applicationTabsModel: JSON.parse(applicationTabsJson)
+    // Presentation-only filtering: retain every saved scene and runtime mapping.
+    function sceneVisible(value) { return value === "regular" || value === "video" || value === "presentation" }
+    readonly property var visibleAddableScenes: catalog.addableScenes.filter(function(scene) { return page.sceneVisible(scene.value) })
     readonly property bool sceneScope: applicationScope && catalog.selectedScene !== "regular"
     readonly property bool showVoiceMappings: controller.recognitionEnabled
     readonly property var selectedApplication: catalog.apps.filter(function(app) { return app.value === page.selectedApp })[0] || null
@@ -28,6 +36,7 @@ UiScrollView {
         managementFeedback = ""
         applicationScope = true
         if (selectedApp !== bundle) catalog.selectApplication(bundle)
+        if (!sceneVisible(catalog.selectedScene)) catalog.selectScene("regular")
     }
     function addApplication() { addDialog.open() }
     readonly property var gestures: [
@@ -86,25 +95,71 @@ UiScrollView {
     }
     clip: true
     contentWidth: availableWidth
+    // Keep app, scene and editing controls in view; the hand map fits the rest.
+    contentHeight: availableHeight
+    Binding { target: page.contentItem; property: "interactive"; value: false }
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
     ScrollBar.vertical.policy: ScrollBar.AlwaysOff
     FigmaDialog {
         id: priorityRules
         objectName: "voiceGesturePriorityRules"
         parent: Overlay.overlay; anchors.centerIn: parent
-        width: Math.min(400, page.Window.width - 48); padding: 20
+        title: "语音手势规则"
+        width: Math.min(460, page.Window.width - 48)
+        padding: 24; topPadding: 4
         modal: true; popupType: Popup.Item
-        background: Rectangle { radius: 12; color: theme.surface; border.color: theme.line }
+        background: Rectangle { radius: 16; color: theme.background; border.color: theme.line }
         contentItem: ColumnLayout {
             spacing: 12
-            Label { text: "语音优先与生效规则"; color: theme.text; font.family: theme.family; font.pixelSize: 18; font.weight: Font.Medium }
-            Label { Layout.fillWidth: true; text: "语音手势可以与应用、全局配置重叠，\n不会删除或关闭普通映射。"; wrapMode: Text.Wrap; color: theme.text; font.family: theme.family; font.pixelSize: 16 }
-            Label { text: "输入框内或语音操作中"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
-            Label { Layout.fillWidth: true; text: "已绑定的语音手势优先执行输入功能；语音会话进行中继续由本次输入接管。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
-            Label { text: "其他手势"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
-            Label { Layout.fillWidth: true; text: "未与语音绑定重叠的手势仍按应用配置优先、全局配置兜底执行，无需输入框失焦。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
-            Label { Layout.fillWidth: true; text: "语音绑定在语音页的「配置手势」中修改，对所有应用生效。每个语音功能只绑定一个手势；同一事件只执行一次。"; wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14 }
-            FigmaAction { Layout.fillWidth: true; text: "知道了"; font.pixelSize: 16; onClicked: priorityRules.close() }
+            Label {
+                Layout.fillWidth: true
+                text: "同一次手势只执行一个功能，原有映射保留。"
+                wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14
+            }
+            Rectangle {
+                Layout.fillWidth: true; implicitHeight: inputRule.implicitHeight + 28
+                radius: 12; color: theme.subtle; border.color: theme.line
+                ColumnLayout {
+                    id: inputRule
+                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                    anchors.margins: 14; spacing: 6
+                    RowLayout {
+                        spacing: 8
+                        FigmaIcon { symbol: "microphone"; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
+                        Label { text: "输入框内或语音操作中"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: "与语音绑定重叠时，优先执行语音功能。未重叠的手势继续使用应用或全局配置。"
+                        wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14
+                    }
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true; implicitHeight: defaultRule.implicitHeight + 28
+                radius: 12; color: theme.surface; border.color: theme.line
+                ColumnLayout {
+                    id: defaultRule
+                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                    anchors.margins: 14; spacing: 6
+                    RowLayout {
+                        spacing: 8
+                        FigmaIcon { symbol: "gesture"; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
+                        Label { text: "其他时候"; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: "优先使用当前应用的配置；未配置的手势沿用全局默认。"
+                        wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 14
+                    }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "语音绑定在「语音输入 → 配置手势」中修改，对所有应用生效。每个语音功能只绑定一个手势。"
+                wrapMode: Text.Wrap; color: theme.muted; font.family: theme.family; font.pixelSize: 13
+            }
+            FigmaAction { objectName: "closeVoiceGesturePriorityRules"; Layout.fillWidth: true; text: "知道了"; primary: true; font.pixelSize: 16; onClicked: priorityRules.close() }
         }
     }
     AddGestureApplicationDialog {
@@ -131,7 +186,7 @@ UiScrollView {
         contentItem: ColumnLayout {
             spacing: 14
             Label { Layout.fillWidth: true; text: "选择要添加的场景，自动配置对应的手势；原有场景和快捷键会保留。"; wrapMode: Text.Wrap; color: theme.muted }
-            FigmaSelect { id: purposeChoice; objectName: "applicationPurposeChoice"; Layout.fillWidth: true; model: page.catalog.addableScenes; textRole: "label"; valueRole: "value" }
+            FigmaSelect { id: purposeChoice; objectName: "applicationPurposeChoice"; Layout.fillWidth: true; model: page.visibleAddableScenes; textRole: "label"; valueRole: "value" }
         }
         footer: DialogButtonBox {
             padding: 18
@@ -217,9 +272,14 @@ UiScrollView {
         }
     }
     ColumnLayout {
-        width: page.availableWidth; spacing: 16
+        width: page.availableWidth
+        height: Math.min(page.availableHeight, implicitHeight)
+        spacing: 12
         GestureHandMap {
-            Layout.fillWidth: true; Layout.preferredHeight: implicitHeight
+            id: handMap
+            Layout.fillWidth: true; Layout.fillHeight: true
+            Layout.minimumHeight: 0; Layout.maximumHeight: implicitHeight
+            Layout.preferredHeight: implicitHeight
             selectedGesture: page.selectedGesture
             voiceActive: page.controller.recognitionEnabled
             voiceEditable: false
@@ -235,9 +295,10 @@ UiScrollView {
                     objectName: "gestureVoicePriorityCard"
                     radius: 12; color: theme.surface; border.color: theme.line
                     ColumnLayout {
-                        anchors.fill: parent; anchors.margins: 13; spacing: 8
+                        anchors.fill: parent; anchors.margins: handMap.compact ? 8 : 13
+                        spacing: handMap.compact ? 4 : 8
                         Label { Layout.fillWidth: true; text: "语音输入规则"; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text }
-                        Label { Layout.fillWidth: true; Layout.fillHeight: true; text: "输入时优先使用语音手势，其他时候使用应用或全局功能。"; font.family: theme.family; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
+                        Label { visible: !handMap.compact; Layout.fillWidth: true; Layout.fillHeight: true; text: "输入时优先使用语音手势，其他时候使用应用或全局功能。"; font.family: theme.family; font.pixelSize: 14; color: theme.muted; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
                         FigmaAction {
                             objectName: "voiceGesturePriorityRulesButton"
                             Layout.fillWidth: true; Layout.preferredHeight: 32
@@ -284,20 +345,60 @@ UiScrollView {
                             Basic.ToolTip {
                                 objectName: "applicationTooltip_" + appTab.modelData.value
                                 parent: appTab; popupType: Popup.Item; y: -height - 8
-                                visible: appTab.hovered; delay: 350; text: appTab.modelData.label
+                                visible: (appTab.enabled && appTab.hovered); delay: 350; text: appTab.modelData.label
                                 focus: false; modal: false; closePolicy: Popup.NoAutoClose
                             }
                             onClicked: page.selectApplication(modelData.value)
-                            background: Rectangle { radius: 8; color: appTab.checked || appTab.down ? theme.selection : appTab.hovered ? theme.subtle : "transparent"; border.width: appTab.visualFocus ? 1 : 0; border.color: theme.primary }
+                            background: Rectangle { radius: 8; color: appTab.checked || appTab.down ? theme.selection : (appTab.enabled && appTab.hovered) ? theme.subtle : "transparent"; border.width: appTab.visualFocus ? 1 : 0; border.color: theme.primary }
                             contentItem: Item {
                                 ApplicationIcon { anchors.centerIn: parent; width: 28; height: 28; bundle: modelData.value; applicationPath: modelData.path || ""; label: modelData.label }
                             }
                         }
                     }
                     FigmaAction {
-                        objectName: "manageGestureConfigurationButton"; text: "配置管理"; quiet: true
+                        objectName: "manageApplicationButton"; text: "管理应用"; quiet: true
                         visible: page.applicationScope; Layout.preferredHeight: 32
-                        onClicked: page.contentItem.contentY = Math.max(0, Math.min(applicationManagementBar.y - 8, page.contentHeight - page.availableHeight))
+                        onClicked: applicationMenu.open()
+                        FigmaMenu {
+                            id: applicationMenu
+                            objectName: "applicationManagementMenu"
+                            FigmaMenuItem {
+                                objectName: "refreshApplicationMenu"
+                                text: page.catalog.busy ? "读取中…" : "刷新快捷键"
+                                enabled: !page.catalog.busy
+                                onTriggered: page.catalog.refreshMenu()
+                            }
+                            FigmaMenuItem {
+                                objectName: "changeApplicationPurpose"
+                                text: "添加场景"
+                                visible: page.visibleAddableScenes.length > 0
+                                height: visible ? implicitHeight : 0
+                                onTriggered: purposeDialog.open()
+                            }
+                            FigmaMenuItem {
+                                objectName: "disableApplicationScene"
+                                text: "停用当前场景（保留配置）"
+                                visible: page.sceneScope; height: visible ? implicitHeight : 0
+                                onTriggered: page.catalog.disableScene(page.catalog.selectedScene)
+                            }
+                            FigmaMenuItem {
+                                objectName: "restoreDefaultApplicationMappings"
+                                text: "恢复默认映射"
+                                enabled: page.catalog.hasDefaultMappings
+                                onTriggered: managementDialog.review("restore")
+                            }
+                            FigmaMenuItem {
+                                objectName: "clearApplicationMappings"
+                                destructive: true
+                                text: "清空此应用的映射"
+                                enabled: {
+                                    var bindings = page.catalog.bindings
+                                    return page.catalog.bindingCount(page.selectedApp) > 0 || page.catalog.pendingDefaultCount > 0
+                                }
+                                onTriggered: managementDialog.review("clear")
+                            }
+                            FigmaMenuItem { objectName: "removeGestureApplication"; destructive: true; text: "移除应用"; onTriggered: managementDialog.review("remove") }
+                        }
                     }
                     FigmaAction {
                         objectName: "addGestureApplicationButton"; text: "添加应用"; navigation: true
@@ -308,78 +409,80 @@ UiScrollView {
                 }
             }
         }
+        Rectangle {
+            id: applicationManagementBar
+            objectName: "applicationManagementBar"
+            visible: page.applicationScope && Boolean(page.selectedApplication)
+            Layout.fillWidth: true; Layout.preferredHeight: implicitHeight
+            implicitHeight: modeRow.implicitHeight + 16
+            radius: 12; color: theme.subtle
+            RowLayout {
+                id: modeRow
+                anchors.left: parent.left; anchors.right: parent.right
+                anchors.top: parent.top; anchors.margins: 8
+                spacing: 12
+                Flow {
+                    id: sceneOptions
+                    objectName: "applicationSceneBar"
+                    Layout.fillWidth: true; Layout.minimumWidth: 0
+                    Layout.preferredHeight: implicitHeight
+                    Layout.alignment: Qt.AlignTop
+                    spacing: 6
+                    Label {
+                        width: Math.min(implicitWidth, 160); height: 32
+                        leftPadding: 6; rightPadding: 10
+                        text: page.selectedApplication ? page.selectedApplication.label : ""
+                        color: theme.muted; font.family: theme.family; font.pixelSize: 13
+                        verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                    }
+                    Repeater {
+                        model: page.catalog.availableScenes
+                        FigmaAction {
+                            required property var modelData
+                            objectName: modelData.value + "GestureScene"; text: modelData.label
+                            visible: page.sceneVisible(modelData.value)
+                            implicitHeight: 32; leftPadding: 12; rightPadding: 12
+                            primary: page.catalog.selectedScene === modelData.value
+                            quiet: !primary
+                            Accessible.role: Accessible.PageTab
+                            onClicked: page.catalog.selectScene(modelData.value)
+                        }
+                    }
+                    FigmaAction {
+                        objectName: "addApplicationSceneButton"; text: "+ 添加场景"
+                        implicitHeight: 32; leftPadding: 12; rightPadding: 12; quiet: true
+                        contentColor: theme.primary
+                        visible: page.visibleAddableScenes.length > 0
+                        onClicked: purposeDialog.open()
+                    }
+                }
+                RowLayout {
+                    objectName: "gestureBrowserExtensionEntry"
+                    visible: Qt.platform.os === "osx" && page.extensionBrowser.length > 0
+                    Layout.alignment: Qt.AlignRight | Qt.AlignTop
+                    spacing: 10
+                    Label {
+                        objectName: "gestureBrowserExtensionHint"
+                        text: page.browserConnected ? "插件已连接" : "安装插件，启用网页控制"
+                        color: page.browserConnected ? theme.success : theme.muted
+                        font.family: theme.family; font.pixelSize: 12
+                    }
+                    FigmaAction {
+                        objectName: "gestureBrowserExtensionButton"
+                        implicitHeight: 32; leftPadding: 12; rightPadding: 12
+                        text: page.browserConnected ? "管理插件" : "安装插件"
+                        primary: !page.browserConnected
+                        onClicked: page.browserSetupRequested(page.extensionBrowser)
+                    }
+                }
+            }
+        }
         GestureActionEditor {
             id: actionEditor
             Layout.fillWidth: true; Layout.preferredHeight: implicitHeight
             service: page.controller.appGestures; globalController: page.controller.ringGestures; voiceController: page.controller
             gesture: page.selectedGesture; gestureTitle: page.selectedTitle
             currentDescription: page.description(page.selectedGesture); applicationScope: page.applicationScope
-        }
-        ColumnLayout {
-            id: applicationManagementBar
-            objectName: "applicationManagementBar"
-            visible: page.applicationScope && Boolean(page.selectedApplication)
-            Layout.fillWidth: true; spacing: 8
-            RowLayout {
-                Layout.fillWidth: true
-                Label { Layout.fillWidth: true; text: page.selectedApplication ? page.selectedApplication.label : ""; color: theme.text; font.pixelSize: 16; font.weight: Font.Medium; elide: Text.ElideRight }
-                FigmaAction { objectName: "refreshApplicationMenu"; text: page.catalog.busy ? "读取中…" : "刷新快捷键"; quiet: true; implicitHeight: 32; enabled: !page.catalog.busy; onClicked: page.catalog.refreshMenu() }
-                FigmaAction {
-                    id: manageApplicationButton
-                    objectName: "manageApplicationButton"; text: "管理应用"; implicitHeight: 32
-                    onClicked: applicationMenu.open()
-                FigmaMenu {
-                    id: applicationMenu
-                    objectName: "applicationManagementMenu"
-                    FigmaMenuItem {
-                        objectName: "changeApplicationPurpose"
-                        text: "添加场景"
-                        visible: page.catalog.addableScenes.length > 0
-                        height: visible ? implicitHeight : 0
-                        onTriggered: purposeDialog.open()
-                    }
-                    FigmaMenuItem {
-                        objectName: "disableApplicationScene"
-                        text: "停用当前场景（保留配置）"
-                        visible: page.sceneScope; height: visible ? implicitHeight : 0
-                        onTriggered: page.catalog.disableScene(page.catalog.selectedScene)
-                    }
-                    FigmaMenuItem {
-                        objectName: "restoreDefaultApplicationMappings"
-                        text: "恢复默认映射"
-                        enabled: page.catalog.hasDefaultMappings
-                        onTriggered: managementDialog.review("restore")
-                    }
-                    FigmaMenuItem {
-                        objectName: "clearApplicationMappings"
-                        destructive: true
-                        text: "清空此应用的映射"
-                        enabled: {
-                            var bindings = page.catalog.bindings
-                            return page.catalog.bindingCount(page.selectedApp) > 0 || page.catalog.pendingDefaultCount > 0
-                        }
-                        onTriggered: managementDialog.review("clear")
-                    }
-                    FigmaMenuItem { objectName: "removeGestureApplication"; destructive: true; text: "移除应用"; onTriggered: managementDialog.review("remove") }
-                }
-
-                }
-            }
-            Flow {
-                objectName: "applicationSceneBar"
-                visible: page.catalog.availableScenes.length > 1 || page.catalog.addableScenes.length > 0
-                Layout.fillWidth: true; spacing: 8
-                Repeater {
-                    model: page.catalog.availableScenes
-                    FigmaAction {
-                        required property var modelData
-                        objectName: modelData.value + "GestureScene"; text: modelData.label; implicitHeight: 32
-                        primary: page.catalog.selectedScene === modelData.value
-                        onClicked: page.catalog.selectScene(modelData.value)
-                    }
-                }
-                FigmaAction { objectName: "addApplicationSceneButton"; text: "添加场景"; implicitHeight: 32; visible: page.catalog.addableScenes.length > 0; onClicked: purposeDialog.open() }
-            }
         }
         Label {
             objectName: "applicationManagementFeedback"

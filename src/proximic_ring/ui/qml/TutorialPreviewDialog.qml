@@ -62,8 +62,9 @@ FigmaDialog {
         ColumnLayout {
             width: viewport.availableWidth; spacing: 20
             Label {
+                visible: text.length > 0
                 Layout.fillWidth: true; color: theme.muted; font.pixelSize: 16; wrapMode: Text.Wrap
-                text: ["先用一句话，学会语音输入", "连接 Ring，并完成语音输入准备", "把想表达的话变成文字", "让刚才的表达更简洁、通顺", "用一句修改指令编辑原文", dialog.demonstration ? "操作示意不计为真实设备测试" : "现在可以回到日常应用中使用"][dialog.step]
+                text: ["", "连接 Ring，并完成语音输入准备", "把想表达的话变成文字", "让刚才的表达更简洁、通顺", "用一句修改指令编辑原文", dialog.demonstration ? "操作示意不计为真实设备测试" : "现在可以回到日常应用中使用"][dialog.step]
             }
             Rectangle {
                 visible: dialog.step === 0
@@ -95,9 +96,21 @@ FigmaDialog {
                     }
                     Flow {
                         Layout.fillWidth: true; spacing: 12
-                        FigmaAction { objectName: "tutorialPrepareButton"; text: "连接并开始学习"; primary: true; font.pixelSize: 16; onClicked: dialog.step = 1 }
-                        FigmaAction { objectName: "tutorialDemoButton"; text: "先看操作示意"; font.pixelSize: 16; onClicked: dialog.begin(true) }
-                        FigmaAction { text: "稍后学习"; navigation: true; onClicked: dialog.close() }
+                        FigmaAction {
+                            objectName: "tutorialPrepareButton"
+                            text: "开始学习"; primary: true
+                            width: 144; height: 40; font.pixelSize: 16
+                            onClicked: dialog.step = 1
+                        }
+                        FigmaAction {
+                            objectName: "tutorialLeaveButton"
+                            text: "离开"; primary: true
+                            width: 144; height: 40; font.pixelSize: 16
+                            primaryColor: "#B44852"
+                            primaryHoverColor: "#C35A64"
+                            primaryPressedColor: "#933843"
+                            onClicked: dialog.close()
+                        }
                     }
                 }
             }
@@ -167,7 +180,7 @@ FigmaDialog {
                         VoiceAudioTest { Layout.fillWidth: true; practice: dialog.practice }
                         FigmaAction { objectName: "tutorialBeginButton"; Layout.fillWidth: true; text: "开始真实练习"; primary: true; enabled: dialog.controller.connected && dialog.controller.recognitionEnabled; onClicked: dialog.begin(false) }
                         Label { Layout.fillWidth: true; visible: text.length > 0; text: dialog.tutorial.message; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
-                        FigmaAction { text: "先看操作示意"; navigation: true; onClicked: dialog.begin(true) }
+                        FigmaAction { objectName: "tutorialDemoButton"; text: "先看操作示意"; navigation: true; onClicked: dialog.begin(true) }
                         Label { Layout.fillWidth: true; text: "示意学习不计为真实设备测试。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
                     }
                 }

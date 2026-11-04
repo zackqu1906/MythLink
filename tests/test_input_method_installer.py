@@ -368,6 +368,7 @@ def development_installer(installer, tmp_path, monkeypatch):
     for name in ('native/ProxiMicInput/Info.plist', 'scripts/build-input-method.sh',
                  'scripts/InputMethodAdmin.swift', 'scripts/InputSourceSelection.swift',
                  'tools/build_input_method.py', 'src/proximic_ring/voice/ime/component_fingerprint.py',
+                 'packaging/macos-target.txt',
                  'native/ProxiMicInput/Sources/ActionPanel.swift',
                  'native/ProxiMicInput/Resources/VoiceHud/gesture-tap.svg'):
         path = root / name

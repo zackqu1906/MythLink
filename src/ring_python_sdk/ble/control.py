@@ -161,8 +161,8 @@ async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
         if version and (12, 0) <= version < (12, 3):
             scanner_options["service_uuids"] = [NUS_SERVICE_UUID]
     scanner = BleakScanner(**scanner_options)
-    await scanner.start()
     try:
+        await scanner.start()
         await asyncio.sleep(timeout)
     finally:
         await scanner.stop()

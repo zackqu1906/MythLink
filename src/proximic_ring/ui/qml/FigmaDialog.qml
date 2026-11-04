@@ -16,7 +16,7 @@ Basic.Dialog {
             anchors.fill: parent
             anchors.leftMargin: 24; anchors.rightMargin: 20; anchors.topMargin: 24; anchors.bottomMargin: 8
             Label { Layout.fillWidth: true; text: dialog.title; font.family: theme.family; font.pixelSize: 22; font.weight: Font.Medium; color: theme.text }
-            FigmaAction { symbol: "close"; quiet: true; implicitWidth: 32; implicitHeight: 32; Accessible.name: "关闭"; onClicked: dialog.close() }
+            FigmaAction { objectName: dialog.objectName + "CloseButton"; symbol: "close"; quiet: true; implicitWidth: 32; implicitHeight: 32; Accessible.name: "关闭"; onClicked: dialog.close() }
         }
     }
     background: Rectangle {

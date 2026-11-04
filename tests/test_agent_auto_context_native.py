@@ -15,6 +15,8 @@ from PySide6.QtWidgets import QApplication, QWidget
 from PySide6.QtTest import QTest
 from proximic_ring.agent_workflow.capture.auto_context import capture_window, current_target
 from proximic_ring.agent_workflow.capture.capture_controller import CaptureController
+from proximic_ring.platforms.macos import screen_capture
+if __import__('sys').argv[4]=='macos13':screen_capture.screenshot_manager=lambda _:None
 
 app=QApplication([])
 window=QWidget()
@@ -65,6 +67,20 @@ image=result[0]
 pixel=image.pixelColor(image.width()//2,image.height()//2)
 assert max(abs(a-b) for a,b in zip(pixel.getRgb()[:3],(57,168,107)))<12,pixel.name()
 assert image.width()>=test_width and image.height()>=test_height
+if __import__('sys').argv[4]=='macos13':
+    from Foundation import NSMutableData
+    from PySide6.QtGui import QImage
+    # This rectangle is inside the synthetic green canvas and covered by the
+    # synthetic red Agent panel. Exercise the legacy display compositing API.
+    cg=screen_capture.legacy_screen_image(Quartz,(window.x()+110,window.y()+110,40,40),set(excluded))
+    assert cg is not None
+    data=NSMutableData.data()
+    dest=Quartz.CGImageDestinationCreateWithData(data,'public.png',1,None)
+    Quartz.CGImageDestinationAddImage(dest,cg,None)
+    assert Quartz.CGImageDestinationFinalize(dest)
+    sample=QImage.fromData(bytes(data),'PNG')
+    color=sample.pixelColor(sample.width()//2,sample.height()//2)
+    assert max(abs(a-b) for a,b in zip(color.getRgb()[:3],(57,168,107)))<12,color.name()
 image.save(str(Path(__import__('sys').argv[1])/'automatic-context-canvas.png'))
 print(json.dumps(dict(window_id=target['window_id'],width=image.width(),
                       height=image.height(),center=pixel.name(),single_window=True,
@@ -77,9 +93,10 @@ overlay.close();window.close()
 @pytest.mark.skipif(sys.platform!='darwin' or os.environ.get('PROXIMIC_TEST_AUTO_CONTEXT_NATIVE')!='1',
                    reason='opt-in synthetic native window capture')
 @pytest.mark.parametrize('size',[(520,340),(1180,760)])
-def test_screen_capture_kit_exact_window(tmp_path,size):
+@pytest.mark.parametrize('backend',['automatic','macos13'])
+def test_screen_capture_kit_exact_window(tmp_path,size,backend):
     script=tmp_path/'auto_context_probe.py';script.write_text(SCRIPT)
-    result=subprocess.run([sys.executable,str(script),str(tmp_path),*map(str,size)],
+    result=subprocess.run([sys.executable,str(script),str(tmp_path),*map(str,size),backend],
         env={**os.environ,'QT_QPA_PLATFORM':'cocoa','QT_QUICK_CONTROLS_STYLE':'Basic',
              'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src')},
         capture_output=True,text=True,timeout=30)

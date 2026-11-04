@@ -24,15 +24,16 @@ ColumnLayout {
             anchors { left: parent.left; right: parent.right; top: parent.top; margins: 20 }
             spacing: 14
             FigmaFormRow {
-                title: "离开锁屏，弹指解锁"
-                description: "戴着戒指离开后自动锁屏。快捷键、菜单或系统空闲锁屏后，也可直接弹指解锁，无需先离开再返回。"
+                title: "离开锁屏，手势解锁"
+                description: "戴着戒指离开后自动锁屏。快捷键、菜单或系统空闲锁屏后，也可使用所选手势解锁，无需先离开再返回。"
                 controlWidth: 48
                 FigmaSwitch {
                     objectName: "proximityEnabled"
                     Layout.alignment: Qt.AlignRight
-                    Accessible.name: "离开锁屏，弹指解锁"
+                    Accessible.name: "离开锁屏，手势解锁"
                     checked: pane.controller.enabled
-                    enabled: !pane.controller.busy
+                    enabled: pane.host.connected && !pane.host.busy
+                             && !pane.host.scanBusy && !pane.controller.busy
                     onClicked: {
                         pane.controller.enabled = checked
                         // An unmet prerequisite can reject enabling; show the actual state.
@@ -81,7 +82,8 @@ ColumnLayout {
                 Layout.alignment: Qt.AlignRight
                 text: pane.controller.calibrating ? "正在校准…" : pane.hasCalibration ? "重新校准（10 秒）" : "开始 10 秒校准"
                 primary: !pane.hasCalibration
-                enabled: !pane.controller.busy
+                enabled: pane.host.connected && !pane.host.busy
+                         && !pane.host.scanBusy && !pane.controller.busy
                 onClicked: pane.controller.startCalibration()
             }
             FigmaAction {
@@ -209,7 +211,7 @@ ColumnLayout {
 
     FigmaFormGroup {
         title: "锁屏提示"
-        description: "可选：在系统锁屏界面显示弹指解锁的使用提示。"
+        description: "可选：在系统锁屏界面显示手势解锁的使用提示。"
         FigmaFormRow {
             title: "提示文字"
             description: pane.controller.lockScreenMessage
@@ -315,13 +317,13 @@ ColumnLayout {
         }
         Label {
             Layout.fillWidth: true
-            text: "开启功能后，快捷键、菜单、系统空闲和远离锁屏均支持弹指解锁。同一枚戒指的手势连接就绪后即可使用，无需先离开再返回。确认离开后，一次有效的近处信号可确认返回，等待手势就绪后单次亮屏；亮屏不会直接解锁。\n\n开启期间保持后台监测，屏幕可以熄灭。合盖或手动睡眠后需先唤醒；重启、注销或切换用户后仍需先使用系统方式登录。完全退出应用后，锁屏与解锁功能停止。"
+            text: "开启功能后，快捷键、菜单、系统空闲和远离锁屏均支持手势解锁。同一枚戒指的手势连接就绪后即可使用，无需先离开再返回。确认离开后，一次有效的近处信号可确认返回，等待手势就绪后单次亮屏；亮屏不会直接解锁。\n\n开启期间保持后台监测，屏幕可以熄灭。合盖或手动睡眠后需先唤醒；重启、注销或切换用户后仍需先使用系统方式登录。完全退出应用后，锁屏与解锁功能停止。"
             color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
         }
     }
     Label {
         Layout.fillWidth: true
-        text: "功能开启后也支持手动锁屏的弹指解锁。持有已连接戒指的人可触发解锁，请妥善保管戒指。"
+        text: "功能开启后也支持手动锁屏的手势解锁。持有已连接戒指的人可触发解锁，请妥善保管戒指。"
         color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
     }
 }

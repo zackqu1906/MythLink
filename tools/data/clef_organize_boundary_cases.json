@@ -1,0 +1,206 @@
+[
+  {
+    "id": "organize-format-only",
+    "utterance": "只拆成编号列表，不要精简任何内容",
+    "target": "周三九点开会，周四十点交稿，周五十一点验收。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "format"
+      ],
+      "preserve_text": [
+        "周三九点开会",
+        "周四十点交稿",
+        "周五十一点验收"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-move-only",
+    "utterance": "把结论移到开头，不要删任何信息",
+    "target": "测试完成了。没有发现问题。结论是可以发布。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "format"
+      ],
+      "modified_text": "结论是可以发布。测试完成了。没有发现问题。"
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-summary",
+    "utterance": "把这段压缩成一句话，保留延期原因和新日期",
+    "target": "由于场地漏水，活动需要延期。新的日期为下周二。我们正在联系参与者。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "场地漏水",
+        "下周二"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-summary-list",
+    "utterance": "提炼成两个简短要点",
+    "target": "产品有两个好处。第一，操作简单，新用户也能快速学会。第二，处理速度快，能够减少等待。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish",
+        "format"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-format-negative",
+    "utterance": "整理成三点，详细信息全部保留，不要摘要",
+    "target": "甲组提交设计；乙组检查设备；丙组安排运输。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "format"
+      ],
+      "preserve_text": [
+        "甲组提交设计",
+        "乙组检查设备",
+        "丙组安排运输"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-cancel-summary",
+    "utterance": "先缩短一点，算了不要缩短，只改成列表",
+    "target": "第一天上午培训，下午练习。第二天上午答疑，下午考核。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "format"
+      ],
+      "preserve_text": [
+        "上午培训",
+        "下午练习",
+        "上午答疑",
+        "下午考核"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-polish-only",
+    "utterance": "意思不变，语气客气一点",
+    "target": "你今天必须交给我。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-precise-delete",
+    "utterance": "只删除末尾的谢谢二字，其余不动",
+    "target": "请今天提交，谢谢",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ],
+      "modified_text": "请今天提交，"
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-compose-list",
+    "utterance": "帮我写一条通知，分两点说明周二检修、周三恢复",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-reported",
+    "utterance": "他说最好把这份材料精简成三点",
+    "target": "项目背景。实施步骤。验收条件。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-verbatim",
+    "utterance": "原封不动写下：把报告改成表格并压缩到一百字",
+    "target": "项目进度正常。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    },
+    "cohort": "new_organize_boundaries"
+  },
+  {
+    "id": "organize-mixed",
+    "utterance": "把周四改成周五，然后整理成两点，不要丢信息",
+    "target": "周四开会。地点在三楼。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify",
+        "format"
+      ],
+      "preserve_text": [
+        "周五",
+        "三楼"
+      ]
+    },
+    "cohort": "new_organize_boundaries"
+  }
+]

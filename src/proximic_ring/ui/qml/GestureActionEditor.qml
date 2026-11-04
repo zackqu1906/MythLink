@@ -172,17 +172,17 @@ Rectangle {
             id: mappingField
             objectName: "gestureMappingDropdown"
             Layout.preferredWidth: 296; Layout.fillWidth: editor.compact; Layout.minimumWidth: 160; Layout.preferredHeight: 40
-            hoverEnabled: true; padding: 16; topPadding: 0; bottomPadding: 0
+            hoverEnabled: enabled; padding: 16; topPadding: 0; bottomPadding: 0
             topInset: 0; bottomInset: 0
             Accessible.name: "选择手势映射"
-            ToolTip.visible: hovered && Boolean(editor.saved)
+            ToolTip.visible: (enabled && hovered) && Boolean(editor.saved)
             ToolTip.delay: 450
             ToolTip.text: {
                 var action = editor.saved
                 return action ? action.label + (editor.actionHint(action) ? " · " + editor.actionHint(action) : "") + "\n" + editor.actionDescription(action) : ""
             }
             onClicked: if (editor.gesture.length) { search.text = ""; editor.category = "all"; mappingMenu.open() }
-            background: Rectangle { radius: 8; color: mappingField.down ? theme.selection : mappingField.hovered && editor.editable ? theme.subtle : theme.background; border.color: mappingMenu.visible || mappingField.visualFocus ? theme.primary : theme.line }
+            background: Rectangle { radius: 8; color: mappingField.down ? theme.selection : (mappingField.enabled && mappingField.hovered) && editor.editable ? theme.subtle : theme.background; border.color: mappingMenu.visible || mappingField.visualFocus ? theme.primary : theme.line }
             contentItem: RowLayout {
                 spacing: 8
                 Label { Layout.fillWidth: true; text: editor.saved ? editor.saved.label : editor.pendingDefault || "无"; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; color: theme.text; elide: Text.ElideRight }
@@ -214,9 +214,9 @@ Rectangle {
                         id: backButton
                         objectName: "gestureMenuBack"; visible: editor.category !== "all"
                         Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.maximumHeight: 36
-                        padding: 12; topPadding: 0; bottomPadding: 0; topInset: 0; bottomInset: 0; hoverEnabled: true
+                        padding: 12; topPadding: 0; bottomPadding: 0; topInset: 0; bottomInset: 0; hoverEnabled: enabled
                         text: "返回全部功能"
-                        background: Rectangle { radius: 8; color: backButton.down ? theme.selection : backButton.hovered ? theme.subtle : theme.surface }
+                        background: Rectangle { radius: 8; color: backButton.down ? theme.selection : (backButton.enabled && backButton.hovered) ? theme.subtle : theme.surface }
                         contentItem: Label { text: backButton.text; color: theme.text; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium; verticalAlignment: Text.AlignVCenter }
                         onClicked: { editor.category="all"; search.text="" }
                     }
@@ -247,18 +247,18 @@ Rectangle {
                             required property var modelData
                             objectName: modelData.category ? "gestureCategory_" + modelData.category : "menuAction_" + modelData.id
                             width: actions.width; height: 44; padding:12; topPadding:0; bottomPadding:0
-                            topInset:0; bottomInset:0; hoverEnabled:true
+                            topInset:0; bottomInset:0; hoverEnabled: enabled
                             enabled: editor.actionEnabled(modelData)
                             opacity: enabled ? 1 : 0.45
                             checked: editor.isChosen(modelData)
                             Accessible.name: modelData.label + " " + editor.actionHint(modelData) + " " + editor.actionDescription(modelData)
-                            ToolTip.visible: hovered; ToolTip.delay:450
+                            ToolTip.visible: (enabled && hovered); ToolTip.delay:450
                             ToolTip.text: modelData.label + (editor.actionHint(modelData) ? " · " + editor.actionHint(modelData) : "") + "\n" + editor.actionDescription(modelData)
                             onClicked: {
                                 if (modelData.category) { search.text = ""; editor.category = modelData.category }
                                 else editor.choose(modelData.id)
                             }
-                            background: Rectangle { radius:8; color: actionRow.down || actionRow.checked ? theme.selection : actionRow.hovered ? theme.subtle : theme.surface; border.width: actionRow.visualFocus ? 1 : 0; border.color:theme.primary }
+                            background: Rectangle { radius:8; color: actionRow.down || actionRow.checked ? theme.selection : (actionRow.enabled && actionRow.hovered) ? theme.subtle : theme.surface; border.width: actionRow.visualFocus ? 1 : 0; border.color:theme.primary }
                             contentItem: ColumnLayout {
                                 id: rowContent
                                 spacing: 4
@@ -318,7 +318,7 @@ Rectangle {
             objectName:"undoMenuMappingButton"; Layout.preferredWidth:140; Layout.preferredHeight:40
             font.pixelSize:16; text:"撤销上一步"
             enabled: editor.history.canUndo && editor.history.contextKey === editor.contextKey
-            ToolTip.visible: hovered; ToolTip.text: "撤销当前手势最近一次修改，不会恢复默认配置。"
+            ToolTip.visible: (enabled && hovered); ToolTip.text: "撤销当前手势最近一次修改，不会恢复默认配置。"
             onClicked: editor.undoLastChange()
         }
         Label {

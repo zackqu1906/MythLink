@@ -1,0 +1,27 @@
+{
+  "source_project": "/Users/admin/Downloads/ProximicAsr_decoupled",
+  "files": {
+    "model.py": {
+      "source": "/Users/admin/Downloads/ProximicAsr_decoupled/src/proximic_ring/model.py",
+      "sha256": "9be27554b4f98b7106b0d4e175b504254360e4582cbfa4d38dd0b2ec28047226"
+    },
+    "features.py": {
+      "source": "/Users/admin/Downloads/ProximicAsr_decoupled/src/proximic_ring/features.py",
+      "sha256": "7732c8612ab2ff134032a2b2756f1c0c8d2d71162409a00213cd02c420c8b341"
+    },
+    "resample.py": {
+      "source": "/Users/admin/Downloads/ProximicAsr_decoupled/src/proximic_ring/resample.py",
+      "sha256": "10d0f921d66a4cafb83e23ac33c6313e3bcc0dc67d6d8a99db61f6a9cd7596dd"
+    },
+    "assets/filter_bank.npy": {
+      "source": "/Users/admin/Downloads/ProximicAsr_decoupled/src/proximic_ring/assets/filter_bank.npy",
+      "sha256": "9f0dbd1fda349a27debec5b4e0fe23c896f75554840cabb289bd79405c40a37f"
+    },
+    "assets/interp_win.npy": {
+      "source": "/Users/admin/Downloads/ProximicAsr_decoupled/src/proximic_ring/assets/interp_win.npy",
+      "sha256": "12dab06ac8cd86e440b3b83ed31ba01cb14fa94622acfa75b1255bc404bc6378"
+    }
+  },
+  "weights_copied": false,
+  "task_note": "Original near_speech/non_target task is not generic speech/non_speech."
+}

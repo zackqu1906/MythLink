@@ -7,7 +7,7 @@
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSUIElement</key><true/>
-<key>LSMinimumSystemVersion</key><string>15.0</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSBluetoothAlwaysUsageDescription</key><string>检测当前连接戒指的远近，在您离开时锁屏、回来时解锁。</string>
 <key>NSBluetoothPeripheralUsageDescription</key><string>连接当前连接戒指并读取蓝牙信号强度。</string>
 </dict></plist>

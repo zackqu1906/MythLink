@@ -307,7 +307,7 @@ Rectangle {
                 objectName: "hotwordDragSurface"
                 anchors.fill: words; anchors.rightMargin: 8
                 acceptedButtons: Qt.LeftButton
-                hoverEnabled: true
+                hoverEnabled: enabled
                 onEntered: panel.updateHover(mouseX, mouseY)
                 onExited: hoverExit.restart()
                 preventStealing: true
@@ -451,11 +451,11 @@ Rectangle {
         topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
         topPadding: 7; bottomPadding: 7; leftPadding: 4; rightPadding: 4
         focusPolicy: Qt.StrongFocus
-        hoverEnabled: true
+        hoverEnabled: enabled
         onHoveredChanged: { if (hovered) hoverExit.stop(); else hoverExit.restart() }
         onPressedChanged: { if (pressed) hoverExit.stop(); else Qt.callLater(panel.sync) }
-        HoverHandler { cursorShape: Qt.PointingHandCursor }
-        ToolTip.visible: hovered
+        HoverHandler { enabled: action.enabled; cursorShape: Qt.PointingHandCursor }
+        ToolTip.visible: (enabled && hovered)
         ToolTip.delay: 550
         ToolTip.text: text
         background: Item {
@@ -464,8 +464,8 @@ Rectangle {
                 width: 14; height: 14; anchors.centerIn: parent
                 radius: width / 2
                 color: action.destructive
-                    ? (action.down ? "#FFACA5" : action.hovered ? "#FFC7C1" : "#FFE1DD")
-                    : (action.down ? "#AEC4FA" : action.hovered ? "#CAD9FF" : "#E0E9FF")
+                    ? (action.down ? "#FFACA5" : (action.enabled && action.hovered) ? "#FFC7C1" : "#FFE1DD")
+                    : (action.down ? "#AEC4FA" : (action.enabled && action.hovered) ? "#CAD9FF" : "#E0E9FF")
                 border.color: action.activeFocus ? theme.primary : action.destructive ? "#F0ADA7" : "#ACC1F3"
                 Behavior on color { ColorAnimation { duration: 100 } }
             }

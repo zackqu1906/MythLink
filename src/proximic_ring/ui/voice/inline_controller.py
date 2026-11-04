@@ -56,6 +56,8 @@ class InlineInputController(QObject):
         self._session_id = 0
         self._seq = 0
         self._final_sent = False
+        self.automatic_mode = False
+        self.session_automatic = False
         self._first_text_update_sent = False
         self._last_state_diagnostic = None
         self._requested = set()
@@ -296,14 +298,14 @@ class InlineInputController(QObject):
 
     @Property(bool, notify=changed)
     def canConvert(self):
-        return bool(self.active and self._view.get("can_convert", False) and
+        return bool(not self.session_automatic and self.active and self._view.get("can_convert", False) and
                     self._view.get("phase") in {"listening", "finishing"})
 
     @Property(bool, notify=changed)
     def canRequestConversion(self):
         # A manual request must reach the IME so an unavailable capability can
         # produce a specific explanation instead of silently ignoring a swipe.
-        return bool(self.active and self._view.get("has_composition") and
+        return bool(not self.session_automatic and self.active and self._view.get("has_composition") and
                     not self._view.get("edit_requested") and
                     self._view.get("phase") in {"listening", "finishing"})
 
@@ -845,6 +847,7 @@ class InlineInputController(QObject):
         self.settled_session_id = 0
         self._session_id = 0
         origin = self._foreground_identity()
+        self.session_automatic = bool(self.automatic_mode)
         pending_focus, self._pending_gesture_focus = self._pending_gesture_focus, None
         if pending_focus is not None:
             focus, created = pending_focus
@@ -899,7 +902,8 @@ class InlineInputController(QObject):
             return True
         self.changed.emit()
         self._startup_clients.add(self._client_id)
-        sent = self._send("begin")
+        self.session_automatic = bool(self.automatic_mode)
+        sent = self._send("begin", automatic_mode=self.session_automatic)
         if not sent:
             self._transport_failed("输入法连接已断开")
             self._diagnose("begin", reason="send_failed")
@@ -980,7 +984,7 @@ class InlineInputController(QObject):
             while len(self._utterance_sessions) > 256:
                 self._utterance_sessions.pop(next(iter(self._utterance_sessions)))
 
-    def update(self, text, final, session_id, error=""):
+    def update(self, text, final, session_id, error="", *, automatic_task="", automatic_allow_empty=False):
         if (self._closed or not self.active or self._final_sent or
                 self._view.get("phase") not in {"starting", "listening", "finishing"}):
             return False
@@ -992,9 +996,13 @@ class InlineInputController(QObject):
             # Coalesce partials; a buffered final/error always wins.
             if self._pending_update and (self._pending_update[1] or self._pending_update[3]):
                 return False
-            self._pending_update = (str(text), bool(final), self._session_id, str(error))
+            self._pending_update = (str(text), bool(final), self._session_id, str(error), str(automatic_task), bool(automatic_allow_empty))
             return True
-        accepted = self._send("update", text=str(text), final=bool(final), error=str(error))
+        fields = dict(text=str(text), final=bool(final), error=str(error))
+        if automatic_task and self.session_automatic and final:
+            fields["automatic_task"] = automatic_task
+            fields["automatic_allow_empty"] = bool(automatic_allow_empty)
+        accepted = self._send("update", **fields)
         if not accepted:
             self._transport_failed("输入法连接已断开，已停止本句")
             return False
@@ -1052,10 +1060,15 @@ class InlineInputController(QObject):
             self._action_pending = None
             self.changed.emit()
 
+    @Property(bool, notify=changed)
+    def canPolish(self):
+        return bool(self.ready and self._utterance_id and self._view.get("phase") == "dictated"
+                    and self._view.get("raw") and not self._view.get("polished")
+                    and not self._view.get("awaiting_readback") and not self._action_pending)
+
+    @Slot(result=bool)
     def polish(self, *, restore_raw_on_undo=True):
-        if (self.ready and self._utterance_id and self._view.get("phase") == "dictated"
-                and self._view.get("raw") and not self._view.get("polished")
-                and not self._view.get("awaiting_readback") and not self._action_pending):
+        if self.canPolish:
             self._mark_action_pending("polish")
             self._send("polish", restore_raw_on_undo=bool(restore_raw_on_undo))
             return True
@@ -1271,7 +1284,8 @@ class InlineInputController(QObject):
                     self._startup_clients.add(client_id)
                     self._client_id = client_id
                     self._view = {**message, "phase": "starting", "raw": "", "error": ""}
-                    if self._send("begin"):
+                    self.session_automatic = bool(self.automatic_mode)
+                    if self._send("begin", automatic_mode=self.session_automatic):
                         self._wait_for_reply("begin")
                         self._diagnose("begin", reason="ready_after_activation")
                         self.changed.emit()
@@ -1291,6 +1305,10 @@ class InlineInputController(QObject):
             begin_acknowledged = (self._reply_stage == "begin" and client_id == self._client_id
                                   and utterance_id == self._utterance_id and message.get("ready")
                                   and message.get("phase") == "listening")
+            if (begin_acknowledged and self.session_automatic
+                    and (not message.get("automatic_mode") or message.get("automatic_routing_version") != 2)):
+                self._transport_failed("请先在设置中更新输入法组件，再使用自动判断")
+                return
             previous_active = self.active
             changed_client = client_id != self._client_id
             if changed_client:
@@ -1335,7 +1353,7 @@ class InlineInputController(QObject):
                 pending, finish, as_dictation = self._pending_update, self._pending_finish, self._finish_as_dictation
                 self._clear_startup()
                 if pending:
-                    self.update(*pending)
+                    self.update(*pending[:4], automatic_task=pending[4], automatic_allow_empty=pending[5])
                 if finish and not self._final_sent:
                     self._finish_as_dictation = as_dictation
                     self.finish()

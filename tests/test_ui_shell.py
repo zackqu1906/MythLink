@@ -91,9 +91,9 @@ def test_all_gestures_are_editable_without_navigation_mutating_settings(inline_u
     assert bridge.messages == messages_before
 
 
-def test_settings_open_unified_advanced_window_directly(inline_ui, tmp_path):
-    from PySide6.QtCore import QObject, QMetaObject, QPointF
-    from PySide6.QtTest import QTest
+def test_settings_open_advanced_in_place_with_shared_back(inline_ui, tmp_path):
+    from PySide6.QtCore import QObject, QMetaObject, QPointF, Qt
+    from PySide6.QtTest import QTest, QSignalSpy
 
     _, _, _, root, _ = inline_ui
     root.setProperty("currentPage", 0)
@@ -110,22 +110,24 @@ def test_settings_open_unified_advanced_window_directly(inline_ui, tmp_path):
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(shots / "settings.png"))
+    dialog = root.findChild(QObject, "runtimeSettingsDialog")
+    showing, hiding = QSignalSpy(dialog.aboutToShow), QSignalSpy(dialog.aboutToHide)
     QMetaObject.invokeMethod(root.findChild(QObject, "advancedSettingsButton"), "click")
     QTest.qWait(160)
-    assert root.findChild(QObject, "advancedSettingsDialog").property("visible")
-    assert not root.findChild(QObject, "runtimeSettingsDialog").property("visible")
+    assert root.findChild(QObject, "advancedSettingsPage").property("visible")
+    assert dialog.property("opened") and dialog.property("opacity") == 1
+    assert showing.count() == hiding.count() == 0
     assert root.findChild(QObject, "settingsPage4").property("visible")
     assert root.findChild(QObject, "settingsPage5").property("visible")
-    back = root.findChild(QObject, "advancedSettingsBackButton")
+    back = root.findChild(QObject, "settingsOverviewBackButton")
     assert back.property("visible")
-    content = back.property("contentItem")
-    icon = content.childItems()[0]
-    center = icon.mapToItem(back, QPointF(icon.width() / 2, icon.height() / 2))
-    assert center.x() == pytest.approx(back.width() / 2)
-    assert center.y() == pytest.approx(back.height() / 2)
-    QMetaObject.invokeMethod(back, "click")
+    assert back.property("navigation") and back.property("text") == "返回所有设置"
+    QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier,
+                     back.mapToScene(QPointF(back.width() / 2, back.height() / 2)).toPoint())
     QTest.qWait(160)
-    assert root.findChild(QObject, "runtimeSettingsDialog").property("visible")
+    assert dialog.property("opened") and dialog.property("opacity") == 1
+    assert showing.count() == hiding.count() == 0
+    assert not root.findChild(QObject, "advancedSettingsPage").property("visible")
     QMetaObject.invokeMethod(root.findChild(QObject, "runtimeSettingsDialog"), "close")
 
 
@@ -171,9 +173,9 @@ def test_settings_form_navigation_preserves_configuration_and_live_voice(inline_
         assert 0 <= point.y() and point.y() + control.height() <= root.height()
     QMetaObject.invokeMethod(root.findChild(QObject, "advancedSettingsButton"), "click")
     QTest.qWait(160)
-    QMetaObject.invokeMethod(root.findChild(QObject, "advancedSettingsDoneButton"), "click")
+    QMetaObject.invokeMethod(root.findChild(QObject, "settingsOverviewBackButton"), "click")
     QTest.qWait(160)
-    assert flick.property("contentY") == max(0, flick.property("contentHeight") - flick.height())
+    assert flick.property("contentY") == 0
     QMetaObject.invokeMethod(root.findChild(QObject, "settingsApplyButton"), "click")
     QTest.qWait(150)
     assert not dialog.property("visible")

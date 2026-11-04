@@ -11,6 +11,7 @@ Basic.SpinBox {
     topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
     font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium
     opacity: enabled ? 1 : 0.45
+    hoverEnabled: enabled
     background: Rectangle { color: theme.surface; radius: 8; border.width: control.activeFocus ? 2 : 1; border.color: control.activeFocus ? theme.primary : theme.line }
     contentItem: TextInput {
         text: control.value + control.unit
@@ -21,12 +22,12 @@ Basic.SpinBox {
     }
     down.indicator: Rectangle {
         x: 4; y: 4; width: 32; height: 32; radius: 6
-        color: control.down.pressed ? theme.selection : control.down.hovered ? theme.subtle : "transparent"
+        color: !control.enabled || !control.down.enabled ? "transparent" : control.down.pressed ? theme.selection : control.down.hovered ? theme.subtle : "transparent"
         Text { anchors.centerIn: parent; text: "−"; color: theme.text; font: control.font }
     }
     up.indicator: Rectangle {
         x: control.width - width - 4; y: 4; width: 32; height: 32; radius: 6
-        color: control.up.pressed ? theme.selection : control.up.hovered ? theme.subtle : "transparent"
+        color: !control.enabled || !control.up.enabled ? "transparent" : control.up.pressed ? theme.selection : control.up.hovered ? theme.subtle : "transparent"
         Text { anchors.centerIn: parent; text: "＋"; color: theme.text; font: control.font }
     }
 }

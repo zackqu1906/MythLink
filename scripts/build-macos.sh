@@ -22,7 +22,7 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "The macOS package must be built on Apple Silicon." >&2
     exit 1
 fi
-export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(cat "$PROJECT_ROOT/packaging/macos-target.txt")}"
 source "$PROJECT_ROOT/scripts/macos-signing-env.sh"
 REQUIRE_SIGNED_RELEASE="${PROXIMIC_REQUIRE_SIGNED_RELEASE:-0}"
 if [[ "$REQUIRE_SIGNED_RELEASE" == "1" ]]; then
@@ -55,6 +55,8 @@ if [[ "${PROXIMIC_SKIP_DEPENDENCY_INSTALL:-0}" != "1" ]]; then
 fi
 /bin/zsh scripts/build-input-method.sh
 /bin/zsh scripts/build-proximity.sh
+/bin/bash scripts/install-node-macos.sh
+/bin/bash scripts/build-llama-macos.sh
 "$PYTHON" tools/build_browser_extension.py --identity "$APPLE_SIGNING_IDENTITY"
 PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" -m PyInstaller --noconfirm --clean packaging/mythlink.spec
@@ -77,7 +79,11 @@ ditto "$PROJECT_ROOT/.build/browser-extension/MythlinkBrowser.app" "$APP/Content
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 plutil -lint "$APP/Contents/Info.plist"
-"$PYTHON" tools/verify_macos_bundle.py "$APP" --minimum-macos 15.0
+"$PYTHON" tools/verify_macos_bundle.py "$APP" --minimum-macos "$MACOSX_DEPLOYMENT_TARGET"
+# Exercise the signed runtimes too: unsigned development binaries do not test
+# hardened-runtime JIT entitlements or the frozen library layout.
+"$APP/Contents/Resources/node/bin/node" -e 'const f = new Function("return 42"); if (f() !== 42 || WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0])) !== true) process.exit(1); console.log("Bundled Node runtime ready:", process.version)'
+"$APP/Contents/Resources/llama-cpp-b10516-macos-arm64/llama-server" --version
 APP_EXECUTABLE="$APP/Contents/MacOS/Mythlink"
 if ! file "$APP_EXECUTABLE" | grep -q "arm64"; then
     echo "Packaged executable is not Apple Silicon arm64: $APP_EXECUTABLE" >&2

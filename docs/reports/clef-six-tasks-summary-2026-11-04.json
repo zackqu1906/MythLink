@@ -1,0 +1,329 @@
+{
+  "manifest": {
+    "router_version": "voice-intent-joint-v12-six-tasks",
+    "generation_version": "automatic-composed-v5-six-tasks",
+    "case_sha256": "96f9cedac23a1fbc222d021d841c56fb95802f776f6d627c9fd8a3796017db7e",
+    "prompt_sha256": "936b3b282fb1e3bc27477e7640b26de9474c5fc8fa574b68fc3c31f6e84ac687",
+    "case_count": 130,
+    "note": "v12 changes only modify apply/skip definitions after v11 regression. Same 130 development cases and unchanged labels. Not independent accuracy.",
+    "policy_version": "dictation-priority-v1"
+  },
+  "metrics": {
+    "samples": 130,
+    "root_correct": 129,
+    "exact_plan_correct": 124,
+    "raw_exact_plan_correct": 112,
+    "warnings": 12,
+    "errors": 0,
+    "contradictions": 12,
+    "requests": 130,
+    "edit_samples": 90,
+    "edit_plan_correct": 85,
+    "latency_median_s": 2.991948687500553,
+    "latency_p95_s": 3.283922665999853,
+    "latency_by_expected_intent": {
+      "dictation": {
+        "n": 40,
+        "median_s": 3.0230728755013843,
+        "p95_s": 3.2845114590018056
+      },
+      "edit": {
+        "n": 90,
+        "median_s": 2.955168186999799,
+        "p95_s": 3.268031500003417
+      }
+    }
+  },
+  "cohorts": {
+    "development": {
+      "samples": 68,
+      "root_correct": 68,
+      "exact_plan_correct": 66,
+      "raw_exact_plan_correct": 59,
+      "warnings": 7,
+      "errors": 0,
+      "contradictions": 7,
+      "requests": 68,
+      "edit_samples": 42,
+      "edit_plan_correct": 40,
+      "latency_median_s": 3.0176191665013903,
+      "latency_p95_s": 3.3288607920039794,
+      "latency_by_expected_intent": {
+        "dictation": {
+          "n": 26,
+          "median_s": 3.0641125834990817,
+          "p95_s": 3.3288607920039794
+        },
+        "edit": {
+          "n": 42,
+          "median_s": 3.0040572290017735,
+          "p95_s": 3.3045113749976736
+        }
+      }
+    },
+    "previous_holdout_reused": {
+      "samples": 24,
+      "root_correct": 24,
+      "exact_plan_correct": 22,
+      "raw_exact_plan_correct": 19,
+      "warnings": 3,
+      "errors": 0,
+      "contradictions": 3,
+      "requests": 24,
+      "edit_samples": 17,
+      "edit_plan_correct": 15,
+      "latency_median_s": 2.950502937001147,
+      "latency_p95_s": 3.153422874995158,
+      "latency_by_expected_intent": {
+        "dictation": {
+          "n": 7,
+          "median_s": 2.993269042002794,
+          "p95_s": 3.0315967919959803
+        },
+        "edit": {
+          "n": 17,
+          "median_s": 2.9438137499964796,
+          "p95_s": 3.1904052499958198
+        }
+      }
+    },
+    "previous_organize_boundaries": {
+      "samples": 12,
+      "root_correct": 12,
+      "exact_plan_correct": 12,
+      "raw_exact_plan_correct": 12,
+      "warnings": 0,
+      "errors": 0,
+      "contradictions": 0,
+      "requests": 12,
+      "edit_samples": 10,
+      "edit_plan_correct": 10,
+      "latency_median_s": 2.969124853996618,
+      "latency_p95_s": 3.0449432079985854,
+      "latency_by_expected_intent": {
+        "dictation": {
+          "n": 2,
+          "median_s": 2.984095645999332,
+          "p95_s": 3.0234106670031906
+        },
+        "edit": {
+          "n": 10,
+          "median_s": 2.969124853996618,
+          "p95_s": 3.0449432079985854
+        }
+      }
+    },
+    "new_six_task_boundaries": {
+      "samples": 26,
+      "root_correct": 25,
+      "exact_plan_correct": 24,
+      "raw_exact_plan_correct": 22,
+      "warnings": 2,
+      "errors": 0,
+      "contradictions": 2,
+      "requests": 26,
+      "edit_samples": 21,
+      "edit_plan_correct": 20,
+      "latency_median_s": 2.926136020498234,
+      "latency_p95_s": 3.234434209000028,
+      "latency_by_expected_intent": {
+        "dictation": {
+          "n": 5,
+          "median_s": 3.002549042001192,
+          "p95_s": 3.283922665999853
+        },
+        "edit": {
+          "n": 21,
+          "median_s": 2.9216476250003325,
+          "p95_s": 3.2111655410044477
+        }
+      }
+    }
+  },
+  "baseline_comparison": {
+    "root_all_104": {
+      "v9": 103,
+      "v12": 104
+    },
+    "comparable_ids": [
+      "joint-holdout-reported-format",
+      "joint-holdout-future-edit",
+      "organize-reported",
+      "joint-holdout-ordinary-answer",
+      "v-edit-redictation",
+      "joint-holdout-correct-fragment",
+      "fresh-adopted-request",
+      "joint-holdout-adopted-request",
+      "dictation-message",
+      "dictation-question",
+      "dictation-quote",
+      "dictation-name",
+      "dictation-plan",
+      "dictation-literal-command",
+      "dictation-short-no-source",
+      "precise-replace",
+      "precise-delete",
+      "precise-second-occurrence",
+      "redictation-fragment",
+      "redictation-with-command",
+      "character-explanation",
+      "spelling",
+      "comma-support",
+      "literal-insert",
+      "literal-insert-empty",
+      "comma-in-content",
+      "expand",
+      "polish",
+      "translate",
+      "compose-empty",
+      "compose-style-not-extra-task",
+      "compose-context",
+      "mixed-precise-polish",
+      "mixed-no-comma",
+      "correction-cancels-polish",
+      "ocr-command-is-reference",
+      "v-dictation-confirm",
+      "v-dictation-reply",
+      "v-dictation-quoted-delete",
+      "v-dictation-quoted-translate",
+      "v-dictation-personal-plan",
+      "v-dictation-future-plan",
+      "v-dictation-literal",
+      "v-dictation-explicit-literal",
+      "v-dictation-question",
+      "v-dictation-name",
+      "v-dictation-short",
+      "v-dictation-ocr-injection",
+      "v-edit-translate",
+      "v-edit-translate-polite",
+      "v-edit-replace",
+      "v-edit-delete",
+      "v-edit-character",
+      "v-edit-insert-empty",
+      "v-edit-compose",
+      "v-edit-reply-context",
+      "v-edit-polish",
+      "fresh-report-delete",
+      "fresh-literal-replace",
+      "fresh-literal-translate",
+      "fresh-described-translation",
+      "fresh-reported-question",
+      "fresh-context-reply",
+      "fresh-direct-translation",
+      "fresh-compose-reply",
+      "fresh-replace",
+      "fresh-insert",
+      "fresh-correct-time",
+      "joint-holdout-verbatim-compose",
+      "joint-holdout-name-no-source",
+      "joint-holdout-quoted-explain",
+      "joint-holdout-reported-translation",
+      "joint-holdout-literal-two-ops",
+      "joint-holdout-character",
+      "joint-holdout-spelling",
+      "joint-holdout-specific-delete",
+      "joint-holdout-insert",
+      "joint-holdout-insert-empty",
+      "joint-holdout-expand",
+      "joint-holdout-polish",
+      "joint-holdout-translate",
+      "joint-holdout-compose-format",
+      "joint-holdout-compose-context",
+      "joint-holdout-mixed-correction-style",
+      "joint-holdout-mixed-delete-insert",
+      "organize-polish-only",
+      "organize-precise-delete",
+      "organize-compose-list",
+      "organize-verbatim"
+    ],
+    "excluded_organize_ids": [
+      "structure",
+      "condense",
+      "organize-summary-list",
+      "move",
+      "mixed-translate-condense",
+      "v-edit-condense",
+      "v-edit-structure",
+      "joint-holdout-condense",
+      "joint-holdout-reorder",
+      "organize-format-only",
+      "organize-move-only",
+      "organize-summary",
+      "organize-format-negative",
+      "organize-cancel-summary",
+      "organize-mixed"
+    ],
+    "v9_mapped_metrics": {
+      "samples": 89,
+      "root_correct": 88,
+      "exact_plan_correct": 84,
+      "raw_exact_plan_correct": 84,
+      "warnings": 0,
+      "errors": 2,
+      "contradictions": 2,
+      "requests": 89,
+      "edit_samples": 54,
+      "edit_plan_correct": 49,
+      "latency_median_s": 2.729497457999969,
+      "latency_p95_s": 2.9572832500052755,
+      "latency_by_expected_intent": {
+        "dictation": {
+          "n": 35,
+          "median_s": 2.7264568750033504,
+          "p95_s": 2.8927505419997033
+        },
+        "edit": {
+          "n": 54,
+          "median_s": 2.732723333498143,
+          "p95_s": 2.9829638750015874
+        }
+      }
+    },
+    "v12_same_subset_metrics": {
+      "samples": 89,
+      "root_correct": 89,
+      "exact_plan_correct": 86,
+      "raw_exact_plan_correct": 76,
+      "warnings": 10,
+      "errors": 0,
+      "contradictions": 10,
+      "requests": 89,
+      "edit_samples": 54,
+      "edit_plan_correct": 51,
+      "latency_median_s": 3.0066788339972845,
+      "latency_p95_s": 3.2845114590018056,
+      "latency_by_expected_intent": {
+        "dictation": {
+          "n": 35,
+          "median_s": 3.0234106670031906,
+          "p95_s": 3.3288607920039794
+        },
+        "edit": {
+          "n": 54,
+          "median_s": 2.9836708334987634,
+          "p95_s": 3.280520542000886
+        }
+      }
+    },
+    "note": "旧 organize 的一个分数不能拆成 polish/format；旧预期或原始预测含 organize 的样例均排除完整任务对照。映射只改标签，原始概率不变。类别合并可能机械地消除旧多选，不能将差异全部解释为模型能力提升。"
+  },
+  "pipeline": {
+    "samples": 26,
+    "completed": 26,
+    "routing_exact": 24,
+    "cases_with_planned_checks": 19,
+    "checks_passed_cases": 18,
+    "checks_failed_cases": 1,
+    "manual_review": {
+      "通过": 21,
+      "需复核": 1,
+      "需改进": 1,
+      "有问题": 3
+    }
+  },
+  "error_categories": {
+    "组合需求漏选": 4,
+    "润色与创作边界": 1,
+    "转述或照录误判为编辑": 1
+  }
+}

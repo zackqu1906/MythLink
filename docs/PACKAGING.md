@@ -75,7 +75,8 @@ $env:WINDOWS_TIMESTAMP_URL = "http://timestamp.digicert.com" # 可省略
 
 ## macOS Apple Silicon
 
-当前产物支持 Apple Silicon（arm64）和 macOS 15 及以上。构建机需要 Xcode Command
+当前产物的部署目标为 Apple Silicon（arm64）、macOS 13.0 及以上；实际系统验收状态见
+[macOS 兼容性](MACOS_COMPATIBILITY.md)。构建机需要 Xcode Command
 Line Tools；脚本会把固定版本的 Python 3.11 和构建工具安装到项目目录，不要求
 Homebrew，也不会修改系统 Python：
 
@@ -99,6 +100,16 @@ GitHub tag 构建使用 tag 的数字版本（如 `v0.6.10`），其他 `CI=true
 控制器、ASR 导入、QML 根窗口和通常按需加载的 Agent 工作区（含 Shapes 图标插件）。
 检查会创建隐藏的 Agent 窗口，不会发起任务；依赖缺失或窗口加载失败会直接终止构建，详细信息写入
 `.build/macos-smoke-data/logs/diagnostic.log`。
+
+最低版本统一读取 `packaging/macos-target.txt`，可通过 `MACOSX_DEPLOYMENT_TARGET`
+覆盖。锁定 PySide6 6.9.3：6.10.2/6.11.1 的 macOS wheel 标签虽然写 13.0，实际绑定库
+要求 15.0。构建会检查所有 Mach-O 的 arm64 slice（包括两种最低版本 load command）、
+内嵌 bundle 的最低版本和动态库依赖；发现任何超过目标的库就失败。
+
+Agent 使用内置 Node 22.23.4，签名时保留 JIT entitlement，并运行签名后的执行检查。
+本地 LLM 使用从 b10516 源码构建的运行库，因为官方 macOS 归档要求 13.3；保留 CPU
+和 Metal，关闭使用 13.3 专属 Accelerate ABI 的可选 BLAS 后端。运行库随包提供，GGUF
+仍按需下载。已有默认运行库路径会迁移到内置版本，自定义路径保留。
 
 Agent 卡片交互修改还须在真实 macOS 窗口上运行以下验收，先验证构建产物，再验证挂载后的 DMG 内程序：
 
@@ -135,7 +146,7 @@ Developer ID G2 中间证书；不要设置“始终信任”来替代完整证�
 ### 输入法随包安装（2026-09-18）
 
 macOS 构建先编译 Swift 输入法和 `InputMethodAdmin`，再将两者完整放入 app 的
-`Contents/Helpers` 并签名。组件最低版本与主程序统一为 macOS 15；默认与主程序使用同一正式身份。
+`Contents/Helpers` 并签名。组件最低版本与主程序统一为 macOS 13.0；默认与主程序使用同一正式身份。
 `--self-check-package` 会核对组件身份、可执行文件及签名，缺失时构建失败。
 
 输入法根据自身 Swift 源码、资源、Info.plist、构建脚本及编译器 / SDK / 目标配置的
@@ -248,7 +259,7 @@ git push origin v0.6.0
 
 ## 发布前硬件验收
 
-在干净的 Windows 10/11 x64 和 Apple Silicon macOS 15+ 上分别验证：
+在干净的 Windows 10/11 x64 和 Apple Silicon macOS 13.0、13 最新小版本、14、15、26 上分别验证：
 
 1. 安装/拖入 Applications 后正常启动，蓝牙权限提示文案正确。
 2. 扫描、选择 Ringo、连接、ADPCM 连续音频至少 15 分钟、连续说 20 次，并验证单个 BLE

@@ -45,21 +45,10 @@ FigmaDialog {
             id: heading
             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 28; rightMargin: 28 }
             spacing: 14
-            FigmaAction {
+            FigmaBackAction {
                 objectName: dialog.backObjectName
                 visible: dialog.showBack
-                quiet: true
-                Layout.preferredWidth: 36; Layout.preferredHeight: 36
-                leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
-                contentItem: Item {
-                    FigmaIcon {
-                        anchors.centerIn: parent
-                        width: 20; height: 20
-                        symbol: "chevron-left"
-                    }
-                }
-                Accessible.name: "返回"
-                ToolTip.visible: hovered; ToolTip.text: "返回"
+                Layout.preferredWidth: implicitWidth; Layout.preferredHeight: implicitHeight
                 onClicked: dialog.backRequested()
             }
             Rectangle {

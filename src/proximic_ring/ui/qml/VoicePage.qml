@@ -117,7 +117,7 @@ UiScrollView {
                 Label {
                     objectName: "voiceStatusDetail"; Layout.fillWidth: true; wrapMode: Text.Wrap
                     visible: page.controller.touchpad.blocksVoice
-                    text: "触摸板使用期间麦克风已暂停，停止后恢复原来的语音设置。"
+                    text: "笔画输入期间语音识别已暂停，结束书写后恢复。"
                     color: theme.muted; font.pixelSize: 13
                 }
                 Flow {
@@ -235,6 +235,7 @@ UiScrollView {
                     Label { Layout.preferredHeight: 24; verticalAlignment: Text.AlignVCenter; text: "虚拟文本框"; color: theme.text; font.pixelSize: 16 }
                     VoicePracticeEditor {
                         Layout.fillWidth: true; Layout.fillHeight: true
+                        controller: page.controller
                         practice: page.controller.voicePractice
                     }
                 }

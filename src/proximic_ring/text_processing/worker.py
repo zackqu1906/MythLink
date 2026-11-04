@@ -37,12 +37,18 @@ class TextProcessingWorker:
         on_warmup: Callable[[str | None, float], None] | None = None,
         on_routing_result: Callable[[InputModeRoutingResult], None] | None = None,
         processor: OpenAICompatibleTextProcessor | None = None,
+        intent_router=None,
+        context_provider=None,
     ) -> None:
         self._on_result = on_result
         self._on_trace = on_trace
         self._on_warmup = on_warmup
         self._on_routing_result = on_routing_result
         self._processor = processor or OpenAICompatibleTextProcessor()
+        from .intent_router import ClefIntentRouter
+        from .screen_context import ScreenContextProvider
+        self._intent_router = intent_router or ClefIntentRouter()
+        self._context_provider = context_provider or ScreenContextProvider()
         self._queue: queue.SimpleQueue[
             TextProcessingRequest | InputModeRoutingRequest | _WarmupTask | None
         ] = queue.SimpleQueue()
@@ -79,6 +85,17 @@ class TextProcessingWorker:
             return
         self._queue.put(request)
 
+    def capture_context(self, target):
+        return self._context_provider.prefetch(target)
+
+    def warmup_router(self):
+        def work():
+            try:
+                self._intent_router.warmup()
+            except Exception:
+                pass  # The actual route reports installation/startup errors.
+        threading.Thread(target=work, name="IntentRouterWarmup", daemon=True).start()
+
     def cancel_request(self, request_id: int) -> None:
         """Suppress a queued/running request's result.
 
@@ -106,6 +123,7 @@ class TextProcessingWorker:
         if self._closed.is_set():
             return
         self._closed.set()
+        self._context_provider.close()
         for _thread in self._threads:
             self._queue.put(None)
         if wait:
@@ -122,6 +140,7 @@ class TextProcessingWorker:
                     self._active_workers -= 1
                     close_processor = self._active_workers == 0
                 if close_processor:
+                    self._intent_router.close()
                     close = getattr(self._processor, "close", None)
                     if callable(close):
                         try:
@@ -152,12 +171,26 @@ class TextProcessingWorker:
                 started = time.perf_counter()
                 error = None
                 model_output = ""
+                task_type = ""
+                edit_plan = None
+                screen_context = None
                 mode = normalize_input_mode(request.fallback_mode)
                 try:
                     classify_with_trace = getattr(
                         self._processor, "classify_input_mode_with_trace", None
                     )
-                    if callable(classify_with_trace):
+                    if request.router_backend == "clef":
+                        from .screen_context import resolve_context
+                        from .task_routing import mode_for_task
+                        screen_context = resolve_context(request.screen_context)
+                        decision, model_output = self._intent_router.classify(
+                            request.raw_text, request.target_text, screen_context,
+                            cancelled=lambda: self._closed.is_set() or self._is_cancelled(request.request_id))
+                        task_type, edit_plan = decision.task, decision.edit_plan
+                        mode = mode_for_task(task_type)
+                    elif request.router_backend != "llm":
+                        raise ValueError("不支持的路由后端，请使用 Clef 自动判断")
+                    elif callable(classify_with_trace):
                         mode, model_output = classify_with_trace(
                             request.raw_text, request.settings
                         )
@@ -176,6 +209,9 @@ class TextProcessingWorker:
                     latency_s=max(0.0, time.perf_counter() - started),
                     error=error,
                     model_output=model_output,
+                    task_type=task_type,
+                    screen_context=screen_context,
+                    edit_plan=edit_plan,
                 )
                 if self._on_routing_result is not None:
                     if self._consume_cancelled(request.request_id):
@@ -199,10 +235,18 @@ class TextProcessingWorker:
                     self._processor, "process_with_collection_trace", None
                 )
                 process_with_trace = getattr(self._processor, "process_with_trace", None)
-                if request.mode == TEXT_MODE_POLISH:
+                if request.task_type:
+                    # Clef automatic lane: a validated task/plan, one composed generation.
+                    from .screen_context import resolve_context
+                    final_text, model_output = self._processor.process_task_with_trace(
+                        request.raw_text, request.task_type, request.settings, request.target_text,
+                        resolve_context(request.screen_context), edit_plan=request.edit_plan)
+                elif request.mode == TEXT_MODE_POLISH:
+                    # Explicit polish action; no automatic intent classification.
                     final_text, model_output = self._processor.polish_with_trace(
                         request.raw_text, request.settings)
                 elif callable(process_with_collection_trace):
+                    # Existing user-selected dictation/edit lane and its candidate trace.
                     trace_request_id = request.request_id
 
                     def publish_trace(
@@ -277,6 +321,8 @@ class TextProcessingWorker:
                 final_text = request.target_text or request.raw_text
             result = TextProcessingResult(
                 request_id=request.request_id,
+                task_type=request.task_type,
+                edit_plan=request.edit_plan,
                 session_id=request.session_id,
                 mode=TEXT_MODE_POLISH if request.mode == TEXT_MODE_POLISH else normalize_input_mode(request.mode),
                 raw_text=request.raw_text,

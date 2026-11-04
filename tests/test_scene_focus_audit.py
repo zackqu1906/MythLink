@@ -40,7 +40,7 @@ def read(node, key):
 
 @pytest.mark.parametrize('scene', [PRESENTATION, PDF, IMAGE, VIDEO, MUSIC])
 @pytest.mark.parametrize('state', ['hidden_focus', 'hidden_parent', 'disabled', 'stale', 'menu', 'dialog', 'foreign_text'])
-def test_invalid_focus_never_claims_a_scene_gesture(scene, state):
+def test_native_scene_never_classifies_input_from_ax_focus(scene, state):
     window, focus = window_tree() if scene == PRESENTATION else content(scene)
     if state == 'hidden_focus': focus['AXHidden'] = True
     if state == 'hidden_parent': focus['AXParent'] = dict(AXRole='AXGroup', AXHidden=True, AXParent=window)
@@ -56,7 +56,7 @@ def test_invalid_focus_never_claims_a_scene_gesture(scene, state):
 def test_native_canvas_can_report_window_without_parent(scene):
     window, focus = content(scene)
     focus.pop('AXParent'); focus['AXWindow'] = window
-    assert activity_context('test.viewer', {scene: 'generic'}, window, focus, metadata) == (scene, 'nontext')
+    assert activity_context('test.viewer', {scene: 'generic'}, window, focus, metadata) == (scene, 'unknown')
 
 
 @pytest.mark.parametrize('state', ['background_pdf', 'sidebar_pdf', 'iframe_pdf'])
@@ -75,17 +75,17 @@ def test_browser_only_uses_focused_document_evidence(state):
 def test_video_audio_controls_do_not_turn_a_video_into_music():
     window, focus = content(VIDEO)
     focus['AXChildren'].append(dict(AXRole='AXGroup', AXDescription='Audio controls'))
-    assert activity_context('test.viewer', {VIDEO: 'generic', MUSIC: 'generic'}, window, focus, metadata) == (VIDEO, 'nontext')
+    assert activity_context('test.viewer', {VIDEO: 'generic', MUSIC: 'generic'}, window, focus, metadata) == (VIDEO, 'unknown')
 
 
 def test_declared_music_only_player_is_not_limited_to_known_bundle_ids():
     window, focus = content(MUSIC); window.pop('AXDocument')
-    assert activity_context('test.new.musicplayer', {MUSIC: 'generic'}, window, focus, metadata) == (MUSIC, 'nontext')
+    assert activity_context('test.new.musicplayer', {MUSIC: 'generic'}, window, focus, metadata) == (MUSIC, 'unknown')
 
 
 def test_player_controls_inside_native_layout_area_are_detected():
     window, focus = content(VIDEO); focus['AXRole'] = 'AXLayoutArea'
-    assert activity_context('test.player', {VIDEO: 'generic'}, window, focus, metadata) == (VIDEO, 'nontext')
+    assert activity_context('test.player', {VIDEO: 'generic'}, window, focus, metadata) == (VIDEO, 'unknown')
 
 
 @pytest.mark.parametrize('extension', ['pdf', 'webp', 'heic', 'mkv', 'mp3', 'xlsx'])
@@ -117,7 +117,7 @@ def test_switching_document_in_same_window_rejects_old_target(monkeypatch, scene
 
 
 @pytest.mark.mac_only
-def test_mid_capture_focus_owner_change_discards_mixed_snapshot(monkeypatch):
+def test_focus_owner_change_does_not_invalidate_a_window_snapshot(monkeypatch):
     window, focus = window_tree(); focus['AXWindow'] = window
     other, _ = window_tree('Other.pptx')
     backend, _, _ = native_backend(monkeypatch, window, focus)
@@ -127,7 +127,7 @@ def test_mid_capture_focus_owner_change_discards_mixed_snapshot(monkeypatch):
         if node is window and key == 'AXTitle': focus['AXWindow'] = other
         return result
     ax.AXUIElementCopyAttributeValue = switch
-    assert backend.capture(menu_action=True, scene=True) is None
+    assert backend.capture(menu_action=True, scene=True).scene == PRESENTATION
 
 
 def test_mid_capture_document_change_discards_mixed_snapshot(monkeypatch):
@@ -142,12 +142,12 @@ def test_mid_capture_document_change_discards_mixed_snapshot(monkeypatch):
     assert backend.capture(menu_action=True, scene=True) is None
 
 
-def test_scene_shortcut_does_not_follow_focus_to_another_button(desktop):
+def test_scene_shortcut_survives_unrelated_button_focus_change(desktop):
     backend, state, _ = desktop
     original = replace(state.target, scene=VIDEO, scene_checked=True, input_context='nontext')
     state.target = replace(original, focus='different-button')
-    with pytest.raises(RuntimeError): backend.post(original, 'Space')
-    assert state.sent == []
+    backend.post(original, 'Space')
+    assert len(state.sent) == 2
 
 
 @pytest.mark.parametrize('context', ['nontext', 'text', 'unknown'])
@@ -190,11 +190,12 @@ def test_browser_documents_with_inactive_page_do_not_claim_keys(change):
 
 
 @pytest.mark.parametrize('state', ['hidden_parent', 'dialog_parent', 'foreign_window', 'stale_focus'])
-def test_native_scene_snapshot_blocks_invalid_focus_before_regular_fallback(monkeypatch, state):
+def test_native_scene_snapshot_ignores_ax_focus_ancestry(monkeypatch, state):
     window, focus = content(PDF)
     if state == 'hidden_parent': focus['AXParent'] = dict(AXRole='AXGroup', AXHidden=True, AXParent=window)
     if state == 'dialog_parent': focus['AXParent'] = dict(AXRole='AXGroup', AXSubrole='AXDialog', AXParent=window)
     if state == 'foreign_window': focus['AXParent'] = dict(AXRole='AXWindow', AXTitle='other')
     if state == 'stale_focus': focus.update(AXRole='AXButton', AXFocused=False)
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle='com.apple.Preview')
-    assert backend.capture(menu_action=True, scene=True).blocked
+    target = backend.capture(menu_action=True, scene=True)
+    assert target.scene == PDF and not target.blocked

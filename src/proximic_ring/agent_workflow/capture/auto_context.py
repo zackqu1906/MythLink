@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import time
 
 from .capture_backend import _await, CapturePermissionError
+from ...platforms.macos import screen_capture as compatibility
 
 # Bound the actual frame acquisition, not PNG encoding or model latency.
 MAX_CAPTURE_DELAY = 1.0
@@ -41,6 +42,7 @@ def capture_window(target, cancelled, *, deadline=None):
     """Capture this exact window's latest content and refresh its metadata."""
     if deadline is None:deadline=time.monotonic()+MAX_CAPTURE_DELAY
     def remaining():
+        if cancelled.is_set():raise InterruptedError('截图已取消')
         delay=deadline-time.monotonic()
         if delay<=0:raise TimeoutError('截图超过发送时限，未使用稍后的画面')
         return delay
@@ -67,23 +69,28 @@ def capture_window(target, cancelled, *, deadline=None):
         target.update(window_title=str(window.title() or ''),
                       app=str(app.applicationName() or ''), bundle=str(app.bundleIdentifier() or ''))
         target.pop('document_url', None)  # A previous page's URL is not current evidence.
-        content_filter = SC.SCContentFilter.alloc().initWithDesktopIndependentWindow_(window)
-        rect = window.frame()
-        scale = float(content_filter.pointPixelScale())
-        width, height = round(rect.size.width*scale), round(rect.size.height*scale)
-        if width <= 0 or height <= 0:
-            raise ValueError('原窗口尺寸无效')
-        # Preserve readable text while bounding unexpectedly large windows.
-        ratio = min(1, 4096/max(width,height))
-        config = SC.SCStreamConfiguration.alloc().init()
-        config.setWidth_(max(1,round(width*ratio)))
-        config.setHeight_(max(1,round(height*ratio)))
-        config.setShowsCursor_(False)
-        config.setCapturesAudio_(False)
-        cg_image = _await(lambda cb: SC.SCScreenshotManager
-            .captureImageWithFilter_configuration_completionHandler_(content_filter,config,cb),
-            cancelled,timeout=remaining())
+        manager = compatibility.screenshot_manager(SC)
+        if manager is not None:
+            content_filter = SC.SCContentFilter.alloc().initWithDesktopIndependentWindow_(window)
+            rect = window.frame()
+            scale = float(content_filter.pointPixelScale())
+            width, height = round(rect.size.width*scale), round(rect.size.height*scale)
+            if width <= 0 or height <= 0:
+                raise ValueError('原窗口尺寸无效')
+            ratio = min(1, 4096/max(width,height))
+            config = SC.SCStreamConfiguration.alloc().init()
+            config.setWidth_(max(1,round(width*ratio)))
+            config.setHeight_(max(1,round(height*ratio)))
+            config.setShowsCursor_(False)
+            config.setCapturesAudio_(False)
+            cg_image = _await(lambda cb: manager
+                .captureImageWithFilter_configuration_completionHandler_(content_filter,config,cb),
+                cancelled,timeout=remaining())
+        else:
+            remaining()
+            cg_image = compatibility.legacy_window_image(CG, target['window_id'])
         remaining()  # Never label a delayed system callback as a send-time frame.
+        if cg_image is None:raise RuntimeError('系统返回了空截图，请检查屏幕录制权限')
         target['captured_at']=datetime.now(timezone.utc).isoformat()
         target['captured_monotonic']=time.monotonic()
         data = NSMutableData.data()
@@ -93,4 +100,7 @@ def capture_window(target, cancelled, *, deadline=None):
             raise RuntimeError('无法保存窗口截图')
         image = QImage.fromData(bytes(data), 'PNG')
         if image.isNull(): raise RuntimeError('窗口截图为空')
+        if max(image.width(),image.height()) > 4096:
+            from PySide6.QtCore import Qt
+            image = image.scaled(4096,4096,Qt.KeepAspectRatio,Qt.SmoothTransformation)
         return image

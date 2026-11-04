@@ -70,9 +70,9 @@ def test_first_connection_enables_both_once_and_logs_actual_state(controllers, t
     c = controllers()
     source = connect(c, source_first=source_first)
     wait_until(lambda: c.touchpad.state == 'running')
-    # Both choices restore, but the active touchpad owns the audio gate.
-    assert c.recognitionEnabled and c.touchpad.blocksVoice
-    assert not c._recognition_event.is_set()
+    # Both choices restore independently; pointer control leaves audio available.
+    assert c.recognitionEnabled and not c.touchpad.blocksVoice
+    assert c._recognition_event.is_set()
     assert c.touchpad.inputMode == 'pointer' and len(source.starts) == 1
     c._apply_runtime_started()
     c.touchpad.changed.emit()

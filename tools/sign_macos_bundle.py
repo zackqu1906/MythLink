@@ -109,6 +109,8 @@ def sign_bundle(app: Path, identity: str, team: str, entitlements: Path, report:
             extra += ["--entitlements", str(path / "Contents/Resources/extension.entitlements.plist")]
         elif helper_entitlements := webengine_entitlements(path):
             extra += ["--entitlements", str(helper_entitlements)]
+        elif path.name == 'node' and path.parent.name == 'bin' and path.parent.parent.name == 'node':
+            extra += ['--entitlements', str(Path(__file__).resolve().parents[1] / 'packaging/node.entitlements.plist')]
         run("/usr/bin/codesign", *flags, *extra, path)
         if index % 50 == 0 or path == app:
             print(f"Signed {index}/{len(targets)} code items", flush=True)

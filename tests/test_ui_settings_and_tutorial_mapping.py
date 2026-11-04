@@ -22,13 +22,12 @@ def test_advanced_settings_matches_preferences_and_sidebar_commits_current_edit(
     root.resize(*size)
     controller.asrBackend = "volcengine"
     open_page(root, 4)
-    advanced, preferences = item(root, "advancedSettingsDialog"), item(root, "runtimeSettingsDialog")
-    for prop in ("width", "height", "leftPadding", "rightPadding", "topPadding", "bottomPadding"):
-        assert advanced.property(prop) == preferences.property(prop)
+    advanced, preferences = item(root, "advancedSettingsPage"), item(root, "runtimeSettingsDialog")
+    assert advanced.property("visible") and preferences.property("opened")
     field = item(root, "asrApiKeyField")
     field.forceActiveFocus(Qt.OtherFocusReason)
     field.setProperty("text", "test-only-sidebar-save")
-    account = visual_child(advanced.property("background"), "preferencesNav0")
+    account = visual_child(preferences.property("background"), "preferencesNav0")
     position = account.mapToScene(QPointF(account.width() / 2, account.height() / 2)).toPoint()
     QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, position)
     QTest.qWait(220)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .task_routing import EditPlan
+
 
 INPUT_MODE_DICTATION = "dictation"
 INPUT_MODE_EDIT = "edit"
@@ -112,6 +114,9 @@ class TextProcessingRequest:
     raw_text: str
     settings: LLMSettings
     target_text: str = ""
+    task_type: str = ""
+    screen_context: object = None
+    edit_plan: EditPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +126,9 @@ class InputModeRoutingRequest:
     raw_text: str
     settings: LLMSettings
     fallback_mode: str = INPUT_MODE_DICTATION
+    router_backend: str = "llm"
+    target_text: str = ""
+    screen_context: object = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +140,9 @@ class InputModeRoutingResult:
     latency_s: float
     error: str | None = None
     model_output: str = ""
+    task_type: str = ""
+    screen_context: object = None
+    edit_plan: EditPlan | None = None
 
 
 @dataclass(frozen=True)
@@ -166,3 +177,5 @@ class TextProcessingResult:
     model_output: str = ""
     llm_branches: tuple[LLMBranchTrace, ...] = ()
     winner_branch: str = ""
+    task_type: str = ""
+    edit_plan: EditPlan | None = None

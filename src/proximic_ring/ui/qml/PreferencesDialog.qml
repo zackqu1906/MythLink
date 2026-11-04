@@ -39,11 +39,11 @@ FigmaDialog {
                         objectName: "preferencesNav" + index
                         Layout.fillWidth: true; implicitHeight: 44
                         leftPadding: 12; rightPadding: 12
-                        hoverEnabled: true; checked: dialog.section === index
+                        hoverEnabled: enabled; checked: dialog.section === index
                         Accessible.name: modelData.text
                         background: Rectangle {
                             radius: 8
-                            color: parent.checked || parent.down ? theme.selection : parent.hovered ? theme.subtle : "transparent"
+                            color: parent.checked || parent.down ? theme.selection : (parent.enabled && parent.hovered) ? theme.subtle : "transparent"
                             border.width: parent.visualFocus ? 2 : 0; border.color: theme.primary
                         }
                         contentItem: RowLayout {
@@ -63,10 +63,10 @@ FigmaDialog {
         }
         RowLayout {
             x: 256; y: 32; width: parent.width - 288; height: 36; spacing: 8
-            FigmaAction {
+            FigmaBackAction {
                 visible: dialog.showBack; objectName: dialog.backObjectName
-                quiet: true; symbol: "chevron-left"; Layout.preferredWidth: 28; Layout.preferredHeight: 28
-                Accessible.name: "返回"; onClicked: dialog.backRequested()
+                Layout.preferredWidth: implicitWidth; Layout.preferredHeight: implicitHeight
+                onClicked: dialog.backRequested()
             }
             Label { Layout.fillWidth: true; text: dialog.title; color: theme.text; font.pixelSize: 28; font.weight: Font.Bold; elide: Text.ElideRight }
             FigmaAction {

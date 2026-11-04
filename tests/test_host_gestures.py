@@ -47,7 +47,7 @@ def test_host_identity_matches_picker_capture_and_menu_in_source_and_packaged_ru
     candidates = application_candidates(host_pid=42)
     assert [(app["value"], app["label"]) for app in candidates] == [(HOST_BUNDLE, "Mythlink")]
     target = backend.capture(menu_action=True)
-    assert target.bundle == HOST_BUNDLE and not target.blocked and target.input_context == "nontext"
+    assert target.bundle == HOST_BUNDLE and not target.blocked and target.input_context == "unknown"
     assert backend.same_target(target, require_focus=True)
     assert read_application_menu(HOST_BUNDLE, host_pid=42)["pid"] == 42
     # The IME still receives the native client identity, not a configuration alias.
@@ -66,8 +66,8 @@ def test_local_workspace_exception_keeps_real_dialog_and_foreground_guards(host_
     if change == "sheet": values["window", "AXSheets"] = ["sheet"]
     if change == "minimized": values["window", "AXMinimized"] = True
     if change == "menu": values["focus", "AXRole"] = "AXMenu"
-    assert backend.capture(menu_action=True, focus_sensitive=focus_sensitive).blocked
-    assert not backend.same_target(target, require_focus=True)
+    assert backend.capture(menu_action=True, focus_sensitive=focus_sensitive).blocked is (change != "menu")
+    assert backend.same_target(target, require_focus=True) is (change == "menu")
 
 
 def test_mythlink_candidate_survives_discovery_failure_without_implicit_bindings(route, monkeypatch):

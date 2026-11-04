@@ -15,6 +15,8 @@ from uuid import UUID
 from PySide6.QtCore import QObject, Property, Qt, QProcess, QTimer, QCoreApplication, QSettings, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
+from ...gestures.gesture_settings import GESTURE_LABELS
+
 
 def helper_path() -> Path:
     root = (Path(sys.executable).resolve().parent.parent / "Helpers" if getattr(sys, "frozen", False)
@@ -24,12 +26,13 @@ def helper_path() -> Path:
 
 class ProximityController(QObject):
     changed = Signal()
+    lockNoticeChanged = Signal()
     diagnostic = Signal(object)
     lockPreparing = Signal()
     locked = Signal()
     unlocked = Signal()
     reconnectRequested = Signal(str)
-    _unlockGesture = Signal(object, object, float)
+    _unlockGesture = Signal(object, object, float, int)
     _activityEvidence = Signal(str, object, float, object, int)
 
     def __init__(self, parent=None, *, settings, process_factory=QProcess):
@@ -37,11 +40,20 @@ class ProximityController(QObject):
         self._gesture_state = (False, "")  # Immutable snapshot read by model worker.
         self._input_resume_allowed = False
         self._lock_preparing = False
+        self._lock_notice_state = ""
+        self._lock_countdown_seconds = 0
+        self._lock_notice_timer = QTimer(self)
+        self._lock_notice_timer.setSingleShot(True)
+        self._lock_notice_timer.timeout.connect(self._clear_lock_notice)
         self._gesture_guard = threading.Lock()
         self._claimed_token = ""
         self._unlockGesture.connect(self._apply_unlock_gesture, Qt.QueuedConnection)
         self._activityEvidence.connect(self._apply_activity_evidence, Qt.QueuedConnection)
         self._settings = settings
+        saved_gesture = settings.value("proximity/unlockGesture", "snap")
+        self._unlock_gesture = (saved_gesture if isinstance(saved_gesture, str)
+                                and saved_gesture in GESTURE_LABELS else "snap")
+        self._unlock_gesture_revision = 0
         self._factory = process_factory
         self._process = None
         self._command = ""
@@ -121,6 +133,10 @@ class ProximityController(QObject):
 
     @Property(bool, notify=changed)
     def busy(self): return self._process is not None and self._command != "monitor"
+    @Property(str, notify=lockNoticeChanged)
+    def lockNoticeState(self): return self._lock_notice_state
+    @Property(int, notify=lockNoticeChanged)
+    def lockCountdownSeconds(self): return self._lock_countdown_seconds
     @Property(str, notify=changed)
     def deviceName(self): return self._name or "请先在主界面连接戒指"
     @Property(bool, notify=changed)
@@ -156,8 +172,30 @@ class ProximityController(QObject):
     @Property(str, constant=True)
     def componentPath(self): return str(helper_path().parents[2])
 
-    @Property(str, constant=True)
-    def lockScreenMessage(self): return "Ring 已连接且弹指解锁功能开启时，可弹指（snap）解锁"
+    @Property("QVariantList", constant=True)
+    def unlockGestureOptions(self):
+        return [dict(value=key, label=label) for key, label in GESTURE_LABELS.items()]
+
+    @Property(str, notify=changed)
+    def unlockGesture(self): return self._unlock_gesture
+
+    @unlockGesture.setter
+    def unlockGesture(self, value):
+        if value not in GESTURE_LABELS or value == self._unlock_gesture:
+            return
+        with self._gesture_guard:
+            self._unlock_gesture = value
+            self._unlock_gesture_revision += 1
+            self._claimed_token = ""
+        self._settings.setValue("proximity/unlockGesture", value)
+        self._lock_screen_message_status = ""
+        self.changed.emit()
+
+    @Property(str, notify=changed)
+    def unlockGestureLabel(self): return GESTURE_LABELS[self._unlock_gesture]
+
+    @Property(str, notify=changed)
+    def lockScreenMessage(self): return f"Ring 已连接且手势解锁功能开启时，可{self.unlockGestureLabel}解锁"
 
     @Property(str, notify=changed)
     def lockScreenMessageStatus(self): return self._lock_screen_message_status
@@ -221,7 +259,7 @@ class ProximityController(QObject):
         self.changed.emit()
 
     def filter_gesture(self, name, connection):
-        """Consume every gesture while locking/locked; enqueue only a fresh snap."""
+        """Consume every gesture while locking/locked; enqueue the selected gesture."""
         with self._gesture_guard:
             blocked, token = self._gesture_state
             if not blocked or self._lock_preparing:
@@ -229,9 +267,9 @@ class ProximityController(QObject):
                     self.record_activity("gestures", connection)
             if not blocked:
                 return False
-            if name == "snap" and token and token != self._claimed_token:
+            if name == self._unlock_gesture and token and token != self._claimed_token:
                 self._claimed_token = token
-                self._unlockGesture.emit(token, connection, time.monotonic())
+                self._unlockGesture.emit(token, connection, time.monotonic(), self._unlock_gesture_revision)
         return True
 
     def record_activity(self, source, connection):
@@ -291,19 +329,20 @@ class ProximityController(QObject):
         if result is None or result >= 0:
             self._sent_baseline_options = state
 
-    @Slot(object, object, float)
-    def _apply_unlock_gesture(self, token, connection, created):
+    @Slot(object, object, float, int)
+    def _apply_unlock_gesture(self, token, connection, created, revision):
         owner = self.parent()
         if (self._closed or not self._enabled or self._command != "monitor"
                 or self._process is None or self._gesture_state != (True, token)
+                or revision != self._unlock_gesture_revision
                 or time.monotonic() - created > 1.0 or connection.is_set()
                 or (owner is not None and connection is not owner._disconnect_event)):
             with self._gesture_guard:
-                if self._claimed_token == token:
+                if self._claimed_token == token and revision == self._unlock_gesture_revision:
                     self._claimed_token = ""
             return
         self._process.write(("gesture-unlock " + token + "\n").encode("ascii"))
-        self.diagnostic.emit({"action": "gesture_unlock", "gesture": "snap"})
+        self.diagnostic.emit({"action": "gesture_unlock", "gesture": self._unlock_gesture})
 
     def _ready(self):
         if self._manually_disconnected:
@@ -584,6 +623,7 @@ class ProximityController(QObject):
                                   "reason": str(message.get("reason", ""))[:80],
                                   "lock": message.get("lock"), "unlock": message.get("unlock")})
         if kind == "monitor":
+            self._update_lock_notice(message)
             self._monitor_received_at = time.monotonic()
             self._input_resume_allowed = (message.get("locked") is False and not message.get("lock_pending")
                                           and bool(message.get("permission")) and not message.get("error"))
@@ -637,6 +677,8 @@ class ProximityController(QObject):
                                               "gesture_eligible", "gesture_ready", "unlock_ready", "return_wake_pending")},
                                           "error": self._error})
                 self._status = str(message.get("state", "正在监测距离"))[:100]
+                if message.get("locked") and message.get("unlock_ready") and not self._error:
+                    self._status = f"手势已连接，请{self.unlockGestureLabel}解锁"
                 self._rssi = str(message.get("rssi", "—"))
                 self.syncConnectionState()
                 self.syncGestureReadiness()
@@ -647,6 +689,7 @@ class ProximityController(QObject):
                 self._status = ("可以开启" if self._target and self._password and self._password_access
                                 and self._permission and self._calibration else "请连接戒指并完成校准及下方设置")
         elif kind == "prepare_lock" and self._enabled and self._command == "monitor":
+            self._clear_lock_notice()
             if not self.lock_connection_ready:
                 self.syncConnectionState()
                 proc.write(b"lock-cancel\n")
@@ -658,19 +701,53 @@ class ProximityController(QObject):
             if self._process is proc and self._enabled:
                 proc.write(b"lock-ready\n" if self.lock_connection_ready else b"lock-cancel\n")
         elif kind == "locked" and self._enabled:
+            self._clear_lock_notice()
             self._input_resume_allowed = False
             self._lock_preparing = False
             self._gesture_state = (True, "")
             self.locked.emit()
         elif kind == "unlocked" and self._enabled:
+            self._clear_lock_notice()
             self._input_resume_allowed = True
             self._lock_preparing = False
             self._monitor_received_at = time.monotonic()
             self._gesture_state = (False, "")
             self.unlocked.emit()
         elif kind == "error":
+            self._clear_lock_notice()
             self._error = str(message.get("error", "距离监测异常"))[:250]
         self.changed.emit()
+
+    def _update_lock_notice(self, message):
+        # Display the helper's authoritative clock; the HUD never initiates a lock.
+        if (not self._enabled or self._command != "monitor" or message.get("locked") is not False
+                or not message.get("permission") or not message.get("connected")
+                or not message.get("locking_enabled") or message.get("error")):
+            self._clear_lock_notice()
+            return
+        seconds = message.get("lock_countdown_seconds", 0)
+        if type(seconds) is not int or not 0 <= seconds <= 5:
+            self._clear_lock_notice()
+            return
+        if seconds > 0 and not message.get("lock_pending"):
+            self._set_lock_notice("countdown", seconds)
+            # Hide a stale HUD if status updates stop before the process watchdog.
+            self._lock_notice_timer.start(2500)
+        elif message.get("lock_pending"):
+            self._clear_lock_notice()
+        elif self._lock_notice_state == "countdown":
+            self._set_lock_notice("cancelled")
+            self._lock_notice_timer.start(1800)
+
+    def _set_lock_notice(self, state, seconds=0):
+        if (state, seconds) == (self._lock_notice_state, self._lock_countdown_seconds):
+            return
+        self._lock_notice_state, self._lock_countdown_seconds = state, seconds
+        self.lockNoticeChanged.emit()
+
+    def _clear_lock_notice(self):
+        self._lock_notice_timer.stop()
+        self._set_lock_notice("")
 
     def _finished(self, proc, code):
         if proc is not self._process: return
@@ -685,6 +762,7 @@ class ProximityController(QObject):
             return
         self._process = None; self._command = ""; self._watchdog.stop(); proc.deleteLater()
         if command == "monitor":
+            self._clear_lock_notice()
             self._status = "距离监测已停止"
             self._error = self._error or "监测组件已退出，请关闭后重新开启此功能"
         elif code != 0:
@@ -705,6 +783,7 @@ class ProximityController(QObject):
         self._stop_failed_operation()
 
     def _stop(self):
+        self._clear_lock_notice()
         self._input_resume_allowed = False
         self._lock_preparing = False
         self._gesture_state = (False, "")

@@ -159,7 +159,7 @@ def test_legacy_stop_duration_is_retired(inline_ui):
 
 
 @pytest.mark.parametrize('enabled', [True, False])
-def test_pointer_blocks_voice_until_touchpad_stops(inline_ui, enabled):
+def test_pointer_keeps_voice_enabled_until_and_after_touchpad_stops(inline_ui, enabled):
     from PySide6.QtCore import QObject
     from PySide6.QtTest import QTest
     c, _, _, root, _ = inline_ui
@@ -167,14 +167,15 @@ def test_pointer_blocks_voice_until_touchpad_stops(inline_ui, enabled):
     c._recognition_enabled = enabled
     c._recognition_event.set() if enabled else c._recognition_event.clear()
     tp.start(); QTest.qWait(20)
-    assert tp.blocksVoice and not c._recognition_event.is_set()
+    assert not tp.blocksVoice and c._recognition_event.is_set() == enabled
     source.future.set_result(None); QTest.qWait(20)
-    assert tp.blocksVoice and not c._recognition_event.is_set()
-    assert not root.findChild(QObject, 'voiceRecognitionButton').property('enabled')
+    assert not tp.blocksVoice and c._recognition_event.is_set() == enabled
+    assert root.findChild(QObject, 'voiceRecognitionButton').property('enabled')
     assert root.findChild(QObject, 'gestureVoiceRecognitionButton') is None
-    assert root.findChild(QObject, 'voiceStatusTitle').property('text') == '语音识别已暂停'
+    assert root.findChild(QObject, 'voiceStatusTitle').property('text') == '语音输入'
+    c._cancel_utterance_event.clear()
     c._apply_runtime_status('[ASR] START t=2.000s')
-    assert c._cancel_utterance_event.is_set()
+    assert not c._cancel_utterance_event.is_set()
     tp.stop(); QTest.qWait(20)
     assert not tp.blocksVoice and c._recognition_event.is_set() == enabled
     assert c.recognitionEnabled == enabled

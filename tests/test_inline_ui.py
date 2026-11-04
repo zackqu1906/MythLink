@@ -218,11 +218,11 @@ def test_settings_pages_and_back_navigation_fit_small_window(inline_ui):
     QTest.qWait(150)
     QMetaObject.invokeMethod(root.findChild(QObject, "advancedSettingsButton"), "click")
     QTest.qWait(160)
-    advanced = root.findChild(QObject, "advancedSettingsDialog")
-    assert advanced.property("visible") and not dialog.property("visible")
+    advanced = root.findChild(QObject, "advancedSettingsPage")
+    assert advanced.property("visible") and dialog.property("opened")
     for index in (4, 5):
         assert root.findChild(QQuickItem, f"settingsPage{index}").isVisible()
-    done = root.findChild(QQuickItem, "advancedSettingsDoneButton")
+    done = root.findChild(QQuickItem, "settingsOverviewBackButton")
     p = done.mapToScene(QPointF(0, 0))
     assert 0 <= p.y() and p.y() + done.height() <= root.height()
     QMetaObject.invokeMethod(done, "click")
@@ -648,6 +648,74 @@ def test_conversion_uses_sentence_snapshot_and_native_revision(inline_ui):
     assert bridge.messages[-1]["text"] == "明天四点开会"
 
 
+@pytest.mark.parametrize("subtask", ["dictation", "modify", "compose", "insert"])
+def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeypatch, subtask):
+    from proximic_ring.text_processing.task_routing import EditPlan
+    task = "dictation" if subtask == "dictation" else "edit"
+    plan = None if task == "dictation" else EditPlan((subtask,))
+    from proximic_ring.text_processing import InputModeRoutingResult
+    controller, bridge, requests, _, event = inline_ui
+    component = controller._inline_input
+    routes = []
+    context = {"source": "screen_ocr", "status": "ok", "coverage": "visible_only",
+               "messages": [{"speaker": "other", "text": "明天有空吗？"}]}
+    monkeypatch.setattr(controller._text_processing_worker, "warmup_router", lambda: None)
+    monkeypatch.setattr(controller._text_processing_worker, "capture_context", lambda target: context)
+    monkeypatch.setattr(controller._text_processing_worker, "submit_routing", routes.append)
+    controller.inputRoutingMode = "auto"
+    # The setting takes effect at the next native BEGIN.
+    event(phase="dictated", ready=True, revision=1, raw="", error="")
+    event("settled", phase="dictated", revision=1, text="")
+    controller._apply_runtime_status("[ASR] START t=2.000s")
+    assert bridge.messages[-1]["type"] == "begin" and bridge.messages[-1]["automatic_mode"]
+    # ASR can finish before BEGIN is acknowledged. It must be buffered, not
+    # committed as dictation or cancelled when the native acknowledgment lands.
+    controller._apply_runtime_update("帮我处理这句话", True, "", 2)
+    assert not routes and not requests
+    event(phase="listening", ready=True, revision=0, automatic_mode=True, automatic_routing_version=2,
+          edit_source_text="明天三点", can_convert=True, has_composition=True)
+    assert len(routes) == 1 and routes[0].target_text == "明天三点"
+    assert not component.canConvert and not component.canRequestConversion
+    before = len(bridge.messages)
+    controller.switchCurrentInputMode()
+    assert len(bridge.messages) == before
+    controller._apply_runtime_update("帮我处理这句话", True, "", 2)
+    assert len(routes) == 1 and not requests
+    r = routes[0]
+    controller._apply_input_mode_routed(InputModeRoutingResult(r.request_id, 2, r.raw_text,
+        "dictation" if task == "dictation" else "edit", .1, task_type=task, screen_context=context, edit_plan=plan))
+    if task != "dictation":
+        assert not requests  # The IME still owns the authoritative source.
+        assert bridge.messages[-1]["automatic_task"] == task
+        event(phase="editing", ready=True, revision=1, edit_requested=True)
+        assert bridge.messages[-1]["automatic_allow_empty"] == plan.allows_empty_source
+        source = "" if plan.allows_empty_source else "明天三点"
+        event("edit_requested", revision=1, instruction=r.raw_text, original=source)
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.task_type == task and request.screen_context == context
+    assert request.settings.enabled
+    assert request.edit_plan == plan
+    if plan and plan.allows_empty_source:
+        assert request.target_text == ""
+    controller._apply_text_processed(TextProcessingResult(request.request_id, 2, request.mode,
+        request.raw_text, "处理后的文字", .1, True, task_type=task))
+    assert bridge.messages[-1]["text"] == "处理后的文字"
+    assert bridge.messages[-1]["type"] == ("update" if task == "dictation" else "edit_result")
+
+
+def test_automatic_mode_rejects_old_native_component(inline_ui, monkeypatch):
+    controller, bridge, requests, _, event = inline_ui
+    monkeypatch.setattr(controller._text_processing_worker, "warmup_router", lambda: None)
+    controller.inputRoutingMode = "auto"
+    event(phase="dictated", ready=True, revision=1, raw="", error="")
+    event("settled", phase="dictated", revision=1, text="")
+    controller._apply_runtime_status("[ASR] START t=2.000s")
+    event(phase="listening", ready=True, revision=0)
+    assert "更新输入法组件" in controller._inline_input.error
+    assert not requests
+
+
 def test_cancel_invalidates_late_model_and_old_connection_events(inline_ui):
     controller, bridge, requests, _, event = inline_ui
     event(phase="editing", ready=True, revision=1, edit_requested=True)
@@ -1063,3 +1131,42 @@ def test_removed_floating_ui_has_no_windows_settings_or_timers(inline_ui):
     controller._reset_transcript_for_device_boundary()
     assert not controller._transcript_active
     assert root.findChild(QObject, "associationRecommendationOverlay") is not None
+
+
+@pytest.mark.parametrize("end_gesture", ["tap", "snap", "double-index-pinch"])
+def test_configured_end_gesture_finishes_automatic_sentence_and_routes_once(inline_ui, monkeypatch, end_gesture):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    c, bridge, requests, _, event = inline_ui
+    routes = []
+    monkeypatch.setattr(c._text_processing_worker, "warmup_router", lambda: None)
+    monkeypatch.setattr(c._text_processing_worker, "capture_context", lambda target: {})
+    monkeypatch.setattr(c._text_processing_worker, "submit_routing", routes.append)
+    c.inputRoutingMode = "auto"
+    c._gesture_bindings = replace(c._gesture_bindings, end=(end_gesture, ""))
+    saved = c._gesture_bindings
+    event(phase="dictated", ready=True, revision=1, raw="", error="")
+    event("settled", phase="dictated", revision=1, text="")
+    c._apply_runtime_status("[ASR] START t=2.000s")
+    event(phase="listening", ready=True, revision=0, automatic_mode=True, automatic_routing_version=2,
+          edit_source_text="旧文本")
+    # The live mapping, not the physical name 'tap', owns the audio endpoint.
+    assert c._ring_gestures.filter(SimpleNamespace(name=end_gesture), True, c._disconnect_event, skip_stroke=True)
+    c._apply_runtime_status(f"[ASR] END reason=gesture-{end_gesture}")
+    assert bridge.messages[-1]["type"] == "finish"
+    assert not requests and not routes
+    c._apply_runtime_update("把旧文本改成新文本", True, "", 2)
+    c._apply_runtime_update("把旧文本改成新文本", True, "", 2)
+    assert len(routes) == 1 and routes[0].router_backend == "clef" and not requests
+    assert c._gesture_bindings is saved
+
+
+def test_automatic_mode_rejects_four_class_native_protocol(inline_ui, monkeypatch):
+    c, _, requests, _, event = inline_ui
+    monkeypatch.setattr(c._text_processing_worker, "warmup_router", lambda: None)
+    c.inputRoutingMode = "auto"
+    event(phase="dictated", ready=True, revision=1, raw="", error="")
+    event("settled", phase="dictated", revision=1, text="")
+    c._apply_runtime_status("[ASR] START t=2.000s")
+    event(phase="listening", ready=True, revision=0, automatic_mode=True)
+    assert "更新输入法组件" in c._inline_input.error and not requests

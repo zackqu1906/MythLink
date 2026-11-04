@@ -58,13 +58,13 @@ Item {
                     visible: !windowSelector.atApps
                     width: 112; height: 36
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "‹ 返回应用"; focusPolicy: Qt.NoFocus; hoverEnabled: true
+                    text: "‹ 返回应用"; focusPolicy: Qt.NoFocus; hoverEnabled: enabled
                     contentItem: Text {
                         text: backButton.text; color: "#eeeeee"; font.pixelSize: 13
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        radius: 18; color: backButton.hovered ? "#555555" : "#383838"
+                        radius: 18; color: (backButton.enabled && backButton.hovered) ? "#555555" : "#383838"
                         border.color: "#50ffffff"
                     }
                     onClicked: windowSelector.back()
@@ -98,7 +98,7 @@ Item {
             anchors.right: parent.right; anchors.top: parent.top
             color: closeArea.containsMouse ? "#30ffffff" : "#16ffffff"
             Text { anchors.centerIn: parent; text: "×"; font.pixelSize: 24; color: "#dcdcdc" }
-            MouseArea { id: closeArea; anchors.fill: parent; hoverEnabled: true; onClicked: windowSelector.cancel() }
+            MouseArea { id: closeArea; anchors.fill: parent; hoverEnabled: enabled; onClicked: windowSelector.cancel() }
         }
         BusyIndicator {
             anchors.centerIn: parent; running: root.presented && windowSelector.phase === "loading"
@@ -193,7 +193,7 @@ Item {
                         text: chosen ? (windowSelector.atApps && modelData.windowCount > 1 ? "›" : "↗") : ""; color: "#eeeeee"; font.pixelSize: 21 }
                     MouseArea {
                         id: cardMouse
-                        anchors.fill: parent; hoverEnabled: true
+                        anchors.fill: parent; hoverEnabled: enabled
                         cursorShape: Qt.PointingHandCursor
                         onClicked: windowSelector.click(index)
                     }

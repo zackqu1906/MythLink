@@ -51,7 +51,7 @@ def test_posts_one_balanced_chord_to_pinned_pid(desktop, shortcut, code, flags):
     if names: assert state.sent[-1][1]["flags"] == 0
 
 
-@pytest.mark.parametrize("change", ["app", "pid", "window", "focus", "modal", "missing", "permission"])
+@pytest.mark.parametrize("change", ["app", "pid", "window", "modal", "missing", "permission"])
 def test_stale_target_or_permission_failure_posts_nothing(desktop, change):
     backend, state, _ = desktop
     original = state.target
@@ -112,10 +112,9 @@ def test_capture_is_bounded_metadata_only_no_text_or_clipboard(monkeypatch):
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWorkspace=SimpleNamespace(
         sharedWorkspace=lambda: SimpleNamespace(frontmostApplication=lambda: app))))
     target = MacAppShortcuts().capture()
-    assert target.profile == "codex" and target.focus == "focus" and not target.blocked
-    assert len(reads) == 9
-    assert set(reads) == {"AXFocusedWindow", "AXFocusedUIElement", "AXRole", "AXWindow",
-                          "AXSubrole", "AXDescription", "AXModal", "AXSheets", "AXMinimized"}
+    assert target.profile == "codex" and target.focus is None and not target.blocked
+    assert len(reads) == 5
+    assert set(reads) == {"AXFocusedWindow", "AXSubrole", "AXModal", "AXSheets", "AXMinimized"}
 
 
 @pytest.mark.parametrize("bundle,role,description", [
@@ -147,7 +146,7 @@ def test_plain_enter_capture_all_apps_and_fields(monkeypatch, bundle, role, desc
     assert backend.same_target(target, require_focus=True)
     values[("app", "AXFocusedUIElement")] = "different-field"
     assert not backend.same_target(target, require_focus=True)
-    assert set(reads) == {"AXFocusedWindow", "AXFocusedUIElement", "AXRole", "AXWindow"}
+    assert set(reads) == {"AXFocusedWindow", "AXFocusedUIElement", "AXRole"}
 
 
 def test_plain_enter_target_posts_no_modifiers_and_rejects_other_chords(desktop):

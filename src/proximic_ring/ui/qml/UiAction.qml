@@ -16,7 +16,7 @@ Button {
     topPadding: 0; bottomPadding: 0
     font.family: theme.family
     font.pixelSize: 13
-    hoverEnabled: true
+    hoverEnabled: enabled
     Accessible.name: text
     background: Rectangle {
         radius: 10

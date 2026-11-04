@@ -104,6 +104,78 @@ def test_sidebar_mouse_navigation_keeps_one_preferences_window_open(inline_ui, s
     assert bridge.messages == before
 
 
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700), (940, 560)])
+def test_settings_and_help_details_keep_the_same_popup_during_navigation(inline_ui, tmp_path, size):
+    controller, bridge, _, root, event = inline_ui
+    event(phase="idle", ready=True)
+    root.resize(*size); root.show(); QTest.qWait(100)
+    click(root, "runtimeSettingsButton"); QTest.qWait(160)
+    shell = root.findChild(QObject, "runtimeSettingsDialog")
+    showing, hiding = QSignalSpy(shell.aboutToShow), QSignalSpy(shell.aboutToHide)
+    geometry = tuple(shell.property(p) for p in ("x", "y", "width", "height"))
+    messages = list(bridge.messages)
+    settings = {k: controller._settings.value(k) for k in controller._settings.allKeys()}
+    scroll = root.findChild(QObject, "runtimeSettingsScroll")
+    flick = scroll.property("contentItem")
+
+    def mouse_click(name, in_settings=False):
+        control = visual_child(root.contentItem(), name) or root.findChild(QObject, name)
+        assert control is not None and control.property("visible"), name
+        if in_settings:
+            y = control.mapToItem(scroll, QPointF()).y()
+            if y < 0 or y + control.height() > scroll.height():
+                flick.setProperty("contentY", max(0, min(
+                    flick.property("contentY") + y - 12,
+                    flick.property("contentHeight") - flick.height())))
+                QTest.qWait(30)
+        point = control.mapToScene(QPointF(control.width()/2, control.height()/2)).toPoint()
+        assert 0 <= point.x() < root.width() and 0 <= point.y() < root.height()
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, point)
+        # Observe the whole transition, including the first frame. Checking only
+        # the settled result missed the old close/reopen flash.
+        for _ in range(10):
+            assert shell.property("opened") and shell.property("opacity") == 1
+            assert showing.count() == hiding.count() == 0
+            assert tuple(shell.property(p) for p in ("x", "y", "width", "height")) == geometry
+            QTest.qWait(16)
+
+    for entry, page in [("settingsAgentEntry", "settingsAgentGroup"),
+                        ("settingsBrowserEntry", "browserExtensionSettings"),
+                        ("advancedSettingsButton", "advancedSettingsPage")]:
+        mouse_click(entry, True)
+        assert root.findChild(QObject, page).property("visible")
+        if page in ("settingsAgentGroup", "browserExtensionSettings"):
+            other = "browserExtensionSettings" if page == "settingsAgentGroup" else "settingsAgentGroup"
+            assert not root.findChild(QObject, other).property("visible")
+            assert not root.findChild(QObject, "settingsAgentEntry").property("visible")
+            assert not root.findChild(QObject, "settingsBrowserEntry").property("visible")
+        back = root.findChild(QObject, "settingsOverviewBackButton")
+        assert back.property("text") == "返回所有设置" and back.property("navigation")
+        screenshot(root, tmp_path, f"{page}-in-place-{size[0]}x{size[1]}.png")
+        mouse_click("settingsOverviewBackButton", True)
+        assert not root.findChild(QObject, page).property("visible")
+        assert root.findChild(QObject, "settingsAgentEntry").property("visible")
+        assert root.findChild(QObject, "settingsBrowserEntry").property("visible")
+
+    mouse_click("settingsGeneralEntry", True)
+    mouse_click("generalAdvancedSettingsButton", True)
+    assert root.findChild(QObject, "advancedSettingsPage").property("visible")
+    mouse_click("preferencesNav2")
+    mouse_click("helpCenterButton")
+    assert root.findChild(QObject, "helpCenterPage").property("visible")
+    screenshot(root, tmp_path, f"help-center-in-place-{size[0]}x{size[1]}.png")
+    mouse_click("helpCenterBackButton")
+    assert root.findChild(QObject, "helpPreferencesPage").property("visible")
+    mouse_click("helpCenterButton")
+    mouse_click("preferencesNav2")
+    assert root.findChild(QObject, "helpPreferencesPage").property("visible")
+    mouse_click("preferencesNav1")
+    assert not root.findChild(QObject, "settingsOverviewBackButton").property("visible")
+    assert not root.findChild(QObject, "advancedSettingsPage").property("visible")
+    assert bridge.messages == messages
+    assert {k: controller._settings.value(k) for k in controller._settings.allKeys()} == settings
+
+
 @pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
 def test_home_history_fits_three_rows_caps_ten_and_shows_footer(inline_ui, tmp_path, size):
     controller, bridge, _, root, event = inline_ui

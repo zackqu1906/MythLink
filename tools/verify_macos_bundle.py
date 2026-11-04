@@ -5,25 +5,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import plistlib
-import re
-import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+from proximic_ring.platforms.macos.macho import inspect_macho, version_tuple
 
 
 SYSTEM_PREFIXES = ("/System/Library/", "/usr/lib/")
 PORTABLE_PREFIXES = ("@executable_path/", "@loader_path/", "@rpath/")
-
-
-def _run(*args: str | Path) -> str:
-    return subprocess.run(
-        [str(item) for item in args],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-
-
-def _version(value: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in value.split("."))
 
 
 def verify_bundle(app: Path, minimum_macos: str) -> list[str]:
@@ -38,38 +27,43 @@ def verify_bundle(app: Path, minimum_macos: str) -> list[str]:
             browser = plistlib.load(stream)
         if browser.get("LSUIElement") is not True or browser.get("LSBackgroundOnly"):
             errors.append("MythlinkBrowser must start as LSUIElement; periodic status checks must not enter the Dock")
-    executable_root = app / "Contents" / "MacOS"
     resources_root = app / "Contents" / "Resources"
-    files = [item for item in app.rglob("*") if item.is_file()]
-    mach_o_files = [
-        item for item in files if "Mach-O" in _run("/usr/bin/file", item)
-    ]
-    if not mach_o_files:
-        return [f"no Mach-O files found in {app}"]
-
-    allowed_version = _version(minimum_macos)
-    for binary in mach_o_files:
+    allowed_version = version_tuple(minimum_macos)
+    seen = set()
+    count = 0
+    for binary in app.rglob('*'):
+        if not binary.is_file() or binary.resolve() in seen:
+            continue
+        seen.add(binary.resolve())
         relative = binary.relative_to(app)
-        description = _run("/usr/bin/file", binary)
-        if binary.parent == executable_root and "arm64" not in description:
-            errors.append(f"main executable is not arm64: {relative}")
-
-        load_commands = _run("/usr/bin/otool", "-l", binary)
-        for match in re.finditer(r"\bminos\s+(\d+(?:\.\d+)+)", load_commands):
-            actual = match.group(1)
-            if _version(actual) > allowed_version:
-                errors.append(
-                    f"requires macOS {actual}, above declared {minimum_macos}: {relative}"
-                )
-
-        linked = _run("/usr/bin/otool", "-L", binary).splitlines()[1:]
-        for line in linked:
-            dependency = line.strip().split(" (", 1)[0]
-            if dependency.startswith(SYSTEM_PREFIXES + PORTABLE_PREFIXES):
-                continue
-            if dependency.startswith(str(app)):
-                continue
-            errors.append(f"non-portable dependency {dependency}: {relative}")
+        if binary.name == 'Info.plist':
+            with binary.open('rb') as stream:
+                metadata = plistlib.load(stream)
+            minimum = metadata.get('LSMinimumSystemVersion')
+            if minimum and version_tuple(minimum) > allowed_version:
+                errors.append(f'bundle requires macOS {minimum}, above declared {minimum_macos}: {relative}')
+        try:
+            slices = inspect_macho(binary)
+        except (ValueError, UnicodeError) as exc:
+            errors.append(f'invalid Mach-O {relative}: {exc}')
+            continue
+        if not slices:
+            continue
+        count += 1
+        arm = [s for s in slices if s['architecture'] == 'arm64']
+        if not arm:
+            errors.append(f'missing arm64 architecture: {relative}')
+        for record in arm:
+            actual = record['minimum_macos']
+            if actual is None or version_tuple(actual) > allowed_version:
+                errors.append(f'requires macOS {actual or "unknown"}, above declared {minimum_macos}: {relative}')
+            for dependency in record['dependencies']:
+                if not dependency.startswith(SYSTEM_PREFIXES + PORTABLE_PREFIXES):
+                    errors.append(f'non-portable dependency {dependency}: {relative}')
+            # Wheels can retain unused compiler search paths in LC_RPATH.
+            # Those are not dependencies; check the actual load commands above.
+    if not count:
+        errors.append(f'no Mach-O files found in {app}')
 
     if not resources_root.is_dir():
         errors.append("missing Contents/Resources")

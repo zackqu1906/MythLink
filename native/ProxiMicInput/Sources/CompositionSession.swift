@@ -149,6 +149,9 @@ final class CompositionSession {
     private(set) var raw = ""
     private(set) var revision = 0
     private(set) var editRequested = false
+    var automaticMode = false
+    private(set) var automaticTask = ""
+    private(set) var automaticAllowsEmptySource = false
     private(set) var error = ""
     private(set) var lastSequence: Int
     private(set) var hasComposition = false
@@ -271,7 +274,7 @@ final class CompositionSession {
 
     var active: Bool { ![.undone, .interrupted, .error].contains(phase) }
     var canEdit: Bool {
-        active && hasComposition && !raw.isEmpty && !finalReceived &&
+        !automaticMode && active && hasComposition && !raw.isEmpty && !finalReceived &&
             [.listening, .finishing].contains(phase) && !editRequested
     }
     var editOriginal: EditorTextRange? {
@@ -644,6 +647,15 @@ final class CompositionSession {
     }
 
     /// Partial and final updates share the same composition; final never presses Return.
+    func setAutomaticTask(_ task: String, allowEmptySource: Bool = false) {
+        guard automaticMode, !finalReceived, !cancelPending,
+              [.listening, .finishing].contains(phase),
+              ["dictation", "edit"].contains(task) else { return }
+        automaticTask = task
+        automaticAllowsEmptySource = task == "edit" && allowEmptySource
+        editRequested = task != "dictation"
+    }
+
     func update(_ text: String, final: Bool) {
         guard [.listening, .finishing].contains(phase), !finalReceived, !cancelPending else { return }
         if final { finalReceived = true }
@@ -819,7 +831,7 @@ final class CompositionSession {
     }
 
     private func startEditing() {
-        guard let source = editRequestText, !source.isEmpty,
+        guard let source = editRequestText, (!source.isEmpty || automaticAllowsEmptySource),
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             editRequested = false
             restoreDictation(error: editRequestText == nil ? "当前输入框未提供光标前的完整原文，已保留听写" :

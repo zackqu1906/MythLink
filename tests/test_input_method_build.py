@@ -48,6 +48,8 @@ def build_repo(tmp_path, monkeypatch):
     (root / shared).parent.mkdir(parents=True)
     shutil.copyfile(ROOT / shared, root / shared)
     (root / 'tools').mkdir()
+    (root / 'packaging').mkdir()
+    shutil.copyfile(ROOT / 'packaging/macos-target.txt', root / 'packaging/macos-target.txt')
     shutil.copyfile(ROOT / 'tools/build_input_method.py', root / 'tools/build_input_method.py')
     write_info(root / 'native/ProxiMicInput/Info.plist')
     (root / 'native/ProxiMicInput/Sources').mkdir()

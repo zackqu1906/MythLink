@@ -13,14 +13,18 @@ Item {
     signal gestureChosen(string gesture)
     signal mappingChosen(string gesture, bool voice)
     objectName: "gestureMappingPanel"
-    readonly property real canvasScale: Math.min(1, width / 932)
+    // A short window keeps the mappings readable in a grid instead of shrinking
+    // the full hand illustration and its labels to thumbnail size.
+    readonly property bool compact: height < implicitHeight * 0.75
+    readonly property real canvasHeight: compact ? 252 : 494
+    readonly property real canvasScale: Math.max(0, Math.min(1, width / 932, height / canvasHeight))
     property string hoveredGesture: ""
     readonly property string highlightedGesture: hoveredGesture || selectedGesture
     readonly property real cardHeight: 76
-    readonly property real cardGap: 12
+    readonly property real cardGap: 20
     readonly property real touchColumn: 148 + cardGap
     readonly property real touchLeft: 932 - 3 * 148 - 2 * cardGap
-    implicitHeight: 494 * canvasScale
+    implicitHeight: 494 * Math.min(1, width / 932)
     readonly property var definitions: [
         {key:"circle-counterclockwise",title:"逆时针",x:0,y:0,width:148,asset:"counterclockwise",iw:15,ih:13.8,dx:0.6,outline:"#0F6D78"},
         {key:"circle-clockwise",title:"顺时针",x:164,y:0,width:148,asset:"clockwise",iw:15,ih:13.8,outline:"#0F6D78"},
@@ -48,11 +52,21 @@ Item {
             var before = Math.hypot(b[0] - a[0], b[1] - a[1])
             var after = Math.hypot(c[0] - b[0], c[1] - b[1])
             if (!before || !after) continue
-            var r = Math.min(4, before / 2, after / 2)
+            var r = Math.min(12, before / 2, after / 2)
             path += " L " + (b[0] + (a[0] - b[0]) * r / before) + " " + (b[1] + (a[1] - b[1]) * r / before)
             path += " Q " + b[0] + " " + b[1] + " " + (b[0] + (c[0] - b[0]) * r / after) + " " + (b[1] + (c[1] - b[1]) * r / after)
         }
         return path + " L " + points[points.length - 1][0] + " " + points[points.length - 1][1]
+    }
+    function sideLink(from, to) {
+        var bend = (from.x + to.x) / 2
+        return "M " + from.x + " " + from.y + " C " + bend + " " + from.y
+            + " " + bend + " " + to.y + " " + to.x + " " + to.y
+    }
+    function connectorPath(connector, activeOnly) {
+        return connector.stem + " " + connector.branches.filter(function(branch) {
+            return !activeOnly || branch.keys.indexOf(map.highlightedGesture) >= 0
+        }).map(function(branch) { return branch.path }).join(" ")
     }
     readonly property var connectors: {
         var rotate = markerCenter("rotate"), index = markerCenter("index")
@@ -62,27 +76,32 @@ Item {
         var rightBus = center + touchColumn - cardGap / 2
         return [
             {name:"rotate",keys:["circle-clockwise","circle-counterclockwise"],color:"#0F6D78",
-                path:route([[rotate.x,rotate.y-10],[rotate.x,92],[74,92],[74,cardHeight]]) + " " + route([[rotate.x,92],[238,92],[238,cardHeight]])},
+                stem:"", branches:[
+                    {keys:["circle-counterclockwise"],path:"M " + rotate.x + " " + (rotate.y-10) + " C " + rotate.x + " 88 74 112 74 " + cardHeight},
+                    {keys:["circle-clockwise"],path:"M " + rotate.x + " " + (rotate.y-10) + " C " + rotate.x + " 92 238 92 238 " + cardHeight}]},
             {name:"index",keys:["index-pinch","double-index-pinch"],color:"#AF832C",
-                path:route([[index.x-10,index.y],[220,index.y],[220,208],[184,208]])},
+                stem:"", branches:[{keys:["index-pinch","double-index-pinch"],path:sideLink(Qt.point(index.x-10,index.y),Qt.point(184,208))}]},
             {name:"middle",keys:["middle-pinch","double-middle-pinch"],color:"#02A1BA",
-                path:route([[middle.x-10,middle.y],[222,middle.y],[222,344],[184,344]])},
+                stem:"", branches:[{keys:["middle-pinch","double-middle-pinch"],path:sideLink(Qt.point(middle.x-10,middle.y),Qt.point(184,344))}]},
             {name:"fist",keys:["clench"],color:"#949CA9",
-                path:route([[fist.x,fist.y+10],[fist.x,398],[74,398],[74,418]])},
+                stem:"", branches:[{keys:["clench"],path:route([[fist.x,fist.y+10],[fist.x,398],[74,398],[74,418]])}]},
             {name:"touch",keys:["tap","double-tap","swipe-up","swipe-down","swipe-left","swipe-right"],color:"#0225BA",
-                path:route([[touch.x+10,touch.y],[436,touch.y],[436,lowerY],[bus,lowerY],[bus,cardHeight/2],[center,cardHeight/2]])
-                    + " " + route([[touchLeft+148,middleY],[center,middleY]])
-                    + " " + route([[bus,lowerY],[bus,2*(cardHeight+cardGap)+cardHeight/2],[center,2*(cardHeight+cardGap)+cardHeight/2]])
-                    + " " + route([[bus,lowerY],[rightBus,lowerY],[rightBus,middleY],[center+touchColumn,middleY]])}
+                stem:route([[touch.x+10,touch.y],[432,touch.y],[432,lowerY],[bus,lowerY]]), branches:[
+                    {keys:["swipe-up"],path:route([[bus,lowerY],[bus,cardHeight/2],[center,cardHeight/2]])},
+                    {keys:["swipe-left"],path:route([[bus,lowerY],[bus,middleY],[touchLeft+148,middleY]])},
+                    {keys:["tap","double-tap"],path:route([[bus,lowerY],[bus,middleY],[center,middleY]])},
+                    {keys:["swipe-down"],path:route([[bus,lowerY],[bus,2*(cardHeight+cardGap)+cardHeight/2],[center,2*(cardHeight+cardGap)+cardHeight/2]])},
+                    {keys:["swipe-right"],path:route([[bus,lowerY],[rightBus,lowerY],[rightBus,middleY],[center+touchColumn,middleY]])}]}
         ]
     }
     Item {
         id: canvas
-        x: (map.width - width * scale) / 2; width: 932; height: 494
+        x: (map.width - width * scale) / 2; width: 932; height: map.canvasHeight
         scale: map.canvasScale; transformOrigin: Item.TopLeft
         Image {
             id: hand
             objectName: "gestureHandImage"
+            visible: !map.compact
             x: 196; y: 94; width: 390; height: 390
             source: "../assets/figma/redesign-567-33097-hand.png"
             mirror: true; fillMode: Image.PreserveAspectCrop; smooth: true
@@ -90,25 +109,43 @@ Item {
         Repeater {
             model: map.connectors
             Shape {
+                id: connector
                 required property var modelData
                 objectName: "gestureConnector_" + modelData.name
+                visible: !map.compact
                 readonly property bool highlighted: modelData.keys.indexOf(map.highlightedGesture) >= 0
+                readonly property color lineColor: modelData.color
                 anchors.fill: parent
-                opacity: highlighted ? 0.85 : 0.28
+                preferredRendererType: Shape.CurveRenderer
                 ShapePath {
-                    strokeColor: modelData.color; strokeWidth: 1.25
+                    strokeColor: Qt.rgba(connector.lineColor.r, connector.lineColor.g, connector.lineColor.b, 0.3)
+                    strokeWidth: 1.5
                     fillColor: "transparent"; capStyle: ShapePath.RoundCap; joinStyle: ShapePath.RoundJoin
-                    PathSvg { path: modelData.path }
+                    PathSvg { path: map.connectorPath(connector.modelData, false) }
                 }
-                Behavior on opacity { NumberAnimation { duration: 120 } }
+                Shape {
+                    anchors.fill: parent
+                    preferredRendererType: Shape.CurveRenderer
+                    opacity: connector.highlighted ? 0.85 : 0
+                    ShapePath {
+                        strokeColor: connector.lineColor; strokeWidth: 1.8
+                        fillColor: "transparent"; capStyle: ShapePath.RoundCap; joinStyle: ShapePath.RoundJoin
+                        PathSvg { path: map.connectorPath(connector.modelData, true) }
+                    }
+                    Behavior on opacity { NumberAnimation { duration: 140 } }
+                }
             }
         }
         Repeater {
             model: map.definitions
             GestureHandChip {
+                required property int index
                 required property var modelData
-                definition: modelData; x: modelData.x
-                y: modelData.y; height: map.cardHeight
+                definition: modelData
+                x: map.compact ? (index % 4) * 236 : modelData.x
+                y: map.compact ? Math.floor(index / 4) * 88 : modelData.y
+                width: map.compact ? 224 : modelData.width
+                height: map.cardHeight
                 selectedGesture: map.selectedGesture
                 mappingLabel: map.describeGesture(currentGesture)
                 voiceMappingLabel: map.describeVoiceGesture(currentGesture)
@@ -130,6 +167,7 @@ Item {
             Image {
                 required property var modelData
                 objectName: "gestureMarker_" + modelData.asset
+                visible: !map.compact
                 x: hand.x + (modelData.x + 10) * hand.width / 432 - width / 2
                 y: hand.y + (modelData.y + 10) * hand.height / 432 - height / 2
                 width: 30; height: 30
@@ -139,7 +177,7 @@ Item {
         }
         Loader {
             anchors.right: parent.right; anchors.bottom: parent.bottom
-            width: 293; height: 139
+            width: map.compact ? 224 : 293; height: map.compact ? 76 : 139
             sourceComponent: map.cornerContent
         }
     }

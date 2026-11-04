@@ -89,7 +89,7 @@ check(c.observe(-70, now: 103, eligible: true) != nil, "burst needs at least two
 // Protection works immediately without reaching the baseline-update quota.
 c.configure(mask: 2, revision: c.revision + 1, now: 0)
 c.activity(.gestures, at: 0, now: 0)
-var protection = PresencePolicy(lockRSSI: -60, unlockRSSI: -56)
+var protection = PresencePolicy(lockRSSI: -60, unlockRSSI: -56, lockCountdownDuration: 0)
 for t in [1.0, 4, 7, 9] {
     protection.sample(-95, now: t)
     check(protection.step(now: t, locked: false, connected: true, permitted: true, awake: true,
@@ -111,7 +111,7 @@ check(c.preventsLock(now: 21, localIdle: .infinity) && !c.preventsLock(now: 21.2
 c.configure(mask: 0, revision: c.revision + 1, now: 40)
 check(c.preventsLock(now: 40, localIdle: 9.9), "keyboard protection works with automatic calibration disabled")
 check(!c.preventsLock(now: 40, localIdle: 10), "disabled source cannot retain old protection")
-var policy = PresencePolicy(lockRSSI: -68, unlockRSSI: -64)
+var policy = PresencePolicy(lockRSSI: -68, unlockRSSI: -64, lockCountdownDuration: 0)
 policy.sample(-75, now: 1); policy.sample(-75, now: 2)
 policy.setThresholds(lock: -78, unlock: -74); policy.invalidateSignal()
 check(policy.step(now: 3, locked: false, connected: true, permitted: true, awake: true) == nil,

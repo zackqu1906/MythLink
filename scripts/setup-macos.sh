@@ -57,7 +57,9 @@ elif ! "$VENV_PYTHON" -c 'import sys; raise SystemExit(sys.version_info[:2] != (
 fi
 
 "$VENV_PYTHON" -m pip install --upgrade "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
-"$VENV_PYTHON" -m pip install -c "$CONSTRAINT_FILE" -e ".[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
+"$VENV_PYTHON" -m pip install -c "$CONSTRAINT_FILE" -e ".[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]" -r requirements-packaging.txt
+/bin/bash scripts/install-node-macos.sh
+PROXIMIC_CMAKE="$VENV_ROOT/bin/cmake" /bin/bash scripts/build-llama-macos.sh
 "$VENV_PYTHON" -c 'import torch, torchaudio, PySide6, bleak, cryptography, funasr, modelscope_hub, transformers, websocket, asr_decoder, online_fbank, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; assert torch.version.cuda is None; print("Torch:", torch.__version__); print("Compute: cpu"); print("macOS installation self-check passed.")'
 
 echo

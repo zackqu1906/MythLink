@@ -59,7 +59,7 @@ def test_switching_outputs_keeps_existing_stream_and_voice_choice(inline_ui):
     tp.setInputMode("pointer"); QTest.qWait(20)
     assert old.stopped and tp._run.output.active and tp.active
     assert len(source.starts) == 1 and source.stops == 0
-    assert c.recognitionEnabled and not c._recognition_event.is_set()
+    assert c.recognitionEnabled and c._recognition_event.is_set()
     tp.setInputMode("stroke"); QTest.qWait(20)
     old.options["on_stroke"]([(0, 0), (100, 0)])
     old.options["on_end"]("old output", RuntimeError("old error"))

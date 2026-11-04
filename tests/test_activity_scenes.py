@@ -34,10 +34,10 @@ def content(scene):
 
 @pytest.mark.parametrize("scene", [PDF, IMAGE, VIDEO, MUSIC])
 @pytest.mark.parametrize("state", ["ready", "text", "missing_focus", "dialog", "sheet", "minimized", "timeout"])
-def test_all_content_scenes_require_valid_window_and_preserve_text_or_unknown_focus(scene, state):
+def test_content_recognition_uses_window_evidence_without_classifying_input(scene, state):
     window, focus = content(scene)
-    expected = (scene, "nontext")
-    if state == "text": focus = dict(AXRole="AXTextField", AXParent=window); expected = (scene, "text")
+    expected = (scene, "unknown")
+    if state == "text": focus = dict(AXRole="AXTextField", AXParent=window); expected = (scene, "unknown")
     if state == "missing_focus": focus = None; expected = (scene, "unknown")
     if state == "dialog": window["AXSubrole"] = "AXDialog"; expected = ("", "unknown")
     if state == "sheet": window["AXSheets"] = [dict(AXRole="AXSheet")]; expected = ("", "unknown")
@@ -51,7 +51,7 @@ def test_one_viewer_switches_pdf_image_video_and_music_without_editor_selection(
     profiles = {s: "generic" for s in (PDF, IMAGE, VIDEO, MUSIC)}
     for scene in profiles:
         window, focus = content(scene)
-        assert activity_context("test.viewer", profiles, window, focus, metadata) == (scene, "nontext")
+        assert activity_context("test.viewer", profiles, window, focus, metadata) == (scene, "unknown")
 
 
 @pytest.mark.parametrize("change", ["empty", "hidden", "disabled", "just_title", "fullscreen", "no_kind"])
@@ -70,15 +70,14 @@ def test_player_home_hidden_controls_and_unknown_content_do_not_activate_playbac
 @pytest.mark.parametrize("label", ["Play", "Pause", "播放", "暂停"])
 def test_pause_does_not_disable_the_resume_gesture(scene, label):
     window, focus = content(scene); focus["AXChildren"][0]["AXDescription"] = label
-    assert activity_context("test.viewer", {scene: "generic"}, window, focus, metadata) == (scene, "nontext")
+    assert activity_context("test.viewer", {scene: "generic"}, window, focus, metadata) == (scene, "unknown")
 
 
-def test_music_player_controls_need_loaded_content_and_yield_to_search():
+def test_music_recognition_does_not_classify_search_focus():
     window, focus = content(MUSIC); window.pop("AXDocument")
-    assert activity_context("com.apple.Music", {MUSIC: "music"}, window, focus, metadata) == (MUSIC, "nontext")
+    assert activity_context("com.apple.Music", {MUSIC: "music"}, window, focus, metadata) == (MUSIC, "unknown")
     focus["AXRole"] = "AXSearchField"
-    # Detection may lose positive evidence when focus becomes a text container;
-    # it must never advertise nontext eligibility.
+    # Input ownership is checked separately through the input method.
     assert activity_context("com.apple.Music", {MUSIC: "music"}, window, focus, metadata)[1] != "nontext"
 
 
@@ -109,7 +108,7 @@ def test_scene_tap_routes_before_voice_in_both_modes_and_restores_after_leaving(
     catalog = configure(service, monkeypatch, bundle)
     assert catalog.setPrimaryScene(scene)
     assert catalog.setCustomBinding(bundle, "tap", "测试动作", "Space")
-    assert not catalog.canBind("index-pinch") and not catalog.canBind("middle-pinch")
+    assert catalog.canBind("index-pinch") and catalog.canBind("middle-pinch")
     backend.target = replace(backend.target, bundle=bundle, scene=scene)
     c.ringGestures._mode = mode
     catalog.selectScene("regular")  # Editor selection never drives runtime.
@@ -161,7 +160,7 @@ def test_quicktime_native_toggle_is_a_playback_control_and_nontext_focus(scene):
     toggle.update(AXRole='AXCheckBox', AXSubrole='AXToggle', AXDescription='play/pause', AXParent=window)
     window['AXChildren'] = [toggle, canvas['AXChildren'][1]]
     profiles = application_scene_profiles('com.apple.QuickTimePlayerX')
-    assert activity_context('com.apple.QuickTimePlayerX', profiles, window, toggle, metadata) == (scene, 'nontext')
+    assert activity_context('com.apple.QuickTimePlayerX', profiles, window, toggle, metadata) == (scene, 'unknown')
     toggle.pop('AXEnabled')
     assert activity_context('com.apple.QuickTimePlayerX', profiles, window, toggle, metadata) == ('', 'unknown')
 

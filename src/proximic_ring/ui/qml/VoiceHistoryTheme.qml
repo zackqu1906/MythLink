@@ -10,6 +10,8 @@ QtObject {
     readonly property color primary: "#0225BA"
     readonly property color edit: "#6552A3"
     readonly property color warning: "#76520B"
+    readonly property color warningSurface: "#FFF8DB"
+    readonly property color warningBorder: "#E5BE54"
     readonly property color neutral: "#A7AFBF"
     // Fit the standalone Figma page into the existing 1200px application shell.
     readonly property int titleSize: 22

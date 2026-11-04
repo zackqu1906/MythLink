@@ -10,11 +10,9 @@ from ..gestures.app_gestures import normalize_shortcut, profile_for_application
 from ..platforms.macos.mac_permissions import require_post_event_access
 from ..scenes.models import PRESENTATION
 from ..scenes.capabilities import BROWSERS, application_scene_profiles, installed_scene_profiles, installed_application_category
-from .browser_accessibility import BrowserAccessibility
 from .host_application import application_identity, HOST_WORKSPACE_TITLES
 from ..scenes.recognition.engine import detect_scene
 from ..scenes.models import SceneResult
-from ..scenes.recognition.focus import inspect_focus
 from ..diagnostics.scene_diagnostics import new_trace_id, SceneActionError, safe_data
 
 
@@ -65,7 +63,6 @@ class ShortcutTarget:
 class LocalMacAppShortcuts:
     def __init__(self, *, host_pid=0):
         self.host_pid = host_pid
-        self._browser_accessibility = BrowserAccessibility()
 
     def capture(self, *, plain_enter: bool = False, menu_action: bool = False,
                 scene: bool = False, scene_observation: bool = False,
@@ -123,13 +120,8 @@ class LocalMacAppShortcuts:
             if node is None:
                 return None
             info["last_attribute"] = name
-            if name == "AXValueSettable":
-                error, editable = AX.AXUIElementIsAttributeSettable(node, "AXValue", None)
-                info["ax_reads"] = info.get("ax_reads", 0) + 1
-                record_error(name, error)
-                return bool(editable) if error == 0 else None
             error, value = AX.AXUIElementCopyAttributeValue(node, name, None)
-            if (node is element and name in {"AXFocusedWindow", "AXFocusedUIElement"}
+            if (node is element and name == "AXFocusedWindow"
                     and error not in (0, -25212, -25205)):  # NoValue / AttributeUnsupported
                 context_read_failed = True
             info["ax_reads"] = info.get("ax_reads", 0) + 1
@@ -148,33 +140,14 @@ class LocalMacAppShortcuts:
                 cache[key] = (node, native_attr(node, name))
             return cache[key][1]
         window = attr(element, "AXFocusedWindow")
-        # Independent window/app gestures need no input-focus classification.
-        # Scene detection may still need the focused page to identify content.
-        # Our Qt workspaces can look like system dialogs. Even independent
-        # bindings must inspect their focus for real menus/dialog descendants.
-        host_menu = menu_action and pid == self.host_pid
-        focus = attr(element, "AXFocusedUIElement") if focus_sensitive or scene or menu_action else None
-        if focus_sensitive and (scene or menu_action) and window is not None and focus is None:
-            # Electron can report NoValue even while its editor owns keyboard
-            # focus, until enhanced accessibility has built the control tree.
-            # Prepare metadata only; never discover, select or focus a field.
-            info["focus_accessibility"] = (info.get("browser_accessibility") or
-                self._browser_accessibility.prepare(app, element, AX))
-            # Some apps expose focus immediately; others finish asynchronously.
-            # Refresh both roots so this snapshot never mixes pre/post setup.
-            window = native_attr(element, "AXFocusedWindow")
-            focus = native_attr(element, "AXFocusedUIElement")
-            cache[(id(element), "AXFocusedWindow")] = (element, window)
-            cache[(id(element), "AXFocusedUIElement")] = (element, focus)
         reported_window = window
+        # Gestures use IMK for input ownership and the extension for browser
+        # state. Only the explicit stroke/Enter target API requests an AX node
+        # for its hit-test; application and scene captures never inspect it.
+        focus_sensitive = bool(plain_enter and focus_sensitive)
+        info["focus_sensitive"] = focus_sensitive
+        focus = attr(element, "AXFocusedUIElement") if focus_sensitive else None
         role = str(attr(focus, "AXRole") or "")
-        # Entering a show (especially on another display) may leave the app's
-        # focused-window attribute on its editor. Prefer the actual focused
-        # control's owning window; never scan background windows for a show.
-        focus_window = focus if role == "AXWindow" else attr(focus, "AXWindow")
-        if (not browser_scene and focus_window is not None and attr(focus_window, "AXRole") == "AXWindow"
-                and attr(focus, "AXFocused") is not False):
-            window = focus_window
         if plain_enter:
             # Enter follows the focused control's own semantics, including web
             # editors, search fields and address bars. No app/role whitelist.
@@ -183,8 +156,6 @@ class LocalMacAppShortcuts:
                                   plain_enter=True, focus_sensitive=focus_sensitive,
                                   trace_id=info["trace_id"], diagnostic=safe_data(info))
         subrole = str(attr(window, "AXSubrole") or "")
-        # Do not turn a chat shortcut into a dialog confirmation or terminal input.
-        description = "" if browser_scene else str(attr(focus, "AXDescription") or "").casefold()
         screen_frames = []
         if (PRESENTATION in scene_profiles
                 and attr(window, "AXFullScreen") is not True):
@@ -202,93 +173,29 @@ class LocalMacAppShortcuts:
             if scene else SceneResult())
         active_scene, input_context = recognized.scene, recognized.input_context
         info.update(recognition=recognized.diagnostic, scene=active_scene, input_context=input_context,
-                    focus_role=role, window_subrole=subrole,
-                    focus_window_override=window != reported_window)
+                    window_subrole=subrole,
+                    focus_source="extension" if browser_scene else "unqueried")
         # Application commands (e.g. New/Open) can create their first window.
         # A window is optional for explicit mappings, not for legacy chat keys.
-        # Preserve the stricter focus guard for legacy chat navigation, while
-        # genuine dialogs/sheets and open menus still block all app shortcuts.
+        # Window state is independent of any focused control or AX parent chain.
         scene_dialog = scene and active_scene == PRESENTATION and input_context != "text"
         host_workspace = (menu_action and pid == self.host_pid
                           and subrole == "AXSystemDialog"
                           and attr(window, "AXTitle") in HOST_WORKSPACE_TITLES)
         dialog_blocked = subrole in {"AXDialog", "AXSystemDialog"} and not (scene_dialog or host_workspace)
-        chat_focus_blocked = (role in {"AXComboBox", "AXSearchField"}
-                              or any(word in description for word in ("terminal", "终端", "search", "搜索")))
         blocked = ((window is None and not menu_action) or bool(attr(window, "AXModal")) or bool(attr(window, "AXSheets"))
-                   or bool(attr(window, "AXMinimized"))
-                   or dialog_blocked
-                   or role in {"AXMenu", "AXMenuItem"}
-                   or (not menu_action and chat_focus_blocked))
+                   or bool(attr(window, "AXMinimized")) or dialog_blocked)
         document = attr(window, "AXDocument") if scene and not browser_scene else None
         document_title = (attr(window, "AXTitle") if scene and not document
                           and bundle.casefold() == "com.apple.preview" else None)
         if scene or menu_action:
-            focus_deadline = time.monotonic() + .18
-            def focus_attr(node, key):
-                if time.monotonic() >= focus_deadline:
-                    raise TimeoutError()
-                return attr(node, key)
-            try:
-                if not blocked and (focus_sensitive or menu_action):
-                    focus_snapshot = inspect_focus(window, focus, focus_attr, window_shortcut=menu_action,
-                                                   page_focus=browser_scene)
-                    # Focus ownership is needed even without scene recognition.
-                    # Missing AX focus in a real window is unknown, not blur.
-                    # Only a confirmed windowless app cannot contain an editor.
-                    ax_context = ("nontext" if window is None and focus is None and not context_read_failed
-                                     and not info["ax_errors"].get("AXFocusedUIElement:-25205")
-                                     else focus_snapshot.context)
-                    if focus_sensitive:
-                        input_context = ax_context
-                    if browser_scene and focus_sensitive:
-                        # Ordinary input must work without a media extension or
-                        # website permission. Inspect only the live native focus
-                        # chain, never browser contents or background controls.
-                        # DOM focus can refine an AX web root, but cannot replace
-                        # an actual text field, browser toolbar focus or blocker.
-                        in_page = any(attr(node, "AXRole") == "AXWebArea"
-                                      for node in focus_snapshot.ancestors)
-                        source = "accessibility"
-                        if (not focus_snapshot.blocked and input_context != "text"
-                                and (in_page or focus is None)
-                                and recognized.browser_target.get("authorized")
-                                and recognized.browser_target.get("focused")
-                                and recognized.input_context in {"text", "nontext"}):
-                            input_context = recognized.input_context
-                            source = "extension"
-                        info["focus_source"] = source
-                        info["native_input_context"] = focus_snapshot.context
-                    info["input_context"] = input_context
-                    info["focus_policy"] = ("application_shortcut" if menu_action and window is None else
-                                            "window_shortcut" if menu_action else "focused_control")
-                    info["disabled_containers"] = list(focus_snapshot.disabled_containers)
-                    info["unfocused_containers"] = list(focus_snapshot.unfocused_containers)
-                    info["focus_depth"] = len(focus_snapshot.ancestors)
-                    blocked = focus_snapshot.blocked
-                    info["focus_reason"] = (focus_snapshot.reason if focus_sensitive or focus_snapshot.blocked
-                                            else "window_guard_only")
-                    if (focus_sensitive and focus is None and window is not None
-                            and info.get("focus_accessibility", {}).get("warming")):
-                        info["focus_reason"] = ("browser_accessibility_initializing" if browser_scene
-                                                else "focus_accessibility_initializing")
-            except TimeoutError:
-                if active_scene != PRESENTATION:
-                    return finish("focus_validation_timeout")
-                # The show is already identified. A failed focus inspection
-                # must not turn its navigation gesture into an IME error.
-                input_context = "unknown"
-                info.update(input_context=input_context, focus_reason="focus_validation_timeout")
             latest = frontmost_application()
             if latest is None or application_identity(latest, identity_pid) != (bundle, pid):
                 return finish("foreground_changed")
-            if (native_attr(element, "AXFocusedWindow") != reported_window
-                    or (focus_sensitive and native_attr(element, "AXFocusedUIElement") != focus)):
-                return finish("focus_changed")  # Do not mix windows in a snapshot.
+            if native_attr(element, "AXFocusedWindow") != reported_window:
+                return finish("window_changed")
             if menu_action and window is None and context_read_failed:
                 return finish("target_unavailable")  # A failed AX read is not an absent window.
-            if focus_sensitive and role != "AXWindow" and native_attr(focus, "AXWindow") != focus_window:
-                return finish("window_changed")
             if scene and not browser_scene and native_attr(window, "AXDocument") != document:
                 return finish("document_changed")
             if document_title is not None and native_attr(window, "AXTitle") != document_title:
@@ -304,10 +211,8 @@ class LocalMacAppShortcuts:
             "modal_window" if flags["AXModal"] else "sheet_open" if flags["AXSheets"] else
             "minimized_window" if flags["AXMinimized"] else
             "dialog_window" if dialog_blocked else
-            "menu_or_sheet_focus" if role in {"AXMenu", "AXMenuItem"} else
-            info.get("focus_reason", "blocked_window"))
+            "blocked_window")
         finish(blocked_reason if blocked else
-               info.get("focus_reason", "focus_missing") if focus_sensitive and focus is None and window is not None and (scene or menu_action) else
                "ready" if menu_action and window is None else
                ("text_focus" if input_context == "text" else "ready")
                if browser_scene and input_context in {"text", "nontext"} and not active_scene else
@@ -321,8 +226,8 @@ class LocalMacAppShortcuts:
 
     def browser_action(self, target, action):
         from ..browser_bridge.client import request
-        if not target.browser_target or (target.focus_sensitive and target.input_context != "nontext"):
-            raise SceneActionError("text_focus")
+        if not target.browser_target:
+            raise SceneActionError("browser_page_unavailable")
         if not self.same_target(target):
             raise SceneActionError(self.last_diagnostic.get("reason", "page_changed"), self.last_diagnostic)
         result = request(target.bundle, "action", target=target.browser_target, action=action)
@@ -352,12 +257,6 @@ class LocalMacAppShortcuts:
             return outcome("foreground_changed")
         if current.blocked:
             return outcome(current.diagnostic.get("reason", "blocked_window"))
-        presentation_focus = target.focus_sensitive and target.scene_checked and target.scene == PRESENTATION
-        if presentation_focus and current.input_context == "text":
-            return outcome("text_focus")
-        if (target.focus_sensitive and target.menu_action and not presentation_focus
-                and current.input_context != target.input_context):
-            return outcome("focus_changed")
         if (target.window is not None or target.menu_action) and current.window != target.window:
             return outcome("window_changed")
         if target.page_key or current.page_key:
@@ -366,11 +265,9 @@ class LocalMacAppShortcuts:
                 return outcome("page_changed")
         if target.scene_checked and current.document_key != target.document_key:
             return outcome("document_changed")
-        if target.scene_checked and (current.scene != target.scene
-                                     or (target.focus_sensitive and target.scene and not presentation_focus
-                                         and current.input_context != target.input_context)):
+        if target.scene_checked and current.scene != target.scene:
             return outcome("scene_changed")
-        if (target.focus_sensitive and (require_focus or (target.scene_checked and target.scene and not presentation_focus))
+        if (target.plain_enter and target.focus_sensitive and require_focus
                 and target.focus is not None and current.focus != target.focus):
             return outcome("focus_changed")
         return outcome("target_verified", True)

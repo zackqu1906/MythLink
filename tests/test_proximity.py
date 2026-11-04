@@ -287,27 +287,94 @@ def test_old_unlock_delay_is_removed(tmp_path):
     c.close()
 
 
-def test_locked_gesture_is_consumed_and_sent_only_once(proximity, monkeypatch):
+@pytest.mark.parametrize("selected", module.GESTURE_LABELS)
+def test_locked_gesture_is_consumed_and_sent_only_once(proximity, monkeypatch, selected):
     monkeypatch.setattr(module.ProximityController, "lock_connection_ready", property(lambda self: True))
     import threading
     c, _ = proximity; prepare(c); c.enabled = True
+    c.unlockGesture = selected
     proc = c._process
     conn = threading.Event()
-    assert not c.filter_gesture("snap", conn)
+    diagnostics = []
+    c.diagnostic.connect(diagnostics.append)
+    assert not c.filter_gesture(selected, conn)
     proc.send(dict(event="prepare_lock"))
-    assert c.filter_gesture("snap", conn)
+    assert c.filter_gesture(selected, conn)
     token = "a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3"
     proc.send(dict(event="monitor", locked=True, unlock_token=token, permission=True))
-    for gesture in ["tap", "swipe-down", "clench", "index-pinch", "middle-pinch", "swipe-up"]:
+    for gesture in module.GESTURE_LABELS:
+        if gesture == selected:
+            continue
         assert c.filter_gesture(gesture, conn)
     QCoreApplication.processEvents()
     assert not any(w.startswith(b"gesture-unlock") for w in proc.writes)
-    for gesture in ["snap", "snap"]:
+    for gesture in [selected, selected]:
         assert c.filter_gesture(gesture, conn)
     QCoreApplication.processEvents()
     assert proc.writes.count(("gesture-unlock " + token + "\n").encode()) == 1
+    assert diagnostics[-1] == dict(action="gesture_unlock", gesture=selected)
     proc.send(dict(event="unlocked"))
-    assert not c.filter_gesture("snap", conn)
+    assert not c.filter_gesture(selected, conn)
+
+
+def test_unlock_gesture_is_saved_without_restarting_monitor(proximity):
+    c, settings = proximity
+    assert c.unlockGesture == "snap"
+    prepare(c); c.enabled = True
+    proc = c._process
+    calibration = c.savedCalibration
+    c.unlockGesture = "clench"
+    assert c._process is proc and not proc.killed and c.enabled
+    assert c.savedCalibration == calibration
+    assert settings.value("proximity/unlockGesture") == "clench"
+    assert "握拳" in c.lockScreenMessage and "snap" not in c.lockScreenMessage
+    for invalid in ("", "empty", "unknown"):
+        c.unlockGesture = invalid
+        assert c.unlockGesture == "clench"
+    restored = module.ProximityController(settings=settings, process_factory=Process)
+    try:
+        assert restored.unlockGesture == "clench"
+    finally:
+        restored.close()
+
+
+@pytest.mark.parametrize("saved", ["empty", "", 1, ["snap"]])
+def test_invalid_saved_unlock_gesture_uses_snap(proximity, saved):
+    _, settings = proximity
+    settings.setValue("proximity/unlockGesture", saved)
+    restored = module.ProximityController(settings=settings, process_factory=Process)
+    try:
+        assert restored.unlockGesture == "snap"
+    finally:
+        restored.close()
+
+
+def test_changing_unlock_gesture_discards_queued_previous_choice(proximity):
+    import threading
+    c, _ = proximity; prepare(c); c.enabled = True
+    proc = c._process; conn = threading.Event()
+    token = "a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3"
+    proc.send(dict(event="monitor", locked=True, unlock_token=token, permission=True))
+    c.filter_gesture("snap", conn)
+    c.unlockGesture = "clench"
+    c.unlockGesture = "snap"  # Even returning to the same choice requires a fresh gesture.
+    QCoreApplication.processEvents()
+    assert not any(w.startswith(b"gesture-unlock") for w in proc.writes)
+    c.filter_gesture("snap", conn)
+    c.unlockGesture = "clench"
+    c.filter_gesture("clench", conn)
+    QCoreApplication.processEvents()
+    c.filter_gesture("clench", conn)
+    QCoreApplication.processEvents()
+    assert proc.writes.count(("gesture-unlock " + token + "\n").encode()) == 1
+
+
+def test_monitor_status_describes_selected_unlock_gesture(proximity):
+    c, _ = proximity; prepare(c); c.enabled = True
+    c.unlockGesture = "clench"
+    c._process.send(dict(event="monitor", locked=True, unlock_ready=True, permission=True,
+                         state="手势已连接，请弹指（snap）解锁"))
+    assert c.status == "手势已连接，请握拳解锁"
 
 
 def test_queued_gesture_cannot_cross_lock_or_connection(proximity):

@@ -45,7 +45,6 @@ def ring(monkeypatch, tmp_path, request):
             self.client.is_connected = False
 
         async def touchpad_on(self, **options):
-            assert not self.mic_active
             if state['touchpad_fail']:
                 raise RuntimeError(state['touchpad_fail'])
             self.touchpad_stopped = options['on_stopped']
@@ -177,49 +176,55 @@ def test_idle_settings_can_interrupt_pcm_gap_without_disconnecting(ring):
 
 
 @pytest.mark.parametrize('audio_enabled', [True, False])
-def test_touchpad_mutes_ring_and_restores_previous_audio_source(ring, audio_enabled):
+def test_touchpad_keeps_selected_audio_stream_running(ring, audio_enabled):
     source, state = ring
     if audio_enabled:
         source.set_audio_enabled(True)
     previous_callbacks = len(state['callbacks'])
     source.start_touchpad(on_event=lambda _: None).result(2)
-    assert not state['session'].mic_active and source._touchpad_audio_suspended.is_set()
+    assert state['session'].mic_active == audio_enabled
     assert source.error is None and source.gestures_active
-    with pytest.raises(RuntimeError, match='停止触摸板'):
-        source.begin_buffering()
-    source.stop_touchpad().result(2)
-    assert not source._touchpad_audio_suspended.is_set()
     if audio_enabled:
-        assert source._resume_finished.wait(2)
-        assert len(state['callbacks']) == previous_callbacks + 1
-        assert state['session'].mic_active and source.read(320) is not None
+        fresh = threading.Timer(.02, lambda: state['callbacks'][-1](1, struct.pack('<320h', *([4096] * 320))))
+        fresh.start()
+        try:
+            source.begin_buffering()
+        finally:
+            fresh.join()
     else:
-        assert not state['session'].mic_active and not state['callbacks']
-        assert source._pause_stream_requested.is_set()
+        source.begin_buffering()
+    if audio_enabled:
+        state['callbacks'][-1](1, struct.pack('<320h', *([4096] * 320)))
+        assert source.read(320) is not None
+    source.stop_touchpad().result(2)
+    assert state['session'].mic_active == audio_enabled
+    assert len(state['callbacks']) == previous_callbacks
     assert state['disconnect'] == 0 and source.error is None
 
 
-def test_touchpad_start_failure_restores_ring_microphone(ring):
+def test_touchpad_start_failure_does_not_interrupt_microphone(ring):
     source, state = ring
     source.set_audio_enabled(True)
-    source._resume_finished.clear()
+    previous_callbacks = len(state['callbacks'])
     state['touchpad_fail'] = 'model unavailable'
     with pytest.raises(RuntimeError, match='model unavailable'):
         source.start_touchpad(on_event=lambda _: None).result(2)
-    assert not source._touchpad_audio_suspended.is_set()
-    assert source._resume_finished.wait(2)
     assert state['session'].mic_active and source.error is None
+    assert len(state['callbacks']) == previous_callbacks
     assert not source._touchpad_activities and state['disconnect'] == 0
 
 
-def test_second_touchpad_start_cannot_release_active_microphone_gate(ring):
+def test_second_touchpad_start_preserves_active_stream_and_audio(ring):
     source, state = ring
     source.set_audio_enabled(True)
     source.start_touchpad(on_event=lambda _: None).result(2)
+    previous_callbacks = len(state['callbacks'])
     with pytest.raises(RuntimeError, match='正在运行'):
         source.start_touchpad(on_event=lambda _: None).result(2)
-    assert source._touchpad_audio_suspended.is_set() and not state['session'].mic_active
-    assert source._pause_stream_requested.is_set()
+    assert state['session'].touchpad_active and state['session'].mic_active
+    assert len(source._touchpad_activities) == 1
+    assert len(state['callbacks']) == previous_callbacks
+    assert not source._pause_stream_requested.is_set()
     source.stop_touchpad().result(2)
 
 
@@ -230,7 +235,6 @@ def test_disconnect_during_touchpad_does_not_restart_microphone(ring):
     previous_callbacks = len(state['callbacks'])
     source.close()
     assert len(state['callbacks']) == previous_callbacks
-    assert not source._touchpad_audio_suspended.is_set()
 
 
 def test_stop_queued_during_touchpad_start_cannot_leave_an_orphan_stream(ring):
@@ -252,11 +256,11 @@ def test_stop_queued_during_touchpad_start_cannot_leave_an_orphan_stream(ring):
     release.set()
     starting.result(2)
     stopping.result(2)
-    assert not session.touchpad_active and not source._touchpad_audio_suspended.is_set()
+    assert not session.touchpad_active
     assert source._resume_finished.wait(2) and session.mic_active
 
 
-def test_automatic_touchpad_end_restores_microphone(ring):
+def test_automatic_touchpad_end_keeps_microphone_running(ring):
     import asyncio
     source, state = ring
     source.set_audio_enabled(True)
@@ -264,4 +268,15 @@ def test_automatic_touchpad_end_restores_microphone(ring):
     loop, session = source._touchpad_endpoint
     asyncio.run_coroutine_threadsafe(session.touchpad_off(), loop).result(2)
     assert source._resume_finished.wait(2) and session.mic_active
-    assert not source.touchpad_active and not source._touchpad_audio_suspended.is_set()
+    assert not source.touchpad_active
+
+
+def test_audio_source_can_switch_while_touchpad_runs(ring):
+    source, state = ring
+    source.start_touchpad(on_event=lambda _: None).result(2)
+    for enabled in (True, False, True):
+        source.set_audio_enabled(enabled)
+        assert state['session'].mic_active == enabled
+        assert state['session'].touchpad_active
+    source.stop_touchpad().result(2)
+    assert state['session'].mic_active and not state['session'].touchpad_active

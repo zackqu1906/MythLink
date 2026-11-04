@@ -25,20 +25,20 @@ def test_configured_command_posts_to_windowless_foreground_app(monkeypatch, desk
 
 @pytest.mark.parametrize('role', ['AXMenu', 'AXMenuItem', 'AXMenuBar', 'AXSheet', 'AXDialog'])
 @pytest.mark.parametrize('nested', [False, True])
-def test_missing_window_does_not_skip_popup_focus_guards(monkeypatch, role, nested):
+def test_windowless_command_does_not_inspect_popup_focus(monkeypatch, role, nested):
     focus = dict(AXRole=role)
     if nested:
         focus = dict(AXRole='AXButton', AXParent=focus)
     backend, _, _ = native_backend(monkeypatch, None, focus)
     target = backend.capture(menu_action=True)
-    assert target.blocked and target.diagnostic['reason'] != 'window_missing'
+    assert not target.blocked and target.focus is None
 
 
 @pytest.mark.parametrize('flag,value', [('AXHidden', True), ('AXEnabled', False),
                                      ('AXFocused', False), ('AXElementBusy', True)])
-def test_windowless_command_still_rejects_explicitly_invalid_focus(monkeypatch, flag, value):
+def test_windowless_command_ignores_control_focus_flags(monkeypatch, flag, value):
     backend, _, _ = native_backend(monkeypatch, None, dict(AXRole='AXApplication', **{flag: value}))
-    assert backend.capture(menu_action=True).blocked
+    assert not backend.capture(menu_action=True).blocked
 
 
 @pytest.mark.parametrize('attribute', ['AXFocusedWindow', 'AXFocusedUIElement'])
@@ -50,7 +50,7 @@ def test_missing_optional_ax_attributes_are_not_confused_with_read_failure(monke
     ax.AXUIElementCopyAttributeValue = lambda node, key, arg: (
         (error, None) if node is root and key == attribute else read(node, key, arg))
     target = backend.capture(menu_action=True)
-    assert bool(target is not None and not target.blocked) is allowed
+    assert bool(target is not None and not target.blocked) is (allowed or attribute == 'AXFocusedUIElement')
 
 
 def test_legacy_chat_navigation_still_needs_a_window(monkeypatch):
@@ -67,7 +67,7 @@ def test_windowless_command_does_not_follow_a_changed_recipient(monkeypatch, des
     if change == 'window':
         root['AXFocusedWindow'] = dict(AXRole='AXWindow')
     elif change == 'dialog':
-        root['AXFocusedUIElement'] = dict(AXRole='AXButton', AXParent=dict(AXRole='AXSheet'))
+        root['AXFocusedWindow'] = dict(AXRole='AXWindow', AXSubrole='AXDialog')
     else:
         current = replace(target, **({'bundle': 'other.app'} if change == 'app' else {'pid': 43}))
         monkeypatch.setattr(backend, 'capture', lambda **kw: current)

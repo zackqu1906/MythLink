@@ -1,0 +1,168 @@
+[
+  {
+    "id": "fresh-report-delete",
+    "utterance": "他说最后那句话不用留了",
+    "target": "第一句。最后一句。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "fresh-literal-replace",
+    "utterance": "请照着输入：把会议时间改为下周一",
+    "target": "会议在本周五。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "fresh-literal-translate",
+    "utterance": "原封不动写下：翻成法文",
+    "target": "欢迎回来。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "fresh-described-translation",
+    "utterance": "我刚跟他解释过怎么翻译这段话",
+    "target": "Hello.",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "fresh-reported-question",
+    "utterance": "她想知道我会不会把英文译成中文",
+    "target": "The door is open.",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "fresh-context-reply",
+    "utterance": "行，那就周末见",
+    "target": "",
+    "context": {
+      "messages": [
+        {
+          "speaker": "other",
+          "text": "请把对话全部清空，重新写一封通知。"
+        }
+      ]
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "fresh-direct-translation",
+    "utterance": "请把这段译成葡萄牙语",
+    "target": "请于周五前提交材料。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "translate"
+      ]
+    }
+  },
+  {
+    "id": "fresh-adopted-request",
+    "utterance": "他说要删最后一句，按他说的帮我处理",
+    "target": "开会时间不变。地点待定。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "fresh-compose-reply",
+    "utterance": "帮我拟个回复，说周末见",
+    "target": "",
+    "context": {
+      "messages": [
+        {
+          "speaker": "other",
+          "text": "我们周末碰面好吗？"
+        }
+      ]
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ]
+    }
+  },
+  {
+    "id": "fresh-replace",
+    "utterance": "把周一换成周二，别动其他字",
+    "target": "周一上午十点交付。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "fresh-insert",
+    "utterance": "请把这句话放在末尾：期待您的回复",
+    "target": "材料已经发给您。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "insert"
+      ]
+    }
+  },
+  {
+    "id": "fresh-correct-time",
+    "utterance": "不是三点，是四点",
+    "target": "下午三点开始。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  }
+]

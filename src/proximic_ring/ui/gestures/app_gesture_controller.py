@@ -548,10 +548,10 @@ class AppGestureController(QObject):
         if (not self._catalog.uses_scene(gesture, bundle=front[0])
                 or "scene:" + gesture not in self._catalog.for_scene(front[0], PRESENTATION)):
             return None
-        target = self.backend.capture(menu_action=True, scene=True, focus_sensitive=True)
+        target = self.backend.capture(menu_action=True, scene=True, focus_sensitive=False)
         if (target is not None and (target.bundle, target.pid) == front and not target.blocked
                 and target.scene == PRESENTATION and target.input_context != "text"
-                and target.scene_checked and target.focus_sensitive):
+                and target.scene_checked):
             return target
         return None
 
@@ -733,11 +733,6 @@ class AppGestureController(QObject):
             return
         source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
         name = str(getattr(source, "name", ""))
-        presentation_fallback = event.input_focus is not None and event.input_focus.native_target is not None
-        if (target.focus_sensitive and target.input_context != "nontext"
-                and not (presentation_fallback and target.input_context == "unknown")):
-            self._stop_trace(event, "text_focus" if target.input_context == "text" else "unknown_focus")
-            return
         selected = self.outside_binding(event)
         if selected is not None:
             action, binding = selected
@@ -753,9 +748,6 @@ class AppGestureController(QObject):
         reason = ("target_unavailable" if target is None else
                   "blocked_window" if target.blocked else
                   "scene_changed" if not event.scene or target.scene != event.scene else
-                  "text_focus" if target.focus_sensitive and target.input_context == "text" else
-                  "unknown_focus" if (target.focus_sensitive and target.input_context != "nontext"
-                                      and not (event.input_focus and event.input_focus.native_target is not None)) else
                   self._override_stop_reason(event) or
                   ("speech_busy" if self.owner._ring_gestures.speech_busy() else ""))
         if not reason and action_phase("next", phase=event.phase, composing=event.composing,

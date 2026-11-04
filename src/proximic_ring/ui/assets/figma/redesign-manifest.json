@@ -456,6 +456,41 @@
       "slot": "marker-fist",
       "sha256": "db54ed90aa2a15d8f2f756a8c0cf06c7e2c773490cd178817d9a2f03dab94882",
       "sourceNode": "544:30358"
+    },
+    {
+      "file": "prelock-ring-base.svg",
+      "context": "170-2787",
+      "sha256": "86d7a3bdde245f13bd21cd56cee6a0565bd9f73987f4ef6bd6f7e8a91950a303"
+    },
+    {
+      "file": "prelock-ring-5.svg",
+      "context": "170-2787",
+      "sha256": "97deb7a523dfe906cd188faa3cfe3377c8ef8786b59c3d734dc589212b2f6934"
+    },
+    {
+      "file": "prelock-ring-3.svg",
+      "context": "170-2801",
+      "sha256": "7fea9075f674a5020a8ed7efa42117754dbb1d52b11802285ef3975652076c98"
+    },
+    {
+      "file": "prelock-ring-1.svg",
+      "context": "170-2815",
+      "sha256": "5bde234337997cd9867662b85c424542269f2f1b2e3d8272350a21a3ad5b52df"
+    },
+    {
+      "file": "prelock-lock.svg",
+      "context": "170-2787",
+      "sha256": "07aec8c70c8be7e031e03988334c190f2e4ec0aa30a5f24ac7a30e9dd4930911"
+    },
+    {
+      "file": "prelock-check.svg",
+      "context": "170-2829",
+      "sha256": "e591542a3d2f3d072a0fd04ee23034e157e50911d7c8ba98b01c8424a46d11ea"
+    },
+    {
+      "file": "prelock-unlock.svg",
+      "context": "170-2829",
+      "sha256": "74b95e0a7a3792068f9ba5547221fd2f7335c15ce860c203a1c0179b6d30175c"
     }
   ]
 }

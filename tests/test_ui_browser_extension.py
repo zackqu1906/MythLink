@@ -77,7 +77,7 @@ def test_connection_color_and_long_status_keep_browser_buttons_inside_settings(i
         value=root.findChild(QObject,name);assert value is not None,name
         return value
     dialog=item('runtimeSettingsDialog');QMetaObject.invokeMethod(dialog,'open');QTest.qWait(80)
-    QMetaObject.invokeMethod(item('settingsAgentEntry'),'click');QTest.qWait(60)
+    QMetaObject.invokeMethod(item('settingsBrowserEntry'),'click');QTest.qWait(60)
     group=item('browserExtensionSettings')
     scroll=item('runtimeSettingsScroll').property('contentItem')
     scroll.setProperty('contentY',group.mapToItem(scroll.property('contentItem'),QPointF()).y()-16)
@@ -295,6 +295,7 @@ def test_setup_guide_precedes_navigation_and_keeps_steps_and_actions_accessible(
         assert QMetaObject.invokeMethod(item(name), 'click')
         QTest.qWait(30)
     QMetaObject.invokeMethod(item('runtimeSettingsDialog'), 'open')
+    click('settingsBrowserEntry')
     click('connectChromeExtension' if browser == 'chrome' else 'connectSafariExtension')
     guide = item('browserExtensionSetup')
     pump_until(lambda: guide.property('opened'))

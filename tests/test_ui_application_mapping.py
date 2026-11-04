@@ -255,8 +255,11 @@ def test_added_activities_visible_and_switch_preserves_bindings(mapping_ui, tmp_
         QTest.qWait(30)
         assert len(catalog.availableScenes) == 5
         button = visual_child(root.contentItem(), scene + "GestureScene")
-        assert button is not None and button.property("visible")
-        click(scene + "GestureScene")
+        assert button is not None and button.property("visible") == (scene == VIDEO)
+        if scene == VIDEO:
+            click(scene + "GestureScene")
+        else:
+            catalog.selectScene(scene)  # Hidden scopes retain their backend mappings.
         assert editor.property("editable")
         click("menuAction_" + action)
         assert editor.property("savedId")
@@ -264,7 +267,10 @@ def test_added_activities_visible_and_switch_preserves_bindings(mapping_ui, tmp_
     for scene in (PDF, VIDEO, IMAGE, MUSIC):
         assert catalog.setPrimaryScene(scene)
         QTest.qWait(30)
-        click(scene + "GestureScene")
+        if scene == VIDEO:
+            click(scene + "GestureScene")
+        else:
+            catalog.selectScene(scene)
         assert editor.property("savedId")
 
         assert catalog.bindings[bundle]["tap"]["id"].split(":")[1] == scene
@@ -331,6 +337,80 @@ def mapping_ui(inline_ui, monkeypatch):
         click("addGestureApp_" + bundle)
         QTest.qWait(180)
     yield c, bridge, root, catalog, requests, click, add
+
+
+@pytest.mark.parametrize("bundle,browser", [("com.google.Chrome", "chrome"), ("com.apple.Safari", "safari")])
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700), (940, 560)])
+def test_browser_mode_bar_opens_matching_setup_and_preserves_mapping_context(mapping_ui, tmp_path, monkeypatch, bundle, browser, size):
+    from PySide6.QtCore import QObject, QPointF, QRectF, Qt
+    from PySide6.QtTest import QTest
+    import proximic_ring.ui.desktop.browser_extension_controller as module
+    c, bridge, root, catalog, _, click, _ = mapping_ui
+    extensions = c.browserExtensions
+    extensions.close()
+    extensions._states = {}
+    extensions.changed.emit()
+    installed = []
+    monkeypatch.setattr(module, "install_chrome", lambda: installed.append("chrome"))
+    monkeypatch.setattr(module, "open_safari_settings", lambda: installed.append("safari"))
+    catalog._candidates = [dict(value=bundle, label="Google Chrome" if browser == "chrome" else "Safari", path="")]
+    assert catalog.addApplication(bundle)
+    root.resize(*size)
+    click("gestureApplication_" + bundle)
+    click("videoGestureScene")
+    QTest.qWait(80)
+    button = root.findChild(QObject, "gestureBrowserExtensionButton")
+    hint = root.findChild(QObject, "gestureBrowserExtensionHint")
+    entry = root.findChild(QObject, "gestureBrowserExtensionEntry")
+    bar = root.findChild(QObject, "applicationManagementBar")
+    page = root.findChild(QObject, "gesturesPage")
+    scene = visual_child(root.contentItem(), "videoGestureScene")
+
+    def bounds(item):
+        return QRectF(item.mapToScene(QPointF()), item.size())
+
+    assert button.property("visible") and button.property("text") == "安装插件"
+    assert hint.property("text") == "安装插件，启用网页控制"
+    assert bounds(button).center().y() == pytest.approx(bounds(scene).center().y(), abs=1)
+    assert bounds(entry).left() > bounds(scene).right()
+    assert bounds(button).right() == pytest.approx(bounds(bar).right() - 8, abs=1)
+    assert bounds(page).contains(bounds(entry))
+    assert page.property("contentHeight") <= page.property("availableHeight") + 1
+    saved = {k: c._settings.value(k) for k in c._settings.allKeys()}
+    messages = list(bridge.messages)
+    shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    shots.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(shots / f"gesture-browser-{browser}-{size[0]}x{size[1]}.png"))
+
+    QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, bounds(button).center().toPoint())
+    QTest.qWait(160)
+    guide = root.findChild(QObject, "browserExtensionSetup")
+    assert guide.property("opened") and guide.property("browser") == browser
+    assert extensions._setup_browser == browser and not installed
+    click("browserSetupDone")
+    QTest.qWait(100)
+    assert not guide.property("visible") and root.property("currentPage") == 2
+    assert catalog.selectedApp == bundle and catalog.selectedScene == "video"
+
+    # The same entry becomes management once this browser connects, even if
+    # the current web page has not yet granted media access.
+    extensions._states = {browser: {"connected": True, "authorized": False}}
+    extensions.changed.emit()
+    QTest.qWait(30)
+    assert hint.property("text") == "插件已连接" and button.property("text") == "管理插件"
+    click("gestureBrowserExtensionButton")
+    QTest.qWait(140)
+    assert guide.property("opened") and guide.property("browser") == browser
+    click("browserSetupDone")
+    QTest.qWait(100)
+    assert {k: c._settings.value(k) for k in c._settings.allKeys()} == saved
+    click("globalGestureScope")
+    assert not button.property("visible")
+    catalog._candidates.append(dict(value=BUNDLE, label="文本编辑", path=""))
+    assert catalog.addApplication(BUNDLE)
+    click("gestureApplication_" + BUNDLE)
+    assert not button.property("visible")
+    assert bridge.messages == messages and not installed
 
 
 def test_empty_application_list_and_explicit_add_do_not_create_bindings(mapping_ui, tmp_path):
@@ -946,7 +1026,7 @@ def test_pending_scene_preset_can_be_seen_cancelled_and_replaced_in_editor(mappi
     assert '等待快捷键' not in editor.property('currentDescription')
 
 
-def test_add_scene_requires_confirmation_and_presentation_can_add_pdf(mapping_ui):
+def test_add_scene_hides_other_choices_and_presentation_can_add_video(mapping_ui):
     from PySide6.QtCore import QObject
     from PySide6.QtTest import QTest
     _,_,root,catalog,_,click,_=mapping_ui
@@ -955,24 +1035,28 @@ def test_add_scene_requires_confirmation_and_presentation_can_add_pdf(mapping_ui
     assert catalog.addApplication(bundle)
     QTest.qWait(40)
     click('gestureApplication_'+bundle)
+    assert catalog.primaryScene=='pdf'
+    assert any(scene['value']=='image' for scene in catalog.addableScenes)
+    assert not root.findChild(QObject,'addApplicationSceneButton').property('visible')
+    assert not root.findChild(QObject,'changeApplicationPurpose').property('visible')
+    assert catalog._bindings_for(bundle,'pdf')
+    assert catalog.selectedScene=='regular'
+    assert not visual_child(root.contentItem(),'pdfGestureScene').property('visible')
+    catalog._candidates.append(dict(value='com.microsoft.Powerpoint',label='PowerPoint',path='',sceneProfiles={'pdf':'generic','video':'generic'}))
+    assert catalog.addApplication('com.microsoft.Powerpoint')
+    QTest.qWait(40)
+    click('gestureApplication_com.microsoft.Powerpoint')
+    assert [item['value'] for item in catalog.availableScenes]==['regular','presentation']
+    assert {item['value'] for item in catalog.addableScenes}=={'pdf','video'}
+    assert visual_child(root.contentItem(),'presentationGestureScene').property('visible')
     click('manageApplicationButton'); click('changeApplicationPurpose')
     choice=root.findChild(QObject,'applicationPurposeChoice')
-    choice.setProperty('currentIndex',0)
-    assert catalog.primaryScene=='pdf'
+    assert choice.property('count')==1 and choice.property('currentValue')=='video'
     click('cancelApplicationPurpose')
-    assert catalog.primaryScene=='pdf'
-    click('manageApplicationButton'); click('changeApplicationPurpose')
-    choice.setProperty('currentIndex',0)
-    click('saveApplicationPurpose')
-    assert catalog.primaryScene=='pdf' and len(catalog.availableScenes)==3
-    assert catalog.selectedScene=='image'
-    assert catalog._bindings_for(bundle,'pdf')
-    catalog._candidates.append(dict(value='com.microsoft.Powerpoint',label='PowerPoint',path='',sceneProfiles={'pdf':'generic'}))
-    assert catalog.addApplication('com.microsoft.Powerpoint')
     assert [item['value'] for item in catalog.availableScenes]==['regular','presentation']
-    assert [item['value'] for item in catalog.addableScenes]==['pdf']
-    assert catalog.addScene('pdf')
-    assert [item['value'] for item in catalog.availableScenes]==['regular','presentation','pdf']
+    click('addApplicationSceneButton'); click('saveApplicationPurpose')
+    assert catalog.selectedScene=='video'
+    assert [item['value'] for item in catalog.availableScenes]==['regular','presentation','video']
 
 
 def test_default_and_scene_editors_remain_accessible_without_gesture_driven_navigation(mapping_ui):
@@ -1013,14 +1097,15 @@ def test_default_and_scene_editors_remain_accessible_without_gesture_driven_navi
     finally:restored.close()
 
 
-@pytest.mark.parametrize('size', [(1440,1040),(940,700)])
+@pytest.mark.parametrize('size', [(1440,1040),(1200,780),(940,700),(940,560),(1200,560)])
 def test_add_scene_button_dialog_and_disable_preserve_default_editor(mapping_ui,tmp_path,size):
-    from PySide6.QtCore import QObject
+    from PySide6.QtCore import QCoreApplication, QObject, QPoint, QPointF, QRectF, Qt
+    from PySide6.QtGui import QWheelEvent
     from PySide6.QtTest import QTest
     _,_,root,catalog,_,click,_=mapping_ui
     root.resize(*size)
     bundle='com.kingsoft.wpsoffice.mac'
-    catalog._candidates=[dict(value=bundle,label='WPS Office',path='')]
+    catalog._candidates=[dict(value=bundle,label='WPS Office',path='',sceneProfiles={'video':'generic'})]
     assert catalog.addApplication(bundle)
     QTest.qWait(40);click('gestureApplication_'+bundle)
     assert catalog.selectedScene=='regular'
@@ -1028,19 +1113,51 @@ def test_add_scene_button_dialog_and_disable_preserve_default_editor(mapping_ui,
     click('addApplicationSceneButton')
     dialog=root.findChild(QObject,'applicationPurposeDialog')
     assert dialog.property('visible') and dialog.property('title')=='添加场景'
-    assert catalog.addableScenes==[dict(value='pdf',label='PDF 阅读')]
+    assert {item['value'] for item in catalog.addableScenes}=={'pdf','video'}
+    choice=root.findChild(QObject,'applicationPurposeChoice')
+    assert choice.property('count')==1 and choice.property('currentValue')=='video'
     shots=Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR',str(tmp_path)));shots.mkdir(parents=True,exist_ok=True)
     QTest.qWait(100)
-    assert root.grabWindow().save(str(shots/f'add-scene-{size[0]}.png'))
-    click('saveApplicationPurpose');QTest.qWait(50)
-    assert catalog.selectedScene=='pdf'
-    assert catalog.configured_scenes()[bundle]==['presentation','pdf']
+    assert root.grabWindow().save(str(shots/f'add-scene-{size[0]}x{size[1]}.png'))
+    click('saveApplicationPurpose');QTest.qWait(120)
+    assert catalog.selectedScene=='video'
+    assert catalog.configured_scenes()[bundle]==['presentation','video']
     assert catalog.regularBindings[bundle]==before
+    page = root.findChild(QObject, 'gesturesPage')
+    tabs = root.findChild(QObject, 'gestureApplicationTabs')
+    scenes = root.findChild(QObject, 'applicationManagementBar')
+    editor = root.findChild(QObject, 'gestureActionEditor')
+    def bounds(item):
+        return item.mapRectToItem(page, QRectF(0, 0, item.width(), item.height()))
+    # Scene controls sit directly under the app picker and above the editor.
+    assert bounds(tabs).bottom() <= bounds(scenes).top()
+    assert bounds(scenes).bottom() <= bounds(editor).top()
+    for item in (tabs, scenes, editor, root.findChild(QObject, 'gestureMappingPanel')):
+        rect = bounds(item)
+        assert rect.left() >= 0 and rect.right() <= page.width() + 1
+        assert rect.top() >= 0 and rect.bottom() <= page.height() + 1
+    assert visual_child(root.contentItem(), 'presentationGestureScene').property('visible')
+    for scene in ('regular', 'presentation', 'video'):
+        button = visual_child(root.contentItem(), scene + 'GestureScene')
+        point = button.mapToScene(QPointF(button.width() / 2, button.height() / 2))
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, point.toPoint())
+        QTest.qWait(30)
+        assert catalog.selectedScene == scene
+    viewport = page.property('contentItem')
+    before_scroll = bounds(scenes)
+    point = scenes.mapToScene(QPointF(scenes.width() / 2, scenes.height() / 2))
+    for delta in (-120, 120):
+        event = QWheelEvent(point, QPointF(root.mapToGlobal(point.toPoint())), QPoint(),
+                            QPoint(0, delta), Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+        QCoreApplication.sendEvent(root, event)
+        QTest.qWait(30)
+        assert viewport.property('contentY') == 0
+        assert bounds(scenes) == before_scroll
     click('manageApplicationButton');click('disableApplicationScene');QTest.qWait(30)
     assert catalog.selectedScene=='regular'
     assert catalog.configured_scenes()[bundle]==['presentation']
     assert catalog.regularBindings[bundle]==before
     click('addApplicationSceneButton');click('saveApplicationPurpose');QTest.qWait(40)
-    assert catalog.configured_scenes()[bundle]==['presentation','pdf']
+    assert catalog.configured_scenes()[bundle]==['presentation','video']
     click('regularGestureScene');QTest.qWait(40)
-    assert root.grabWindow().save(str(shots/f'added-scene-{size[0]}.png'))
+    assert root.grabWindow().save(str(shots/f'added-scene-{size[0]}x{size[1]}.png'))

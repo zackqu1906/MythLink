@@ -10,7 +10,6 @@ import re
 import time
 from urllib.parse import unquote, urlsplit
 
-from .focus import inspect_focus
 from .documents import non_slide_document
 
 from ..models import PRESENTATION, SceneResult
@@ -18,7 +17,7 @@ from .diagnostics import explain, window_rejection
 
 
 def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), application_names=()):
-    """Return the shared scene result with a three-state input context.
+    """Recognize a show from window evidence without inferring input ownership.
 
     A full-screen document is insufficient. Recognize a dedicated slide-show
     window or a visible End Show button in a presentation editor's controls.
@@ -38,15 +37,6 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
             raise TimeoutError()
         return attr(node, key)
 
-    def focus_context():
-        try:
-            snapshot = inspect_focus(window, focus, read)
-        except TimeoutError:
-            details["focus_reason"] = "focus_validation_timeout"
-            return "unknown"
-        details["focus_reason"] = snapshot.reason
-        return snapshot.context
-
     def close_rect(position, size, other_position, other_size):
         if any(value is None or len(value) != 2 for value in (position, size, other_position, other_size)):
             return False
@@ -62,16 +52,8 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
         # and borderless fullscreen windows often omit AXFullScreen entirely.
         # Require a complete, non-editable canvas tree covering the screen;
         # fullscreen editor ribbons, prompts and missing trees never qualify.
-        if (focus is None or read(focus, "AXRole") not in {"AXGroup", "AXImage", "AXLayoutArea"}
-                or read(focus, "AXFocused") is False or read(focus, "AXEnabled") is False
-                or focus_context() != "nontext"):
-            details["canvas_reason"] = "canvas_focus_unavailable"
-            return False
         position, size = read(window, "AXPosition"), read(window, "AXSize")
         details.update(window_size=size, display_count=len(screen_frames))
-        if not close_rect(position, size, read(focus, "AXPosition"), read(focus, "AXSize")):
-            details["canvas_reason"] = "canvas_bounds_mismatch"
-            return False
         if read(window, "AXFullScreen") is not True and not any(
                 close_rect(position, size, frame[:2], frame[2:]) for frame in screen_frames):
             details["canvas_reason"] = "fullscreen_unconfirmed"
@@ -86,7 +68,9 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
             if read(node, "AXEditable") or read(node, "AXIsEditable"):
                 details["canvas_reason"] = "editable_canvas"
                 return False
-            if node == focus:
+            if (node != window and role in {"AXGroup", "AXImage", "AXLayoutArea"}
+                    and read(node, "AXEnabled") is not False
+                    and close_rect(position, size, read(node, "AXPosition"), read(node, "AXSize"))):
                 found = True
             if node != window and role not in {"AXGroup", "AXImage", "AXLayoutArea", "AXStaticText"}:
                 details["canvas_reason"] = "canvas_has_controls"
@@ -120,9 +104,9 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
         # Only reject it as a filename when AXDocument actually says so.
         document_name = Path(unquote(urlsplit(str(read(window, "AXDocument") or "")).path)).name
         if (branded or unbranded) and title != document_name:
-            return done("recognized", PRESENTATION, focus_context(), evidence="show_title")
+            return done("recognized", PRESENTATION, "unknown", evidence="show_title")
         if slide_surface():
-            return done("recognized", PRESENTATION, "nontext", evidence="fullscreen_canvas")
+            return done("recognized", PRESENTATION, "unknown", evidence="fullscreen_canvas")
         # Some versions expose only the document name. A visible presentation
         # toolbar's End Show button is an independent positive signal. Never
         # traverse the app menu, slide content, or read AXValue/selected text.
@@ -141,7 +125,7 @@ def detect_presentation(window, focus, attr, *, budget=0.24, screen_frames=(), a
             if role == "AXButton":
                 label = str(read(node, "AXTitle") or read(node, "AXDescription") or "").strip().casefold()
                 if label in end_labels and read(node, "AXEnabled") and read(node, "AXHidden") is not True:
-                    return done("recognized", PRESENTATION, focus_context(), evidence="end_show_control")
+                    return done("recognized", PRESENTATION, "unknown", evidence="end_show_control")
             if role in {"AXWindow", "AXGroup", "AXToolbar", "AXSplitGroup"} and depth < 4:
                 queue.extend((child, depth + 1) for child in list(read(node, "AXChildren") or [])[:64 - visited])
         return done("no_presentation_evidence", scanned_nodes=visited)

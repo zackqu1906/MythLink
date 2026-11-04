@@ -5,6 +5,7 @@ source "$TASK_ROOT/scripts/macos-signing-env.sh"
 BUILD_ROOT="$TASK_ROOT/.build/proximity"
 APP="$BUILD_ROOT/ProxiMicPresence.app"
 STAMP="$BUILD_ROOT/build-inputs.sha256"
+DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(cat "$TASK_ROOT/packaging/macos-target.txt")}"
 mkdir -p "$BUILD_ROOT"
 # Ad-hoc Keychain authorization is tied to the actual code identity. Do not
 # rebuild or re-sign an unchanged helper during unrelated UI/package work.
@@ -13,6 +14,7 @@ INPUT_HASH=$({
   xcrun swiftc --version
   xcrun --show-sdk-path
   uname -m
+  print -r -- "$DEPLOYMENT_TARGET"
   print -r -- "${PROXIMIC_SIGN_IDENTITY:--}"
 } | shasum -a 256 | awk '{print $1}')
 if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$INPUT_HASH" && -x "$APP/Contents/MacOS/ProxiMicPresence" ]] \
@@ -24,7 +26,7 @@ fi
 # .cstemp makes codesign --verify --strict fail forever after an interrupted sign.
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$BUILD_ROOT/module-cache"
-xcrun swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx15.0" \
+xcrun swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx$DEPLOYMENT_TARGET" \
   -module-cache-path "${PROXIMIC_MODULE_CACHE:-$BUILD_ROOT/module-cache}" \
   -framework AppKit -framework CoreBluetooth -framework Security -framework OpenDirectory -framework IOKit \
   "$TASK_ROOT/native/ProxiMicPresence/Policy.swift" "$TASK_ROOT/native/ProxiMicPresence/Calibration.swift" \
@@ -33,6 +35,7 @@ xcrun swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx15.0" \
   "$TASK_ROOT/native/ProxiMicPresence/main.swift" \
   -o "$APP/Contents/MacOS/ProxiMicPresence"
 cp "$TASK_ROOT/native/ProxiMicPresence/Info.plist" "$APP/Contents/Info.plist"
+plutil -replace LSMinimumSystemVersion -string "$DEPLOYMENT_TARGET" "$APP/Contents/Info.plist"
 codesign "${MYTHLINK_CODESIGN_FLAGS[@]}" "$APP"
 codesign --verify --strict "$APP"
 print -r -- "$INPUT_HASH" > "$STAMP"

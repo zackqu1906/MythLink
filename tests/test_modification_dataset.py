@@ -52,6 +52,32 @@ def _update(session_id: int, text: str, *, final: bool):
     )
 
 
+def test_clef_routing_history_records_choice_schema_and_model_without_credentials(tmp_path, monkeypatch):
+    from proximic_ring.text_processing.model import InputModeRoutingRequest, InputModeRoutingResult
+    from proximic_ring.text_processing.router_prompts import routing_schema, ROUTER_PROMPT_VERSION
+    from proximic_ring.text_processing.task_routing import EditPlan
+    monkeypatch.setenv("PROXIMIC_CLEF_MODEL", "Cloudflare/clef-flash")
+    monkeypatch.setenv("PROXIMIC_CLEF_API_KEY", "test-secret-not-for-history")
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    request = InputModeRoutingRequest(901, 7, "把咖啡改成牛奶", LLMSettings(), router_backend="clef",
+                                      target_text="咖啡")
+    collector.record_routing_request(request)
+    collector.record_routing_result(InputModeRoutingResult(901, 7, request.raw_text, "edit", .2,
+        task_type="edit", edit_plan=EditPlan(("modify",)), model_output='{"provider":"clef_server"}'))
+    interaction_id = collector._routing_interactions[901]
+    record = collector._interaction_data(interaction_id)
+    mode = record["mode"]
+    assert mode["router_provider"] == "clef_server"
+    assert mode["router_model"] == "Cloudflare/clef-flash"
+    assert mode["router_schema"] == routing_schema()
+    assert mode["router_prompt_version"] == ROUTER_PROMPT_VERSION
+    assert mode["task_type"] == "edit"
+    assert mode["edit_plan"] == {"tasks": ["modify"]}
+    assert mode["router_classification_type"] == "joint"
+    assert "六类任务定义" in mode["router_rules"]
+    assert "test-secret-not-for-history" not in json.dumps(record)
+
+
 def _result(request_id: int, session_id: int, candidate: str, winner: str):
     return TextProcessingResult(
         request_id=request_id,
@@ -1091,3 +1117,20 @@ def test_cancelled_model_request_is_terminal_but_completed_model_remains_complet
     assert cancelled["completed_at"] and cancelled["end_reason"] == "用户取消"
     assert "candidate_text" not in cancelled
     assert completed["status"] == "completed"
+
+
+def test_composed_prompt_and_plan_are_saved_for_replay(tmp_path):
+    from proximic_ring.text_processing.model import TextProcessingRequest
+    from proximic_ring.text_processing.task_routing import EditPlan
+    from proximic_ring.text_processing.automatic_prompts import AUTOMATIC_PROMPT_VERSION, automatic_system_prompt
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    plan = EditPlan(("modify", "polish"))
+    request = TextProcessingRequest(901, 7, "edit", "王字旁的玮，再客气一点", LLMSettings(),
+                                    target_text="请张伟来", task_type="edit", edit_plan=plan,
+                                    screen_context={"messages": []})
+    collector.record_text_request(request)
+    record = collector._interaction_data(collector._request_interactions[901])
+    saved = record["llm"]["requests"][0]
+    assert saved["prompt_version"] == AUTOMATIC_PROMPT_VERSION
+    assert saved["edit_plan"] == saved["input"]["edit_plan"] == plan.as_dict()
+    assert saved["system_prompt"] == automatic_system_prompt("edit", plan)

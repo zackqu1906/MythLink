@@ -38,8 +38,8 @@ def test_scene_success_is_one_correlated_trace_with_unverified_delivery(presenta
     service.handle_override(event)
     assert sent == [('com.microsoft.Powerpoint', 'Right')]
     rows = [r for r in records(service) if r['trace'] == event.trace_id]
-    assert [r['stage'] for r in rows] == ['received', 'capture', 'route', 'dispatch', 'outcome']
-    assert rows[2]['owner'] == 'outside'
+    assert [r['stage'] for r in rows] == ['received', 'input_focus', 'capture', 'route', 'dispatch', 'outcome']
+    assert rows[3]['owner'] == 'outside'
     assert rows[-1]['reason'] == 'shortcut_posted' and rows[-1]['delivery'] == 'posted_unverified'
     assert rows[-1]['shortcut'] == 'Right' and rows[-1]['pid'] == 42
     assert all(r['run'] == c._diagnostic_run_id for r in rows)
@@ -115,7 +115,7 @@ def test_text_focus_claims_input_without_scene_or_regular_app_fallback(presentat
     _, service, _, backend, _, sent, _ = presentation
     backend.target = replace(backend.target, input_context='text')
     assert service.scene_envelope(SimpleNamespace(name='swipe-right')) is None
-    assert records(service)[-1]['reason'] == 'text'
+    assert records(service)[-1]['reason'] == 'input_method_focus'
     assert records(service)[-1]['owner'] == 'input' and not sent
 
 
@@ -135,7 +135,7 @@ def test_presentation_negative_evidence_is_not_lost_to_generic_detector():
     window, focus = window_tree('Regular editor')
     result = detect_scene('test.app', {PRESENTATION: 'generic'}, window, focus, metadata)
     assert result.diagnostic['reason'] == 'no_presentation_evidence'
-    assert result.diagnostic['canvas_reason'] == 'canvas_bounds_mismatch' and result.diagnostic['scanned_nodes'] > 0
+    assert result.diagnostic['canvas_reason'] == 'fullscreen_unconfirmed' and result.diagnostic['scanned_nodes'] > 0
 
 
 @pytest.mark.mac_only
@@ -150,7 +150,7 @@ def test_ax_failures_keep_attribute_codes_not_document_values(monkeypatch):
 
 
 @pytest.mark.parametrize('field,value,reason', [('bundle','other','foreground_changed'), ('pid',99,'foreground_changed'),
-    ('window','other-window','window_changed'), ('focus','search','focus_changed'), ('blocked',True,'blocked_window'),
+    ('window','other-window','window_changed'), ('blocked',True,'blocked_window'),
     ('document_key','other-document','document_changed'), ('page_key','other-page','page_changed'), ('scene','video','scene_changed')])
 def test_validation_reason_is_specific_and_posts_nothing(desktop, field, value, reason):
     backend, state, _ = desktop

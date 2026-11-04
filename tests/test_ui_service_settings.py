@@ -26,7 +26,8 @@ def open_page(root, page):
     root.show()
     assert QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", page))
     QTest.qWait(160)
-    dialog = item(root, "advancedSettingsDialog")
+    dialog = item(root, "runtimeSettingsDialog")
+    assert item(root, "advancedSettingsPage").property("visible")
     for _ in range(30):
         if dialog.property("opacity") >= 0.999:
             break
@@ -41,7 +42,7 @@ def settings(controller):
 def scroll_bottom(root):
     from PySide6.QtTest import QTest
     QTest.qWait(40)  # Allow conditional groups to update the scroll extent.
-    flick = item(root, "advancedSettingsScroll").property("contentItem")
+    flick = item(root, "runtimeSettingsScroll").property("contentItem")
     flick.setProperty("contentY", max(0, flick.property("contentHeight") - flick.height()))
     QTest.qWait(40)
 
@@ -76,9 +77,9 @@ def test_service_navigation_preserves_custom_profiles_and_live_voice(inline_ui, 
     scroll_bottom(root)
     screenshot(root, tmp_path, f"speech-service-advanced-{size[0]}.png")
     assert item(root, "asrPerformanceRow").property("visible")
-    click(root, "advancedSettingsDoneButton")
+    click(root, "settingsApplyButton")
     QTest.qWait(140)
-    assert not item(root, "advancedSettingsDialog").property("visible")
+    assert not item(root, "runtimeSettingsDialog").property("visible")
 
     open_page(root, 5)
     assert not item(root, "localTextModelGroup").property("visible")
@@ -87,20 +88,20 @@ def test_service_navigation_preserves_custom_profiles_and_live_voice(inline_ui, 
     screenshot(root, tmp_path, f"text-service-{size[0]}.png")
     click(root, "showLlmApiKeyButton")
     assert item(root, "llmApiKeyField").property("displayText") == controller.llmApiKey
-    click(root, "advancedSettingsDoneButton")
+    click(root, "settingsApplyButton")
     QTest.qWait(140)
     open_page(root, 5)
     assert item(root, "llmApiKeyField").property("displayText") != controller.llmApiKey
     scroll_bottom(root)
     screenshot(root, tmp_path, f"text-service-advanced-{size[0]}.png")
-    for name in ("llmModelField", "advancedSettingsDoneButton"):
+    for name in ("llmModelField", "settingsApplyButton"):
         control = item(root, name)
         point = control.mapToScene(QPointF())
         assert 0 <= point.x() <= root.width() - control.width()
         assert 0 <= point.y() <= root.height() - control.height()
-    click(root, "advancedSettingsDoneButton")
+    click(root, "settingsApplyButton")
     QTest.qWait(120)
-    assert not item(root, "advancedSettingsDialog").property("visible")
+    assert not item(root, "runtimeSettingsDialog").property("visible")
     assert settings(controller) == before
     assert bridge.messages == messages
     assert controller.gestureBindings == bindings
@@ -125,7 +126,7 @@ def test_online_speech_form_retains_connection_locks_and_live_gain(inline_ui, st
     assert settings(controller) == before and bridge.messages == messages
 
 
-def test_service_editors_save_on_done_and_escape_without_touching_other_preferences(inline_ui):
+def test_service_editors_save_on_back_and_escape_without_touching_other_preferences(inline_ui):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
@@ -140,8 +141,10 @@ def test_service_editors_save_on_done_and_escape_without_touching_other_preferen
     field.forceActiveFocus(Qt.OtherFocusReason)
     assert not field.property("placeholderText")
     field.setProperty("text", " test-only-new-key ")
-    click(root, "advancedSettingsDoneButton")
+    click(root, "settingsOverviewBackButton")
     QTest.qWait(120)
+    assert item(root, "runtimeSettingsDialog").property("opened")
+    assert not item(root, "advancedSettingsPage").property("visible")
     assert controller.asrApiKey == "test-only-new-key"
     after = settings(controller)
     assert {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)} == {"asr/volcengineApiKey"}
@@ -155,8 +158,7 @@ def test_service_editors_save_on_done_and_escape_without_touching_other_preferen
     field.setProperty("text", "ep-new-custom-model")
     QTest.keyClick(root, Qt.Key_Escape)
     QTest.qWait(140)
-    assert not item(root, "advancedSettingsDialog").property("visible")
-    assert item(root, "runtimeSettingsDialog").property("visible")
+    assert not item(root, "runtimeSettingsDialog").property("visible")
     assert controller.llmModel == "ep-new-custom-model"
     after = settings(controller)
     assert {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)} == {"llm/model"}

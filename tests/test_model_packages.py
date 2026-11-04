@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import zipfile
 
+import pytest
+
 from proximic_ring.text_processing import model_packages
 from proximic_ring.text_processing import local_server
 
@@ -133,8 +135,9 @@ def test_platform_specific_runtime_selection(monkeypatch, tmp_path):
     ).endswith("runtimes/mac/llama-server")
 
 
+@pytest.mark.parametrize("bundled", [False, True])
 def test_install_default_local_model_verifies_and_flattens_runtime(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, bundled
 ):
     model_bytes = b"fake-gguf"
     runtime_archive = tmp_path / "fixture.zip"
@@ -169,11 +172,18 @@ def test_install_default_local_model_verifies_and_flattens_runtime(
     catalog_path = tmp_path / "catalog-source.json"
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
     monkeypatch.setattr(model_packages, "local_llm_platform_key", lambda: "windows-x86_64")
+    bundled_executable = tmp_path / "bundled" / "llama-server"
+    if bundled:
+        bundled_executable.parent.mkdir()
+        bundled_executable.write_bytes(b"server")
+    monkeypatch.setattr(model_packages, "bundled_local_runtime",
+                        lambda _runtime: bundled_executable if bundled else None)
 
     def fake_download(
         _urls, destination, _sha, label, _progress, *, expected_size=None
     ):
         assert expected_size is None
+        assert not (bundled and "运行时" in label), "bundled runtime must not be downloaded again"
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(
             archive_bytes if "运行时" in label else model_bytes
@@ -187,6 +197,40 @@ def test_install_default_local_model_verifies_and_flattens_runtime(
     )
 
     assert Path(result["server_path"]).read_bytes() == b"server"
-    assert (Path(result["server_path"]).parent / "backend.dll").is_file()
+    if bundled:
+        assert Path(result["server_path"]) == bundled_executable
+        assert not (home / "runtimes").exists()
+    else:
+        assert (Path(result["server_path"]).parent / "backend.dll").is_file()
     assert Path(result["model_path"]).read_bytes() == model_bytes
     assert json.loads((home / "installation.json").read_text())["runtimeId"] == "runtime"
+
+
+def test_existing_default_server_uses_bundled_runtime_and_preserves_custom_path(tmp_path, monkeypatch):
+    from proximic_ring import runtime_paths
+
+    monkeypatch.setenv("PROXIMIC_LLM_HOME", str(tmp_path / "models"))
+    monkeypatch.setattr(runtime_paths, "resource_root", lambda: tmp_path / "App/Contents/Resources")
+    monkeypatch.setattr(runtime_paths, "is_frozen", lambda: True)
+    monkeypatch.setattr(local_server, "local_llm_platform_key", lambda: "macos-arm64")
+    runtime_id = "llama-cpp-b10516-macos-arm64"
+    bundled = runtime_paths.resource_root() / runtime_id / "llama-server"
+    bundled.parent.mkdir(parents=True)
+    bundled.touch()
+    old_server = local_server.default_local_llm_home() / "runtimes" / runtime_id / "llama-server"
+    model = tmp_path / "existing-model.gguf"
+    server = local_server.LocalModelServer(
+        base_url="http://127.0.0.1:11435/v1", model_alias="local",
+        server_path=old_server, model_path=model,
+    )
+    assert server.server_path == bundled
+    assert server.model_path == model
+    resolved = local_server.resolve_default_local_llm()
+    assert Path(resolved["server_path"]) == bundled
+    assert Path(resolved["model_path"]).is_relative_to(local_server.default_local_llm_home())
+    custom = tmp_path / "custom-server"
+    server = local_server.LocalModelServer(
+        base_url="http://127.0.0.1:11435/v1", model_alias="local",
+        server_path=custom, model_path=model,
+    )
+    assert server.server_path == custom

@@ -44,13 +44,13 @@ Rectangle {
                 Layout.row: 0; Layout.column: index
                 Layout.fillWidth: true; Layout.fillHeight: true
                 Layout.preferredWidth: 1; Layout.preferredHeight: 1
-                focusPolicy: Qt.NoFocus; hoverEnabled: true
+                focusPolicy: Qt.NoFocus; hoverEnabled: enabled
                 topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0; padding: 0
                 Accessible.name: "输入标点 " + modelData.symbol
                 Component.onCompleted: menu.cells[modelData.direction] = action
                 background: Rectangle {
                     radius: 10
-                    color: action.directionActive ? "#234CDB" : action.down ? "#D8E3FA" : action.hovered ? "#E7EDFB" : "#EDF2FB"
+                    color: action.directionActive ? "#234CDB" : action.down ? "#D8E3FA" : (action.enabled && action.hovered) ? "#E7EDFB" : "#EDF2FB"
                     border.width: action.directionActive ? 2 : 1
                     border.color: action.directionActive ? "#1739AC" : "#DCE4F0"
                 }
@@ -92,7 +92,7 @@ Rectangle {
                 Layout.fillWidth: true; Layout.fillHeight: true
                 Layout.preferredWidth: 1; Layout.preferredHeight: 1
                 enabled: character.length > 0
-                focusPolicy: Qt.NoFocus; hoverEnabled: true
+                focusPolicy: Qt.NoFocus; hoverEnabled: enabled
                 topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0; padding: 0
                 Accessible.name: character.length ? "第" + (index + 1) + "候选 " + character + (visual ? "，" + visual.status : "") : "暂无候选"
                 Component.onCompleted: menu.cells[modelData.direction] = cell

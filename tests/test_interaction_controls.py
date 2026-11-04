@@ -276,7 +276,8 @@ def test_failed_initial_edit_keeps_f8_dictation_fallback(tmp_path, monkeypatch):
     controller._desktop_target = desktop
     controller._desktop_output = True
     controller._llm_enabled = True
-    controller._input_routing_mode = "auto"
+    controller._input_routing_mode = "manual"
+    controller._input_mode = "edit"
     controller._capture_desktop_reference = lambda: target
     controller._connected = True
     controller._recognition_enabled = True
@@ -284,16 +285,6 @@ def test_failed_initial_edit_keeps_f8_dictation_fallback(tmp_path, monkeypatch):
 
     controller._apply_runtime_update("把这句话改正式", True, "", 61)
     edit_request = next(request for request in submitted if request.mode == "edit")
-    controller._apply_input_mode_routed(
-        InputModeRoutingResult(
-            routed[0].request_id,
-            61,
-            "把这句话改正式",
-            "edit",
-            0.1,
-            model_output="edit",
-        )
-    )
     controller._apply_text_processed(
         TextProcessingResult(
             edit_request.request_id,
@@ -1194,7 +1185,7 @@ def test_applied_result_remains_on_multi_undo_stack(
     _close(controller)
 
 
-def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
+def test_manual_conversion_prepares_both_modes_and_switch_uses_cached_edit(
     tmp_path, monkeypatch
 ):
     import json
@@ -1248,14 +1239,14 @@ def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
     controller._desktop_target = desktop
     controller._desktop_output = True
     controller._llm_enabled = True
-    controller._input_routing_mode = "auto"
+    controller._input_routing_mode = "manual"
     controller._capture_desktop_reference = lambda: target
     controller._modification_dataset.record_audio(
         21, np.zeros(1600, dtype=np.float32)
     )
 
     controller._apply_runtime_update("改得更正式", True, "", 21)
-    assert len(routed) == 1
+    assert not routed
     assert {request.mode for request in submitted} == {"dictation", "edit"}
 
     edit_request = next(request for request in submitted if request.mode == "edit")
@@ -1273,16 +1264,6 @@ def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
             True,
             target_text="旧文本",
             model_output='{"modified_text":"新的正式文本"}',
-        )
-    )
-    controller._apply_input_mode_routed(
-        InputModeRoutingResult(
-            routed[0].request_id,
-            21,
-            "改得更正式",
-            "dictation",
-            0.1,
-            model_output="dictation",
         )
     )
     controller._apply_text_processed(
@@ -1367,11 +1348,8 @@ def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
         ).read_text(encoding="utf-8")
     )
     assert record["mode"]["selected"] == "dictation"
-    assert record["mode"]["negative_mode"] == "edit"
-    assert record["mode"]["label_source"] == "explicit_mode_switch"
-    assert record["outcome"]["manually_corrected"] is True
-    assert record["asr"]["training_label"] == "positive"
-    assert record["near_field"]["training_label"] == "positive"
+    assert record["mode"]["negative_mode"] == ""  # No classifier prediction in manual mode.
+    assert record["mode"]["label_source"] == "system"
     _close(controller)
 
 
@@ -1762,82 +1740,57 @@ def test_failed_mode_switch_restores_exact_previous_text(tmp_path, monkeypatch):
     _close(controller)
 
 
-def test_auto_dictation_commits_asr_without_waiting_for_llm_candidates(
-    tmp_path, monkeypatch
-):
+def _automatic_controller(tmp_path, monkeypatch, *, has_target=True):
     from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
-    from proximic_ring.text_processing import InputModeRoutingResult
-
     controller = _controller(tmp_path, monkeypatch)
-    routed = []
-    submitted = []
-    cancelled = []
-    injected = []
-
-    class Worker:
-        def submit_routing(self, request):
-            routed.append(request)
-
-        def submit(self, request):
-            submitted.append(request)
-
-        def cancel_request(self, request_id):
-            cancelled.append(request_id)
-
-        def close(self, *, wait=False):
-            return None
-
-    target = DesktopTargetRef(1, 2, "编辑器")
-
-    class Desktop:
-        def capture_text(self, captured):
-            return DesktopTextSnapshot(captured, "旧文本")
-
-        def inject(self, _captured, _text):
-            return None
-
-        def inject(self, captured, text):
-            injected.append((captured, text))
-
-        def release_selection(self, _target):
-            return None
-
-    controller._text_processing_worker = Worker()
-    controller._desktop_target = Desktop()
+    target = DesktopTargetRef(1, 2, "编辑器") if has_target else None
+    routed, submitted, cancelled, injected = [], [], [], []
+    controller._text_processing_worker = SimpleNamespace(
+        submit_routing=routed.append, submit=submitted.append, cancel_request=cancelled.append,
+        capture_context=lambda target: {"status": "ok", "messages": [], "coverage": "visible_only"},
+        warmup_router=lambda: None, close=lambda **kw: None)
+    controller._desktop_target = SimpleNamespace(
+        capture_text=lambda target: DesktopTextSnapshot(target, "旧文本"),
+        inject=lambda target, text: injected.append(text), release_selection=lambda target: None)
     controller._desktop_output = True
-    controller._llm_enabled = True
+    controller._llm_enabled = False  # Automatic uses the configured API independently.
     controller._input_routing_mode = "auto"
     controller._capture_desktop_reference = lambda: target
+    controller._connected = True
+    controller._recognition_enabled = True
+    controller._recognition_event.set()
+    return controller, routed, submitted, cancelled, injected
 
-    controller._apply_runtime_update("直接输入这句话", True, "", 31)
-    assert {request.mode for request in submitted} == {"dictation", "edit"}
-    controller._apply_input_mode_routed(
-        InputModeRoutingResult(
-            routed[0].request_id,
-            31,
-            "直接输入这句话",
-            "dictation",
-            0.1,
-            model_output="dictation",
-        )
-    )
 
-    pending, pending_target = controller._pending_dictation_result
-    assert pending.request_id == 0
-    assert pending.final_text == "直接输入这句话"
-    assert pending_target == target
-    controller._dictation_commit_timer.stop()
-    controller._commit_pending_dictation()
+def _route(request, task, error=None):
+    from proximic_ring.text_processing.task_routing import EditPlan
+    from proximic_ring.text_processing import InputModeRoutingResult
+    return InputModeRoutingResult(request.request_id, request.session_id, request.raw_text,
+        "dictation" if task == "dictation" else "edit", .1,
+        error=error, task_type="dictation" if task == "dictation" else "edit",
+        edit_plan=None if task == "dictation" else EditPlan((task,)),
+        screen_context={"status": "ok", "messages": []})
 
-    assert injected == [(target, "直接输入这句话")]
-    assert cancelled == []
-    assert controller._active_auto_interaction is None
-    assert controller.interactionState == "applied"
-    controller.switchCurrentInputMode()
-    pending_switches = dict(controller._pending_applied_mode_switches)
-    controller.switchCurrentInputMode()
-    assert controller._pending_applied_mode_switches == pending_switches
-    _close(controller)
+
+def test_automatic_dictation_waits_for_route_then_one_llm_request(tmp_path, monkeypatch):
+    from proximic_ring.text_processing import TextProcessingResult
+    c, routes, requests, cancelled, injected = _automatic_controller(tmp_path, monkeypatch)
+    c._apply_runtime_update("明天开会", True, "", 31)
+    c._apply_runtime_update("明天开会", True, "", 31)  # duplicate ASR final
+    assert len(routes) == 1 and not requests and not injected
+    assert routes[0].router_backend == "clef"
+    c._apply_input_mode_routed(_route(routes[0], "dictation"))
+    assert len(requests) == 1 and requests[0].task_type == "dictation"
+    assert requests[0].settings.enabled and not injected
+    r = requests[0]
+    c._apply_text_processed(TextProcessingResult(r.request_id, 31, "dictation", r.raw_text,
+        "明天开会。", .2, True, task_type=r.task_type))
+    c._dictation_commit_timer.stop(); c._commit_pending_dictation()
+    assert injected == ["明天开会。"]
+    assert not c.processingModeCorrectionAvailable and not c.modeCorrectionHotkeyAvailable
+    c.switchCurrentInputMode()
+    assert len(requests) == 1 and c._active_auto_interaction is None
+    _close(c)
 
 
 def test_late_edit_protocol_failure_retries_only_after_explicit_f8(
@@ -2255,143 +2208,38 @@ def test_main_history_manual_mode_labels_one_correct_and_multiple_wrong(
     _close(controller)
 
 
-def test_auto_edit_failure_is_cached_until_classification_finishes(
-    tmp_path, monkeypatch
-):
-    from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
-    from proximic_ring.text_processing import (
-        InputModeRoutingResult,
-        TextProcessingResult,
-    )
-
-    controller = _controller(tmp_path, monkeypatch)
-    routed = []
-    submitted = []
-
-    class Worker:
-        def submit_routing(self, request):
-            routed.append(request)
-
-        def submit(self, request):
-            submitted.append(request)
-
-        def cancel_request(self, _request_id):
-            return None
-
-        def close(self, *, wait=False):
-            return None
-
-    target = DesktopTargetRef(1, 2, "编辑器")
-
-    class Desktop:
-        def capture_text(self, captured):
-            return DesktopTextSnapshot(captured, "旧文本")
-
-        def inject(self, _captured, _text):
-            return None
-
-        def release_selection(self, _target):
-            return None
-
-    controller._text_processing_worker = Worker()
-    controller._desktop_target = Desktop()
-    controller._desktop_output = True
-    controller._llm_enabled = True
-    controller._input_routing_mode = "auto"
-    controller._capture_desktop_reference = lambda: target
-
-    controller._apply_runtime_update("请改一下", True, "", 41)
-    edit_request = next(request for request in submitted if request.mode == "edit")
-    controller._apply_text_processed(
-        TextProcessingResult(
-            edit_request.request_id,
-            41,
-            "edit",
-            "请改一下",
-            "旧文本",
-            0.1,
-            True,
-            target_text="旧文本",
-            error="编辑候选失败",
-        )
-    )
-
-    assert controller.interactionState == "processing"
-
-    controller._apply_input_mode_routed(
-        InputModeRoutingResult(
-            routed[0].request_id,
-            41,
-            "请改一下",
-            "dictation",
-            0.2,
-            model_output="dictation",
-        )
-    )
-    controller._dictation_commit_timer.stop()
-    controller._commit_pending_dictation()
-    before_retry = len(submitted)
-    controller.switchCurrentInputMode()
-    assert controller._latest_operation().mode == "dictation"
-    assert len(submitted) == before_retry + 1
-    assert submitted[-1].mode == "edit"
-    _close(controller)
+def test_automatic_edit_failure_does_not_create_alternate_candidate(tmp_path, monkeypatch):
+    from proximic_ring.text_processing import TextProcessingResult
+    c, routes, requests, _, injected = _automatic_controller(tmp_path, monkeypatch)
+    c._apply_runtime_update("精简一下", True, "", 41)
+    assert not requests
+    c._apply_input_mode_routed(_route(routes[0], "condense"))
+    assert len(requests) == 1
+    r = requests[0]
+    assert r.task_type == "edit" and r.edit_plan.tasks == ("condense",) and r.target_text == "旧文本"
+    c._apply_text_processed(TextProcessingResult(r.request_id, 41, "edit", r.raw_text,
+        "旧文本", .2, True, target_text="旧文本", error="接口失败", task_type=r.task_type))
+    assert c.interactionState == "error" and not injected
+    assert not c.processingModeCorrectionAvailable
+    c.switchCurrentInputMode()
+    assert len(requests) == 1
+    _close(c)
 
 
-def test_auto_error_without_edit_target_still_allows_switch_and_cancel(
-    tmp_path, monkeypatch
-):
-    from proximic_ring.text_processing import InputModeRoutingResult
-
-    controller = _controller(tmp_path, monkeypatch)
-    routed = []
-
-    class Worker:
-        def submit_routing(self, request):
-            routed.append(request)
-
-        def submit(self, _request):
-            return None
-
-        def cancel_request(self, _request_id):
-            return None
-
-        def close(self, *, wait=False):
-            return None
-
-    controller._text_processing_worker = Worker()
-    controller._desktop_output = True
-    controller._llm_enabled = False
-    controller._input_routing_mode = "auto"
-    controller._capture_desktop_reference = lambda: None
-    controller._connected = True
-    controller._recognition_enabled = True
-    controller._recognition_event.set()
-
-    controller._apply_runtime_update("把它改正式", True, "", 51)
-    assert controller._interaction_recognition_suspended is True
-    assert controller._recognition_event.is_set() is False
-    controller._apply_input_mode_routed(
-        InputModeRoutingResult(
-            routed[0].request_id,
-            51,
-            "把它改正式",
-            "edit",
-            0.1,
-            model_output="edit",
-        )
-    )
-
-    assert controller.interactionState == "error"
-    assert controller.interactionCanCancel is True
-    assert controller.processingModeCorrectionAvailable is True
-    assert controller._interaction_recognition_suspended is False
-    assert controller._recognition_event.is_set() is True
-    controller._apply_runtime_status("[ASR] START t=2.000s")
-    assert controller._active_auto_interaction is None
-    assert controller._interaction_recognition_suspended is False
-    assert controller._recognition_event.is_set() is True
-    _close(controller)
+def test_automatic_missing_target_and_cancelled_route_never_generate(tmp_path, monkeypatch):
+    c, routes, requests, cancelled, injected = _automatic_controller(tmp_path, monkeypatch, has_target=False)
+    c._apply_runtime_update("精简一下", True, "", 51)
+    c._apply_input_mode_routed(_route(routes[0], "condense"))
+    assert c.interactionState == "error" and not requests
+    assert not c.processingModeCorrectionAvailable
+    assert c._recognition_event.is_set()
+    c._apply_runtime_status("[ASR] START t=2.000s")
+    c._apply_runtime_update("帮我回复", True, "", 52)
+    c.cancelCurrentUtterance()
+    c._apply_input_mode_routed(_route(routes[-1], "compose"))
+    assert not requests and not injected
+    assert routes[-1].request_id in cancelled
+    _close(c)
 
 
 def test_failed_edit_cancel_skips_readback_and_survives_release_error(

@@ -11,12 +11,12 @@ FigmaAction {
     implicitWidth: 24; implicitHeight: 24
     leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
     Accessible.name: hint
-    ToolTip.visible: hovered && !pressed && !menuOpen
+    ToolTip.visible: (enabled && hovered) && !pressed && !menuOpen
     ToolTip.delay: 500
     ToolTip.text: hint
     background: Rectangle {
         radius: 4
-        color: control.down ? "#D9DFF9" : control.hovered ? "#F6F7FD" : control.filled ? "#EDEEF6" : "transparent"
+        color: control.down ? "#D9DFF9" : (control.enabled && control.hovered) ? "#F6F7FD" : control.filled ? "#EDEEF6" : "transparent"
         border.width: control.visualFocus ? 2 : 0; border.color: "#0225BA"
     }
     contentItem: Item {

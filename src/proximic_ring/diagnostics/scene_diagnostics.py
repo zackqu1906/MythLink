@@ -53,7 +53,6 @@ MESSAGES = {
     'multiple_content_surfaces': '页面有多个文档或播放器，请点入要操作的内容',
     'page_scan_incomplete': '网页结构暂未完整确认，请点入播放器后重试',
     'no_web_player': '未读到当前页面的播放器，请点入播放器后重试',
-    'browser_accessibility_initializing': '浏览器正在准备网页辅助功能信息，稍后自动重试',
     'multiple_players': '当前页面有多个播放器，暂时无法确定操作对象',
     'no_focused_webpage': '焦点未在网页内容内，请点入目标页面',
     'web_player_unconfirmed': '播放器状态尚未确认，请点入播放器后重试',
@@ -61,7 +60,6 @@ MESSAGES = {
     'page_url_unavailable': '暂时无法确认当前网页',
     'recognition_timeout': '应用响应较慢，场景识别超时，请稍后重试',
     'focus_validation_timeout': '焦点检查超时，请稍后重试',
-    'focus_accessibility_initializing': '应用正在准备输入焦点信息，请稍后重试手势',
     'invalid_metadata': '应用返回的窗口信息不完整，暂时无法识别',
     'text_focus': '焦点在文字输入区域，场景手势暂不接管',
     'input_method_focus': '已确认当前输入法客户端，使用输入手势',
@@ -76,10 +74,7 @@ MESSAGES = {
     'foreground_or_connection_changed': '前台应用或输入法连接已变化，本次操作已取消',
     'unknown_focus': '焦点状态尚未确认，请点入内容区域',
     'focus_missing': '暂时读不到焦点，请点入目标内容',
-    'focus_chain_incomplete': '应用未提供完整的焦点归属信息',
-    'focus_depth_limit': '焦点层级过深，暂时无法确认归属',
     'unknown_focus_role': '当前控件类型尚无法确认',
-    'web_editability_unknown': '网页是否处于文字输入状态尚无法确认',
     'hidden_focus': '焦点所在控件已隐藏，请重新点入目标内容',
     'disabled_focus': '焦点所在控件不可用，请重新点入目标内容',
     'busy_focus': '焦点所在界面仍在加载，请稍后重试',
@@ -214,7 +209,7 @@ class SceneDiagnostics:
                 except PackageNotFoundError:
                     pass
             root = Path(__file__).resolve().parents[1]
-            names = ["diagnostics/scene_diagnostics.py", "diagnostics/diagnostic_log.py", "diagnostics/runtime_diagnostics.py", "desktop/app_shortcuts.py", "desktop/browser_accessibility.py", "platforms/macos/mac_shortcut_events.py", "platforms/macos/native_access.py", "platforms/macos/native_access_worker.py",
+            names = ["diagnostics/scene_diagnostics.py", "diagnostics/diagnostic_log.py", "diagnostics/runtime_diagnostics.py", "desktop/app_shortcuts.py", "platforms/macos/mac_shortcut_events.py", "platforms/macos/native_access.py", "platforms/macos/native_access_worker.py",
                      "ui/gestures/app_gesture_controller.py", "ui/gestures/ring_gesture_controller.py", "ui/controller.py",
                      "ui/scenes/scene_notice_controller.py", "ui/scenes/scene_notice_overlay.py", "ui/shared/overlay_stacking.py",
                      "ui/shared/feedback_availability.py", "ui/permissions/permission_setup_controller.py", "ui/main.py"]

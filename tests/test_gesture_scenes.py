@@ -39,14 +39,14 @@ def wps_window_tree():
 
 def test_wps_real_untitled_dialog_slide_surface_is_recognized_without_reading_content():
     window, focus = wps_window_tree()
-    assert presentation_context("com.kingsoft.wpsoffice.mac", window, focus, metadata) == (PRESENTATION, "nontext")
+    assert presentation_context("com.kingsoft.wpsoffice.mac", window, focus, metadata) == (PRESENTATION, "unknown")
     window["AXChildren"] = [focus]  # The transient fullscreen title label is optional.
-    assert presentation_context("com.kingsoft.wpsoffice.mac.global", window, focus, metadata) == (PRESENTATION, "nontext")
+    assert presentation_context("com.kingsoft.wpsoffice.mac.global", window, focus, metadata) == (PRESENTATION, "unknown")
 
 
 @pytest.mark.parametrize("change", ["foreign", "system_dialog", "modal", "minimized", "sheet",
     "windowed", "unknown_fullscreen", "text", "editable",
-    "unknown", "missing", "detached", "not_focused", "disabled", "unknown_children", "nested_control",
+    "unknown", "disabled", "unknown_children", "nested_control",
     "prompt", "missing_children", "missing_size", "partial_size", "shifted", "empty_size"])
 def test_wps_surface_exception_does_not_accept_editor_dialog_or_unknown_metadata(change):
     window, focus = wps_window_tree()
@@ -81,9 +81,9 @@ def test_wps_surface_exception_does_not_accept_editor_dialog_or_unknown_metadata
 
 
 @pytest.mark.parametrize("title", ["PowerPoint Slide Show - Deck", "幻灯片放映 — 演示", "Slide Show"])
-def test_dedicated_show_window_with_known_nontext_focus(title):
+def test_dedicated_show_window_needs_no_input_focus(title):
     window, focus = window_tree(title)
-    assert presentation_context(POWERPOINT, window, focus, metadata) == (PRESENTATION, "nontext")
+    assert presentation_context(POWERPOINT, window, focus, metadata) == (PRESENTATION, "unknown")
 
 
 @pytest.mark.parametrize("change,expected", [
@@ -91,8 +91,8 @@ def test_dedicated_show_window_with_known_nontext_focus(title):
     ("fullscreen", ("", "unknown")), ("foreign", ("", "unknown")),
     ("modal", ("", "unknown")), ("unknown", (PRESENTATION, "unknown")),
     ("missing", (PRESENTATION, "unknown")), ("detached", (PRESENTATION, "unknown")),
-    ("text", (PRESENTATION, "text")), ("editable", (PRESENTATION, "text")),
-    ("editable_parent", (PRESENTATION, "text")), ("timeout", ("", "unknown")),
+    ("text", (PRESENTATION, "unknown")), ("editable", (PRESENTATION, "unknown")),
+    ("editable_parent", (PRESENTATION, "unknown")), ("timeout", ("", "unknown")),
 ])
 def test_scene_evidence_is_not_fullscreen_or_an_unknown_focus(change, expected):
     window, focus = window_tree()
@@ -116,7 +116,7 @@ def test_visible_end_show_control_recognizes_presenter_window_but_not_a_menu_ite
     window, focus = window_tree("Deck")
     button = dict(AXRole="AXButton", AXTitle="结束放映", AXEnabled=True, AXHidden=False)
     window["AXChildren"] = [dict(AXRole="AXToolbar", AXChildren=[button])]
-    assert presentation_context(POWERPOINT, window, focus, metadata) == (PRESENTATION, "nontext")
+    assert presentation_context(POWERPOINT, window, focus, metadata) == (PRESENTATION, "unknown")
     button["AXHidden"] = True
     assert not presentation_context(POWERPOINT, window, focus, metadata)[0]
     button.update(AXHidden=False, AXRole="AXMenuItem")
@@ -296,11 +296,11 @@ def test_all_known_presenters_get_scene_and_standard_gesture_defaults(route, mon
     ("org.libreoffice.script", "LibreOffice Impress Slide Show - Deck"),
     ("asc.onlyoffice.ONLYOFFICE", "ONLYOFFICE Slide Show - Deck"),
 ])
-def test_presenter_detection_requires_a_show_and_preserves_input_guard(bundle, title):
+def test_presenter_detection_requires_a_show_independent_of_input_focus(bundle, title):
     window, focus = window_tree(title)
-    assert presentation_context(bundle, window, focus, metadata) == (PRESENTATION, "nontext")
+    assert presentation_context(bundle, window, focus, metadata) == (PRESENTATION, "unknown")
     focus["AXRole"] = "AXTextField"
-    assert presentation_context(bundle, window, focus, metadata) == (PRESENTATION, "text")
+    assert presentation_context(bundle, window, focus, metadata) == (PRESENTATION, "unknown")
     window.update(AXTitle="Spreadsheet.xlsx", AXFullScreen=True)
     assert presentation_context(bundle, window, focus, metadata) == ("", "unknown")
 
@@ -325,7 +325,7 @@ def test_generic_presentation_editor_persists_scene_and_requires_matching_native
         restored.selectApplication(bundle)
         assert restored.supportsPresentation and restored.for_scene(bundle, PRESENTATION)
         window, focus = window_tree("Slide Show - Deck")
-        assert presentation_context(bundle, window, focus, metadata, profile="generic") == (PRESENTATION, "nontext")
+        assert presentation_context(bundle, window, focus, metadata, profile="generic") == (PRESENTATION, "unknown")
         assert presentation_context(bundle, window, focus, metadata) == ("", "unknown")
     finally:
         restored.close()
@@ -393,7 +393,7 @@ def test_existing_wps_record_gains_scene_without_readding_or_changing_bindings(r
 
 
 @pytest.mark.mac_only
-def test_native_capture_verifies_generic_installed_editor_and_fresh_focus(monkeypatch, tmp_path):
+def test_native_capture_verifies_generic_installed_editor_and_foreground_identity(monkeypatch, tmp_path):
     import sys
     import proximic_ring.platforms.macos.mac_workspace as workspace
     from test_application_catalog import application
@@ -411,10 +411,10 @@ def test_native_capture_verifies_generic_installed_editor_and_fresh_focus(monkey
         AXUIElementCopyAttributeValue=lambda node, key, _: (0, metadata(node, key))))
     backend = LocalMacAppShortcuts()
     captured = backend.capture(menu_action=True, scene=True)
-    assert captured.scene == PRESENTATION and captured.input_context == "nontext"
+    assert captured.scene == PRESENTATION and captured.input_context == "unknown"
     assert backend.same_target(captured)
     focus["AXRole"] = "AXTextArea"
-    assert not backend.same_target(captured)
+    assert backend.same_target(captured)
     front.bundleIdentifier = lambda: "test.different.app"
     target = backend.capture(menu_action=True, scene=True)
     assert target.bundle == "test.different.app" and not target.scene

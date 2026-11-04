@@ -105,7 +105,7 @@ check(recordedWakes == [35.5] && p.returnConfirmed, "logged first near callback 
 // Actual 11:42 return: raw RSSI reaches -71 at 05.060; EMA only reaches it
 // at 07.152. The existing far streak must not block the first raw near callback.
 p = departed(); p.connectionChanged()
-var recordedLock = PresencePolicy(lockRSSI: -75, unlockRSSI: -71)
+var recordedLock = PresencePolicy(lockRSSI: -75, unlockRSSI: -71, lockCountdownDuration: 0)
 let rawReturn: [(Double, Double, Double)] = [
     (1.955, -83, -83), (2.978, -80, -81.8), (4.008, -74, -78.68),
     (5.060, -71, -75.608), (6.105, -66, -71.7648), (7.152, -69, -70.65888)
@@ -144,7 +144,7 @@ check(!p.returnConfirmed && p.awaitingReturn, "two new far samples confirm the n
 
 // Real locking still waits for consecutive smoothed far callbacks, even if
 // the raw readings cross the departure threshold earlier.
-var smoothedLock = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, awaySamples: 2)
+var smoothedLock = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, awaySamples: 2, lockCountdownDuration: 0)
 for (i, raw) in [-60.0, -80, -80, -80].enumerated() {
     smoothedLock.sample(raw, now: Double(i))
     let action = smoothedLock.step(now: Double(i), locked: false, connected: true, permitted: true, awake: true)
@@ -165,7 +165,7 @@ check(sample(&p, 13), "first near callback after reconnect wakes")
 
 // Return alone never unlocks. Manual locks in a monitored session also accept snap.
 p = departed()
-var manualLock = PresencePolicy()
+var manualLock = PresencePolicy(lockCountdownDuration: 0)
 _ = manualLock.step(now: -1, locked: false, connected: true, permitted: true, awake: true)
 _ = manualLock.step(now: 0, locked: true, connected: true, permitted: true, awake: true)
 check(sample(&p, 2.1), "actual return wakes a manual lock")
@@ -213,7 +213,7 @@ for t in 21...25 { check(!sample(&p, Double(t)), "near after radio recovery cann
 
 // Both policies: connected departure locks; disconnected return can wake an external lock.
 for loseConnection in [false, true] {
-    var lock = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, awaySamples: loseConnection ? 30 : 2, lostDelay: 5)
+    var lock = PresencePolicy(lockRSSI: -72, unlockRSSI: -68, awaySamples: loseConnection ? 30 : 2, lostDelay: 5, lockCountdownDuration: 0)
     var wake = ReturnWakePolicy()
     var locked = false
     var wakeCount = 0

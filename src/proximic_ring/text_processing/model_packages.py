@@ -19,6 +19,7 @@ from .local_server import (
     default_local_llm_home,
     load_local_llm_catalog,
     local_llm_platform_key,
+    bundled_local_runtime,
 )
 
 
@@ -196,7 +197,7 @@ def install_default_local_model(
             model_path, model["sha256"], "GGUF 模型", progress,
             expected_size=int(model.get("sizeBytes") or 0) or None,
         )
-    executable = runtime_path / runtime["executable"]
+    executable = bundled_local_runtime(runtime_id) or runtime_path / runtime["executable"]
     if not executable.is_file():
         if not runtime_archive.is_file() or _sha256(runtime_archive) != runtime["sha256"]:
             _download(

@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+import pytest
 
 from ring_python_sdk.ble import control
 from ring_python_sdk import RingSession
@@ -57,6 +58,31 @@ def test_legacy_scan_rings_still_supports_cli_name_filter(monkeypatch):
     found = asyncio.run(control.scan_rings("ringo", 0.01))
 
     assert [item.address for item in found] == ["1"]
+
+
+@pytest.mark.parametrize("during_start", [False, True])
+def test_cancel_scan_stops_platform_scanner_even_during_start(monkeypatch, during_start):
+    async def exercise():
+        ready, stopped = asyncio.Event(), asyncio.Event()
+
+        class Scanner:
+            def __init__(self, **_options): pass
+            async def start(self):
+                ready.set()
+                if during_start:
+                    await asyncio.Event().wait()
+            async def stop(self):
+                stopped.set()
+
+        monkeypatch.setattr(control, "BleakScanner", Scanner)
+        scan = asyncio.create_task(control.scan_all_devices(60))
+        await ready.wait()
+        scan.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await scan
+        assert stopped.is_set()
+
+    asyncio.run(exercise())
 
 
 def test_connect_target_rescans_without_name_filter(monkeypatch):

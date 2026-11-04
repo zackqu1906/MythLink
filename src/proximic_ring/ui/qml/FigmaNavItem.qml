@@ -9,13 +9,13 @@ AbstractButton {
     property bool disclosure: false
     property bool expanded: true
     implicitWidth: 180; implicitHeight: 44
-    hoverEnabled: true
+    hoverEnabled: enabled
     opacity: enabled ? 1 : 0.4
     Accessible.name: text
     FigmaTheme { id: theme }
     background: Rectangle {
         radius: 8
-        color: control.checked || control.down ? theme.selection : control.hovered ? theme.subtle : "transparent"
+        color: control.checked || control.down ? theme.selection : (control.enabled && control.hovered) ? theme.subtle : "transparent"
         border.width: control.visualFocus ? 2 : 0; border.color: theme.primary
     }
     contentItem: RowLayout {

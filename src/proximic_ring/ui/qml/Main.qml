@@ -52,6 +52,10 @@ ApplicationWindow {
         runtimeSettingsDialog.showSection(section)
         runtimeSettingsDialog.open()
     }
+    function showBrowserSetup(browser) {
+        browserExtensionSetup.browser = browser
+        browserExtensionSetup.open()
+    }
     function showSettings(page) {
         if (page === 9) { currentPage = 5; return }
         if (page === 7) {
@@ -59,7 +63,7 @@ ApplicationWindow {
             currentPage = 2
             return
         }
-        // Legacy service routes open the single advanced form.
+        // Legacy service routes use the same mounted preferences page.
         if (page === 4 || page === 5) {
             showAdvancedSettings(page)
             return
@@ -68,11 +72,15 @@ ApplicationWindow {
         runtimeSettingsDialog.navigate(page)
     }
     function showAdvancedSettings(section) {
-        runtimeSettingsDialog.saveCurrentEditor()
-        advancedSettingsDialog.returnScrollPosition = runtimeSettingsScroll.contentItem.contentY
-        advancedSettingsDialog.initialSection = section === 5 ? 5 : 4
-        runtimeSettingsDialog.close()
-        advancedSettingsDialog.open()
+        showPreferences(1)
+        runtimeSettingsDialog.navigate(0)
+        settingsOverview.expandedSection = "advanced"
+        Qt.callLater(function() {
+            var flick = runtimeSettingsScroll.contentItem
+            flick.contentY = section === 5
+                ? Math.min(settingsOverview.advancedTextPosition,
+                           Math.max(0, flick.contentHeight - flick.height)) : 0
+        })
     }
     property color panel: uiTheme.surface
     property color panelAlt: uiTheme.subtle
@@ -135,7 +143,7 @@ ApplicationWindow {
                     MouseArea {
                         anchors.fill: parent
                         enabled: segmentedChoice.enabled
-                        hoverEnabled: true
+                        hoverEnabled: enabled
                         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: segmentedChoice.activated(index)
                     }
@@ -231,7 +239,7 @@ ApplicationWindow {
         popupType: Popup.Item
         title: "选择蓝牙设备"
         closePolicy: Popup.CloseOnEscape
-        onClosed: appController.stopDeviceDiscovery()
+        onAboutToHide: appController.stopDeviceDiscovery()
 
         contentItem: ColumnLayout {
             spacing: 12
@@ -301,8 +309,8 @@ ApplicationWindow {
                         width: deviceList.width
                         height: 70
                         radius: 9
-                        color: connectButton.hovered ? "#EBEFFB" : "transparent"
-                        border.color: connectButton.hovered ? root.primary : "transparent"
+                        color: (connectButton.enabled && connectButton.hovered) ? "#EBEFFB" : "transparent"
+                        border.color: (connectButton.enabled && connectButton.hovered) ? root.primary : "transparent"
 
                         RowLayout {
                             anchors.fill: parent
@@ -349,11 +357,13 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 FigmaAction {
+                    objectName: "devicePickerRescanButton"
                     text: appController.scanBusy ? "扫描中…" : "重新扫描"
                     enabled: !appController.scanBusy && !appController.busy
                     onClicked: appController.scanDevices()
                 }
                 FigmaAction {
+                    objectName: "devicePickerCancelButton"
                     text: "取消"
                     onClicked: devicePicker.close()
                 }
@@ -575,12 +585,13 @@ ApplicationWindow {
                     objectName: "sidebarAccountButton"; symbol: "account"; quiet: true
                     anchors.left: parent.left; anchors.leftMargin: 6
                     width: 32; height: 44
+                    topInset: 6; bottomInset: 6
                     Accessible.name: "账户"; onClicked: root.showPreferences(0)
                 }
                 Row {
                     anchors.right: parent.right; anchors.rightMargin: 6; height: 44; spacing: 0
-                    FigmaAction { objectName: "runtimeSettingsButton"; symbol: "settings"; quiet: true; width: 32; height: 44; Accessible.name: "设置"; onClicked: root.showPreferences(1) }
-                    FigmaAction { objectName: "helpButton"; symbol: "help"; quiet: true; width: 32; height: 44; Accessible.name: "帮助"; onClicked: root.showPreferences(2) }
+                    FigmaAction { objectName: "runtimeSettingsButton"; symbol: "settings"; quiet: true; width: 32; height: 44; topInset: 6; bottomInset: 6; Accessible.name: "设置"; onClicked: root.showPreferences(1) }
+                    FigmaAction { objectName: "helpButton"; symbol: "help"; quiet: true; width: 32; height: 44; topInset: 6; bottomInset: 6; Accessible.name: "帮助"; onClicked: root.showPreferences(2) }
                 }
             }
         }
@@ -607,7 +618,7 @@ ApplicationWindow {
                     height: (root.currentPage === 1 || root.currentPage === 2) ? 24 : implicitHeight
                     verticalAlignment: Text.AlignVCenter
                     width: parent.width; elide: Text.ElideRight
-                    text: root.currentPage === 2 ? "为不同场景配置戒指手势" : root.currentPage === 1 ? "语音手势、热词与输入测试" : root.currentPage === 3 ? "光标偏好调节，笔画输入测试" : root.currentPage === 4 ? "查找听写与修改的结果" : root.currentPage === 5 ? "离开后锁屏，靠近后响指解锁" : "查看手势与应用操作的对应关系"
+                    text: root.currentPage === 2 ? "为不同场景配置戒指手势" : root.currentPage === 1 ? "语音手势、热词与输入测试" : root.currentPage === 3 ? "光标偏好调节，笔画输入测试" : root.currentPage === 4 ? "查找听写与修改的结果" : root.currentPage === 5 ? "离开后锁屏，使用所选手势解锁" : "查看手势与应用操作的对应关系"
                     color: uiTheme.muted; font.pixelSize: (root.currentPage === 1 || root.currentPage === 2) ? 16 : 14
                 }
             }
@@ -705,34 +716,12 @@ ApplicationWindow {
                 anchors.fill: parent
                 visible: root.currentPage === 2
                 controller: appController
+                onBrowserSetupRequested: function(browser) { root.showBrowserSetup(browser) }
             }
         }
     }
-    FigmaDialog {
-        id: helpCenterDialog
-        objectName: "helpCenterDialog"
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(560, root.width - 48)
-        modal: true
-        title: "使用帮助"
-        standardButtons: Dialog.Close
-        background: Rectangle { color: uiTheme.surface; radius: 16; border.color: uiTheme.line }
-        contentItem: ColumnLayout {
-            spacing: 16
-            Label { Layout.fillWidth: true; text: "Mythlink · 戒指交互平台"; font.pixelSize: 18; font.bold: true; color: uiTheme.text }
-            Label { Layout.fillWidth: true; text: "融合语音输入、鼠标控制、手势识别与场景联动，在一个平台中管理戒指的交互功能。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            Label { Layout.fillWidth: true; text: "语音输入"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
-            Label { Layout.fillWidth: true; text: "连接 Ring 并开启语音识别。点入文本框后，使用当前配置的语音手势开始输入；语音输入页可查看记录。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            Label { Layout.fillWidth: true; text: "鼠标控制"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
-            Label { Layout.fillWidth: true; text: "在触摸板页开启鼠标控制，通过戒指触摸板移动指针和轻触点击，并调整指针速度。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            Label { Layout.fillWidth: true; text: "手势控制"; font.pixelSize: 16; font.bold: true; color: uiTheme.text }
-            Label { Layout.fillWidth: true; text: "默认双击 Tap 开始语音、单击 Tap 结束语音。仅与输入手势重叠时，输入框内优先执行输入功能；其他手势按应用优先、全局兜底执行。语音处理期间仍可取消本次操作。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-            Label { Layout.fillWidth: true; text: "输入法安装与系统授权统一在“设置 → 系统与权限”中管理。"; wrapMode: Text.Wrap; color: uiTheme.muted }
-        }
-    }
-
     ReleaseNotesDialog { id: releaseNotesDialog; objectName: "releaseNotesDialog"; appVersion: appController.appVersion }
+    BrowserExtensionSetup { id: browserExtensionSetup; bridge: appController.browserExtensions }
     TutorialPreviewDialog {
         id: tutorialPreview
         controller: appController
@@ -770,25 +759,11 @@ ApplicationWindow {
         onSettingsRequested: root.showSettings(6)
     }
 
-        AdvancedSettingsDialog {
-            id: advancedSettingsDialog
-            controller: appController
-            onGpuSetupRequested: gpuInstallDialog.open()
-            onClosed: {
-                if (root.visible) {
-                    root.showPreferences(advancedSettingsDialog.returnSection)
-                    Qt.callLater(function() {
-                        if (advancedSettingsDialog.returnSection === 1)
-                            runtimeSettingsScroll.contentItem.contentY = advancedSettingsDialog.returnScrollPosition
-                    })
-                }
-            }
-        }
-
         PreferencesDialog {
             id: runtimeSettingsDialog
             objectName: "runtimeSettingsDialog"
             property int currentPage: 0
+            property bool helpCenterOpen: false
             readonly property var pageTitles: ["设置", "输入与控制", "手势说明", "麦克风与语音", "语音识别服务", "文本处理服务", "系统与权限", "应用快捷键", "微信快捷键设置", "离开锁屏"]
             title: section === 0 ? accountPage.title : section === 2 ? "帮助" : pageTitles[currentPage]
             section: 1
@@ -798,7 +773,7 @@ ApplicationWindow {
             onBackRequested: goBack()
             onCloseRequested: applyAndClose()
             onAccountRequested: showSection(0)
-            onHelpRequested: showSection(2)
+            onHelpRequested: { showSection(2); helpCenterOpen = false }
             onSettingsRequested: {
                 showSection(1)
                 settingsOverview.expandedSection = ""
@@ -808,6 +783,7 @@ ApplicationWindow {
                 appController.appGestures.recording = false
                 appController.inlineInput.permissions.cancelScreenPreview()
             }
+            onAboutToHide: saveCurrentEditor()
 
             onOpened: {
                 if (section === 0) accountPage.focusEditor()
@@ -827,6 +803,7 @@ ApplicationWindow {
                 saveCurrentEditor()
                 appController.appGestures.recording = false
                 appController.inlineInput.permissions.cancelScreenPreview()
+                helpCenterOpen = false
                 section = nextSection
                 if (section === 0) {
                     accountPage.resetDraft()
@@ -893,11 +870,16 @@ ApplicationWindow {
                 }
                 HelpPreferencesPage {
                     anchors.fill: parent
-                    visible: runtimeSettingsDialog.section === 2
+                    visible: runtimeSettingsDialog.section === 2 && !runtimeSettingsDialog.helpCenterOpen
                     appVersion: appController.appVersion
                     onTutorialRequested: { runtimeSettingsDialog.close(); tutorialPreview.open() }
-                    onHelpCenterRequested: { runtimeSettingsDialog.close(); helpCenterDialog.open() }
+                    onHelpCenterRequested: runtimeSettingsDialog.helpCenterOpen = true
                     onReleaseNotesRequested: releaseNotesDialog.open()
+                }
+                HelpCenterPage {
+                    anchors.fill: parent
+                    visible: runtimeSettingsDialog.section === 2 && runtimeSettingsDialog.helpCenterOpen
+                    onBackRequested: runtimeSettingsDialog.helpCenterOpen = false
                 }
                 UiScrollView {
                     id: runtimeSettingsScroll
@@ -924,6 +906,7 @@ ApplicationWindow {
                             visible: runtimeSettingsDialog.currentPage === 0
                             controller: appController
                             settingsDialog: runtimeSettingsDialog
+                            onBrowserSetupRequested: function(browser) { root.showBrowserSetup(browser) }
                             onDetailRequested: function(page) {
                                 if (page === 12) { runtimeSettingsDialog.close(); root.currentPage = 2 }
                                 else if (page === 9) { runtimeSettingsDialog.close(); root.currentPage = 5 }
@@ -931,6 +914,7 @@ ApplicationWindow {
                                 else runtimeSettingsDialog.navigate(page)
                             }
                             onAdvancedSettingsRequested: root.showAdvancedSettings(4)
+                            onGpuSetupRequested: gpuInstallDialog.open()
                             onLogRequested: { runtimeSettingsDialog.saveCurrentEditor(); runtimeSettingsDialog.close(); runtimeLogDialog.open() }
                         }
                         ProximitySettings {

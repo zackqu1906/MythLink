@@ -101,7 +101,7 @@ def test_double_click_shows_native_palette_commits_and_returns_to_mouse(stroke, 
             assert tp.predictionMode and tp._stroke_context == prefix[-4:]
             tp._run.output.options["on_double_click"]()
             until(lambda: session.phase == "idle" and tp._run.output.active and tp.inputMode == "pointer")
-            assert not c._recognition_event.is_set() and tp.blocksVoice
+            assert c._recognition_event.is_set() and not tp.blocksVoice
             assert len(source.starts) == 1 and source.stops == 0
             assert not {"begin", "finish", "finish_dictation", "cancel"} & {m["type"] for m in sent}
             bridge.send(dict(type="test_exit"))

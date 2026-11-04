@@ -37,7 +37,7 @@ def idle(controller):
     controller._pending_inline_audio_start = None
 
 
-@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700), (940, 560), (1200, 560)])
 def test_hand_layout_starts_unselected_and_all_triggers_are_reachable(mapping_ui, size):
     c, bridge, root, catalog, _, _, _ = mapping_ui
     root.resize(*size)
@@ -55,10 +55,13 @@ def test_hand_layout_starts_unselected_and_all_triggers_are_reachable(mapping_ui
     assert expression.evaluate()[0] and hand.property("mirror")
     assert hand.width() == hand.height() and hand.width() >= 380
     corner = find(root, "gestureVoicePriorityCard")
-    hand_right = hand.mapToScene(QPointF(hand.width(), 0)).x()
-    assert corner.mapToScene(QPointF()).x() >= hand_right + 8
-    assert root.findChild(QObject, "gestureVoiceRecognitionButton") is None
     panel = find(root, "gestureMappingPanel")
+    if panel.property("compact"):
+        assert not hand.isVisible()
+    else:
+        hand_right = hand.mapToScene(QPointF(hand.width(), 0)).x()
+        assert corner.mapToScene(QPointF()).x() >= hand_right + 8
+    assert root.findChild(QObject, "gestureVoiceRecognitionButton") is None
     from PySide6.QtCore import QRectF
     # Top-level cards must stay disjoint and inside the scaled workbench.
     cards = [find(root, "gestureCard_" + key) for key in (

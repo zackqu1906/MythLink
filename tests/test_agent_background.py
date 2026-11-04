@@ -103,8 +103,9 @@ def test_private_service_endpoint_rejects_public_directory(tmp_path):
 
 
 def test_remodex_summary_preserves_command_and_zero_request_is_removed():
-    node=Path('/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node')
-    if not node.is_file():pytest.skip('Requires installed Node runtime')
+    from proximic_ring.agent_workflow.agent.background_service import node_path
+    try:node=node_path('/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex')
+    except RuntimeError:pytest.skip('Requires installed Node runtime')
     module=Path(__file__).resolve().parents[1]/'src/proximic_ring/agent_workflow/agent/desktop_owner/desktop-ipc-conversation-adapter.js'
     code=r'''
 const assert=require('node:assert/strict');

@@ -6,7 +6,7 @@ Basic.Switch {
     id: control
     implicitWidth: 40; implicitHeight: 24
     padding: 0
-    hoverEnabled: true
+    hoverEnabled: enabled
     readonly property string stateAsset: !enabled ? "disabled"
         : (checked ? "on" : "off") + (visualFocus ? "-focus" : down ? "-pressed" : hovered ? "-hover" : "")
     indicator: Image {

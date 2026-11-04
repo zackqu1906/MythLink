@@ -113,7 +113,7 @@ ColumnLayout {
                                         Layout.columnSpan: modelData.key ? 1 : 2
                                         Layout.fillWidth: true; Layout.minimumWidth: 0
                                         Layout.preferredHeight: 48
-                                        padding: 6; hoverEnabled: true
+                                        padding: 6; hoverEnabled: enabled
                                         text: modelData.title
                                         Accessible.role: Accessible.RadioButton
                                         Accessible.name: text
@@ -145,7 +145,7 @@ ColumnLayout {
                                         }
                                         background: Rectangle {
                                             radius: 6
-                                            color: option.selected ? theme.selection : option.hovered ? theme.subtle : theme.background
+                                            color: option.selected ? theme.selection : (option.enabled && option.hovered) ? theme.subtle : theme.background
                                             border.width: option.visualFocus ? 2 : 0; border.color: theme.primary
                                         }
                                         onClicked: {

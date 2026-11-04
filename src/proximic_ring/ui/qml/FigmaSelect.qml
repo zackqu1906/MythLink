@@ -8,19 +8,19 @@ Basic.ComboBox {
     implicitHeight: 40; implicitWidth: 216
     leftPadding: 12; rightPadding: 36
     topInset: 0; bottomInset: 0
-    hoverEnabled: true
+    hoverEnabled: enabled
     font.family: theme.family; font.pixelSize: 14
     opacity: enabled ? 1 : 0.45
     contentItem: Text { text: control.displayText; font: control.font; color: theme.text; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
     indicator: FigmaIcon { x: control.width - 28; y: (control.height - 16) / 2; width: 16; height: 16; symbol: "chevron-down" }
-    background: Rectangle { radius: 8; color: control.down ? theme.selection : control.hovered ? theme.subtle : theme.background; border.width: control.activeFocus ? 2 : 1; border.color: control.activeFocus ? theme.primary : theme.line }
+    background: Rectangle { radius: 8; color: control.down ? theme.selection : (control.enabled && control.hovered) ? theme.subtle : theme.background; border.width: control.activeFocus ? 2 : 1; border.color: control.activeFocus ? theme.primary : theme.line }
     delegate: ItemDelegate {
         width: control.width; height: 40
         text: control.textAt(index)
         font: control.font
         highlighted: control.highlightedIndex === index
         contentItem: Text { text: parent.text; font: control.font; color: theme.text; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
-        background: Rectangle { radius: 6; color: parent.highlighted ? theme.selection : parent.hovered ? theme.subtle : theme.background }
+        background: Rectangle { radius: 6; color: parent.highlighted ? theme.selection : (parent.enabled && parent.hovered) ? theme.subtle : theme.background }
     }
     popup: Popup {
         y: control.height + 4; width: control.width; padding: 4

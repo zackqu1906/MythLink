@@ -184,7 +184,7 @@ def test_short_sparse_and_previous_auto_captures_remain_valid(proximity, count, 
 @pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("xcrun"), reason="Swift macOS toolchain")
 def test_native_activity_collection_and_existing_lock_return_policies(tmp_path):
     root = Path(__file__).resolve().parents[1] / "native/ProxiMicPresence"
-    for suite in ("ActivityCalibration", "Calibration", "ReturnWake", ""):
+    for suite in ("ActivityCalibration", "Calibration", "ReturnWake", "Countdown", ""):
         main = root / "Tests" / suite / "main.swift"
         executable = tmp_path / (suite or "policy")
         subprocess.run(["xcrun", "swiftc", "-swift-version", "5", "-module-cache-path", str(tmp_path / "cache"),

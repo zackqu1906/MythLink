@@ -80,12 +80,11 @@ def test_fallback_requires_current_show_and_no_positive_ax_text(show_focus, case
     assert not sent
 
 
-@pytest.mark.parametrize("change", ["imk_text", "ax_text", "window", "exit", "foreground", "settings", "disconnect"])
+@pytest.mark.parametrize("change", ["imk_text", "window", "exit", "foreground", "settings", "disconnect"])
 def test_queued_show_action_rechecks_text_window_scene_and_configuration(show_focus, change):
     c, _, _, backend, catalog, sent, _, data = show_focus
     request(c, "swipe-left", deliver=False)
     if change == "imk_text": data["state"] = text_state()
-    if change == "ax_text": backend.target = replace(backend.target, input_context="text")
     if change == "window": backend.target = replace(backend.target, window="another-window")
     if change == "exit": backend.target = replace(backend.target, scene="")
     if change == "foreground": data["front"] = ("another.app", 43)
@@ -153,20 +152,19 @@ def test_native_show_window_with_missing_ax_focus_still_dispatches(show_focus, m
     assert sent == [(POWERPOINT, "Right")] and not data["source_calls"]
 
 
-@pytest.mark.parametrize("stage", ["recognition", "validation", "both"])
-def test_native_focus_timeout_preserves_independently_recognized_show(show_focus, monkeypatch, stage):
+def test_native_show_dispatch_never_queries_ax_focus(show_focus, monkeypatch):
     c, service, _, _, _, sent, _, data = show_focus
     window, focus = window_tree()
     backend, _, _ = native_backend(monkeypatch, window, focus)
     service.backend = backend
 
-    def timeout(*_, **__):
-        raise TimeoutError("focus inspection timed out")
-
-    if stage in {"recognition", "both"}:
-        monkeypatch.setattr("proximic_ring.scenes.recognition.presentation.inspect_focus", timeout)
-    if stage in {"validation", "both"}:
-        monkeypatch.setattr("proximic_ring.desktop.app_shortcuts.inspect_focus", timeout)
+    import sys
+    ax = sys.modules['ApplicationServices']
+    original = ax.AXUIElementCopyAttributeValue
+    def read(node, key, unused):
+        assert key not in {'AXFocusedUIElement', 'AXParent', 'AXFocused', 'AXWindow'}
+        return original(node, key, unused)
+    monkeypatch.setattr(ax, 'AXUIElementCopyAttributeValue', read)
 
     def post(target, shortcut, **_):
         assert target.scene == PRESENTATION and backend.same_target(target)

@@ -92,7 +92,7 @@ def test_window_guard_remains_independent_of_ax_text_focus(monkeypatch, case):
     backend, _, _ = native_backend(monkeypatch, window, focus, bundle='com.apple.Safari')
     target = backend.capture(menu_action=True, focus_sensitive=False)
     assert target is not None
-    assert target.blocked is (case != 'missing')
+    assert target.blocked is (case in {'sheet', 'modal'})
     assert not target.focus_sensitive
 
 

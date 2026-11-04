@@ -106,6 +106,47 @@ def test_history_filters_and_row_actions_remain_available(inline_ui):
     assert root.findChild(QObject,"voiceTrialEditor") is not None
 
 
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+def test_lock_preparation_selects_and_saves_unlock_gesture(inline_ui, tmp_path, size):
+    from PySide6.QtCore import QObject, QPointF, Qt
+    from PySide6.QtTest import QTest
+
+    controller, _, _, root, event = inline_ui
+    event(phase="idle", ready=True)
+    root.resize(*size); root.show()
+    click(root, "mainNav5"); QTest.qWait(100)
+    choice = root.findChild(QObject, "lockUnlockGestureSelect")
+    preparation = root.findChild(QObject, "lockPreparationCard")
+    assert choice.property("currentValue") == "snap"
+    assert choice.property("enabled")  # Can prepare the setting before connecting Ring.
+    point = choice.mapToItem(preparation, QPointF())
+    assert 0 <= point.y() <= preparation.height() - choice.height()
+    bindings = controller.gestureBindings
+    before = {k: controller._settings.value(k) for k in controller._settings.allKeys()}
+    # Change through the real combo's keyboard path, including popup activation.
+    choice.forceActiveFocus(Qt.TabFocusReason)
+    QTest.keyClick(root, Qt.Key_Space)
+    QTest.keyClick(root, Qt.Key_Home)
+    QTest.keyClick(root, Qt.Key_Return)
+    QTest.qWait(30)
+    assert choice.property("currentValue") == "tap"
+    assert controller.proximity.unlockGesture == "tap"
+    assert root.findChild(QObject, "lockCurrentGesture").property("text") == controller.proximity.unlockGestureLabel
+    assert controller.gestureBindings == bindings
+    after = {k: controller._settings.value(k) for k in controller._settings.allKeys()}
+    assert after == dict(before, **{"proximity/unlockGesture": "tap"})
+    controller.proximity.unlockGesture = "clench"
+    QTest.qWait(30)
+    assert choice.property("currentValue") == "clench"
+    assert root.findChild(QObject, "lockCurrentGesture").property("text") == "握拳"
+    controller.proximity.copyLockScreenMessage()
+    from PySide6.QtGui import QGuiApplication
+    assert "握拳" in QGuiApplication.clipboard().text()
+    out = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    out.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(out / f"lock-gesture-{size[0]}.png"))
+
+
 def test_figma_pointer_focus_and_disabled_states(inline_ui):
     from PySide6.QtCore import QObject, QPointF, QPoint, Qt
     from PySide6.QtTest import QTest
@@ -113,6 +154,7 @@ def test_figma_pointer_focus_and_disabled_states(inline_ui):
     event(phase="idle", ready=True)
     root.show()
     click(root, "mainNav3")
+    click(root, "pointerModeButton")
     QTest.qWait(100)
     control = root.findChild(QObject, "touchpadInvertSwitch")
     before = controller.touchpad.invertY
@@ -131,6 +173,61 @@ def test_figma_pointer_focus_and_disabled_states(inline_ui):
     assert not bridge.messages or bridge.messages[-1]["type"] != "commit"
 
 
+@pytest.mark.parametrize("saved_enabled", [False, True])
+def test_lock_control_disables_on_manual_disconnect_and_restores_saved_choice(inline_ui, monkeypatch, tmp_path, saved_enabled):
+    import threading
+    from types import SimpleNamespace
+    from PySide6.QtCore import QObject, QPointF, Qt
+    from PySide6.QtTest import QSignalSpy, QTest
+
+    controller, _, _, root, event = inline_ui
+    event(phase="idle", ready=True)
+    proximity = controller.proximity
+    proximity._enabled = saved_enabled
+    controller._settings.setValue("proximity/enabled", saved_enabled)
+    proximity.changed.emit()
+    root.show(); click(root, "mainNav5"); QTest.qWait(100)
+    control = root.findChild(QObject, "lockPageEnabled")
+    clicks = QSignalSpy(control.clicked)
+
+    def assert_disabled():
+        assert not control.property("enabled")
+        assert control.property("opacity") == pytest.approx(0.45)
+        point = control.mapToScene(QPointF(control.width()/2, control.height()/2)).toPoint()
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, point)
+        QTest.qWait(20)
+        assert clicks.count() == 0
+        assert proximity.enabled == saved_enabled
+        assert controller._settings.value("proximity/enabled", type=bool) == saved_enabled
+
+    assert_disabled()
+    controller._selector = "a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3"
+    controller._runtime_active = True
+    controller._apply_runtime_connected()
+    assert control.property("enabled") and control.property("opacity") == 1
+    assert control.property("checked") == saved_enabled
+    # Connection transitions must disable the control before disconnection ends.
+    controller._busy = True; controller.busyChanged.emit()
+    assert_disabled()
+    controller._busy = False; controller.busyChanged.emit()
+    assert control.property("enabled")
+    monkeypatch.setattr(controller, "_worker", SimpleNamespace(is_alive=lambda: True))
+    controller.disconnectDevice()
+    assert not controller.connected
+    assert_disabled()
+    out = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    out.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(out / f"lock-manually-disconnected-{saved_enabled}.png"))
+    # A confirmed new connection restores availability without changing intent.
+    controller._disconnect_event = threading.Event()
+    controller._proximity_reconnect_cancelled = False
+    controller._busy = False; controller.busyChanged.emit()
+    controller._apply_runtime_connected()
+    assert control.property("enabled") and control.property("opacity") == 1
+    assert control.property("checked") == saved_enabled
+    assert controller._settings.value("proximity/enabled", type=bool) == saved_enabled
+
+
 def test_tutorial_demo_is_not_device_completion(inline_ui, tmp_path):
     from PySide6.QtCore import QObject, QMetaObject
     from PySide6.QtTest import QTest
@@ -142,6 +239,7 @@ def test_tutorial_demo_is_not_device_completion(inline_ui, tmp_path):
     controller.voicePractice.completed.connect(completed.append)
     QMetaObject.invokeMethod(tutorial, "open")
     QTest.qWait(150)
+    click(root, "tutorialPrepareButton")
     click(root, "tutorialDemoButton")
     out = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     for step in (2, 3, 4):

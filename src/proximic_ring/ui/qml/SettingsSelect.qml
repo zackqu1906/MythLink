@@ -21,7 +21,7 @@ ComboBox {
         color: control.enabled ? "#FCFCFE" : theme.sidebar
         border.color: control.activeFocus ? theme.primary : theme.line
     }
-    ToolTip.visible: hovered && displayText.length > 0
+    ToolTip.visible: (enabled && hovered) && displayText.length > 0
     ToolTip.delay: 700
     ToolTip.text: displayText
 }

@@ -1,23 +1,19 @@
-"""Window commands must not inherit a layout container's enabled/focused state."""
+"""Application gestures use window identity and IMK, never AX focus ancestry."""
 from dataclasses import replace
-import sys
 from types import SimpleNamespace
-
+import sys
 import pytest
-
-from proximic_ring.scenes.recognition.focus import inspect_focus, WINDOW_SHORTCUT_CONTAINERS, MAX_FOCUS_DEPTH
-from proximic_ring.scenes.recognition.engine import detect_scene
-from proximic_ring.scenes.models import PRESENTATION, PDF, IMAGE, VIDEO, MUSIC
 from proximic_ring.diagnostics.scene_diagnostics import SceneActionError, reason_message
+from proximic_ring.scenes.models import PRESENTATION
 from test_presentation_portability import native_backend
-from test_activity_scenes import content, metadata
-from test_gesture_scenes import window_tree, presentation
 from test_app_shortcuts import desktop
+from test_app_gestures import route
+from test_application_menus import configure
+from test_ring_gestures import request
+from test_gesture_scenes import presentation
 
 
 def activation_snapshot(role='AXLayoutArea', focused=True):
-    # Oct 5/8 traces: active ordinary document window with a disabled layout
-    # canvas; on Oct 8 that AXFocusedUIElement also reported AXFocused=false.
     window = dict(AXRole='AXWindow', AXSubrole='AXStandardWindow', AXModal=False,
                   AXMinimized=False, AXSheets=[], AXFullScreen=False)
     focus = dict(AXRole=role, AXEnabled=False, AXFocused=focused, AXWindow=window,
@@ -27,116 +23,49 @@ def activation_snapshot(role='AXLayoutArea', focused=True):
 
 
 @pytest.mark.parametrize('bundle', ['com.microsoft.Powerpoint', 'com.kingsoft.wpsoffice.mac',
-    'com.apple.iWork.Keynote', 'com.apple.Preview', 'com.apple.QuickTimePlayerX',
-    'com.apple.Music', 'com.openai.codex', 'test.unknown.application'])
-@pytest.mark.mac_only
-@pytest.mark.parametrize('scene_capture', [False, True])
-@pytest.mark.parametrize('focused', [True, False])
-def test_all_app_window_shortcuts_work_from_disabled_canvas_and_revalidate(monkeypatch, bundle, scene_capture, focused):
-    window, focus = activation_snapshot(focused=focused)
-    backend, _, _ = native_backend(monkeypatch, window, focus, bundle=bundle)
-    target = backend.capture(menu_action=True, scene=scene_capture)
-    assert target is not None and not target.blocked
-    assert target.diagnostic['focus_policy'] == 'window_shortcut'
-    assert target.diagnostic['disabled_containers'] == ['AXLayoutArea']
-    assert target.diagnostic.get('unfocused_containers', []) == ([] if focused else ['AXLayoutArea'])
-    assert backend.same_target(target)
-    # Selecting a thumbnail was why the same command started working later.
-    focus.update(AXRole='AXList', AXEnabled=True, AXFocused=True)
-    enabled = backend.capture(menu_action=True, scene=scene_capture)
-    assert not enabled.blocked and backend.same_target(enabled)
+    'com.apple.iWork.Keynote', 'com.apple.Preview', 'com.openai.codex', 'test.unknown.application',
+    'com.apple.Safari', 'com.google.Chrome'])
+@pytest.mark.parametrize('scene', [False, True])
+@pytest.mark.parametrize('role', ['AXWebArea', 'AXTextArea', 'AXMenu', 'AXUnknown'])
+def test_window_commands_never_read_or_prepare_ax_focus(monkeypatch, bundle, scene, role):
+    monkeypatch.setattr('proximic_ring.scenes.recognition.browser.request',
+                        lambda _: {'error': 'browser_disconnected'})
+    window, focus = activation_snapshot(role, focused=False)
+    focus.pop('AXParent'); focus.pop('AXWindow')
+    backend, root, _ = native_backend(monkeypatch, window, focus, bundle=bundle)
+    ax = sys.modules['ApplicationServices']; original = ax.AXUIElementCopyAttributeValue
+    def read(node, key, unused):
+        assert key not in {'AXFocusedUIElement', 'AXParent', 'AXFocused', 'AXWindow'}
+        return original(node, key, unused)
+    monkeypatch.setattr(ax, 'AXUIElementCopyAttributeValue', read)
+    monkeypatch.setattr(ax, 'AXUIElementSetAttributeValue', lambda *a: pytest.fail('AX warmup'), raising=False)
+    target = backend.capture(menu_action=True, scene=scene)
+    assert target and not target.blocked and not target.focus_sensitive
+    assert target.focus is None and target.input_context == 'unknown'
+    root['AXFocusedUIElement'] = None
+    assert backend.same_target(target, require_focus=True)
 
 
-@pytest.mark.parametrize('role', sorted(WINDOW_SHORTCUT_CONTAINERS))
-@pytest.mark.parametrize('focused,enabled', [(True, False), (False, False), (False, True)])
-def test_container_flag_is_advisory_only_for_proven_window_commands(role, focused, enabled):
-    window, focus = activation_snapshot(role, focused)
-    focus['AXEnabled'] = enabled
-    strict = inspect_focus(window, focus, metadata)
-    assert strict.blocked and strict.context == 'unknown'
-    assert strict.reason == ('stale_focus' if enabled else 'disabled_focus')
-    # Browser recognition's special web-root policy must not relax native canvases.
-    assert inspect_focus(window, focus, metadata, page_focus=True).blocked
-    snapshot = inspect_focus(window, focus, metadata, window_shortcut=True)
-    assert not snapshot.blocked and snapshot.context == 'nontext'
-    assert snapshot.ancestors[-1] is window
-    assert snapshot.disabled_containers == (() if enabled else (role,))
-    assert snapshot.unfocused_containers == (() if focused else (role,))
-
-
-@pytest.mark.parametrize('role', ['AXTextField', 'AXTextArea', 'AXSearchField', 'AXComboBox',
-    'AXButton', 'AXCheckBox', 'AXSlider', 'AXList', 'AXWebArea', 'AXWindow', 'AXUnknown'])
-def test_disabled_interactive_or_unknown_controls_and_windows_still_block(role):
-    window, focus = activation_snapshot(role)
-    assert inspect_focus(window, focus, metadata, window_shortcut=True).blocked
-
-
-@pytest.mark.parametrize('focused', [True, False])
-@pytest.mark.parametrize('state', ['hidden', 'busy', 'editable', 'is_editable',
-    'menu', 'sheet', 'dialog', 'foreign_window', 'missing_parent', 'cycle', 'depth',
-    'disabled_window', 'hidden_parent'])
-def test_disabled_container_exception_cannot_skip_ownership_and_safety_checks(state, focused):
-    window, focus = activation_snapshot(focused=focused)
-    if state == 'hidden': focus['AXHidden'] = True
-    if state == 'busy': focus['AXElementBusy'] = True
-    if state == 'editable': focus['AXEditable'] = True
-    if state == 'is_editable': focus['AXIsEditable'] = True
-    if state == 'menu': focus['AXParent'] = dict(AXRole='AXMenu', AXParent=window)
-    if state == 'sheet': focus['AXParent'] = dict(AXRole='AXSheet', AXParent=window)
-    if state == 'dialog': focus['AXParent'] = dict(AXRole='AXGroup', AXSubrole='AXDialog', AXParent=window)
-    if state == 'foreign_window': focus['AXParent'] = dict(AXRole='AXWindow')
-    if state == 'missing_parent': focus.pop('AXParent'); focus.pop('AXWindow')
-    if state == 'cycle': focus['AXParent'] = focus
-    if state == 'depth':
-        parent = window
-        for _ in range(MAX_FOCUS_DEPTH): parent = dict(AXRole='AXGroup', AXParent=parent)
-        focus['AXParent'] = parent
-    if state == 'disabled_window': window['AXEnabled'] = False
-    if state == 'hidden_parent': focus['AXParent'] = dict(AXRole='AXGroup', AXHidden=True, AXParent=window)
-    assert inspect_focus(window, focus, metadata, window_shortcut=True).blocked
-
-
-@pytest.mark.parametrize('state', ['modal', 'sheet', 'dialog', 'minimized', 'menu', 'foreign_window'])
-def test_window_command_capture_keeps_real_window_guards(monkeypatch, state):
+@pytest.mark.parametrize('state', ['modal', 'sheet', 'dialog', 'minimized'])
+def test_window_command_keeps_actual_window_state(monkeypatch, state):
     window, focus = activation_snapshot()
-    if state == 'modal': window['AXModal'] = True
-    if state == 'sheet': window['AXSheets'] = [dict(AXRole='AXSheet')]
-    if state == 'dialog': window['AXSubrole'] = 'AXDialog'
-    if state == 'minimized': window['AXMinimized'] = True
-    if state == 'menu': focus['AXParent'] = dict(AXRole='AXMenu', AXParent=window)
-    if state == 'foreign_window': focus['AXParent'] = dict(AXRole='AXWindow')
+    window[{'modal':'AXModal', 'sheet':'AXSheets', 'dialog':'AXSubrole', 'minimized':'AXMinimized'}[state]] = (
+        [dict(AXRole='AXSheet')] if state == 'sheet' else 'AXDialog' if state == 'dialog' else True)
     backend, _, _ = native_backend(monkeypatch, window, focus)
     assert backend.capture(menu_action=True).blocked
 
 
-@pytest.mark.parametrize('scene', [PRESENTATION, PDF, IMAGE, VIDEO, MUSIC])
-@pytest.mark.parametrize('focused,enabled', [(True, False), (False, False), (False, True)])
-def test_scene_recognition_does_not_inherit_relaxed_window_command_policy(scene, focused, enabled):
-    window, focus = window_tree() if scene == PRESENTATION else content(scene)
-    focus.update(AXRole='AXLayoutArea', AXEnabled=enabled, AXFocused=focused)
-    result = detect_scene('test.app', {scene:'generic'}, window, focus, metadata)
-    assert result.input_context != 'nontext'
-
-
-@pytest.mark.parametrize('focused', [True, False])
-def test_send_from_log_snapshot_posts_one_balanced_command_and_stops_on_window_change(monkeypatch, desktop, focused):
-    _, state, quartz = desktop
-    window, focus = activation_snapshot(focused=focused)
+def test_command_survives_focus_loss_but_rejects_window_change(monkeypatch, desktop):
+    _, state, _ = desktop
+    window, focus = activation_snapshot()
     backend, root, _ = native_backend(monkeypatch, window, focus)
     target = backend.capture(menu_action=True)
+    root['AXFocusedUIElement'] = None
     backend.post(target, 'Cmd+Return')
-    assert [(pid, event['down'], event['code']) for pid,event in state.sent] == [(42,True,55),(42,True,36),(42,False,36),(42,False,55)]
-    assert backend.last_diagnostic['validation']['observed']['disabled_containers'] == ['AXLayoutArea']
-    other, other_focus = activation_snapshot()
-    other['AXIdentifier'] = 'new-window'
-    root.update(AXFocusedWindow=other, AXFocusedUIElement=other_focus)
+    assert len(state.sent) == 4
+    root['AXFocusedWindow'] = dict(window, AXIdentifier='new-window')
     with pytest.raises(SceneActionError) as error: backend.post(target, 'Cmd+Return')
     assert error.value.reason == 'window_changed' and len(state.sent) == 4
-
-
-from test_app_gestures import route
-from test_application_menus import configure
-from test_ring_gestures import request
 
 
 @pytest.mark.parametrize('mode', ['input', 'operation'])
@@ -169,80 +98,7 @@ def test_real_gesture_route_sends_bound_window_command_without_clicking_another_
     assert outcome['reason'] == 'shortcut_posted'
     observed = outcome['native']['validation']['observed']
     assert not observed['focus_sensitive']  # IMK owns text arbitration; AX still guards the window.
-    assert observed['disabled_containers'] == ['AXLayoutArea']
-
-
-@pytest.mark.parametrize('role,expected', [('AXTextField','text'), ('AXTextArea','text'),
-    ('AXSearchField','text'), ('AXComboBox','text'), ('AXGroup','nontext')])
-def test_regular_gesture_capture_classifies_focus_without_scene_detection(monkeypatch, role, expected):
-    window, focus = activation_snapshot(role, focused=True)
-    focus['AXEnabled'] = True
-    backend, _, _ = native_backend(monkeypatch, window, focus, bundle='test.editor')
-    target = backend.capture(menu_action=True)
-    assert not target.scene_checked and target.input_context == expected
-    if expected == 'nontext':
-        # The exact AX object can become editable: object identity alone is insufficient.
-        focus['AXEditable'] = True
-        assert not backend.same_target(target)
-        assert backend.last_diagnostic['reason'] == 'focus_changed'
-
-
-@pytest.mark.parametrize('error', [0, -25212, -25205, -25204])
-def test_missing_responder_in_a_window_is_never_evidence_of_blur(monkeypatch, error):
-    window, _ = activation_snapshot()
-    backend, _, _ = native_backend(monkeypatch, window, None, bundle='test.editor')
-    # Read the mocked bridge installed by native_backend, never the real desktop.
-    import sys
-    bridge = sys.modules['ApplicationServices']
-    original = bridge.AXUIElementCopyAttributeValue
-    monkeypatch.setattr(bridge, 'AXUIElementCopyAttributeValue',
-        lambda node, attribute, output: (error, None) if attribute == 'AXFocusedUIElement'
-        else original(node, attribute, output))
-    target = backend.capture(menu_action=True)
-    assert target is not None and target.input_context == 'unknown'
-    assert target.diagnostic['reason'] == 'focus_missing'
-
-
-@pytest.mark.parametrize('scene', [False, True])
-@pytest.mark.parametrize('immediate', [False, True])
-def test_cold_electron_focus_preparation_never_treats_missing_focus_as_blur(monkeypatch, scene, immediate):
-    window, editor = activation_snapshot('AXTextArea')
-    editor['AXEnabled'] = True
-    backend, root, _ = native_backend(monkeypatch, window, None, bundle='com.openai.codex')
-    bridge = sys.modules['ApplicationServices']
-    original = bridge.AXUIElementCopyAttributeValue
-    writes, forbidden_reads = [], {'AXValue', 'AXSelectedText', 'AXSelectedTextRange', 'AXChildren'}
-    def read(node, key, output):
-        assert key not in forbidden_reads
-        if node is root and key == 'AXFocusedUIElement' and root[key] is None:
-            return -25212, None  # Actual Oct 12 Codex trace, despite focused composer.
-        if node is root and key == 'AXEnhancedUserInterface':
-            return 0, bool(writes)
-        return original(node, key, output)
-    def enable(node, key, value):
-        assert node is root and (key, value) == ('AXEnhancedUserInterface', True)
-        writes.append((key, value))
-        if immediate:
-            root['AXFocusedUIElement'] = editor
-        return -25208  # Codex enables its AX tree despite NotImplemented.
-    monkeypatch.setattr(bridge, 'AXUIElementCopyAttributeValue', read)
-    monkeypatch.setattr(bridge, 'AXUIElementSetAttributeValue', enable, raising=False)
-    cold = backend.capture(menu_action=True, scene=scene)
-    assert cold.input_context == ('text' if immediate else 'unknown')
-    if not immediate:
-        assert cold.diagnostic['reason'] == 'focus_accessibility_initializing'
-        assert backend.capture(menu_action=True, scene=scene).input_context == 'unknown'
-    assert len(writes) == 1  # Repeated gestures must not reset the async warmup.
-    root['AXFocusedUIElement'] = editor
-    focused = backend.capture(menu_action=True, scene=scene)
-    assert focused.input_context == 'text' and not focused.blocked
-    assert backend.same_target(focused, require_focus=True)
-    root['AXFocusedUIElement'] = dict(AXRole='AXGroup', AXFocused=True, AXWindow=window, AXParent=window)
-    assert backend.capture(menu_action=True, scene=scene).input_context == 'nontext'
-    assert not backend.same_target(focused, require_focus=True)
-    root['AXFocusedUIElement'] = None
-    assert backend.capture(menu_action=True, scene=scene).input_context == 'unknown'
-    assert len(writes) == 1
+    assert 'disabled_containers' not in observed
 
 
 @pytest.mark.parametrize('gesture', ['swipe-left', 'swipe-right'])
@@ -277,65 +133,6 @@ def test_codex_missing_focus_blocks_shortcuts_then_editor_wins_and_blur_restores
     request(c, gesture)
     assert bool(state.sent) == (scope == 'application')
     assert bool(starts) == (scope == 'global')
-
-
-def test_native_dispatch_rejects_focus_becoming_unavailable_after_capture(monkeypatch, desktop):
-    _, state, _ = desktop
-    window, focus = activation_snapshot('AXGroup')
-    focus['AXEnabled'] = True
-    backend, root, _ = native_backend(monkeypatch, window, focus, bundle='com.openai.codex')
-    target = backend.capture(menu_action=True)
-    assert target.input_context == 'nontext'
-    root['AXFocusedUIElement'] = None
-    with pytest.raises(SceneActionError) as error:
-        backend.post(target, 'Cmd+Shift+]')
-    assert error.value.reason == 'focus_changed' and not state.sent
-
-
-@pytest.mark.parametrize('role,context', [('AXTextArea', 'text'), ('AXGroup', 'nontext')])
-@pytest.mark.parametrize('guard', ['', 'hidden', 'dialog', 'foreign_window'])
-def test_codex_31_level_focus_chain_reaches_window_without_skipping_ancestor_guards(monkeypatch, role, context, guard):
-    window = dict(AXRole='AXWindow', AXSubrole='AXStandardWindow')
-    chain = [window]
-    for index in range(29):
-        container_role = 'AXScrollArea' if index == 6 else 'AXWebArea' if index == 7 else 'AXGroup'
-        chain.append(dict(AXRole=container_role, AXParent=chain[-1], AXEditable=False))
-    focus = dict(AXRole=role, AXFocused=True, AXEnabled=True, AXParent=chain[-1], AXWindow=window)
-    if guard == 'hidden': chain[3]['AXHidden'] = True
-    if guard == 'dialog': chain[3]['AXSubrole'] = 'AXDialog'
-    if guard == 'foreign_window': chain[3]['AXRole'] = 'AXWindow'
-    backend, _, _ = native_backend(monkeypatch, window, focus, bundle='com.openai.codex')
-    target = backend.capture(menu_action=True)
-    if guard:
-        assert target.blocked and target.input_context == 'unknown'
-    else:
-        assert not target.blocked and target.input_context == context
-        assert target.diagnostic['focus_depth'] == 31
-
-
-@pytest.mark.mac_only
-def test_independent_native_shortcut_keeps_window_guards_and_survives_focus_change(monkeypatch, desktop):
-    _, state, _ = desktop
-    window, editor = activation_snapshot('AXTextArea')
-    editor['AXEnabled'] = True
-    backend, root, _ = native_backend(monkeypatch, window, editor, bundle='com.openai.codex')
-    bridge = sys.modules['ApplicationServices']
-    read = bridge.AXUIElementCopyAttributeValue
-    def metadata_only(node, key, output):
-        # Focus metadata is still needed to reject menus, sheets and dialogs;
-        # the independent shortcut must not read the user's text content.
-        assert key not in {'AXValue', 'AXSelectedText', 'AXSelectedTextRange'}
-        return read(node, key, output)
-    monkeypatch.setattr(bridge, 'AXUIElementCopyAttributeValue', metadata_only)
-    target = backend.capture(menu_action=True, focus_sensitive=False)
-    assert target is not None and not target.focus_sensitive and not target.blocked
-    root['AXFocusedUIElement'] = None  # Unreadable, focused, or blurred are equally irrelevant.
-    backend.post(target, 'Cmd+N')
-    assert len(state.sent) == 4
-    window['AXModal'] = True
-    with pytest.raises(SceneActionError):
-        backend.post(target, 'Cmd+N')
-    assert len(state.sent) == 4
 
 
 @pytest.mark.parametrize('gesture', ['clench', 'snap'])

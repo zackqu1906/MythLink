@@ -14,6 +14,7 @@ def source_fingerprint(root: Path) -> str:
         "scripts/InputMethodAdmin.swift",
         "scripts/InputSourceSelection.swift",
         "tools/build_input_method.py",
+        "packaging/macos-target.txt",
         "src/proximic_ring/voice/ime/component_fingerprint.py",
     )]
     paths += sorted((root / "native/ProxiMicInput/Sources").glob("*.swift"))
