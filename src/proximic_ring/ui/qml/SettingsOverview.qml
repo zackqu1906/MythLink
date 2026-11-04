@@ -144,6 +144,19 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             visible: pane.controller.inlineInput.enabled
+            title: "语音输入后切回原输入法"
+            description: "完成后自动切回；润色、撤销手势会临时切回 Mythlink。默认关闭。"
+            PreferenceSwitch {
+                objectName: "autoReturnInputSourceSwitch"
+                Layout.alignment: Qt.AlignRight
+                Accessible.name: "语音输入后切回原输入法"
+                checked: pane.controller.autoReturnInputSource
+                onClicked: pane.controller.autoReturnInputSource = checked
+            }
+        }
+        FigmaFormRow {
+            preferenceStyle: true
+            visible: pane.controller.inlineInput.enabled
             title: "多次撤销"
             description: "逐次撤回当前输入框内的听写和编辑；关闭时只保留最近一次操作。"
             PreferenceSwitch {

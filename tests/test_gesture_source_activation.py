@@ -103,6 +103,16 @@ def test_already_selected_inactive_client_recovers_once_with_remaining_budget(ac
     assert result == {'value': None} and second.cancelled
 
 
+def test_native_selection_returns_previous_source_for_opt_in_borrowing(activation):
+    gate, data = activation
+    thread, result = worker(lambda: gate.activate(ORIGIN, timeout=.5))
+    until(lambda: bool(data['sources']))
+    data['sources'][0].event.emit({'event': 'selected', 'focus_restored': True,
+                                 'previous_source': 'com.apple.keylayout.ABC'})
+    thread.join(1)
+    assert result == {'value': 'com.apple.keylayout.ABC'}
+
+
 def test_expired_queued_request_never_starts_native_selection(activation):
     gate, data = activation
     thread, result = worker(lambda: gate.activate(ORIGIN, timeout=.02))

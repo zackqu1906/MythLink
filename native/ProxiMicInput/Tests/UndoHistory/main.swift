@@ -6,10 +6,11 @@ final class Editor: CompositionClient {
     var marked = unspecifiedRange
     var reads = 0
     var writes = 0
+    var fullDocument = true
     init(_ text: String = "") { body = text; selected = NSRange(location: (text as NSString).length, length: 0) }
     func snapshot() throws -> EditorSnapshot {
         reads += 1
-        return EditorSnapshot(text: body, selection: selected, markedRange: marked,
+        return EditorSnapshot(text: fullDocument ? body : nil, selection: selected, markedRange: marked,
                               selectedText: (body as NSString).substring(with: selected), documentAccess: true)
     }
     func readText(in range: NSRange) -> String? {
@@ -72,6 +73,16 @@ final class Fixture {
         }
         session.cancel()
     }
+    func roundTrip() throws {
+        let writes = editor.writes
+        let saved = try session.suspension()
+        let stack = history.snapshot()
+        history.clear()
+        session = try CompositionSession(client: editor, resuming: saved, sequence: saved.lastSequence + 1)
+        history.restore(stack)
+        wire()
+        check(editor.writes == writes, "suspend/resume modified text")
+    }
 }
 
 var passed = 0
@@ -84,6 +95,88 @@ try test("Three dictations undo in LIFO order including Unicode and line breaks"
     for expected in ["原文一😀二\n", "原文一😀", "原文"] { f.undo(); check(f.editor.body == expected, "wrong undo order") }
     let writes = f.editor.writes
     f.undo(); check(f.editor.writes == writes && f.history.count == 0, "empty history wrote")
+}
+try test("Input-source round trips preserve polish restore and multi-sentence undo") {
+    let f = Fixture("原文")
+    try f.say("甲"); try f.say("乙")
+    try f.roundTrip()
+    check(f.session.canPolish, "resumed dictation lost polishing")
+    f.session.polish(restoringRawOnUndo: true)
+    f.session.applyPolish(text: "润色乙", revision: f.session.revision, error: nil)
+    try f.roundTrip()
+    check(f.session.polished && f.session.canRestorePolish, "polish restoration disappeared")
+    f.undo()
+    check(f.editor.body == "原文甲乙" && !f.session.polished, "first undo did not restore dictation")
+    try f.roundTrip()
+    f.undo()
+    check(f.editor.body == "原文甲" && f.session.phase == .undone, "second undo did not remove the sentence")
+    try f.roundTrip()
+    f.undo()
+    check(f.editor.body == "原文", "older undo did not survive the source round trip")
+}
+try test("Edited input resumes with two-stage restore then undo semantics") {
+    let f = Fixture("原文")
+    try f.edit("改成乙", to: "结果乙")
+    let revision = f.session.revision
+    try f.roundTrip()
+    check(f.session.phase == .edited && f.session.revision == revision, "resume changed the edited transaction")
+    f.undo()
+    check(f.editor.body == "原文改成乙", "edited resume lost original dictation")
+    try f.roundTrip()
+    f.undo()
+    check(f.editor.body == "原文", "restored dictation could not be undone")
+}
+try test("Suspended snapshots reject changed text, caret, composition and replay without writes") {
+    for scenario in ["text", "caret", "mark", "sequence"] {
+        let f = Fixture("原文")
+        try f.say("甲")
+        let saved = try f.session.suspension()
+        if scenario == "text" { f.editor.body = "原文乙" }
+        if scenario == "caret" { f.editor.selected = NSRange(location: 0, length: 0) }
+        if scenario == "mark" { f.editor.marked = NSRange(location: 2, length: 1) }
+        let writes = f.editor.writes
+        do {
+            _ = try CompositionSession(client: f.editor, resuming: saved,
+                sequence: saved.lastSequence + (scenario == "sequence" ? 0 : 1))
+            fatalError("resume accepted \(scenario)")
+        } catch {}
+        check(f.editor.writes == writes, "failed resume wrote into another owner")
+    }
+}
+try test("Partial document uses exact sentence proof and keeps polish/undo") {
+    let f = Fixture("原文")
+    f.editor.fullDocument = false
+    try f.say("甲")
+    try f.roundTrip()
+    check(f.session.canPolish, "readable partial sentence lost polish")
+    let saved = try f.session.suspension()
+    f.editor.body = "原文乙"
+    let writes = f.editor.writes
+    do {
+        _ = try CompositionSession(client: f.editor, resuming: saved, sequence: saved.lastSequence + 1)
+        fatalError("partial resume accepted changed sentence")
+    } catch {}
+    check(f.editor.writes == writes, "partial resume wrote before verification")
+}
+try test("Busy input cannot be suspended") {
+    let f = Fixture()
+    try f.begin()
+    do { _ = try f.session.suspension(); fatalError("suspended live ASR") } catch {}
+    f.session.update("甲", final: true)
+    f.session.polish(restoringRawOnUndo: true)
+    do { _ = try f.session.suspension(); fatalError("suspended pending polish") } catch {}
+}
+try test("Restoration binds only the newly verified client") {
+    let f = Fixture("原文")
+    try f.say("甲")
+    let saved = try f.session.suspension()
+    let next = Editor(f.editor.body)
+    let resumed = try CompositionSession(client: next, resuming: saved, sequence: saved.lastSequence + 1)
+    f.editor.body = "旧客户端已被接管"
+    let oldReads = f.editor.reads, oldWrites = f.editor.writes
+    resumed.cancel()
+    check(next.body == "原文", "resumed undo did not target the fresh client")
+    check(f.editor.reads == oldReads && f.editor.writes == oldWrites, "resumed transaction called the retired client")
 }
 try test("Mixed edit restores dictation, then reaches previous dictation and edit") {
     let f = Fixture("原文")

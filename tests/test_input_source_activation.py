@@ -39,6 +39,39 @@ print(json.dumps({{'event':'selected','already_selected':{already_selected!r}}})
     app.processEvents()
 
 
+@pytest.mark.parametrize('restored, reason', [(True, 'restored'), (False, 'source_changed')])
+def test_restore_source_passes_ids_and_delivers_outcome_without_focus_handshake(tmp_path, local_window,
+                                                                            restored, reason):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    _, _, restores = local_window
+    response = dict(event='restored', restored=restored, reason=reason)
+    command = helper(tmp_path, f'''assert sys.argv[1:] == ['restore-source', '123', '', 'com.apple.inputmethod.SCIM.ITABC', 'test.mythlink.dictation']
+print(json.dumps({response!r}),flush=True)
+''')
+    source = InputSourceActivation(command=command)
+    events = []
+    source.event.connect(events.append)
+    source.restore(('', 123), 'com.apple.inputmethod.SCIM.ITABC', 'test.mythlink.dictation')
+    wait_until(lambda: bool(events))
+    assert events == [response]
+    assert not restores and source._local_window is None
+    source.cancel()
+    app.processEvents()
+
+
+def test_restore_source_rejects_a_selection_reply(tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    command = helper(tmp_path, "print(json.dumps({'event':'selected','already_selected':False}),flush=True)\n")
+    source = InputSourceActivation(command=command)
+    events = []
+    source.event.connect(events.append)
+    source.restore(('test.editor', 123), 'com.apple.keylayout.ABC', 'test.mythlink.dictation')
+    wait_until(lambda: bool(events))
+    assert events == [dict(event='error', error='输入法切换工具状态异常')]
+    source.cancel()
+    app.processEvents()
+
+
 def test_hung_selector_is_killed_without_stopping_gui_timers(tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     source = InputSourceActivation(command=helper(tmp_path, 'time.sleep(10)\n'), timeout_ms=200)

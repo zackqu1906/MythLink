@@ -57,6 +57,12 @@ class EditorGestureActions:
 
     @Slot(str, str, object, float, object)
     def _input_gesture(self, name, key, connection, created, context):
+        try:
+            self._input_gesture_current(name, key, connection, created, context)
+        finally:
+            self.owner._inline_input.finish_resumed_gesture()
+
+    def _input_gesture_current(self, name, key, connection, created, context):
         sentence, bindings = context
         if time.monotonic()-created > 1 or not self._input_context_valid(key, connection, context): return
         if name in bindings.send + bindings.polish:

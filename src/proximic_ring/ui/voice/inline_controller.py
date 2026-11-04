@@ -20,6 +20,7 @@ from ...voice.ime.ime_bridge import IMEBridge, IMEBridgeInUseError
 from ..permissions.mac_permissions_controller import MacPermissionsController
 from .input_source_activation import INPUT_ACTIVATION_TIMEOUT_MS, InputSourceActivation, warm_input_method
 from .gesture_source_activation import GestureSourceActivation
+from .input_source_return import InputSourceReturn
 
 
 class InlineInputController(QObject):
@@ -117,6 +118,7 @@ class InlineInputController(QObject):
         self._reply_timer = QTimer(self)
         self._reply_timer.setSingleShot(True)
         self._reply_timer.timeout.connect(self._reply_timed_out)
+        self._source_return = InputSourceReturn(self)
         self._received.connect(self._accept)
         self._start_bridge()
 
@@ -392,10 +394,26 @@ class InlineInputController(QObject):
                                   "reason": "system_shortcut_unavailable",
                                   "application": origin[0], "pid": origin[1]})
             return self._gesture_source_activation.activate(origin, **options)
+        previous_source = ""
         def select_source(pid, **options):
-            return activate_voice_input_source(pid, native_activate=native_activate, **options)
-        return probe_input_focus(self._bridge, self._foreground_identity, select_source,
-                                 native_fallback=native_fallback)
+            nonlocal previous_source
+            if self._source_return.enabled:
+                options["remember_source"] = True
+            previous_source = activate_voice_input_source(pid, native_activate=native_activate, **options)
+        proof = probe_input_focus(self._bridge, self._foreground_identity, select_source,
+                                  native_fallback=native_fallback)
+        if proof and proof.status == "text":
+            self._source_return.remember_probe(proof.target, previous_source)
+        return proof
+
+    def set_auto_return_input_source(self, enabled):
+        self._source_return.configure(enabled)
+
+    def resume_for_gesture(self):
+        return self._source_return.resume_for_gesture()
+
+    def finish_resumed_gesture(self):
+        self._source_return.gesture_finished()
 
     def same_input_focus(self, proof):
         from ...voice.ime.focus_probe import same_input_focus
@@ -734,6 +752,7 @@ class InlineInputController(QObject):
         if kind == "error":
             self._transport_failed(str(message.get("error") or "自动切换输入法失败"))
         elif kind == "selected":
+            self._source_return.selected(message)
             self._source_pending = False
             self._focus_recovery_attempted |= message.get("focus_restored") is True
             # Selection, focus recovery and native readiness share the original
@@ -791,6 +810,7 @@ class InlineInputController(QObject):
         if self._installing:
             failed("输入法正在更新，请稍后重试")
             return
+        self._source_return.discard()
         self._stop_reply_wait()
         self._clear_startup()
         if not self._enabled or self._closed or not origin or self._transport_error or not self._bridge:
@@ -855,6 +875,8 @@ class InlineInputController(QObject):
                 self._transport_failed("输入目标已变化或手势已超时，请重新开始")
                 return False
             self._startup_focus_target = focus
+        self._source_return.begin(origin, self._startup_focus_target)
+        auto_select = auto_select or self._source_return.enabled
         self._sentence_origin = origin
         needs_activation = auto_select or not self.ready or bool(origin and self._view.get("application") != origin[0])
         if needs_activation and (origin is None or self._transport_error or self._bridge is None):
@@ -930,7 +952,8 @@ class InlineInputController(QObject):
             self._clear_startup()
             failed(reason)
             return
-        if self._startup_buffering:
+        startup_failed = self._startup_buffering
+        if startup_failed:
             self._send("reset")
         self._stop_reply_wait()
         self._clear_startup()
@@ -944,6 +967,8 @@ class InlineInputController(QObject):
         self.changed.emit()
         self.interrupted.emit()
         self.settled.emit("error", "")
+        if startup_failed:
+            self._source_return.finish()
 
     def _reply_timed_out(self):
         stage = self._reply_stage
@@ -1037,7 +1062,7 @@ class InlineInputController(QObject):
         self.actionRequested.emit("cancel")
         if self._startup_buffering:
             session_id = self._session_id
-            self.reset()
+            self.reset(return_source=True)
             self.settled_session_id = session_id
             self._view = {**self._view, "phase": "undone", "error": ""}
             self.changed.emit()
@@ -1087,6 +1112,8 @@ class InlineInputController(QObject):
     @Slot(object)
     def _accept(self, message):
         if self._closed or not isinstance(message, dict):
+            return
+        if self._source_return.handle(message):
             return
         kind = message.get("type")
         if kind in {"state", "stroke_ready", "stroke_cleared", "stroke_ink_cleared", "disconnected", "connected"}:
@@ -1447,8 +1474,13 @@ class InlineInputController(QObject):
                     (self._epoch, client_id, source, message.get("revision", self._view.get("revision", 0))),
                     phase, str(message.get("text", "")), str(message.get("error") or ""), source != utterance_id)
                 self.settled.emit(phase, str(message.get("text", "")))
+                self._source_return.schedule()
 
-    def reset(self):
+    def reset(self, *, return_source=False):
+        if return_source:
+            self._source_return.finish()
+        else:
+            self._source_return.discard()
         self.actionRequested.emit("reset")
         self._clear_action_pending()
         self._stop_reply_wait()
@@ -1480,6 +1512,7 @@ class InlineInputController(QObject):
                 self._send("end_input", outcome="sent" if sent else "replaced")
                 self._diagnose("session_retired", reason="sent" if sent else "editor_context_changed")
             self._clear_startup()
+        self._source_return.finish()
         self._stop_reply_wait()
         self._clear_action_pending()
         self._utterance_id = ""

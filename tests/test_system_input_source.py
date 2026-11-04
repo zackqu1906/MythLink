@@ -43,6 +43,21 @@ def test_repeated_source_stops_instead_of_looping_or_claiming_success():
     assert sources.advances == 2
 
 
+def test_borrow_remembers_the_first_source_not_an_intermediate_cycle():
+    sources = Sources(['abc', 'pinyin', 'voice'])
+    assert cycle_to_source(sources, ORIGIN, 'voice', timeout=.1, remember_source=True) == 'abc'
+
+
+def test_borrow_uses_native_helpers_actual_previous_source():
+    sources = Sources(['abc'])
+    sources.shortcut = unavailable_shortcut
+    def activate(origin, *, timeout):
+        sources.selected = 'voice'
+        return 'pinyin'
+    assert cycle_to_source(sources, ORIGIN, 'voice', timeout=.2,
+                           native_activate=activate, remember_source=True) == 'pinyin'
+
+
 def test_disabled_target_cannot_emit_a_shortcut():
     sources = Sources(['abc'])
     with pytest.raises(RuntimeError, match='尚未启用'):

@@ -17,6 +17,7 @@ class _Request:
     error: str = ""
     source: object = None
     recovering: bool = False
+    previous_source: str | None = None
 
 
 class GestureSourceActivation(QObject):
@@ -50,6 +51,7 @@ class GestureSourceActivation(QObject):
             raise TimeoutError('输入法切换超时')
         if request.error:
             raise RuntimeError(request.error)
+        return request.previous_source
 
     @Slot(object)
     def _start(self, request):
@@ -94,6 +96,7 @@ class GestureSourceActivation(QObject):
         elif request.recovering and message.get('focus_restored') is not True:
             self._finish(request, '输入法焦点恢复未完成')
         else:
+            request.previous_source = message.get('previous_source')
             self._finish(request)
 
     def _finish(self, request, error=''):

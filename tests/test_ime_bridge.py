@@ -278,7 +278,7 @@ def test_activation_recovery_reply_reaches_host_and_does_not_replace_context(bri
 
 
 @pytest.mark.mac_only
-@pytest.mark.parametrize('prefix', ['stroke:', 'start:'])
+@pytest.mark.parametrize('prefix', ['stroke:', 'start:', 'resume:'])
 def test_ui_ready_probe_reaches_host_but_asr_context_stays_private(bridge, prefix):
     server, messages = bridge
     sock, stream = connect(server)
@@ -311,5 +311,26 @@ def test_stroke_replies_cross_transport_with_request_and_epoch_intact(bridge, ki
         wait_until(lambda: response in messages)
         assert not any(m.get("stroke_session") == "old-session" for m in messages)
         assert not server._state  # Lifecycle/commit replies cannot become voice context.
+    finally:
+        stream.close(); sock.close()
+
+
+@pytest.mark.mac_only
+@pytest.mark.parametrize("kind", ["input_suspended", "input_resumed"])
+def test_suspension_replies_reach_ui_with_request_id_without_replacing_context(bridge, kind):
+    server, messages = bridge
+    sock, stream = connect(server)
+    try:
+        epoch = receive(stream)["epoch"]
+        response = dict(type=kind, epoch=epoch, client_id="editor", utterance_id="sentence",
+                        token="suspension-one", success=True, request_id="transition-one")
+        if kind == "input_resumed":
+            response["state"] = dict(type="state", client_id="editor", utterance_id="sentence",
+                                     phase="dictated", ready=True)
+        send(stream, {**response, "epoch": "old", "token": "old-suspension"})
+        send(stream, response)
+        wait_until(lambda: response in messages)
+        assert not any(m.get("token") == "old-suspension" for m in messages)
+        assert not server._state  # Even a nested resume snapshot belongs to the UI handshake.
     finally:
         stream.close(); sock.close()
