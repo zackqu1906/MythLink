@@ -480,16 +480,14 @@ class ModificationDatasetCollector:
             )
 
     def record_routing_request(self, request) -> None:
-        from ..text_processing.prompts import INPUT_MODE_ROUTER_PROMPT
         from ..text_processing.task_routing import DEFAULT_ROUTER_MODEL
         from ..text_processing.router_prompts import routing_schema, joint_router_input, ROUTER_PROMPT_VERSION
-        clef = getattr(request, "router_backend", "llm") == "clef"
+        clef = getattr(request, "router_backend", "clef") == "clef"
 
         with self._lock:
             session_id = int(getattr(request, "session_id", 0))
             interaction_id = self._ensure_interaction_locked(session_id)
             request_id = int(getattr(request, "request_id", 0))
-            settings = getattr(request, "settings", None)
             self._routing_interactions[request_id] = interaction_id
             record = self._interaction_data(interaction_id)
             record["mode"].update(
@@ -498,13 +496,13 @@ class ModificationDatasetCollector:
                     "fallback": str(getattr(request, "fallback_mode", "")),
                     "router_request_id": request_id,
                     "router_input": str(getattr(request, "raw_text", "")),
-                    "router_system_prompt": "" if clef else INPUT_MODE_ROUTER_PROMPT,
-                    "router_schema": routing_schema() if clef else {},
-                    "router_classification_type": "joint" if clef else "legacy",
+                    "router_system_prompt": "",
+                    "router_schema": routing_schema(target=getattr(request, "target_text", "")) if clef else {},
+                    "router_classification_type": "joint" if clef else "unsupported",
                     "router_rules": joint_router_input("") if clef else "",
-                    "router_prompt_version": ROUTER_PROMPT_VERSION if clef else "legacy",
-                    "router_provider": "clef_server" if clef else str(getattr(settings, "provider", "")),
-                    "router_model": os.environ.get("PROXIMIC_CLEF_MODEL", DEFAULT_ROUTER_MODEL) if clef else str(getattr(settings, "model", "")),
+                    "router_prompt_version": ROUTER_PROMPT_VERSION if clef else "",
+                    "router_provider": "clef_server" if clef else "unsupported",
+                    "router_model": os.environ.get("PROXIMIC_CLEF_MODEL", DEFAULT_ROUTER_MODEL) if clef else "",
                 }
             )
             record["updated_at"] = _utc_now()

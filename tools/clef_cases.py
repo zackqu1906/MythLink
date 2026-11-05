@@ -54,6 +54,8 @@ def load_cases(path=DEFAULT_CASES, selected=None, *, require_plan=False):
                     raise ValueError(f"{prefix}的 expected.{key} 包含未知或重复标签")
                 if expected["task"] == "dictation" and values:
                     raise ValueError(f"{prefix}为听写，不能包含编辑任务")
+        if not case["target"].strip() and "modify" in expected.get("tasks", []):
+            raise ValueError(f"{prefix}没有可编辑原文，修改任务不可用")
     if selected:
         unknown = set(selected) - seen
         if unknown:
@@ -78,6 +80,9 @@ def raw_joint_match(trace, expected):
     """Score original model choices independently of any dictation fallback policy."""
     stage = next((s for s in trace.get('stages', []) if s.get('stage') == 'joint'), {})
     answers = stage.get('answers', {})
+    availability = trace.get('task_availability')
+    if availability and set(answers) != {'voice_intent', *availability['available_tasks']}:
+        return False
     if not answers or any(len(set(a.get('probabilities', {}).values())) < 2 for a in answers.values()):
         return False
     return (answers.get('voice_intent', {}).get('choice') == expected['task'] and

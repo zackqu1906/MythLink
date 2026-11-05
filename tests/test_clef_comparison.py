@@ -60,3 +60,14 @@ def test_old_task_sets_fold_for_scoring_without_merging_probability_values():
     assert result['exact_match']
     assert result['actual']['tasks'] == ['condense','structure']
     assert 'format' not in result['trace']['stages'][1]['answers']
+
+
+def test_joint_comparison_uses_the_same_empty_source_gate_as_the_app():
+    prompts, _, _ = snapshots()
+    case = copy.deepcopy(CASE)
+    case.update(target='', expected={'task':'edit','tasks':['insert']})
+    router = Router(apply=('modify', 'insert'))
+    record = run_case(router, case, 'C', prompts['C'])
+    assert record['exact_match'] and record['raw_exact_match']
+    assert 'modify' not in router.calls[0][1]
+    assert record['trace']['task_availability']['excluded_tasks'] == {'modify':'no_editable_source'}

@@ -13,6 +13,38 @@ struct UpdateSourceHandoff: Codable {
     let bundle: String
 }
 
+struct InstallableInputSource {
+    let id: String
+    let enabled: Bool
+    let enableCapable: Bool
+    // Current availability, including the parent and enabled source list;
+    // unlike TIS's static IsSelectCapable property.
+    let selectable: Bool
+}
+
+/// Enabling a parent does not establish that its dictation mode is available.
+/// Re-enumerate after each enable, since TIS source lists are snapshots.
+func enableVoiceInputSources(productID: String, readSources: () -> [InstallableInputSource],
+                             enable: (String) throws -> Void) throws {
+    let modeID = productID + ".dictation"
+    for identifier in [productID, modeID] {
+        guard let source = readSources().first(where: { $0.id == identifier }) else {
+            if identifier == productID { continue } // Still require the exact mode below.
+            throw SourceSelectionFailure("未找到已注册的 Mythlink 语音模式，请重新安装输入法组件。")
+        }
+        if source.enableCapable {
+            try enable(identifier)
+        } else if !source.enabled {
+            throw SourceSelectionFailure("系统不允许启用 Mythlink 输入法，请检查系统键盘设置后重试。")
+        }
+    }
+    let confirmed = readSources()
+    guard confirmed.contains(where: { $0.id == modeID && $0.enabled && $0.selectable }),
+          !confirmed.contains(where: { $0.id == productID && !$0.enabled }) else {
+        throw SourceSelectionFailure("系统尚未确认 Mythlink 语音模式可切换，请重试安装输入法组件。")
+    }
+}
+
 /// Explicit installation only: release our selected input source before replacing its bundle.
 func prepareUpdateSource(voiceIDs: Set<String>, currentSource: () -> String,
                          foreground: () -> (Int32, String), fallback: () throws -> String,

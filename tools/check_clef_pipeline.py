@@ -1,5 +1,8 @@
 """Run synthetic inputs through the real project worker, Clef and configured LLM."""
 import argparse
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import hashlib
 import json
 from pathlib import Path
 import queue
@@ -16,10 +19,13 @@ from proximic_ring.text_processing.model import LLMSettings, InputModeRoutingReq
 from proximic_ring.text_processing.worker import TextProcessingWorker
 from proximic_ring.text_processing.llm import OpenAICompatibleTextProcessor
 from proximic_ring.text_processing.automatic_prompts import AUTOMATIC_PROMPT_VERSION
-from proximic_ring.text_processing.router_prompts import routing_schema, joint_router_input
-from clef_cases import DEFAULT_CASES, load_cases, generation_checks, raw_joint_match
-from clef_routing_report import write_routing_html
-from compare_clef_routing import metrics
+from proximic_ring.text_processing.router_prompts import ROUTER_PROMPT_VERSION, routing_schema, joint_router_input
+try:
+    from .clef_cases import DEFAULT_CASES, load_cases, generation_checks, raw_joint_match
+    from .clef_pipeline_report import write_pipeline_report, recording_opener
+except ImportError:
+    from clef_cases import DEFAULT_CASES, load_cases, generation_checks, raw_joint_match
+    from clef_pipeline_report import write_pipeline_report, recording_opener
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -30,7 +36,7 @@ def main():
     parser.add_argument('--output', type=Path, help='Save complete synthetic pipeline report')
     args = parser.parse_args()
     try:
-        cases = load_cases(args.cases, args.case)
+        cases = load_cases(args.cases, args.case, require_plan=True)
     except ValueError as exc:
         parser.error(str(exc))
     if args.validate_only:
@@ -50,17 +56,39 @@ def main():
     )
     settings.validate()
     # Only synthetic case data is sent; desktop settings are never changed.
-    routed, generated, generation_requests = queue.Queue(), queue.Queue(), queue.Queue()
-    def capture_generation_request(request, **kwargs):
-        # Record the actual synthetic request body, never headers or credentials.
-        generation_requests.put(json.loads(request.data.decode('utf-8')))
-        return urlopen(request, **kwargs)
+    routed, generated, routing_calls, generation_calls = (queue.Queue() for _ in range(4))
+    router = ClefIntentRouter(endpoint=args.endpoint)
+    # Preserve the real client's no-redirect transport and response size limit.
+    router._urlopen = recording_opener(router._urlopen, routing_calls)
     worker = TextProcessingWorker(
         on_result=generated.put, on_routing_result=routed.put,
-        intent_router=ClefIntentRouter(endpoint=args.endpoint),
-        processor=OpenAICompatibleTextProcessor(urlopen=capture_generation_request),
+        intent_router=router,
+        processor=OpenAICompatibleTextProcessor(urlopen=recording_opener(urlopen, generation_calls)),
     )
     records=[]
+    report={'kind':'synthetic-project-worker-pipeline', 'cases_path':str(args.cases.resolve()),
+            'created_at':datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(),
+            'case_sha256':hashlib.sha256(args.cases.read_bytes()).hexdigest(),
+            'requested_samples':len(cases), 'llm_model':settings.model,
+            'generation_prompt_version': AUTOMATIC_PROMPT_VERSION, 'prompt_version':ROUTER_PROMPT_VERSION,
+            'source_sha256':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (
+                ROOT/'src/proximic_ring/text_processing/router_prompts.py',ROOT/'src/proximic_ring/text_processing/intent_router.py',
+                ROOT/'src/proximic_ring/text_processing/task_routing.py',ROOT/'src/proximic_ring/text_processing/automatic_prompts.py',
+                ROOT/'src/proximic_ring/text_processing/automatic_processing.py',ROOT/'src/proximic_ring/text_processing/llm.py',
+                ROOT/'src/proximic_ring/text_processing/worker.py',Path(__file__))},
+            'prompts': {'joint': routing_schema(), 'joint_without_source': routing_schema(target=''),
+                        'shared_input_prefix': joint_router_input('')},
+            'llm_host':urlsplit(settings.base_url).hostname,
+            'scope':'真实 Worker → v19 联合 Clef → 按实际路由调用文本模型；每例一次分类、成功后一次生成，不以预期标签覆盖路由、不自动重试。合成输入，不采集麦克风或 OCR，不执行 IME 写回。',
+            'cases':records}
+    journal=None
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        journal=args.output.with_suffix('.jsonl').open('w')
+    def drain(calls):
+        values=[]
+        while not calls.empty(): values.append(calls.get_nowait())
+        return values
     try:
         for index, case in enumerate(cases):
             start=time.perf_counter()
@@ -72,8 +100,11 @@ def main():
                     'expected':case['expected'], 'actual_task':route.task_type,
                     'edit_plan':route.edit_plan.as_dict() if route.edit_plan else None,
                     'routing_error':route.error, 'routing_latency_s':route.latency_s,
-                    'routing_trace':json.loads(route.model_output) if route.model_output else {}}
+                    'routing_trace':json.loads(route.model_output) if route.model_output else {},
+                    'routing_calls':drain(routing_calls), 'generation_review':{'status':'pending'}}
             record['raw_exact_match'] = raw_joint_match(record['routing_trace'], case['expected'])
+            record['root_correct'] = record['routing_trace'].get('raw_model_task') == case['expected']['task']
+            record['exact_match'] = not route.error and route.task_type == case['expected']['task'] and set((record['edit_plan'] or {}).get('tasks',[])) == set(case['expected'].get('tasks',[]))
             if not route.error:
                 worker.submit(TextProcessingRequest(
                     index*2+2, index+1, route.mode, case['utterance'], settings,
@@ -81,42 +112,24 @@ def main():
                     screen_context=route.screen_context, edit_plan=route.edit_plan))
                 result=generated.get(timeout=60)
                 record.update(final_text=result.final_text, generation_error=result.error,
-                              generation_latency_s=result.latency_s, used_llm=result.used_llm)
-                record['generation_requests'] = []
-                while not generation_requests.empty():
-                    record['generation_requests'].append(generation_requests.get_nowait())
+                              generation_latency_s=result.latency_s, used_llm=result.used_llm,
+                              generation_model_output=result.model_output)
+                record['generation_calls'] = drain(generation_calls)
+                record['generation_requests'] = [c['request'] for c in record['generation_calls']]
                 if not result.error:
                     record['generation_checks'] = generation_checks(case['expected'], result.final_text)
             record['total_latency_s']=time.perf_counter()-start
             records.append(record)
-            print(json.dumps({k:v for k,v in record.items() if k not in ('routing_trace', 'generation_requests')},ensure_ascii=False),flush=True)
+            if journal:
+                journal.write(json.dumps(record,ensure_ascii=False)+'\n');journal.flush()
+            print(json.dumps({'index':index+1,'n':len(cases),'id':record['id'],'route_ok':record['exact_match'],
+                              'raw_route_ok':record['raw_exact_match'],'routing_s':round(record['routing_latency_s'],3),
+                              'generation_s':round(record.get('generation_latency_s',0),3),'total_s':round(record['total_latency_s'],3),
+                              'error':record.get('routing_error') or record.get('generation_error')},ensure_ascii=False),flush=True)
     finally:
         worker.close(wait=True)
-    report={'kind':'synthetic-project-worker-pipeline', 'cases_path':str(args.cases), 'llm_model':settings.model,
-            'generation_prompt_version': AUTOMATIC_PROMPT_VERSION,
-            'prompts': {'joint': routing_schema(), 'shared_input_prefix': joint_router_input('')},
-            'llm_host':urlsplit(settings.base_url).hostname,
-            'scope':'Real Clef HTTP and text LLM; no live microphone, OCR capture, IME writeback or messages sent.',
-            'cases':records}
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
-        display = []
-        for record in records:
-            trace = record['routing_trace']
-            actual = {'task': record['actual_task'], **(record['edit_plan'] or {})}
-            expected = record['expected']
-            row = {**record, 'trace': {**trace, 'requests': 1, 'latency_s': record['routing_latency_s']},
-                   'actual': actual, 'root_correct': trace.get('raw_model_task') == expected['task'],
-                   'exact_match': not record['routing_error'] and actual['task'] == expected['task'] and
-                       set(actual.get('tasks', [])) == set(expected.get('tasks', []))}
-            if record.get('routing_error') or record.get('generation_error'):
-                row['error'] = record.get('routing_error') or record.get('generation_error')
-            display.append(row)
-        write_routing_html({'cases': display, 'metrics': metrics(display),
-            'prompts': report['prompts'],
-            'prompt_version': records[0]['routing_trace'].get('prompt_version', '') if records else '',
-            'note': '真实 Worker → Clef → 文本模型的合成流程；完整匹配只评价分类，不代表生成文本全部正确。未执行麦克风、实时 OCR 或输入法写回。'}, args.output.with_suffix('.html'))
+        if journal: journal.close()
+        if args.output: write_pipeline_report(report,args.output)
     errors = sum(bool(r.get('routing_error') or r.get('generation_error')) for r in records)
     failed_checks = sum(r.get('generation_checks', {}).get('passed') is False for r in records)
     print(json.dumps({'generation_check_failures': failed_checks, 'samples': len(records), 'completed_generations': sum('final_text' in r for r in records), 'errors': errors}, ensure_ascii=False))

@@ -77,3 +77,22 @@ def test_joint_dictation_and_rejected_plan_show_all_task_probabilities(tmp_path)
     assert '原始完整分类匹配 0/1' in html and '最终处理计划匹配 1/1' in html
     assert '原始 apply 任务：修改' in html
     assert html.count('12.34%') == 6 and html.count('87.66%') == 6
+
+
+def test_unavailable_modify_has_no_invented_model_probabilities(tmp_path):
+    from proximic_ring.text_processing.router_prompts import routing_schema
+    from proximic_ring.text_processing.task_routing import task_availability
+    schema = routing_schema(target='')
+    answers = {k: {'choice': 'skip', 'probabilities': {'apply': .1234, 'skip': .8766}}
+               for k in schema if k != 'voice_intent'}
+    answers['voice_intent'] = {'choice':'dictation', 'probabilities':{'dictation':.9, 'edit':.1}}
+    case = {'id':'no-source', 'utterance':'我叫李静，安静的静', 'target':'', 'context':{'messages':[]},
+            'expected':{'task':'dictation','tasks':[]}, 'actual':{'task':'dictation'}, 'exact_match':True,
+            'trace':{'task_availability':task_availability(''), 'request_schema':schema,
+                     'stages':[{'stage':'joint', 'answers':answers}], 'latency_s':.2}}
+    report = {'cases':[case], 'metrics':{'root_correct':1,'samples':1,'exact_plan_correct':1,
+              'edit_samples':0,'errors':0,'latency_median_s':.2,'latency_p95_s':.2}}
+    path=tmp_path/'gated.html';write_routing_html(report,path);html=path.read_text()
+    assert '不可用（无可编辑原文）' in html and '未请求，无模型概率' in html
+    assert html.count('12.34%') == 5 and html.count('87.66%') == 5
+    assert '<td>0.00%</td>' not in html and '<td>100.00%</td>' not in html

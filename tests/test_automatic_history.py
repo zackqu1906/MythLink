@@ -16,6 +16,27 @@ from proximic_ring.voice.automatic_history import automatic_history_details
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAA9hAAAPYQGoP6dpAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC")
 
 
+def test_unavailable_modify_is_distinct_from_skip_in_history(tmp_path):
+    from proximic_ring.text_processing.task_routing import task_availability
+    trace = {'classification_type':'joint', 'task':'dictation', 'task_availability':task_availability(''),
+             'stages':[{'stage':'joint', 'answers':{
+                 'voice_intent':{'choice':'dictation','probabilities':{'dictation':.9,'edit':.1}},
+                 'insert':{'choice':'skip','probabilities':{'apply':.1,'skip':.9}}}}]}
+    details = automatic_history_details(tmp_path, {'mode':{'routing':'auto','router_trace':trace}})
+    line = details['probabilityText'].splitlines()[0]
+    assert line == '修改：不可用（无可编辑原文，未参与分类，无模型概率）'
+    assert '%' not in line and not details['warningText']
+
+
+def test_empty_source_history_saves_reduced_request_schema(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / 'dataset', 'anonymous-1')
+    request = InputModeRoutingRequest(901, 7, '我叫张伟', LLMSettings(), router_backend='clef', target_text='')
+    collector.record_routing_request(request)
+    record = collector._interaction_data(collector._routing_interactions[901])
+    assert 'modify' not in record['mode']['router_schema']
+    assert len(record['mode']['router_schema']) == 6
+
+
 def context_fixture():
     context = filter_ocr_lines([
         {"text": "16:29", "box": [.5, .3, .1, .02], "confidence": .99},

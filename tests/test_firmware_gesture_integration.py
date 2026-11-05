@@ -11,13 +11,14 @@ from proximic_ring.voice import app_runtime
 from proximic_ring.audio.ring import RingAudioSource
 
 
+@pytest.mark.parametrize("automatic", [False, True])
 @pytest.mark.parametrize("confirm_name,slot,live", [
     ("double-tap", 0, False), ("tap", 0, False), ("snap", 1, False), ("swipe-left", 0, True),
     ("swipe-up", 1, True),
     ("clench", 0, False), ("index-pinch", 1, True), ("middle-pinch", 0, False),
     ("circle-clockwise", 1, False), ("circle-counterclockwise", 0, True),
 ])
-def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypatch, confirm_name, slot, live):
+def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypatch, confirm_name, slot, live, automatic):
     from proximic_ring.asr.controller import ProximitySessionController
     from proximic_ring.voice.detection.events import Stage2Event
     import proximic_ring.gestures.firmware_gestures as gestures
@@ -30,6 +31,10 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
     remaining = [name for name in GESTURE_LABELS if name != confirm_name]
     configured = GestureBindings(confirm=confirms, end=confirms,
                                  undo=tuple(remaining[:2]), switch_mode=tuple(remaining[2:4]), send=(), polish=())
+    if automatic:
+        from dataclasses import replace
+        # Former manual conversion has the exact same audio END behavior.
+        configured = replace(configured, confirm=(), end=(), switch_mode=confirms)
     state["bindings"] = GestureBindings() if live else configured
     audio_thread = threading.get_ident()
 
@@ -46,7 +51,7 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
 
     def tap(name=None):
         thread = threading.Thread(target=lambda: state["gesture_callback"](
-            SimpleNamespace(name=name or next(item for item in state["bindings"].confirm if item), confidence=0.99)
+            SimpleNamespace(name=name or (confirm_name if automatic and state["bindings"] is configured else next(item for item in state["bindings"].confirm if item)), confidence=0.99)
         ))
         thread.start()
         thread.join(1)
@@ -147,6 +152,7 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
         on_started=lambda: None, on_session_ended=recognition.clear,
         on_gesture=actions.append,
         gesture_bindings_provider=(lambda: state["bindings"]) if live else None,
+        automatic_routing_provider=lambda: automatic,
     )
     if confirm_name == "tap":
         assert actions == []

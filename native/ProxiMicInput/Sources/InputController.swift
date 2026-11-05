@@ -276,6 +276,7 @@ final class ProxiMicInputController: IMKInputController {
         rejectedBeginID = nil
         panel.onCancel = { [weak self] in self?.cancelCurrentOrHistory() }
         panel.onConvert = { [weak self] in self?.perform { $0.convert() } }
+        panel.onFinish = { [weak self] in self?.perform { $0.finish() } }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in self?.tick() }
         guard service.activation.owns(self, lease) else { return }
         preparingActivation = false
@@ -562,6 +563,10 @@ final class ProxiMicInputController: IMKInputController {
         }
         perform { session in
             switch type {
+            case "automatic_progress":
+                if let stage = message["stage"] as? String, let tasks = message["tasks"] as? [String] {
+                    session.setAutomaticProgress(stage, tasks: tasks)
+                }
             case "update":
                 if let error = message["error"] as? String, !error.isEmpty { session.failASR(error) }
                 else if let text = message["text"] as? String {
@@ -859,7 +864,9 @@ final class ProxiMicInputController: IMKInputController {
                                     "edit_scope": session?.editScope ?? "unavailable",
                                     "automatic_mode": session?.automaticMode ?? false,
                                     "automatic_task": session?.automaticTask ?? "",
-                                    "automatic_routing_version": 2,
+                                    "automatic_stage": session?.automaticStage ?? "",
+                                    "automatic_tasks": session?.automaticTasks ?? [],
+                                    "automatic_routing_version": 3,
                                     "edit_source_text": session?.editRequestText ?? "",
                                     "context_complete": complete]
         // A sentence snapshot is stable. Fresh idle snapshots only answer explicit refreshes.

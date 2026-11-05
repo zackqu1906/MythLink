@@ -5,7 +5,7 @@ import pytest
 
 from proximic_ring.voice.hotwords import HotwordStore, HOTWORD_BUDGET, select_hotwords, validated_hotwords
 from proximic_ring.text_processing import LLMSettings, OpenAICompatibleTextProcessor
-from proximic_ring.text_processing.prompts import HOTWORD_EXTRACTION_PROMPT, EDIT_PROMPT, POLISH_PROMPT
+from proximic_ring.text_processing.prompts import HOTWORD_EXTRACTION_PROMPT, EDIT_FRAGMENT_PROMPT, POLISH_PROMPT
 
 
 def test_manual_and_independent_corrections_survive_individual_undo(tmp_path):
@@ -141,7 +141,7 @@ def test_extract_uses_its_own_prompt_and_small_output_budget(monkeypatch):
     assert words == ["张玮"]
     assert settings.enabled and settings.timeout_s <= 10
     assert request["system_prompt"] == HOTWORD_EXTRACTION_PROMPT
-    assert request["system_prompt"] not in (EDIT_PROMPT, POLISH_PROMPT)
+    assert request["system_prompt"] not in (EDIT_FRAGMENT_PROMPT, POLISH_PROMPT)
     assert request["edit_tool"] is None and request["max_tokens"] == 1024
     assert json.loads(request["user_content"])["before"] == "联系张伟"
 

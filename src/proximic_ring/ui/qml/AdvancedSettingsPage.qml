@@ -9,6 +9,11 @@ ColumnLayout {
     signal gpuSetupRequested()
     spacing: 24
 
+    ClefConnectionSettings {
+        Layout.fillWidth: true
+        connection: pane.controller.clefConnection
+    }
+
     SpeechServiceSettings {
         objectName: "settingsPage4"
         Layout.fillWidth: true

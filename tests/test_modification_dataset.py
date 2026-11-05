@@ -54,7 +54,7 @@ def _update(session_id: int, text: str, *, final: bool):
 
 def test_clef_routing_history_records_choice_schema_and_model_without_credentials(tmp_path, monkeypatch):
     from proximic_ring.text_processing.model import InputModeRoutingRequest, InputModeRoutingResult
-    from proximic_ring.text_processing.router_prompts import routing_schema, ROUTER_PROMPT_VERSION
+    from proximic_ring.text_processing.router_prompts import routing_schema, joint_router_input, ROUTER_PROMPT_VERSION
     from proximic_ring.text_processing.task_routing import EditPlan
     monkeypatch.setenv("PROXIMIC_CLEF_MODEL", "Cloudflare/clef-flash")
     monkeypatch.setenv("PROXIMIC_CLEF_API_KEY", "test-secret-not-for-history")
@@ -74,7 +74,7 @@ def test_clef_routing_history_records_choice_schema_and_model_without_credential
     assert mode["task_type"] == "edit"
     assert mode["edit_plan"] == {"tasks": ["modify"]}
     assert mode["router_classification_type"] == "joint"
-    assert "六类任务定义" in mode["router_rules"]
+    assert mode["router_rules"] == joint_router_input("")
     assert "test-secret-not-for-history" not in json.dumps(record)
 
 

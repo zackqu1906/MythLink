@@ -333,3 +333,36 @@ def test_installed_scan_survives_unavailable_native_channel(route, monkeypatch):
     QCoreApplication.processEvents()
     assert not catalog._is_added(CODEX) and catalog.bindingCount(CODEX) == 0
     assert catalog._candidates == [host_candidate(), dict(value=CODEX, label="Codex")]
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('not well-formed (invalid token): line 1'), TimeoutError()])
+def test_failed_application_refresh_keeps_last_list_and_can_recover(route, monkeypatch, caplog, failure):
+    import proximic_ring.ui.desktop.application_mapping_controller as module
+    from PySide6.QtCore import QCoreApplication
+    _, service, *_ = route
+    catalog = service.catalog
+    previous = [host_candidate(), dict(value=CODEX, label="Codex")]
+    catalog._apply_result('apps', catalog._generation['apps'], '', dict(candidates=previous), '')
+    monkeypatch.setattr(catalog.channel, 'call', lambda *args, **kwargs: [])
+    def fail_scan(running):
+        raise failure
+    monkeypatch.setattr(module, 'installed_applications', fail_scan)
+    class ImmediateThread:
+        def __init__(self, *, target, **kwargs): self.target = target
+        def start(self): self.target()
+    monkeypatch.setattr(module.threading, 'Thread', ImmediateThread)
+
+    catalog.refreshApplications()
+    QCoreApplication.processEvents()
+
+    assert catalog._candidates == previous and not catalog.listBusy
+    assert '请稍后刷新' in catalog.listMessage and '保留' in catalog.listMessage
+    assert 'invalid token' not in catalog.listMessage
+    if not isinstance(failure, TimeoutError):
+        assert 'invalid token' in caplog.text
+    # A successful empty scan is authoritative; failure retention must not make
+    # genuinely removed apps persist forever.
+    monkeypatch.setattr(module, 'installed_applications', lambda running: dict(candidates=[]))
+    catalog.refreshApplications()
+    QCoreApplication.processEvents()
+    assert catalog._candidates == [host_candidate()] and catalog.listMessage == ''

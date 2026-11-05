@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 from proximic_ring.text_processing.intent_router import ClefIntentRouter
 from proximic_ring.text_processing.router_prompts import ROUTER_PROMPT_VERSION, EDIT_TASK_DESCRIPTIONS, routing_schema, joint_router_input
-from proximic_ring.text_processing.task_routing import EDIT_TASK_LABELS, LEGACY_EDIT_HINT_LABELS, resolve_joint_decision, router_input, select_multiclass_task
+from proximic_ring.text_processing.task_routing import EDIT_TASK_LABELS, LEGACY_EDIT_HINT_LABELS, resolve_joint_decision, router_input, select_multiclass_task, task_availability
 try:
     from .clef_cases import load_cases, DEFAULT_CASES, comparable_tasks, raw_joint_match
     from .clef_routing_report import write_routing_html
@@ -41,7 +41,8 @@ def snapshots():
     return {
         'A': {**original, 'primary_input_suffix': '', 'version': frozen['version']},
         'B': {**original, 'primary_input_suffix': supplement, 'version': frozen['version'] + '-definitions'},
-        'C': {'joint': routing_schema(), 'shared_input_prefix': joint_router_input(''), 'version': ROUTER_PROMPT_VERSION},
+        'C': {'joint': routing_schema(), 'joint_without_source': routing_schema(target=''),
+              'shared_input_prefix': joint_router_input(''), 'version': ROUTER_PROMPT_VERSION},
     }, signature, frozen['model_revision']
 
 
@@ -59,11 +60,13 @@ def run_case(router, case, variant, prompts):
     try:
         if variant == 'C':
             trace['input_state'] = prompts['shared_input_prefix'] + state
-            answers = call('joint', trace['input_state'], prompts['joint'])
+            schema = prompts['joint'] if case['target'].strip() else prompts['joint_without_source']
+            trace.update(request_schema=schema, task_availability=task_availability(case['target']))
+            answers = call('joint', trace['input_state'], schema)
             trace.update(raw_model_task=answers['voice_intent']['choice'],
                          probabilities=answers['voice_intent']['probabilities'],
-                         raw_tasks=[k for k in EDIT_TASK_LABELS if answers[k]['choice'] == 'apply'])
-            decision, policy = resolve_joint_decision(answers)
+                         raw_tasks=[k for k in EDIT_TASK_LABELS if k in answers and answers[k]['choice'] == 'apply'])
+            decision, policy = resolve_joint_decision(answers, target=case['target'])
             trace.update(policy)
             actual = {'task': decision.task, **(decision.edit_plan.as_dict() if decision.edit_plan else {})}
         else:

@@ -574,16 +574,21 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
 修改指令只输入“识别”，期望得到“识别效果还不错”。两种编辑协议共用纠错规则，
 结合原文定位替换位置并保留其余文字；没有合理对应位置或位置有歧义时保持原文。
 
-自动区分听写/编辑指令可以用单独的路由测试程序验证。它可选择本地 Qwen、豆包、DeepSeek
-或三者同时比较，并为每次请求打印开始时间、完成时间、判断结果、原始返回和耗时：
+自动模式使用 Clef 联合分类，一次判断听写／编辑及六类编辑任务。将 `PROXIMIC_CLEF_URL`
+设置为完整的 `/v1/systemone` 服务地址后，
+可用当前路由测试程序验证；完整流程另加调用已配置的正文模型：
 
 ```powershell
-$env:ARK_API_KEY = "<your-ark-api-key>"
-.\.runtime\venv\Scripts\python.exe .\tools\test_input_mode_router.py `
-  --provider compare `
-  --text "把上一句里的周四改成周五" `
-  --expected edit
+.\.runtime\venv\Scripts\python.exe .\tools\check_clef_router.py `
+  --cases .\tools\data\automatic_voice_routing_cases.json `
+  --output .\.runtime\clef\routing-results.json
+.\.runtime\venv\Scripts\python.exe .\tools\check_clef_pipeline.py `
+  --cases .\tools\data\clef_ocr_context_cases.json `
+  --output .\.runtime\clef\ocr-pipeline-results.json
 ```
+
+旧聊天模型二分类提示词及其测试入口已移除。当前提示词位置和可编辑样例说明见
+[自动语音流程](docs/AUTOMATIC_VOICE.md)及[测试样例说明](tools/data/README.md)。
 
 独立测试工具的本地默认超时是 180 秒；桌面 UI 的请求超时可以在设置中调整，范围为 1～300 秒。
 

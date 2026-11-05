@@ -62,7 +62,11 @@ def automatic_history_details(directory: Path, record: dict) -> dict:
     if is_joint:
         hint_text = ""
     answer_lines = []
+    excluded = trace.get("task_availability", {}).get("excluded_tasks", {})
     for key, label in {**EDIT_TASK_LABELS, **LEGACY_EDIT_TASK_LABELS, **LEGACY_EDIT_HINT_LABELS}.items():
+        if excluded.get(key) == "no_editable_source":
+            answer_lines.append(f"{label}：不可用（无可编辑原文，未参与分类，无模型概率）")
+            continue
         answer = second.get("answers", {}).get(key)
         if isinstance(answer, dict):
             choice = "启用" if answer.get("choice") == "apply" else "不启用"

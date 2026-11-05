@@ -9,8 +9,8 @@
 |---|---|
 | `ui/voice/automatic_voice.py` | 自动会话入口、开始时预取 OCR、提交 Clef、接收计划并进入生成／原生编辑 |
 | `text_processing/intent_router.py` | Clef 单次联合判断总体意图与六个任务，一致性拒绝与 trace |
-| `text_processing/task_routing.py` | 分类类型、编辑计划校验、路由输入裁剪 |
-| `text_processing/router_prompts.py` | 联合分类提示词、问题 schema、类别边界 |
+| `text_processing/task_routing.py` | 分类类型、原文决定的可用任务、编辑计划校验、路由输入裁剪 |
+| `text_processing/router_prompts.py` | 联合分类提示词、按原文生成问题 schema、类别边界 |
 | `text_processing/automatic_prompts.py` | 按六类任务组合生成提示词，修改包含释字及重述 |
 | `text_processing/automatic_processing.py` | `process_task_with_trace`：按计划一次生成完整结果，不走手动候选竞速 |
 | `text_processing/screen_context.py` | 当次目标窗口截图、OCR、规则过滤及本地诊断证据 |
@@ -48,12 +48,16 @@ Clef 联合七字段 → 一致性校验 → 组合提示词 → 一次生成 �
 | `voice/modification_dataset.py` | 听写、编辑、自动分类及截图的统一记录与删除 |
 | `ui/voice/inline_controller.py`、`native/ProxiMicInput/Sources/` | 原生会话、目标与版本校验、文字应用、撤销 |
 
-## 旧兼容代码的命名
+## 旧入口清理及仍在使用的内部命名
 
-`text_processing/legacy_input_routing.py` 保存旧的聊天大模型听写／编辑分类 API，
-仅供已有调用方兼容。它既不是手势判断，也不是 Clef 失败后的备用分类器；当前自动 UI 显式选择 Clef。
+2026-11-05 移除了旧聊天模型二分类提示词、`legacy_input_routing.py`、
+`classify_input_mode*` API 及其专用测试工具。`InputModeRoutingRequest` 默认使用 Clef，
+Worker 仅接受 Clef；显式传入旧 `llm` 或 `gliner` 后端会报不支持，不会静默切换模型。
+正文模型的本地预热不再发送旧分类提示词。历史记录读取保留，新的请求不再写入旧提示词。
 
 `controller.py` 中 `_AutoInteraction`、`_prepare_auto_candidates` 等名称来自原有可切换候选流程，
 目前手动桌面链路仍使用它们；它们不属于新的 Clef 自动流程。保留这些内部名称，避免连带改变候选、撤销和异步回调。
 
-本次拆分保持公共处理器方法签名、方法体和现有行为；没有改变用户手势绑定、分类方式或提示词内容。
+当前分类提示词为 `router_prompts.py` 的 v19，自动生成提示词为 `automatic_prompts.py` 的 v9。
+本次清理未改这两套文本，仍在使用的手动编辑、润色、听写、OCR 与热词提示词保留。
+旧两级／分支方案的冻结提示词仅供 `tools/` 历史评测及 `docs/reports/` 结果追溯，不会被应用加载。

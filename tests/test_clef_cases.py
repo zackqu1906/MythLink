@@ -106,3 +106,17 @@ def test_invalid_generation_expectations_fail_offline(tmp_path, sample, field, v
     sample['expected'][field]=value
     with pytest.raises(ValueError):
         load_cases(save(tmp_path,[sample]))
+
+
+def test_empty_source_cannot_expect_modify_and_dump_omits_it(tmp_path, sample):
+    sample['target'] = ' \n'
+    with pytest.raises(ValueError, match='修改任务不可用'):
+        load_cases(save(tmp_path, [sample]), require_plan=True)
+    sample['expected'] = {'task': 'dictation', 'tasks': []}
+    path = save(tmp_path, [sample])
+    assert load_cases(path, require_plan=True) == [sample]
+    script = Path(__file__).resolve().parents[1] / 'tools' / 'check_clef_router.py'
+    output = subprocess.run([sys.executable, str(script), '--cases', str(path), '--dump-request'],
+                            capture_output=True, text=True, check=True)
+    payload = json.loads(output.stdout)['requests'][0]['body']
+    assert 'modify' not in payload['questions'] and len(payload['questions']) == 6

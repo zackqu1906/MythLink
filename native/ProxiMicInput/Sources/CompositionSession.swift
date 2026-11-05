@@ -151,6 +151,8 @@ final class CompositionSession {
     private(set) var editRequested = false
     var automaticMode = false
     private(set) var automaticTask = ""
+    private(set) var automaticStage = ""
+    private(set) var automaticTasks: [String] = []
     private(set) var automaticAllowsEmptySource = false
     private(set) var error = ""
     private(set) var lastSequence: Int
@@ -647,6 +649,15 @@ final class CompositionSession {
     }
 
     /// Partial and final updates share the same composition; final never presses Return.
+    func setAutomaticProgress(_ stage: String, tasks: [String]) {
+        guard automaticMode, !cancelPending, [.listening, .finishing, .editing].contains(phase),
+              ["routing", "routed", "generating", "dictation", "route_failed", "dictation_failed"].contains(stage),
+              tasks.count <= 6, tasks.allSatisfy({ ["modify", "insert", "polish", "format", "translate", "compose"].contains($0) }) else { return }
+        automaticStage = stage
+        automaticTasks = tasks
+        onChanged?() // Presentation only: no phase, text, revision or ownership changes.
+    }
+
     func setAutomaticTask(_ task: String, allowEmptySource: Bool = false) {
         guard automaticMode, !finalReceived, !cancelPending,
               [.listening, .finishing].contains(phase),
@@ -810,6 +821,7 @@ final class CompositionSession {
 
     func convert() {
         guard !cancelPending else { return }
+        if automaticMode { finish(); return }
         guard canEdit else {
             error = "请在文字还有下划线时右滑，确认本句为编辑指令"
             onChanged?()
@@ -1060,12 +1072,13 @@ final class CompositionSession {
     }
 
     var canPolish: Bool {
-        phase == .dictated && !polished && !editRequested && !hasComposition &&
+        !automaticMode && phase == .dictated && !polished && !editRequested && !hasComposition &&
             !awaitingReadback && !client.clientOperationPending && !raw.isEmpty &&
             (committedRangeVerified || canReplace)
     }
 
     func polish(restoringRawOnUndo: Bool) {
+        if automaticMode { return }
         guard canPolish else {
             if phase == .dictated && !polished {
                 error = "当前输入框无法校验本句文字，暂不能润色"

@@ -71,6 +71,10 @@ def write_routing_html(report, path):
             chosen = set(case["expected"].get("tasks", [])) | set(case["expected"].get("hints", []))
             expected_edit = case["expected"]["task"] == "edit"
             rows = []
+            for name, reason in trace.get("task_availability", {}).get("excluded_tasks", {}).items():
+                if reason == "no_editable_source":
+                    rows.append(row([labels.get(name, name), name, "不可用", "不可用（无可编辑原文）",
+                                     "—", "—", "未请求，无模型概率"]))
             for name in secondary.get("answers", {}):
                 if name == "voice_intent":
                     continue
@@ -95,7 +99,10 @@ def write_routing_html(report, path):
                 rows.append(row([label, name, expected, actual, percent(p.get("apply")), percent(p.get("skip")),
                                  "—" if correct is None else ("正确" if correct else "错误")], correct))
             block += table(["任务／辅助标签", "字段", "预期", "实际", "apply 概率", "skip 概率", "结果"], rows)
-        block += f'<details><summary>实际分类输入 state</summary><pre>{text(trace.get("input_state", "未记录"))}</pre></details></section>'
+        block += f'<details><summary>实际分类输入 state</summary><pre>{text(trace.get("input_state", "未记录"))}</pre></details>'
+        if trace.get("request_schema") is not None:
+            block += '<details><summary>本条实际问题 schema</summary><pre>' + text(json.dumps(trace["request_schema"], ensure_ascii=False, indent=2)) + '</pre></details>'
+        block += '</section>'
         details.append(block)
 
     m = report["metrics"]
@@ -109,7 +116,7 @@ def write_routing_html(report, path):
 <p>新校验策略中听写优先；分类不明确回退听写。标黄结果保留原始编辑 apply 概率，但不执行这些任务。校验后匹配的提升不是模型原始分类准确率提升；旧报告按其当时策略展示。</p>
 <p>分类总耗时中位数 {seconds(m['latency_median_s'])} 秒，P95 {seconds(m['latency_p95_s'])} 秒。
 各阶段耗时都包含 HTTP/SSH 网络及服务端处理，不含 ASR、OCR 采集、文本生成和写回。</p>
-<p>各版本的问题字段以本次实际响应为准；当前为总体意图和 {len(EDIT_TASK_LABELS)} 个任务，旧报告保留原分类及辅助标签。每题 apply/skip 互斥，不同题可以组合，概率不能跨题相加。
+<p>各版本的问题字段以本次实际请求及响应为准；当前为总体意图和最多 {len(EDIT_TASK_LABELS)} 个任务。空原文时修改不参与分类，标记为不可用，不记为模型 skip 或 0%/100%。原始完整分类统计可用任务的原始选择；规则排除带来的改善不代表模型学会了该边界。旧报告保留原分类及辅助标签。每题 apply/skip 互斥，不同题可以组合，概率不能跨题相加。
 所有概率按服务端返回值展示，尚未校准为真实正确率。这是合成样例评测，不代表真实用户准确率。</p>
 {table(['#', '编号', '口述', '预期', '最终处理', '最终匹配', '听写概率', '编辑概率', '联合或一级/秒', '任务响应/秒', '总计/秒'], summary)}
 {''.join(details)}

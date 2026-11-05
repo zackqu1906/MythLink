@@ -13,8 +13,8 @@ func property(_ source: TISInputSource, _ key: CFString) -> AnyObject? {
     return Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
 }
 
-func allSources() -> [TISInputSource] {
-    guard let list = TISCreateInputSourceList(nil, true)?.takeRetainedValue() else { return [] }
+func allSources(includeAllInstalled: Bool = true) -> [TISInputSource] {
+    guard let list = TISCreateInputSourceList(nil, includeAllInstalled)?.takeRetainedValue() else { return [] }
     return (0..<CFArrayGetCount(list)).map {
         unsafeBitCast(CFArrayGetValueAtIndex(list, $0), to: TISInputSource.self)
     }
@@ -62,10 +62,25 @@ func fallbackKeyboardID() throws -> String {
 }
 
 func snapshot() -> [String: Any] {
-    let items = sources().map { source -> [String: Any] in
-        ["id": property(source, kTISPropertyInputSourceID) as? String ?? "",
+    let matching = sources()
+    let availableIDs = Set(allSources(includeAllInstalled: false).compactMap {
+        property($0, kTISPropertyInputSourceID) as? String
+    })
+    let parentEnabled = !matching.contains {
+        property($0, kTISPropertyInputSourceID) as? String == productID
+            && property($0, kTISPropertyInputSourceIsEnabled) as? Bool != true
+    }
+    let items = matching.map { source -> [String: Any] in
+        let identifier = property(source, kTISPropertyInputSourceID) as? String ?? ""
+        let enabled = property(source, kTISPropertyInputSourceIsEnabled) as? Bool ?? false
+        let selectCapable = property(source, kTISPropertyInputSourceIsSelectCapable) as? Bool ?? false
+        return ["id": identifier,
          "name": property(source, kTISPropertyLocalizedName) as? String ?? "",
-         "enabled": property(source, kTISPropertyInputSourceIsEnabled) as? Bool ?? false,
+         "type": property(source, kTISPropertyInputSourceType) as? String ?? "",
+         "enabled": enabled,
+         "enable_capable": property(source, kTISPropertyInputSourceIsEnableCapable) as? Bool ?? false,
+         "select_capable": selectCapable,
+         "selectable": enabled && selectCapable && parentEnabled && availableIDs.contains(identifier),
          "selected": property(source, kTISPropertyInputSourceIsSelected) as? Bool ?? false]
     }
     return ["bundle_id": productID, "path": installation.path,
@@ -154,18 +169,25 @@ struct InputMethodAdmin {
             let status = TISRegisterInputSource(installation as CFURL)
             guard status == noErr else { fail("输入法注册失败：\(status)") }
         case "enable":
-            let matching = sources().sorted {
-                let leftIsMode = (property($0, kTISPropertyInputSourceType) as? String) == (kTISTypeKeyboardInputMode as String)
-                let rightIsMode = (property($1, kTISPropertyInputSourceType) as? String) == (kTISTypeKeyboardInputMode as String)
-                return !leftIsMode && rightIsMode
-            }
-            guard !matching.isEmpty else { fail("未找到已注册的 Mythlink 输入源，请先安装。") }
-            for source in matching {
-                if property(source, kTISPropertyInputSourceIsEnableCapable) as? Bool == true {
-                    let status = TISEnableInputSource(source)
-                    guard status == noErr else { fail("输入法启用失败：\(status)") }
-                }
-            }
+            do {
+                try enableVoiceInputSources(productID: productID, readSources: {
+                    (snapshot()["sources"] as? [[String: Any]] ?? []).map {
+                        InstallableInputSource(id: $0["id"] as? String ?? "",
+                            enabled: $0["enabled"] as? Bool ?? false,
+                            enableCapable: $0["enable_capable"] as? Bool ?? false,
+                            selectable: $0["selectable"] as? Bool ?? false)
+                    }
+                }, enable: { identifier in
+                    guard let source = sources().first(where: {
+                        property($0, kTISPropertyInputSourceID) as? String == identifier
+                    }) else { throw SourceSelectionFailure("待启用的 Mythlink 输入源已变化，请重试。") }
+                    let result = TISEnableInputSource(source)
+                    guard result == noErr else {
+                        let stage = identifier == productID ? "输入法组件" : "语音模式"
+                        throw SourceSelectionFailure("\(stage)启用失败：\(result)")
+                    }
+                })
+            } catch { fail(error.localizedDescription) }
         case "disable":
             guard !sources().contains(where: { property($0, kTISPropertyInputSourceIsSelected) as? Bool == true }) else {
                 fail("请先手动切回系统拼音或其他输入法，再卸载 Mythlink。")

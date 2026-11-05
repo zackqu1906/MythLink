@@ -22,7 +22,8 @@ from ...voice.ime.input_source_switch import foreground_pid, select_voice_input_
 from ...scenes.registry import SCENE_LABELS, PRESENTATION
 from ...platforms.macos.wechat_setup import (KEYBOARD_SETTINGS_URL, MENU_TITLES,
                             KeyboardShortcutsNavigator, detect_wechat_menu)
-from .shortcut_recorder import shortcut_from_event, shortcut_from_key
+from .shortcut_recorder import (ShortcutRecordingGuard, recorded_key_identity,
+                                shortcut_from_event, shortcut_from_key)
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,11 @@ class AppGestureController(QObject):
         self._notice = ""
         self._recording = False
         self._recording_error = ""
+        self._recording_guard = ShortcutRecordingGuard()
+        self._pending_shortcut = None
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(self._recording_app_state_changed)
         self._pending = None
         self._last_dispatch = None
         from ..desktop.browser_action_queue import BrowserActionQueue
@@ -234,15 +240,34 @@ class AppGestureController(QObject):
 
     @recording.setter
     def recording(self, value):
+        value = bool(value)
+        if value == self._recording:
+            return
         app = QCoreApplication.instance()
-        if app is not None and bool(value) != self._recording:
-            if value:
+        if value:
+            try:
+                self._recording_guard.start()
+            except Exception as exc:
+                field = QGuiApplication.focusObject()
+                if field is not None and field.property("shortcutRecorder"):
+                    field.setProperty("focus", False)
+                self._recording_error = str(exc)
+                self.recordingChanged.emit()
+                return
+            if app is not None:
                 app.installEventFilter(self)
-            else:
+        else:
+            if app is not None:
                 app.removeEventFilter(self)
-        self._recording = bool(value)
+            self._recording_guard.stop()
+        self._recording = value
+        self._pending_shortcut = None
         self._recording_error = ""
         self.recordingChanged.emit()
+
+    def _recording_app_state_changed(self, state):
+        if state != Qt.ApplicationActive:
+            self.recording = False
 
     @Property(str, notify=recordingChanged)
     def recordingError(self):
@@ -253,6 +278,7 @@ class AppGestureController(QObject):
             return False
         field = QGuiApplication.focusObject()
         if field is None or not field.property("shortcutRecorder") or not field.property("visible"):
+            self.recording = False
             return False
         event.accept()
         if event.type() == QEvent.KeyPress and not event.isAutoRepeat():
@@ -266,8 +292,16 @@ class AppGestureController(QObject):
                     self._recording_error = str(exc)
                     self.recordingChanged.emit()
                 else:
-                    if value:
-                        self.shortcutCaptured.emit(value)
+                    if value and self._pending_shortcut is None:
+                        self._pending_shortcut = (recorded_key_identity(event), value)
+        elif (event.type() == QEvent.KeyRelease and not event.isAutoRepeat()
+              and self._pending_shortcut is not None
+              and recorded_key_identity(event) == self._pending_shortcut[0]):
+            # Keep the system guard until key-up so repeats cannot invoke the
+            # very shortcut being recorded after QML releases the field's focus.
+            _, value = self._pending_shortcut
+            self._pending_shortcut = None
+            self.shortcutCaptured.emit(value)
         return True
 
     def notify(self, text, *, duration=2200):
@@ -799,6 +833,9 @@ class AppGestureController(QObject):
                    else {"polish": _PolishBinding(gesture=name)} if name in bindings.polish
                    else {})
         action = next((key for key, b in actions.items() if b.enabled and b.gesture == name), None)
+        if action == "polish" and self.owner._inline_input.session_automatic:
+            self.notify("自动模式：结束语音后自动判断处理方式")
+            return True
         if action is None:
             self._stop_trace(event, "binding_missing")
             return False

@@ -54,7 +54,10 @@ def installer(tmp_path, monkeypatch):
                 output = json.dumps({'input_source_restored': restored})
             elif args[1] == 'status':
                 output = json.dumps({'installed': value.destination.exists(),
-                    'sources': [{'selected': state['selected'], 'enabled': state['enabled']}]})
+                    'sources': state.get('sources', [{
+                        'id': module.BUNDLE_ID + '.dictation',
+                        'selected': state['selected'], 'enabled': state['enabled'],
+                        'selectable': state['enabled']}])})
         elif args[0] == '/usr/bin/pgrep':
             code, output = (0, state['running']) if state['running'] else (1, '')
         elif args[0] == '/bin/ps':
@@ -257,6 +260,36 @@ def test_invalid_signature_leaves_installed_bundle_untouched(installer):
 def test_system_must_confirm_enabled_source_or_install_rolls_back(installer):
     value, state, _ = installer
     state['enabled'] = False
+    with pytest.raises(RuntimeError, match='尚未确认'):
+        value.install()
+    assert not value.destination.exists()
+
+
+@pytest.mark.parametrize('mode', [None, {'enabled': False, 'selectable': False},
+                                 {'enabled': True, 'selectable': False},
+                                 {'enabled': True}])
+@pytest.mark.parametrize('existing', [False, True])
+def test_enabled_parent_does_not_prove_dictation_is_available(installer, mode, existing):
+    value, state, _ = installer
+    if existing:
+        bundle(value.destination, module.BUNDLE_ID, 'previous')
+    state['sources'] = [{'id': module.BUNDLE_ID, 'enabled': True,
+                         'selected': False, 'selectable': False}]
+    if mode is not None:
+        state['sources'].append({'id': module.BUNDLE_ID + '.dictation',
+                                 'selected': False, **mode})
+    with pytest.raises(RuntimeError, match='尚未确认'):
+        value.install()
+    if existing:
+        assert (value.destination / 'marker').read_text() == 'previous'
+    else:
+        assert not value.destination.exists()
+
+
+def test_another_selectable_mode_does_not_prove_dictation_is_available(installer):
+    value, state, _ = installer
+    state['sources'] = [{'id': module.BUNDLE_ID + '.other', 'enabled': True,
+                         'selected': False, 'selectable': True}]
     with pytest.raises(RuntimeError, match='尚未确认'):
         value.install()
     assert not value.destination.exists()

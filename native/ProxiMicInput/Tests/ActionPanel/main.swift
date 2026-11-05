@@ -103,7 +103,9 @@ func checkActionFit(_ count: Int, scale: CGFloat = 0.8) {
               "hidden action left unused space at the right edge")
     } else {
         check(find(content, "voiceGestureHints")?.isHidden == true, "empty actions still occupy a slot")
-        check(abs(content.bounds.width - 210 * scale) < 1, "zero actions kept the action gap")
+        let requiredText = ceil((label.stringValue as NSString).size(withAttributes: [.font: label.font!]).width)
+        let expectedWidth = 30 * scale + max(180 * scale, requiredText + 82 * scale)
+        check(abs(content.bounds.width - expectedWidth) < 1, "zero actions kept the action gap")
     }
 }
 
@@ -314,3 +316,64 @@ palette.hide()
 print("PASS input notices are passive and leave composition state intact")
 print("PASS listening and dictated palettes show the down-swipe polish hint until polishing")
 print("PASS zero through three actions fit without reserved space at every configured scale")
+
+// Automatic routing has one end action and never advertises manual conversion.
+let automaticClient = PanelTextClient()
+let automaticSession = try CompositionSession(client: automaticClient, utteranceID: "automatic-hud", sequence: 1)
+automaticSession.automaticMode = true
+automaticSession.update("改得客气一些", final: false)
+palette.configureGestureHints(VoiceHudBindings())
+palette.update(automaticSession)
+palette.position(caret: oldCaret, clientLevel: 0)
+guard let finishHint = find(content, "voiceHint_end") as? VoiceHudHint else { fatalError("missing finish hint") }
+check(editHint.isHidden && polishHint.isHidden && !finishHint.isHidden, "automatic mode exposed manual actions")
+check(finishHint.gestures == ["tap"] && label.stringValue == "请说话", "wrong automatic start/end presentation")
+try capture("automatic-listening")
+var finishes = 0
+automaticSession.onFinishAudio = { finishes += 1 }
+automaticSession.convert(); automaticSession.finish()
+check(finishes == 1 && !automaticSession.editRequested, "old conversion ending must only finish once")
+let beforeProgress = (automaticSession.revision, automaticClient.text.string)
+for (stage, tasks, title) in [("routing", [String](), "正在判断"),
+                               ("routed", ["polish", "translate"], "正在润色、翻译"),
+                               ("generating", ["polish", "translate"], "正在编辑 · 润色、翻译")] {
+    automaticSession.setAutomaticProgress(stage, tasks: tasks)
+    palette.update(automaticSession)
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+    check(label.stringValue.hasPrefix(title), "automatic stage was lost: \(stage)")
+    check(editHint.isHidden && polishHint.isHidden && finishHint.isHidden, "processing exposed end or manual choices")
+    try capture("automatic-" + stage)
+}
+automaticSession.setAutomaticProgress("generating", tasks: ["modify", "insert", "polish", "format", "translate", "compose"])
+let shortWidth = window.frame.width
+palette.update(automaticSession)
+if !VoiceHudMotion.reduced {
+    check(abs(window.frame.width - shortWidth) < 1, "resize jumped instead of starting at the displayed width")
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.06))
+    check(window.frame.width > shortWidth, "resize did not grow smoothly")
+}
+RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+content.layoutSubtreeIfNeeded()
+let fullTextWidth = (label.stringValue as NSString).size(withAttributes: [.font: label.font!]).width
+check(label.bounds.width + 1 >= fullTextWidth && label.lineBreakMode == .byClipping, "full task status was truncated")
+try capture("automatic-all-tasks")
+let longWidth = window.frame.width
+automaticSession.setAutomaticProgress("routing", tasks: [])
+palette.update(automaticSession)
+if !VoiceHudMotion.reduced {
+    check(abs(window.frame.width - longWidth) < 1, "shorter state snapped the panel width")
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.06))
+    let interruptedWidth = window.frame.width
+    automaticSession.setAutomaticProgress("generating", tasks: ["polish", "translate"])
+    palette.update(automaticSession)
+    check(abs(window.frame.width - interruptedWidth) < 1, "new state did not continue from the current animation width")
+}
+automaticSession.setAutomaticProgress("generating", tasks: ["polish", "translate"])
+RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.25))
+check(beforeProgress.0 == automaticSession.revision && beforeProgress.1 == automaticClient.text.string,
+      "presentation changed text or transaction revision")
+automaticSession.cancel()
+automaticSession.setAutomaticProgress("routing", tasks: [])
+check(automaticSession.automaticStage == "generating", "cancelled sentence accepted late progress")
+palette.hide()
+print("PASS automatic end, routing/task/generation states, cancellation and hidden manual hints")

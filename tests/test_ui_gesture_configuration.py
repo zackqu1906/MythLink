@@ -316,3 +316,23 @@ def test_inline_keyboard_recording_auto_saves_in_original_scope(mapping_ui, appl
     QMetaObject.invokeMethod(find(root, "gestureMappingMenu"), "close")
     QTest.qWait(100)
     assert not c.appGestures.recording
+
+
+def test_snap_cmd_space_recording_saves_after_key_release(mapping_ui):
+    c, _, root, _, _, _, _ = mapping_ui
+    idle(c)
+    click(root, 'globalGestureScope')
+    click(root, 'gestureCard_snap')
+    click(root, 'customShortcutButton')
+    QTest.qWait(160)
+    dialog = find(root, 'customShortcutDialog')
+    find(root, 'customShortcutName').setProperty('text', '系统搜索')
+    field = find(root, 'customShortcutRecorder')
+    field.forceActiveFocus()
+    QTest.keyPress(root, Qt.Key_Space, Qt.ControlModifier)
+    assert c.appGestures.recording and dialog.property('capturedShortcut') == ''
+    QTest.keyRelease(root, Qt.Key_Space, Qt.ControlModifier)
+    assert not c.appGestures.recording and dialog.property('capturedShortcut') == 'Cmd+Space'
+    click(root, 'useCustomShortcutButton')
+    QTest.qWait(100)
+    assert c._global_gesture_bindings.custom_for('snap').shortcut == 'Cmd+Space'

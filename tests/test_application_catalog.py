@@ -3,6 +3,8 @@ from pathlib import Path
 import plistlib
 import subprocess
 
+import pytest
+
 from proximic_ring.desktop.application_catalog import application_metadata, installed_applications, spotlight_application_paths
 
 
@@ -45,6 +47,42 @@ def test_broken_app_is_skipped_and_spotlight_failure_keeps_folder_results(tmp_pa
     result = installed_applications([], roots=[tmp_path])
     assert result['partial'] and [item['value'] for item in result['candidates']] == ['test.good']
     assert result['candidates'][0]['path'] == str(app)
+
+
+@pytest.mark.parametrize('payload', [
+    b'<?xml version="1.0"?><plist><dict><key>CFBundleName</key><string>A & B</string></dict></plist>',
+    b'<?xml version="1.0"?><plist><dict>',
+    b'not a plist',
+    b'bplist00broken',
+])
+def test_corrupt_plist_keeps_healthy_and_traditional_chinese_apps(tmp_path, caplog, payload):
+    root = tmp_path / '應用程式'
+    application(root / 'A.app', 'test.before')
+    broken = application(root / 'Broken.app', 'test.broken') / 'Contents/Info.plist'
+    broken.write_bytes(payload)
+    traditional = application(root / '文字編輯器.app', 'test.traditional', CFBundleDisplayName='繁體編輯器')
+
+    result = installed_applications([], roots=[root], indexed=[])
+
+    apps = {app['value']: app for app in result['candidates']}
+    assert set(apps) == {'test.before', 'test.traditional'}
+    assert apps['test.traditional']['path'] == str(traditional)
+    assert '繁體編輯器' in apps['test.traditional']['search']
+    assert result['partial']
+    assert str(broken) in caplog.text
+
+
+def test_running_app_with_corrupt_plist_keeps_native_identity(tmp_path, caplog):
+    app = application(tmp_path / 'Running.app', 'test.running')
+    broken = app / 'Contents/Info.plist'
+    broken.write_bytes(b'<?xml version="1.0"?><plist><string>A & B</string></plist>')
+    result = installed_applications([dict(value='test.running', label='執行中的應用', path=str(app))],
+                                    roots=[], indexed=[])
+    assert result['partial']
+    assert result['candidates'][0]['value'] == 'test.running'
+    assert result['candidates'][0]['running']
+    assert result['candidates'][0]['label'] == '執行中的應用'
+    assert str(broken) in caplog.text and 'ExpatError' in caplog.text
 
 
 def test_presentation_capability_is_discovered_for_editors_not_attachment_viewers(tmp_path):

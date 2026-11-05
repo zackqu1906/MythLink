@@ -24,6 +24,18 @@ LEGACY_EDIT_TASK_LABELS = {
 LEGACY_EDIT_HINT_LABELS = {"character_clarification": "释字拼写", "redictation": "直接重述"}
 DEFAULT_ROUTER_MODEL = "clef-flash"
 JOINT_POLICY_VERSION = "dictation-priority-v1"
+TASK_AVAILABILITY_VERSION = "modify-requires-source-v1"
+
+
+def available_edit_tasks(target=None):
+    """None exports the full catalogue; actual requests pass the editable source."""
+    return tuple(k for k in EDIT_TASK_LABELS if k != "modify" or target is None or target.strip())
+
+
+def task_availability(target):
+    available = available_edit_tasks(target)
+    return {"version": TASK_AVAILABILITY_VERSION, "available_tasks": list(available),
+            "excluded_tasks": {k: "no_editable_source" for k in EDIT_TASK_LABELS if k not in available}}
 
 
 @dataclass(frozen=True)
@@ -64,12 +76,15 @@ def joint_decision(answers):
     return resolve_joint_decision(answers)[0]
 
 
-def resolve_joint_decision(answers):
+def resolve_joint_decision(answers, *, target=None):
     """Keep model answers intact; return a final decision and separate policy evidence."""
+    available = available_edit_tasks(target)
+    if set(answers) != {"voice_intent", *available}:
+        raise ValueError("联合分类结果与本次可用任务不一致")
     tied = [name for name, answer in answers.items()
             if len(set(answer["probabilities"].values())) == 1]
     task = answers["voice_intent"]["choice"]
-    tasks = tuple(k for k in EDIT_TASK_LABELS if answers[k]["choice"] == "apply")
+    tasks = tuple(k for k in available if answers[k]["choice"] == "apply")
     codes, warnings = [], []
     if task == DICTATION and tasks:
         codes.append("dictation_with_tasks")
@@ -128,6 +143,6 @@ def router_input(utterance: str, target: str, context: dict) -> str:
         raise ValueError("本句过长，自动判断未执行")
     messages = context.get("messages", [])[-4:]
     history = "\n".join(f"{m.get('speaker', 'unknown')}: {m.get('text', '')}" for m in messages)[-360:]
-    return (f"当前口述：{utterance}\n可编辑原文：{target[-400:] or '空'}\n"
+    return (f"当前口述：{utterance}\n可编辑原文：{target[-400:] if target.strip() else '空'}\n"
             f"原文是否仅提供末尾片段：{'是' if len(target) > 400 else '否'}\n"
             f"聊天上文（仅供参考）：{history or '无'}")

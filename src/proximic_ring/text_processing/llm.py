@@ -25,24 +25,20 @@ from .prompts import (
     DICTATION_PROMPT,
     EDIT_FRAGMENT_PROMPT,
     EDIT_FRAGMENT_RETRY_PROMPT,
-    EDIT_FULL_TEXT_PROMPT,
     EDIT_FULL_TEXT_RETRY_PROMPT,
-    EDIT_PROMPT,
     EDIT_TOOL_REQUIRED_PROMPT,
-    INPUT_MODE_ROUTER_PROMPT,
     HOTWORD_EXTRACTION_PROMPT,
 )
 
 
-# Preserve the public processor API while keeping the two policies separate.
+# Automatic and explicit/manual generation share this transport.
 from .automatic_processing import AutomaticTextProcessingMixin
 from .manual_processing import ManualTextProcessingMixin
-from .legacy_input_routing import LegacyInputRoutingMixin, INPUT_MODE_MAX_OUTPUT_TOKENS
 from .processing_common import LLMResponseProcessingError, TEXT_PROCESSING_MAX_OUTPUT_TOKENS, _text_output_budget
 
 
 class OpenAICompatibleTextProcessor(
-    AutomaticTextProcessingMixin, ManualTextProcessingMixin, LegacyInputRoutingMixin
+    AutomaticTextProcessingMixin, ManualTextProcessingMixin
 ):
     """Shared model transport and edit validation, exposing both processing APIs.
 
@@ -195,7 +191,7 @@ class OpenAICompatibleTextProcessor(
         )
 
     def warmup(self, settings: LLMSettings) -> None:
-        """Load the local model and seed all stable prompt prefixes."""
+        """Load the local text model and seed dictation/manual-edit prefixes."""
 
         settings.validate()
         if not settings.enabled:
@@ -213,19 +209,11 @@ class OpenAICompatibleTextProcessor(
         )
         self._request_chat(
             settings,
-            system_prompt=EDIT_PROMPT,
+            system_prompt=EDIT_FRAGMENT_PROMPT,
             user_content=(
                 "<待修改文本>\n测试。\n</待修改文本>\n\n"
                 "<修改要求>\n保持不变\n</修改要求>"
             ),
-            temperature=0.0,
-            max_tokens=1,
-            edit_tool=None,
-        )
-        self._request_chat(
-            settings,
-            system_prompt=INPUT_MODE_ROUTER_PROMPT,
-            user_content="<用户语音>\n测试\n</用户语音>",
             temperature=0.0,
             max_tokens=1,
             edit_tool=None,

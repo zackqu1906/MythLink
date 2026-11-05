@@ -262,6 +262,9 @@ class RingGestureController(QObject):
             generation = self._generation
         service, bindings = self.owner._app_gestures, self.owner._gesture_bindings
         endpoint = name in bindings.confirm + bindings.end
+        if (name in bindings.switch_mode
+                and getattr(self.owner, "_automatic_session_enabled", lambda: False)()):
+            endpoint = True
         if endpoint and agent is not None and (agent.owns_input_focus()
                 or agent.recommendations.owns_input_focus()):
             # This is our known Qt editor. A conflicting app/global assignment

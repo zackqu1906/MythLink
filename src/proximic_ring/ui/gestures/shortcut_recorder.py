@@ -4,12 +4,29 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QGuiApplication, QKeySequence
 
 from ...gestures.app_gestures import KEY_CODES, normalize_shortcut
 
 MODIFIER_KEYS = {int(key) for key in (Qt.Key_Shift, Qt.Key_Control, Qt.Key_Meta, Qt.Key_Alt, Qt.Key_AltGr)}
 SHIFTED_KEYS = dict(zip('~!@#$%^&*()_+{}|:"<>?', '`1234567890-=[]\\;\',./'))
+
+
+class ShortcutRecordingGuard:
+    def __init__(self):
+        self._native = None
+
+    def start(self):
+        # Offscreen test windows cannot receive physical system hotkeys.
+        if sys.platform == 'darwin' and QGuiApplication.platformName() == 'cocoa':
+            if self._native is None:
+                from ...platforms.macos.shortcut_recording import SymbolicHotKeyGuard
+                self._native = SymbolicHotKeyGuard()
+            self._native.start()
+
+    def stop(self):
+        if self._native is not None:
+            self._native.stop()
 
 
 def shortcut_from_key(key, modifiers, *, native_key=None):
@@ -35,3 +52,14 @@ def shortcut_from_event(event):
     if sys.platform == "darwin" and any((event.nativeVirtualKey(), event.nativeScanCode(), event.nativeModifiers())):
         native = event.nativeVirtualKey()
     return shortcut_from_key(event.key(), event.modifiers().value, native_key=native)
+
+
+def recorded_key_identity(event):
+    """Match key-up even if Shift/Option was released before the main key."""
+    if sys.platform == 'darwin' and any((event.nativeVirtualKey(), event.nativeScanCode(), event.nativeModifiers())):
+        return ('physical', event.nativeVirtualKey())
+    base = QKeySequence(event.key()).toString(QKeySequence.PortableText)
+    base = SHIFTED_KEYS.get(base, base)
+    base = {'PgUp': 'PageUp', 'PgDown': 'PageDown', 'Del': 'Delete',
+            'Backtab': 'Tab', 'Enter': 'Return'}.get(base, base)
+    return ('physical', KEY_CODES[base]) if base in KEY_CODES else ('qt', event.key())

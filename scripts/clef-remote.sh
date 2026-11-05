@@ -41,6 +41,9 @@ case "$CLEF_ACTION" in
   compare)
     start_tunnel
     exec "$PROJECT_ROOT/.runtime/venv/bin/python" "$PROJECT_ROOT/tools/compare_clef_routing.py" "$@" ;;
+  split)
+    start_tunnel
+    exec "$PROJECT_ROOT/.runtime/venv/bin/python" "$PROJECT_ROOT/tools/check_clef_split.py" "$@" ;;
   primary)
     start_tunnel
     exec "$PROJECT_ROOT/.runtime/venv/bin/python" "$PROJECT_ROOT/tools/check_clef_primary.py" "$@" ;;
@@ -50,5 +53,5 @@ case "$CLEF_ACTION" in
   ui)
     start_tunnel
     exec bash "$PROJECT_ROOT/scripts/start-ui.sh" "$@" ;;
-  *) echo "Usage: $0 {start|status|stop|primary|compare|check|pipeline|ui} [arguments]" >&2; exit 2 ;;
+  *) echo "Usage: $0 {start|status|stop|primary|compare|split|check|pipeline|ui} [arguments]" >&2; exit 2 ;;
 esac

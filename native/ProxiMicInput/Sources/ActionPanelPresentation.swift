@@ -7,7 +7,8 @@ struct ActionPanelPresentation {
     let isError: Bool
 
     init(phase: CompositionSession.Phase, error: String, empty: Bool = false,
-         editRequested: Bool = false, readableRange: Bool = false, polished: Bool = false) {
+         editRequested: Bool = false, readableRange: Bool = false, polished: Bool = false,
+         automatic: Bool = false, stage: String = "", tasks: [String] = [], awaitingReadback: Bool = false) {
         let reason = error.trimmingCharacters(in: .whitespacesAndNewlines)
         if !reason.isEmpty {
             title = Self.summary(reason)
@@ -17,12 +18,31 @@ struct ActionPanelPresentation {
         }
         detail = nil
         isError = phase == .error
+        if automatic {
+            let names = ["modify": "修改", "insert": "插入", "polish": "润色", "format": "整理格式", "translate": "翻译", "compose": "创作"]
+            let taskText = tasks.compactMap { names[$0] }.joined(separator: "、")
+            if awaitingReadback && [.dictated, .edited].contains(phase) { title = "正在写入"; return }
+            if phase == .dictated && stage == "route_failed" { title = "路由失败 · 已保留听写"; return }
+            if phase == .dictated && stage == "dictation_failed" { title = "整理失败 · 已保留听写"; return }
+            if [.listening, .finishing, .editing].contains(phase) {
+                switch stage {
+                case "routing": title = "正在判断"
+                case "routed": title = "正在" + (taskText.isEmpty ? "准备听写" : taskText)
+                case "generating": title = "正在编辑" + (taskText.isEmpty ? "" : " · " + taskText)
+                case "dictation": title = "正在听写"
+                case "route_failed": title = "路由失败 · 正在保留听写"
+                case "dictation_failed": title = "整理失败 · 正在保留听写"
+                default: title = phase == .listening ? "请说话" : "正在识别"
+                }
+                return
+            }
+        }
         switch phase {
         case .listening: title = empty ? "听写 · 可以说话" : "听写中"
         case .finishing: title = editRequested ? "编辑 · 正在收尾" : "听写 · 正在收尾"
         case .dictated: title = empty ? "未识别到语音" : polished ? "已润色" : "已听写"
-        case .editing: title = "正在编辑…"
-        case .polishing: title = "正在润色…"
+        case .editing: title = "正在编辑"
+        case .polishing: title = "正在润色"
         case .edited: title = readableRange ? "已编辑可读原文" : "已编辑"
         case .undone: title = "已撤销"
         case .interrupted: title = "本句已结束"
@@ -67,6 +87,6 @@ struct ActionPanelPresentation {
         let line = reason.components(separatedBy: .newlines).first ?? reason
         let sentence = line.components(separatedBy: "。").first ?? line
         let result = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
-        return result.count > 24 ? String(result.prefix(23)) + "…" : result
+        return result.count > 24 ? String(result.prefix(23)) : result
     }
 }

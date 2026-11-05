@@ -17,6 +17,7 @@ class IMKInputController: NSObject {
     func client() -> IMKTextInput? { nil }
 }
 final class ActionPanel {
+    var onFinish: (() -> Void)?
     static var sentCount = 0
     func showSent() { Self.sentCount += 1 }
     func showNotice(_ text: String) {}

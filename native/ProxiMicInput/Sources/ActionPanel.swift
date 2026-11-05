@@ -16,11 +16,15 @@ final class ActionPanel: NSObject {
     private let cancelButton = VoiceHudHint(action: "undo")
     private let convertButton = VoiceHudHint(action: "switch_mode")
     private let polishHint = VoiceHudHint(action: "polish")
-    private var actionHints: [VoiceHudHint] { [cancelButton, convertButton, polishHint] }
+    private let finishButton = VoiceHudHint(action: "end")
+    private var actionHints: [VoiceHudHint] { [cancelButton, convertButton, polishHint, finishButton] }
+    private var automatic = false
+    private var finishAvailable = false
     private let stack = NSStackView()
     private let state = NSStackView()
     private let hints = NSStackView()
     private var hintWidthConstraint: NSLayoutConstraint!
+    private var stateWidthConstraint: NSLayoutConstraint!
     private var scaledConstraints: [(NSLayoutConstraint, CGFloat)] = []
     private var appearance = VoiceHudAppearance()
     private var visualState = ""
@@ -31,6 +35,8 @@ final class ActionPanel: NSObject {
     private var polishDetail = "润色本句"
     private var cancelDetail = "取消本句"
     private var dismissTimer: Timer?
+    private var resizeTimer: Timer?
+    private var resizeTarget: NSSize?
     private var shouldShow = false
     private var anchor = ActionPanelAnchor()
     private var busy = false
@@ -42,6 +48,7 @@ final class ActionPanel: NSObject {
     }
     var onCancel: (() -> Void)?
     var onConvert: (() -> Void)?
+    var onFinish: (() -> Void)?
 
     override init() {
         panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 290, height: 60),
@@ -61,7 +68,7 @@ final class ActionPanel: NSObject {
         status.identifier = NSUserInterfaceItemIdentifier("status")
         status.font = VoiceHudStyle.font(12)
         status.textColor = VoiceHudStyle.text
-        status.lineBreakMode = .byTruncatingTail
+        status.lineBreakMode = .byClipping // Width is measured; never replace a state with an ellipsis.
         status.maximumNumberOfLines = 1
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         progress.identifier = NSUserInterfaceItemIdentifier("voiceProcessingDots")
@@ -101,12 +108,13 @@ final class ActionPanel: NSObject {
             scaledConstraints += [(hint.widthAnchor.constraint(equalToConstant: VoiceHudHint.baseWidth), VoiceHudHint.baseWidth),
                                   (hint.heightAnchor.constraint(equalToConstant: 32), 32)]
         }
+        stateWidthConstraint = state.widthAnchor.constraint(equalToConstant: 180)
         scaledConstraints += [
             (progress.widthAnchor.constraint(equalToConstant: 31), 31),
             (progress.heightAnchor.constraint(equalToConstant: 5), 5),
             (symbolSlot.widthAnchor.constraint(equalToConstant: 30), 30),
             (symbolSlot.heightAnchor.constraint(equalToConstant: 24), 24),
-            (state.widthAnchor.constraint(equalToConstant: 180), 180)
+            (stateWidthConstraint, 180)
         ]
         stack.setViews([state, hints], in: .center)
         stack.orientation = .horizontal
@@ -116,11 +124,11 @@ final class ActionPanel: NSObject {
         stack.identifier = NSUserInterfaceItemIdentifier("voiceHudContent")
         stack.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(stack)
-        scaledConstraints += [(stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 16), 16),
-                              (stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -14), -14)]
+        scaledConstraints += [(stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 16), 16)]
         NSLayoutConstraint.activate(scaledConstraints.map { $0.0 } + [hintWidthConstraint, stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor)])
         cancelButton.target = self; cancelButton.action = #selector(cancel)
         convertButton.target = self; convertButton.action = #selector(convert)
+        finishButton.target = self; finishButton.action = #selector(finish)
         // Polish gestures remain routed by the host, including waiting for final ASR.
         polishHint.setAccessibilityRole(.image)
         refreshHints()
@@ -129,6 +137,7 @@ final class ActionPanel: NSObject {
 
     @objc private func cancel() { onCancel?() }
     @objc private func convert() { onConvert?() }
+    @objc private func finish() { onFinish?() }
 
     func configureGestureHints(_ hints: VoiceHudBindings) {
         guard hints != gestureHints else { return }
@@ -157,19 +166,48 @@ final class ActionPanel: NSObject {
         let scale = appearance.scale
         let count = actionHints.filter { !$0.isHidden }.count
         let actionsWidth = (CGFloat(count) * VoiceHudHint.baseWidth + CGFloat(max(0, count - 1) * 6)) * scale
+        let textWidth = (status.stringValue as NSString).size(withAttributes: [.font: status.font!]).width
+        stateWidthConstraint.constant = max(180 * scale, ceil(textWidth) + 82 * scale)
         hintWidthConstraint.constant = actionsWidth
         hints.isHidden = count == 0
         stack.spacing = count == 0 ? 0 : 18 * scale
-        let size = NSSize(width: 210 * scale + actionsWidth + stack.spacing,
+        let size = NSSize(width: 30 * scale + stateWidthConstraint.constant + actionsWidth + stack.spacing,
                           height: InputPaletteStyle.rowHeight * scale / 0.8)
         // Keep the status region and left anchor steady. Only actual visible
         // actions occupy space; hiding the last action also removes its gap.
-        let origin = panel.frame.origin
-        if panel.frame.size != size {
+        resize(to: size)
+        effect.layoutSubtreeIfNeeded()
+    }
+
+    private func resize(to size: NSSize) {
+        if resizeTarget == size && resizeTimer != nil { return }
+        resizeTimer?.invalidate()
+        resizeTimer = nil
+        resizeTarget = size
+        let start = panel.frame.size
+        guard start != size else { return }
+        guard automatic, panel.isVisible, !VoiceHudMotion.reduced else {
+            let origin = panel.frame.origin
             panel.setContentSize(size)
             panel.setFrameOrigin(origin)
+            return
         }
-        effect.layoutSubtreeIfNeeded()
+        // Start at the currently displayed width, including an interrupted resize.
+        // The left caret anchor stays fixed while the right edge eases to its target.
+        let started = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            let t = min(1, max(0, (ProcessInfo.processInfo.systemUptime - started) / 0.20))
+            let eased = t * t * (3 - 2 * t)
+            let current = NSSize(width: start.width + (size.width - start.width) * eased,
+                                 height: start.height + (size.height - start.height) * eased)
+            let origin = self.panel.frame.origin
+            self.panel.setContentSize(current)
+            self.panel.setFrameOrigin(origin)
+            if t >= 1 { timer.invalidate(); self.resizeTimer = nil }
+        }
+        resizeTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func refreshHints() {
@@ -179,6 +217,10 @@ final class ActionPanel: NSObject {
                                 available: editAvailable, detail: "转换为编辑")
         polishHint.configure(gestures: gestureHints.actions["polish"] ?? [], caption: "润色",
                              available: polishAvailable, detail: polishDetail)
+        finishButton.configure(gestures: gestureHints.actions["end"] ?? [], caption: "结束",
+                               available: finishAvailable, detail: "结束语音并自动判断")
+        finishButton.isHidden = !automatic || !finishAvailable
+        if automatic { convertButton.isHidden = true; polishHint.isHidden = true }
     }
 
     func applyPresentation(_ presentation: ActionPanelPresentation) {
@@ -194,6 +236,8 @@ final class ActionPanel: NSObject {
     func update(_ session: CompositionSession, historyDepth: Int = 0) {
         anchor.update(utteranceID: session.utteranceID,
                       editing: session.phase == .editing || session.phase == .polishing ||
+                          (session.automaticMode && (session.phase == .finishing ||
+                            (session.phase == .listening && !session.automaticStage.isEmpty))) ||
                           (session.phase == .finishing && session.editRequested) ||
                           (session.phase == .edited && session.awaitingReadback),
                       currentSize: panel.frame.size)
@@ -201,15 +245,20 @@ final class ActionPanel: NSObject {
         dismissTimer = nil
         let presentation = ActionPanelPresentation(phase: session.phase, error: session.error,
             empty: session.raw.isEmpty, editRequested: session.editRequested,
-            readableRange: session.editScope == "readable_range", polished: session.polished)
+            readableRange: session.editScope == "readable_range", polished: session.polished,
+            automatic: session.automaticMode, stage: session.automaticStage, tasks: session.automaticTasks,
+            awaitingReadback: session.awaitingReadback)
+        automatic = session.automaticMode
+        finishAvailable = automatic && session.phase == .listening && session.automaticStage.isEmpty
         let pendingDictation = [.listening, .finishing].contains(session.phase) && !session.editRequested
-        polishAvailable = pendingDictation || session.canPolish
+        polishAvailable = !automatic && (pendingDictation || session.canPolish)
         polishDetail = pendingDictation ? "结束听写并润色本句" : "润色本句"
         let nextVisualState = "\(session.phase)|\(presentation.title)|\(presentation.isError)|\(session.canCancel)|\(session.canEdit)|\(polishAvailable)|\(historyDepth > 0)"
         let animateState = panel.isVisible && visualState != nextVisualState
         visualState = nextVisualState
         applyPresentation(presentation)
-        busy = !presentation.isError && [.editing, .polishing, .finishing].contains(session.phase)
+        busy = !presentation.isError && ([.editing, .polishing, .finishing].contains(session.phase) ||
+            (automatic && session.phase == .listening && !session.automaticStage.isEmpty) || session.awaitingReadback)
         progress.setAnimating(busy)
         spinner.setAnimating(busy)
         if busy {
@@ -238,6 +287,7 @@ final class ActionPanel: NSObject {
     }
 
     func showSent() {
+        finishAvailable = false
         dismissTimer?.invalidate()
         let animateState = panel.isVisible
         visualState = "sent"
@@ -259,6 +309,7 @@ final class ActionPanel: NSObject {
     }
 
     func showNotice(_ text: String) {
+        finishAvailable = false
         dismissTimer?.invalidate()
         visualState = "notice"
         applyPresentation(ActionPanelPresentation(phase: .error, error: text))
@@ -285,6 +336,7 @@ final class ActionPanel: NSObject {
         progress.setAnimating(false)
         spinner.setAnimating(false)
         shouldShow = true
+        fitVisibleActions()
         VoiceHudMotion.transition(stack)
         dismissTimer?.invalidate()
         dismissTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { [weak self] _ in self?.hide() }
@@ -317,6 +369,9 @@ final class ActionPanel: NSObject {
     }
 
     func hide() {
+        resizeTimer?.invalidate()
+        resizeTimer = nil
+        if let resizeTarget { panel.setContentSize(resizeTarget) }
         shouldShow = false
         // IMK may hide palettes while ending a composition or preparing an
         // edit. Its next state update must reuse this operation's anchor.

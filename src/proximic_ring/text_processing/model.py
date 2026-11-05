@@ -126,7 +126,7 @@ class InputModeRoutingRequest:
     raw_text: str
     settings: LLMSettings
     fallback_mode: str = INPUT_MODE_DICTATION
-    router_backend: str = "llm"
+    router_backend: str = "clef"
     target_text: str = ""
     screen_context: object = None
 

@@ -21,6 +21,12 @@ class AutomaticUtterance:
 
 
 class AutomaticVoiceMixin:
+    def _automatic_session_enabled(self):
+        inline = self._inline_input
+        if self._inline_enabled() and inline.active:
+            return inline.session_automatic
+        return self._input_routing_mode == INPUT_ROUTING_AUTO
+
     def _init_automatic_voice(self):
         self._automatic_generation = 0
         self._automatic_routes = {}
@@ -108,6 +114,8 @@ class AutomaticVoiceMixin:
             replace(self._llm_settings(), enabled=True), router_backend="clef", target_text=source,
             screen_context=self._automatic_context)
         self._automatic_record("record_routing_request", request)
+        if inline:
+            self._inline_input.automatic_progress("routing")
         self._transcript_text = "正在自动判断"
         self._set_interaction_state("processing")
         self.textProcessingChanged.emit()
@@ -134,6 +142,7 @@ class AutomaticVoiceMixin:
         if result.error:
             self._append_log(f"自动判断失败，保留本句听写：{result.error}")
             if pending.inline_key:
+                self._inline_input.automatic_progress("route_failed")
                 self._inline_input.update(pending.text, True, pending.session_id)
             else:
                 from ...text_processing.model import TextProcessingResult
@@ -147,6 +156,7 @@ class AutomaticVoiceMixin:
             self._append_log("编辑需求：" + "、".join(EDIT_TASK_LABELS[k] for k in result.edit_plan.tasks))
         if pending.inline_key and result.task_type != DICTATION:
             self._automatic_inline_edit = pending
+            self._inline_input.automatic_progress("routed", result.edit_plan.tasks)
             self._inline_input.update(pending.text, True, pending.session_id, automatic_task=result.task_type,
                                       automatic_allow_empty=result.edit_plan.allows_empty_source)
         else:
@@ -154,6 +164,8 @@ class AutomaticVoiceMixin:
                 self._reject_edit_request("没有取得原文本框，无法应用自动编辑")
                 return True
             mode = INPUT_MODE_DICTATION if result.task_type == DICTATION else INPUT_MODE_EDIT
+            if pending.inline_key:
+                self._inline_input.automatic_progress("dictation")
             self._submit_text_processing(pending.text, pending.session_id, mode,
                 target=pending.target, snapshot=pending.snapshot,
                 target_text=pending.snapshot.text if pending.snapshot is not None else "",
@@ -176,6 +188,7 @@ class AutomaticVoiceMixin:
         self._automatic_record("record_llm_result", result.request_id, result)
         if result.error:
             self._append_log(f"听写整理失败，保留原始听写：{result.error}")
+            self._inline_input.automatic_progress("dictation_failed")
         self._inline_input.update(pending.text if result.error else result.final_text,
                                   True, pending.session_id, automatic_task=DICTATION)
         return True

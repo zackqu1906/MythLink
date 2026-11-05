@@ -672,7 +672,7 @@ def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeyp
     # committed as dictation or cancelled when the native acknowledgment lands.
     controller._apply_runtime_update("帮我处理这句话", True, "", 2)
     assert not routes and not requests
-    event(phase="listening", ready=True, revision=0, automatic_mode=True, automatic_routing_version=2,
+    event(phase="listening", ready=True, revision=0, automatic_mode=True, automatic_routing_version=3,
           edit_source_text="明天三点", can_convert=True, has_composition=True)
     assert len(routes) == 1 and routes[0].target_text == "明天三点"
     assert not component.canConvert and not component.canRequestConversion
@@ -1133,7 +1133,7 @@ def test_removed_floating_ui_has_no_windows_settings_or_timers(inline_ui):
     assert root.findChild(QObject, "associationRecommendationOverlay") is not None
 
 
-@pytest.mark.parametrize("end_gesture", ["tap", "snap", "double-index-pinch"])
+@pytest.mark.parametrize("end_gesture", ["tap", "snap", "double-index-pinch", "swipe-right"])
 def test_configured_end_gesture_finishes_automatic_sentence_and_routes_once(inline_ui, monkeypatch, end_gesture):
     from dataclasses import replace
     from types import SimpleNamespace
@@ -1143,12 +1143,13 @@ def test_configured_end_gesture_finishes_automatic_sentence_and_routes_once(inli
     monkeypatch.setattr(c._text_processing_worker, "capture_context", lambda target: {})
     monkeypatch.setattr(c._text_processing_worker, "submit_routing", routes.append)
     c.inputRoutingMode = "auto"
-    c._gesture_bindings = replace(c._gesture_bindings, end=(end_gesture, ""))
+    if end_gesture != "swipe-right":
+        c._gesture_bindings = replace(c._gesture_bindings, end=(end_gesture, ""))
     saved = c._gesture_bindings
     event(phase="dictated", ready=True, revision=1, raw="", error="")
     event("settled", phase="dictated", revision=1, text="")
     c._apply_runtime_status("[ASR] START t=2.000s")
-    event(phase="listening", ready=True, revision=0, automatic_mode=True, automatic_routing_version=2,
+    event(phase="listening", ready=True, revision=0, automatic_mode=True, automatic_routing_version=3,
           edit_source_text="旧文本")
     # The live mapping, not the physical name 'tap', owns the audio endpoint.
     assert c._ring_gestures.filter(SimpleNamespace(name=end_gesture), True, c._disconnect_event, skip_stroke=True)
@@ -1170,3 +1171,50 @@ def test_automatic_mode_rejects_four_class_native_protocol(inline_ui, monkeypatc
     c._apply_runtime_status("[ASR] START t=2.000s")
     event(phase="listening", ready=True, revision=0, automatic_mode=True)
     assert "更新输入法组件" in c._inline_input.error and not requests
+
+
+def test_automatic_progress_and_finish_preserve_session_guards(inline_ui, monkeypatch):
+    c, bridge, requests, root, event = inline_ui
+    monkeypatch.setattr(c._text_processing_worker, 'warmup_router', lambda: None)
+    monkeypatch.setattr(c._text_processing_worker, 'capture_context', lambda target: {})
+    c.inputRoutingMode = 'auto'
+    event(phase='dictated', ready=True, revision=1, raw='', error='')
+    event('settled', phase='dictated', revision=1, text='')
+    c._apply_runtime_status('[ASR] START t=2.000s')
+    event(phase='listening', ready=True, revision=0, automatic_mode=True, automatic_routing_version=3,
+          edit_source_text='原文', has_composition=True)
+    inline = c._inline_input
+    assert not inline.canConvert and not inline.canPolish
+    c._apply_voice_action('edit')
+    assert bridge.messages[-1]['type'] == 'finish'
+    assert not requests
+    assert inline.automatic_progress('routing')
+    event(phase='finishing', ready=True, automatic_stage='routing')
+    assert inline.status == '正在判断'
+    assert inline.automatic_progress('routed', ('polish', 'translate'))
+    event(phase='finishing', ready=True, automatic_stage='routed', automatic_tasks=['polish', 'translate'])
+    assert inline.status == '正在润色、翻译'
+    event(phase='editing', ready=True, automatic_stage='generating', automatic_tasks=['polish', 'translate'])
+    assert inline.status == '正在编辑 · 润色、翻译'
+    event(phase='edited', ready=True, awaiting_readback=True)
+    assert inline.status == '正在写入'
+    event(phase='interrupted', ready=True, awaiting_readback=False)
+    before = len(bridge.messages)
+    assert not inline.automatic_progress('generating', ('modify',))
+    assert len(bridge.messages) == before
+
+
+def test_clef_settings_surface_is_in_service_settings(inline_ui):
+    from PySide6.QtCore import QObject, QMetaObject, Q_ARG
+    from PySide6.QtTest import QTest
+    c, _, _, root, _ = inline_ui
+    for name in ('clefSshHost', 'clefSshPort', 'clefSshUser', 'clefSshKey', 'clefServicePort', 'clefConnectButton'):
+        assert root.findChild(QObject, name) is not None
+    assert c.clefConnection.config['service_port'] == 30000
+    root.show()
+    QMetaObject.invokeMethod(root, 'showAdvancedSettings', Q_ARG('QVariant', 4))
+    QTest.qWait(200)
+    root.grabWindow()
+    QTest.qWait(250)
+    assert root.findChild(QObject, 'clefSshHost').property('visible')
+    assert root.findChild(QObject, 'clefSshHost').window().grabWindow().save('/private/tmp/mythlink-clef-settings.png')

@@ -94,7 +94,8 @@ def main():
             "p95_s": values[max(0, (95 * len(values) + 99) // 100 - 1)] if values else None}
     report = {"kind": "synthetic-routing-evaluation", "note": "Developer-authored cases; not real-user accuracy or end-to-end editing acceptance.",
               "created_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(), "prompt_version": ROUTER_PROMPT_VERSION,
-              "prompts": {"joint": routing_schema(), "shared_input_prefix": joint_router_input("")},
+              "prompts": {"joint": routing_schema(), "joint_without_source": routing_schema(target=""),
+                          "shared_input_prefix": joint_router_input("")},
               "metrics": metrics, "cases_path": str(args.cases), "cases": records}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +107,7 @@ def main():
 
 def case_requests(sample, model):
     state = router_input(sample["utterance"], sample["target"], sample["context"])
-    requests = [{"stage": "joint", "body": {"model": model, "state": joint_router_input(state), "questions": routing_schema()}}]
+    requests = [{"stage": "joint", "body": {"model": model, "state": joint_router_input(state), "questions": routing_schema(target=sample["target"])}}]
     return {"case": sample["id"], "expected": sample["expected"], "requests": requests}
 
 

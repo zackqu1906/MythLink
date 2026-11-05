@@ -77,7 +77,7 @@ from proximic_ring.text_processing import (  # noqa: E402
     LLMSettings,
     OpenAICompatibleTextProcessor,
 )
-from proximic_ring.text_processing.llm import (  # noqa: E402
+from proximic_ring.text_processing.prompts import (  # noqa: E402
     DICTATION_PROMPT,
     EDIT_FRAGMENT_PROMPT,
     EDIT_FULL_TEXT_PROMPT,

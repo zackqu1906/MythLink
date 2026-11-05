@@ -1,0 +1,244 @@
+[
+  {
+    "id": "new-spelling",
+    "utterance": "木字旁的彬，不是宾客的宾",
+    "target": "接待人是陈宾。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "modify"
+      ]
+    },
+    "expected": {
+      "modified_text": "接待人是陈彬。"
+    },
+    "review_points": "姓名释字只改对应字，保留姓氏。"
+  },
+  {
+    "id": "new-reported-name",
+    "utterance": "同事告诉我，他的名字是木字旁的彬",
+    "target": "接待人是陈宾。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "modify"
+      ]
+    },
+    "expected": {
+      "modified_text": "接待人是陈宾。"
+    },
+    "review_points": "故意注入错误修改候选；转述相似姓名不授权修改。"
+  },
+  {
+    "id": "new-insert-delete",
+    "utterance": "先在开头加一行原话：丙。然后删掉第二行，保留两行",
+    "target": "甲。\n乙。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "modify",
+        "insert"
+      ]
+    },
+    "expected": {
+      "modified_text": "丙。\n乙。"
+    },
+    "review_points": "先新增后删当前第二行；定位使用中间结果。"
+  },
+  {
+    "id": "new-delete-insert",
+    "utterance": "先删掉第二行，再在开头加一行原话：丙。保留两行",
+    "target": "甲。\n乙。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "modify",
+        "insert"
+      ]
+    },
+    "expected": {
+      "modified_text": "丙。\n甲。"
+    },
+    "review_points": "相反操作顺序产生另一结果。"
+  },
+  {
+    "id": "new-same-task-steps",
+    "utterance": "先把第二句删掉，再将现在的第二句改成：丁。",
+    "target": "甲。乙。丙。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "modify"
+      ]
+    },
+    "expected": {
+      "modified_text": "甲。丁。"
+    },
+    "review_points": "同一类别多步，也需要通用组合说明。"
+  },
+  {
+    "id": "new-polish-after",
+    "utterance": "说得客气一些，时间关系必须保持",
+    "target": "你必须周四之后来取材料。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "polish"
+      ]
+    },
+    "expected": {
+      "contains": [
+        "周四之后",
+        "材料"
+      ],
+      "excludes": [
+        "周四之前",
+        "周四前"
+      ]
+    },
+    "review_points": "保持之后，不把领取时间变成截止时间。"
+  },
+  {
+    "id": "new-translate-before",
+    "utterance": "翻译成英文，时间边界和否定都保持",
+    "target": "周二之前不要付款。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "translate"
+      ]
+    },
+    "expected": {
+      "contains_ci": [
+        "before",
+        "Tuesday"
+      ]
+    },
+    "review_points": "周二之前不付款，不能误成周二前完成付款。"
+  },
+  {
+    "id": "new-compose-cancel",
+    "utterance": "写一句面向同学的礼貌通知：活动取消；不补原因或后续安排",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "compose"
+      ]
+    },
+    "expected": {
+      "contains": [
+        "活动",
+        "取消"
+      ],
+      "max_chars": 65
+    },
+    "review_points": "不补重新安排、另行通知等承诺，允许礼貌表达。"
+  },
+  {
+    "id": "new-scope-format-polish",
+    "utterance": "先把两行倒序，再只把现在的第一行说得客气一点，第二行一字不动",
+    "target": "你必须按时到场。\n你必须带好证件。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "polish",
+        "format"
+      ]
+    },
+    "expected": {
+      "contains": [
+        "证件",
+        "\n你必须按时到场。"
+      ]
+    },
+    "review_points": "重排后的局部润色；原第一行保持原样。"
+  },
+  {
+    "id": "new-polish-insert",
+    "utterance": "把原文精简为一句，再另起一行补上原话：请不要替我改这句话。最后这句必须逐字保留",
+    "target": "本次交流的时间已经确定为周三下午，地点是东门。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "insert",
+        "polish"
+      ]
+    },
+    "expected": {
+      "contains": [
+        "周三下午",
+        "东门",
+        "\n请不要替我改这句话。"
+      ],
+      "max_chars": 65
+    },
+    "review_points": "精简原文后补最终原话；不要执行原话里的禁止指令。"
+  },
+  {
+    "id": "new-cancel-one",
+    "utterance": "把两份改成三份，在末尾补上原话：我会准时到。算了，数量不改，只追加那句",
+    "target": "我带两份。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "modify",
+        "insert"
+      ]
+    },
+    "expected": {
+      "modified_text": "我带两份。我会准时到。"
+    },
+    "review_points": "撤销替换，保留插入及句号。"
+  },
+  {
+    "id": "new-triple-final-literal",
+    "utterance": "先把南门改成东门，再把整句翻译成英文；最后另起一行添加中文原话：请确认。最后一行不要翻译",
+    "target": "周一在南门等我。",
+    "context": {
+      "messages": []
+    },
+    "edit_plan": {
+      "tasks": [
+        "modify",
+        "insert",
+        "translate"
+      ]
+    },
+    "expected": {
+      "contains": [
+        "\n请确认。"
+      ],
+      "contains_ci": [
+        "Monday",
+        "east"
+      ],
+      "excludes": [
+        "south"
+      ]
+    },
+    "review_points": "修改作为翻译素材，最终新增中文受保护；类别集合不规定顺序。"
+  }
+]

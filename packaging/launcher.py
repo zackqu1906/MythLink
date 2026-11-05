@@ -188,6 +188,9 @@ def run() -> int:
 
 def _entrypoint() -> int:
     multiprocessing.freeze_support()
+    if len(sys.argv) >= 2 and sys.argv[1] == "--self-check-clef":
+        from proximic_ring.diagnostics.clef_connection_check import main
+        return main(sys.argv[2:])
     if len(sys.argv) >= 2 and sys.argv[1] == "--self-check-agent-ui":
         from proximic_ring.diagnostics.agent_card_check import main
         return main(sys.argv[2:])

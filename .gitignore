@@ -62,3 +62,7 @@ tools/data/*
 !tools/data/clef_joint_eight_baseline_v2.json
 !tools/data/clef_organize_boundary_cases.json
 !tools/data/clef_six_task_boundary_cases.json
+!tools/data/automatic_edit_order_cases.json
+!tools/data/automatic_edit_generalization_cases.json
+!tools/data/clef_fidelity_cases.json
+!tools/data/clef_ocr_context_cases.json

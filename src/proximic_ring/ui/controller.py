@@ -895,7 +895,10 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._gesture_input_preparation_enabled = False
         self._associationActionRequested.connect(self._apply_association_action)
         self._voiceHistorySaved.connect(self._apply_voice_history_saved)
+        from .voice.clef_settings_controller import ClefSettingsController
+        self._clef_connection = ClefSettingsController(self._settings, self)
         self._text_processing_worker = TextProcessingWorker(
+            intent_router=self._clef_connection.router,
             on_result=self._textProcessed.emit,
             on_routing_result=self._inputModeRouted.emit,
             on_trace=self._llmTraceCollected.emit,
@@ -1326,6 +1329,8 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._suspend_recognition_for_interaction()
         automatic = self._automatic_inline_edit
         automatic = automatic if automatic is not None and tuple(key[:3]) == automatic.inline_key else None
+        if automatic:
+            self._inline_input.automatic_progress("generating", automatic.edit_plan.tasks)
         self._submit_text_processing(
             instruction, self._latest_asr_session_id, INPUT_MODE_EDIT,
             target_text=original, target=target,
@@ -2567,6 +2572,10 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
     def inputRoutingMode(self) -> str:
         return self._input_routing_mode
 
+    @Property(QObject, constant=True)
+    def clefConnection(self):
+        return self._clef_connection
+
     @inputRoutingMode.setter
     def inputRoutingMode(self, value: str) -> None:
         mode = normalize_input_routing_mode(value)
@@ -3793,6 +3802,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
                     asr_gain_db_provider=lambda: self._asr_gain_db,
                     stage1_threshold_provider=lambda: self._stage1_threshold,
                     gesture_bindings_provider=lambda: self._gesture_bindings,
+                    automatic_routing_provider=self._automatic_session_enabled,
                     audio_settings=audio_changes,
                     on_ring_source=lambda source: self._touchpad.sourceReady.emit(source, gesture_connection),
                     on_audio_configuring=lambda: self._audioConfiguring.emit(audio_changes),
@@ -4534,6 +4544,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             QCoreApplication.quit()
 
     def _close_voice_history(self) -> None:
+        self._clef_connection.connection.shutdown()
         if self._voice_history_closed:
             return
         self._voice_history_closed = True
@@ -7285,6 +7296,10 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
                 self._inline_input.convert()
             elif action in {ACTION_CANCEL, ACTION_UNDO}:
                 self._inline_input.cancel()
+            return
+        if self._automatic_session_enabled() and action in {ACTION_INPUT, ACTION_EDIT, ACTION_SWITCH_MODE}:
+            if action != ACTION_INPUT:
+                self._finish_utterance_event.set()
             return
         self._event_log(
             "GLOBAL_ACTION",

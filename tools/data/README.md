@@ -69,3 +69,74 @@ bash scripts/clef-remote.sh compare --output .runtime/clef/my-comparison.json
 - `expected.preserve_text`：要求保留的关键文字列表，逐项检查是否存在。
 
 不填写这些字段时不评分生成文本，不能把“未检查”算成质量通过。完整流程命令会在 JSON/HTML 中报告检查结果，检查失败退出码为 2。
+
+## 独立的编辑生成样例
+
+`automatic_edit_order_cases.json` 给 `tools/check_automatic_edit_generation.py` 使用，
+与上面的分类样例格式不同：它有意直接提供 `edit_plan.tasks`，以隔离测试组合编辑生成。
+该程序不调用 Clef，不能据此报告分类准确率或概率。
+48 条开发样例覆盖六类、15 种两类组合、相反步骤顺序、三类串联、撤销和错误候选守卫。
+这里的 15 种组合只是测试覆盖；生成提示词没有逐对规则。
+`automatic_edit_generalization_cases.json` 是 v8 冻结后首次测试的 12 条新措辞，
+覆盖同类多步、位置变化、时间边界、原话和局部撤销；结果未用于继续改本轮提示词。
+
+每条填写 `id`、`utterance`、`target`、`context.messages`、`edit_plan.tasks`、`expected`、`review_points`。
+`expected` 支持 `modified_text` 精确全文、`contains` 保留片段、`contains_ci` 不分大小写的片段、
+`excludes` 禁止片段、`max_chars` 最大长度。`review_points` 说明需语义复核的重点。
+这两项只用于评分，不进入模型请求。无 OCR 写 `{"messages": []}`；无原文只能用允许空源的插入／创作计划。
+防误触发样例可以故意指定错误候选，需明确写在复核要点中。
+
+```sh
+.runtime/venv/bin/python tools/check_automatic_edit_generation.py \
+  --cases tools/data/automatic_edit_order_cases.json \
+  --output .runtime/clef/my-edit-generation.json
+```
+
+`--validate-only` 不发请求；`--case ID` 可重复以筛选样例。
+退出码 0 仅表示全部调用成功，1 表示调用出错；正文约束与逐条语义复核分别看报告。
+修改样例会改变文件 SHA256，报告保留当次全部输入、预期及文件摘要；不要覆盖旧报告冒充同一轮结果。
+
+## 原 130 条的真实路由与生成联测
+
+原 v19 报告的同批 130 条保存在 `docs/reports/clef-six-tasks-cases-2026-11-04.json`。
+使用该分类样例格式跑完整流程：
+
+```sh
+bash scripts/clef-remote.sh pipeline \
+  --cases docs/reports/clef-six-tasks-cases-2026-11-04.json \
+  --output .runtime/clef/my-full-pipeline.json
+```
+
+每条先由 Clef 真实联合判断，再将实际路由交给正文模型；预期标签只评分，不能覆盖实际计划。
+听写也运行正文整理。HTML 分别展示最终路由错误、编辑生成问题、听写整理问题及原始标黄选择。
+详细记录保存两端实际请求／响应、所有分类概率、分阶段及总延迟、token 和可编辑的逐条复核结论。
+`generation_review` 默认 pending，必须对照输入输出复核后填 pass／fail，不能把接口成功或未配置文字约束计成质量通过。
+JSONL 保存运行时原始记录，后续复核写回 JSON 并用 `tools.clef_pipeline_report.write_pipeline_report` 重建 HTML。
+生成前校验拦截且没有正文 HTTP 请求时，复核状态用 `blocked`，不要把 Worker 回退的口述当成生成结果。
+
+`clef_fidelity_cases.json` 是 v9 提示词冻结后编写的 12 条正反边界样例，用同一 `pipeline` 命令指定 `--cases` 运行。
+它重点检查：用户明确补充的新原因／功能／承诺应被采用、允许用户改变旧日期或条件、建议和虚构仍可创作、
+OCR 中对方的要求不能覆盖用户决定，以及照录引导语处于正文内部时应保留。
+这批是合成小样例，首次结果不会用来修改本轮冻结的提示词，也不能代表独立真实使用准确率。
+
+`clef_ocr_context_cases.json` 是 16 条模拟已过滤 OCR 的首轮样例，覆盖空框回复老板、按只读参考纠正产品名／软件名／人名、
+修改与润色组合、多个名称的对应、歧义不猜、明确保留原名、OCR 夹带指令及用户口述优先。
+每例有 `utterance`、`target`、`context.messages` 和 `expected`；`review_focus` 只描述复核重点，不传给模型。
+这些样例不启动微信、不截图、不调用 OCR、不发送消息，只验证下游模型是否正确利用已经取得的只读文字。
+空原文的 `modify` 仍不可用；明确根据 OCR 写新稿可走 `compose`，不能把 OCR 当可修改的原文。
+
+```sh
+bash scripts/clef-remote.sh pipeline \
+  --cases tools/data/clef_ocr_context_cases.json \
+  --output .runtime/clef/my-ocr-pipeline.json
+bash scripts/clef-remote.sh pipeline \
+  --cases tools/data/clef_fidelity_cases.json \
+  --output .runtime/clef/my-fidelity-pipeline.json
+```
+
+2026-11-05 的 v19 路由＋v9 生成首轮：OCR 最终路由 14/16，正文通过 13、边界问题 1、未生成 2；
+忠实性最终路由与冻结标签匹配 8/12，正文通过 9/12。其中两条标签存在“内容更新＋润色／创作”解释空间，报告保留原始分数并单独注明。
+这些结果没有用于继续修改本轮提示词。后续若据此调优，需将它们视为开发回归集。
+[汇总及前后对照](../../docs/reports/automatic-edit-v9-summary-2026-11-05.html)、
+[OCR 全概率明细](../../docs/reports/clef-v19-generation-v9-ocr-2026-11-05.html)、
+[信息忠实性明细](../../docs/reports/clef-v19-generation-v9-fidelity-2026-11-05.html)。

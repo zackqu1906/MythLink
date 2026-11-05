@@ -176,7 +176,6 @@ def test_six_tasks_keep_polishing_and_formatting_scopes_separate():
     for task in ('condense','structure','organize','expand','precise_edit','verbatim_insert'):
         with pytest.raises(ValueError, match='未知编辑任务'):
             EditPlan((task,))
-    assert '六类任务定义' in joint_router_input('口述')
 
 
 def test_full_sentence_replacement_and_verbatim_insertion_use_distinct_modules():

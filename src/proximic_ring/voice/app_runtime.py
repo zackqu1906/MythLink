@@ -596,6 +596,7 @@ class RecognitionRuntime:
         asr_gain_db_provider: Callable[[], float] | None = None,
         stage1_threshold_provider: Callable[[], float] | None = None,
         gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
+        automatic_routing_provider: Callable[[], bool] | None = None,
         gesture_filter: Callable[[object, bool], bool] | None = None,
         utterance_commands=None,
         audio_settings: LiveAudioSettings | None = None,
@@ -866,6 +867,9 @@ class RecognitionRuntime:
                         )
                         is_start_endpoint = end_on_gesture and bool(name) and name in bindings.confirm
                         is_end_endpoint = end_on_gesture and bool(name) and name in bindings.end
+                        if (end_on_gesture and name and name in bindings.switch_mode
+                                and automatic_routing_provider is not None and automatic_routing_provider()):
+                            is_end_endpoint = True
                         is_confirm_endpoint = is_start_endpoint or is_end_endpoint
                         confirm_requested = False
                         requested_action = "end"

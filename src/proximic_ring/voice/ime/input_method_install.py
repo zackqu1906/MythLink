@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 import plistlib
@@ -18,6 +19,7 @@ from xml.parsers.expat import ExpatError
 from .component_fingerprint import SOURCE_FINGERPRINT_KEY, source_fingerprint
 
 BUNDLE_ID = "com.proximic.inputmethod.ProxiMicVoice"
+_logger = logging.getLogger(__name__)
 
 
 def _version_parts(value: str) -> tuple[int, ...]:
@@ -262,10 +264,15 @@ class InputMethodInstaller:
                     os.replace(staged, self.destination)
                     installed = True
                     self._run([str(self.helper), "register"])
+                    _logger.info("[INPUT_METHOD_INSTALL] registered sources=%s", self.status()["sources"])
                     self._run([str(self.helper), "enable"])
                     state = self.status()
-                    if not state.get("installed") or not any(s.get("enabled") for s in state["sources"]):
-                        raise RuntimeError("组件已复制，但系统尚未确认输入法启用。")
+                    _logger.info("[INPUT_METHOD_INSTALL] enabled sources=%s", state["sources"])
+                    if not state.get("installed") or not any(
+                            s.get("id") == BUNDLE_ID + ".dictation"
+                            and s.get("enabled") is True and s.get("selectable") is True
+                            for s in state["sources"]):
+                        raise RuntimeError("组件已复制，但系统尚未确认 Mythlink 语音模式可切换。")
                 except BaseException:
                     if installed and self.destination.exists():
                         shutil.rmtree(self.destination)

@@ -1,0 +1,216 @@
+[
+  {
+    "id": "fidelity-add-reason",
+    "utterance": "把这段说得完整些，补充说明：因为仓库盘点，发货耽误了。只用这些信息",
+    "target": "设备还没到齐，因此需要延期。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "仓库盘点",
+        "发货",
+        "延期"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-authorized-function",
+    "utterance": "展开这个好处，并补充一个已经确认的功能：它可以自动核对订单",
+    "target": "新工具能节省人工检查时间。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "自动核对订单",
+        "检查"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-compose-known-arrangements",
+    "utterance": "写一条礼貌通知：会议改到周五下午三点，地点仍在A210，不需要大家回复",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ],
+      "preserve_text": [
+        "周五下午三点",
+        "A210"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-authorized-promise",
+    "utterance": "写一条简短通知，说明活动延期，并明确告诉大家：我会在周一另行通知新安排",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ],
+      "preserve_text": [
+        "延期",
+        "周一",
+        "另行通知"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-correct-source-date",
+    "utterance": "根据这段素材重新写一条通知，但日期更新为周四当天，不是周四之前，其他信息保留",
+    "target": "请于周二提交材料。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ],
+      "preserve_text": [
+        "周四",
+        "材料"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-preserve-uncertainty",
+    "utterance": "把这句说得正式些，仍然只是可能，不要写成已经确定",
+    "target": "活动可能延期，目前还没定。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "可能"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-authorized-condition-change",
+    "utterance": "把要求放宽，不再要求今天交，改成方便时再交，语气客气一点",
+    "target": "你今天必须交材料。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "polish"
+      ],
+      "preserve_text": [
+        "方便",
+        "材料"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-suggestions",
+    "utterance": "给我两条缩短签到排队时间的建议，目前没有确定任何实施方案，写成建议",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ],
+      "preserve_text": [
+        "建议"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-fiction",
+    "utterance": "写一段五十到一百字的虚构童话：一只会种云朵的兔子帮助村庄下雨，具体情节由你构思",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ],
+      "preserve_text": [
+        "兔子",
+        "云朵"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-reply-user-scope",
+    "utterance": "替我回他，说只能借三天，不能借七天，不替我承诺其他事情",
+    "target": "",
+    "context": {
+      "messages": [
+        {
+          "speaker": "other",
+          "text": "我想借你的相机七天，之后再续借一天行吗？"
+        }
+      ]
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "compose"
+      ],
+      "preserve_text": [
+        "三天"
+      ]
+    }
+  },
+  {
+    "id": "fidelity-literal-inner-prefix",
+    "utterance": "逐字输入冒号后这一整句：原封不动写下：把标题换掉。",
+    "target": "旧正文。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": [],
+      "modified_text": "原封不动写下：把标题换掉。"
+    }
+  },
+  {
+    "id": "fidelity-reported-prefix",
+    "utterance": "他说下次要先输入照录两个字",
+    "target": "旧正文。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": [],
+      "preserve_text": [
+        "他说",
+        "照录",
+        "两个字"
+      ]
+    }
+  }
+]

@@ -176,28 +176,16 @@ class TextProcessingWorker:
                 screen_context = None
                 mode = normalize_input_mode(request.fallback_mode)
                 try:
-                    classify_with_trace = getattr(
-                        self._processor, "classify_input_mode_with_trace", None
-                    )
-                    if request.router_backend == "clef":
-                        from .screen_context import resolve_context
-                        from .task_routing import mode_for_task
-                        screen_context = resolve_context(request.screen_context)
-                        decision, model_output = self._intent_router.classify(
-                            request.raw_text, request.target_text, screen_context,
-                            cancelled=lambda: self._closed.is_set() or self._is_cancelled(request.request_id))
-                        task_type, edit_plan = decision.task, decision.edit_plan
-                        mode = mode_for_task(task_type)
-                    elif request.router_backend != "llm":
+                    if request.router_backend != "clef":
                         raise ValueError("不支持的路由后端，请使用 Clef 自动判断")
-                    elif callable(classify_with_trace):
-                        mode, model_output = classify_with_trace(
-                            request.raw_text, request.settings
-                        )
-                    else:
-                        mode = self._processor.classify_input_mode(
-                            request.raw_text, request.settings
-                        )
+                    from .screen_context import resolve_context
+                    from .task_routing import mode_for_task
+                    screen_context = resolve_context(request.screen_context)
+                    decision, model_output = self._intent_router.classify(
+                        request.raw_text, request.target_text, screen_context,
+                        cancelled=lambda: self._closed.is_set() or self._is_cancelled(request.request_id))
+                    task_type, edit_plan = decision.task, decision.edit_plan
+                    mode = mode_for_task(task_type)
                 except BaseException as exc:
                     error = str(exc)
                     model_output = str(getattr(exc, "model_output", "") or "")

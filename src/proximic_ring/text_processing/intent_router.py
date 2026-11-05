@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from .router_prompts import ROUTER_PROMPT_VERSION, routing_schema, joint_router_input
 from .task_routing import (DEFAULT_ROUTER_MODEL, EDIT_TASK_LABELS, router_input, resolve_joint_decision,
-                           multiclass_probabilities, JOINT_POLICY_VERSION)
+                           multiclass_probabilities, JOINT_POLICY_VERSION, task_availability)
 
 
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -58,21 +58,23 @@ class ClefIntentRouter:
     def classify(self, utterance, target="", context=None, *, cancelled=lambda: False):
         self.warmup()
         state = joint_router_input(router_input(utterance, target, context or {}))
+        schema = routing_schema(target=target)
         started = time.perf_counter()
         trace = {"provider": "clef_server", "requested_model": self.model,
                  "prompt_version": ROUTER_PROMPT_VERSION, "classification_type": "joint",
                  "policy_version": JOINT_POLICY_VERSION,
                  "input_state": state,
+                 "request_schema": schema, "task_availability": task_availability(target),
                  "stages": []}
         try:
-            result = self._classify_stage(state, routing_schema(), cancelled)
+            result = self._classify_stage(state, schema, cancelled)
             trace["stages"].append(dict(stage="joint", **result))
             answers = result["answers"]
             answer = answers["voice_intent"]
             trace.update(model=result["model"], raw_model_task=answer["choice"],
-                         raw_tasks=[k for k in EDIT_TASK_LABELS if answers[k]["choice"] == "apply"],
+                         raw_tasks=[k for k in EDIT_TASK_LABELS if k in answers and answers[k]["choice"] == "apply"],
                          probabilities=answer["probabilities"], consistency="pending")
-            decision, policy = resolve_joint_decision(answers)
+            decision, policy = resolve_joint_decision(answers, target=target)
             trace.update(policy)
             trace.update(task=decision.task,
                          edit_plan=decision.edit_plan.as_dict() if decision.edit_plan else None)

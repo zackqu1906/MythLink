@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import sys
 import threading
 from datetime import datetime
@@ -510,7 +511,13 @@ class ApplicationMappingController(QObject):
                 result = None
                 error = "读取应用列表超时，请稍后刷新" if kind == "apps" else "读取菜单超时，请稍后刷新"
             except Exception as exc:
-                result, error = None, str(exc)
+                result = None
+                if kind == "apps":
+                    logging.getLogger(__name__).warning(
+                        '[APPLICATION_SCAN] Refresh failed: %s: %s', type(exc).__name__, exc)
+                    error = "读取应用列表失败，请稍后刷新"
+                else:
+                    error = str(exc)
             if not self._closed:
                 self._result.emit(kind, generation, bundle, result, error)
         threading.Thread(target=work, name="ApplicationMenuDiscovery", daemon=True).start()
@@ -537,14 +544,19 @@ class ApplicationMappingController(QObject):
             return
         if kind == "apps":
             self._list_busy = False
-            self._candidates = result.get("candidates", []) if isinstance(result, dict) else result or []
+            # A failed refresh is not an empty scan. Keep the last usable list
+            # until a later successful result replaces it.
+            if not error:
+                self._candidates = result.get("candidates", []) if isinstance(result, dict) else result or []
             if sys.platform == "darwin":
                 # Configuring ourselves must work in source runs and when
                 # installed-app discovery is unavailable, without auto-adding a scheme.
                 own = next((app for app in self._candidates if app["value"] == HOST_BUNDLE), host_candidate())
                 self._candidates = [{**own, "label": HOST_LABEL, "running": True}] + [
                     app for app in self._candidates if app["value"] != HOST_BUNDLE]
-            self._list_message = error or ("部分位置暂时无法检索，已显示可找到的应用" if isinstance(result, dict) and result.get("partial") else "")
+            self._list_message = error or ("部分应用或位置无法读取，已显示可找到的应用" if isinstance(result, dict) and result.get("partial") else "")
+            if error and any(app["value"] != HOST_BUNDLE for app in self._candidates):
+                self._list_message += "；已保留上次列表"
             for app in self._candidates:
                 if app["value"] in self._apps:
                     saved = self._apps[app["value"]]

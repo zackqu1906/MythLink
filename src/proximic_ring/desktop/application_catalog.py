@@ -1,10 +1,12 @@
 """Installed macOS application metadata for the explicit application picker."""
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 import plistlib
 import subprocess
+from xml.parsers.expat import ExpatError
 
 from ..scenes.capabilities import presentation_profile
 from ..scenes.capabilities import application_scene_profiles
@@ -44,7 +46,7 @@ def application_paths(roots, indexed):
     return sorted(paths, key=lambda path: (not str(path).startswith('/Applications/'), str(path))), bool(errors)
 
 
-def application_metadata(path):
+def application_metadata(path, *, errors=None):
     path = Path(path)
     if (not path.is_absolute() or path.suffix.casefold() != '.app'
             or any(parent.suffix.casefold() in {'.app', '.framework', '.appex'} for parent in path.parents)):
@@ -78,7 +80,15 @@ def application_metadata(path):
                     presentationProfile=presentation_profile(bundle, info),
                     sceneProfiles=profiles,
                     primaryScene=primary_scene(bundle, profiles, category=info.get('LSApplicationCategoryType', '')))
-    except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
+    except (OSError, ValueError, TypeError, plistlib.InvalidFileException, ExpatError) as exc:
+        # XML parse failures are not InvalidFileException. One broken bundle
+        # must not discard the rest of the installed-application scan.
+        info_path = str(path / 'Contents/Info.plist')
+        if errors is not None:
+            errors.append(info_path)
+        logging.getLogger(__name__).warning(
+            '[APPLICATION_SCAN] Skipped metadata: path=%r error=%s: %s',
+            info_path, type(exc).__name__, exc)
         return None
 
 
@@ -88,20 +98,20 @@ def installed_applications(running, *, roots=None, indexed=None):
     if indexed is None:
         indexed, partial = spotlight_application_paths()
     paths, scan_errors = application_paths(application_roots() if roots is None else roots, indexed)
-    apps = {}
+    apps, metadata_errors = {}, []
     for path in paths:
-        item = application_metadata(path)
+        item = application_metadata(path, errors=metadata_errors)
         if item:
             apps.setdefault(item['value'], item)
     for app in running:
         bundle = app['value']
         previous = apps.get(bundle, {})
         label, path = app['label'], app.get('path') or previous.get('path', '')
-        metadata = previous or (application_metadata(path) if path else None) or {}
+        metadata = previous or (application_metadata(path, errors=metadata_errors) if path else None) or {}
         apps[bundle] = dict(value=bundle, label=label, path=path, running=True,
                             presentationProfile=metadata.get('presentationProfile', presentation_profile(bundle)),
                             sceneProfiles=metadata.get('sceneProfiles', application_scene_profiles(bundle)),
                             primaryScene=metadata.get('primaryScene', ''),
                             search=f"{previous.get('search', '')} {label} {bundle}".casefold())
     return dict(candidates=sorted(apps.values(), key=lambda app: (not app['running'], app['label'].casefold())),
-                partial=partial or scan_errors)
+                partial=partial or scan_errors or bool(metadata_errors))

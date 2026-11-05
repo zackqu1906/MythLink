@@ -88,3 +88,59 @@ let invalid = UpdateSourceHandoff(originalSource: "another.ime", temporarySource
 rejects { try restoreUpdate(invalid) }
 precondition(updateSource == abc && updateSelections.count == 2)
 print("Input method update scenarios passed; no AX or real source switching")
+
+let installProduct = "test.voice"
+func installSource(_ id: String, enabled: Bool = false, capable: Bool = true,
+                   selectable: Bool = false) -> InstallableInputSource {
+    InstallableInputSource(id: id, enabled: enabled, enableCapable: capable, selectable: selectable)
+}
+var installSources = [installSource(installProduct)]
+var enabledIDs: [String] = []
+func enableSources(_ enable: (String) throws -> Void) throws -> Bool {
+    try enableVoiceInputSources(productID: installProduct, readSources: { installSources }, enable: enable)
+    return true
+}
+// The mode appears only after the parent is enabled: use a fresh enumeration.
+_ = try enableSources { identifier in
+    enabledIDs.append(identifier)
+    if identifier == installProduct {
+        installSources = [installSource(installProduct, enabled: true), installSource(voice)]
+    } else {
+        installSources[1] = installSource(voice, enabled: true, selectable: true)
+    }
+}
+precondition(enabledIDs == [installProduct, voice])
+// Existing enabled sources remain usable; no input source is selected here.
+enabledIDs = []
+_ = try enableSources { enabledIDs.append($0) }
+precondition(enabledIDs == [installProduct, voice])
+// A parent's successful enable cannot hide a missing/wrong mode.
+installSources = [installSource(installProduct, enabled: true),
+                  installSource("test.voice.other", enabled: true, selectable: true)]
+enabledIDs = []
+rejects { try enableSources { enabledIDs.append($0) } }
+precondition(enabledIDs == [installProduct])
+// Rejected enable and native failures must never be swallowed.
+installSources = [installSource(installProduct, enabled: true), installSource(voice, capable: false)]
+rejects { try enableSources { _ in } }
+installSources = [installSource(installProduct), installSource(voice)]
+enabledIDs = []
+rejects { try enableSources { identifier in
+    enabledIDs.append(identifier)
+    throw SourceSelectionFailure("native enable failure")
+} }
+precondition(enabledIDs == [installProduct])
+// noErr alone is insufficient: the mode must actually be enabled and selectable.
+installSources = [installSource(installProduct, enabled: true), installSource(voice)]
+rejects { try enableSources { _ in } }
+installSources[1] = installSource(voice, enabled: true)
+rejects { try enableSources { _ in } }
+// An enabled child still depends on its parent.
+installSources = [installSource(installProduct), installSource(voice, enabled: true, selectable: true)]
+rejects { try enableSources { _ in } }
+// Do not require a parent record if the exact selectable mode is already exposed.
+installSources = [installSource(voice, enabled: true, selectable: true)]
+enabledIDs = []
+_ = try enableSources { enabledIDs.append($0) }
+precondition(enabledIDs == [voice])
+print("Input method enable: 9 scenarios passed; no real source registration, enable or selection")

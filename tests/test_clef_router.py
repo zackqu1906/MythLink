@@ -121,7 +121,7 @@ def test_official_four_decimal_rounding_preserves_reported_probabilities(scores)
 
 def test_root_tie_falls_back_to_dictation_with_raw_probabilities_retained():
     scores = dict(dictation=.5, edit=.5)
-    decision, raw = client(result(scores)).classify("修改")
+    decision, raw = client(result(scores)).classify("修改", "原文")
     trace = json.loads(raw)
     assert decision == RoutingDecision("dictation")
     assert trace["raw_model_task"] == "edit"
@@ -229,19 +229,34 @@ def test_worker_cancellation_discards_pending_clef_result():
         worker.close(wait=True)
 
 
-def test_removed_gliner_backend_cannot_fall_through_to_legacy_llm():
+@pytest.mark.parametrize('backend', ['gliner', 'llm'])
+def test_removed_backends_are_rejected_without_calling_a_model(backend):
     responses, done = [], threading.Event()
-    class Processor:
-        def classify_input_mode(self, *args):
-            pytest.fail("Old backend must not silently invoke another classifier")
+    class Router:
+        def classify(self, *args, **kwargs):
+            pytest.fail("Removed backend must not silently invoke Clef")
         def close(self):
             pass
-    worker = TextProcessingWorker(processor=Processor(), on_result=lambda r: None,
+    worker = TextProcessingWorker(intent_router=Router(), on_result=lambda r: None,
         on_routing_result=lambda r: (responses.append(r), done.set()))
     try:
-        worker.submit_routing(InputModeRoutingRequest(1, 2, "测试", LLMSettings(), router_backend="gliner"))
+        worker.submit_routing(InputModeRoutingRequest(1, 2, "测试", LLMSettings(), router_backend=backend))
         assert done.wait(2)
         assert responses[0].error and not responses[0].task_type
+    finally:
+        worker.close(wait=True)
+
+
+def test_routing_request_defaults_to_clef_and_preserves_joint_plan():
+    responses, done = [], threading.Event()
+    worker = TextProcessingWorker(intent_router=client(), on_result=lambda r: None,
+        on_routing_result=lambda r: (responses.append(r), done.set()))
+    try:
+        worker.submit_routing(InputModeRoutingRequest(1, 2, "改成牛奶", LLMSettings(), target_text="咖啡"))
+        assert done.wait(2)
+        assert responses[0].error is None
+        assert responses[0].task_type == 'edit' and responses[0].edit_plan == EditPlan(('modify',))
+        assert json.loads(responses[0].model_output)['classification_type'] == 'joint'
     finally:
         worker.close(wait=True)
 
@@ -251,7 +266,7 @@ def test_dictation_checks_all_tasks_in_same_request():
     def respond(request, **kwargs):
         calls.append(json.loads(request.data))
         return io.BytesIO(json.dumps(result(dict(dictation=.9, edit=.1), "dictation")).encode())
-    decision, raw = ClefIntentRouter(endpoint="http://localhost/v1/systemone", urlopen=respond).classify("他说把最后一句删掉")
+    decision, raw = ClefIntentRouter(endpoint="http://localhost/v1/systemone", urlopen=respond).classify("他说把最后一句删掉", "保留这句。删除那句。")
     assert decision == RoutingDecision("dictation") and len(calls) == 1
     assert len(calls[0]["questions"]) == 7
     assert json.loads(raw)["edit_plan"] is None
@@ -295,7 +310,7 @@ def test_cancellation_discards_joint_response_without_retry():
 
 
 def test_dictation_wins_over_edit_tasks_with_yellow_warning_and_raw_scores():
-    decision, raw = client(result(dict(dictation=.9, edit=.1), "dictation"), details=edit_result()).classify("他说改一下")
+    decision, raw = client(result(dict(dictation=.9, edit=.1), "dictation"), details=edit_result()).classify("他说改一下", "原文")
     trace = json.loads(raw)
     assert decision == RoutingDecision("dictation")
     assert trace["warning_codes"] == ["dictation_with_tasks"]
@@ -322,7 +337,66 @@ def test_unclear_edit_plan_falls_back_without_executing_partial_tasks(failure):
 def test_dictation_priority_is_not_blocked_by_uncertain_task_head():
     details = edit_result()
     details["answers"]["polish"]["probabilities"] = dict(apply=.5, skip=.5)
-    decision, raw = client(result(dict(dictation=.9, edit=.1), "dictation"), details=details).classify("普通口述")
+    decision, raw = client(result(dict(dictation=.9, edit=.1), "dictation"), details=details).classify("普通口述", "原文")
     assert decision == RoutingDecision("dictation")
     trace = json.loads(raw)
     assert trace["ignored_tasks"] == ["modify"] and trace["warning_level"] == "yellow"
+
+
+@pytest.mark.parametrize("target", ["", " \t\n\u3000"])
+@pytest.mark.parametrize("task,selected", [("dictation", ()), ("edit", ("insert",)), ("edit", ("compose",))])
+def test_empty_source_removes_modify_from_request_without_inventing_probabilities(target, task, selected):
+    calls = []
+    def respond(request, **kwargs):
+        payload = json.loads(request.data)
+        calls.append(payload)
+        assert set(payload["questions"]) == {"voice_intent", "insert", "polish", "format", "translate", "compose"}
+        response = result(dict(dictation=.9, edit=.1) if task == "dictation" else None, task)
+        response["answers"].update(edit_result(selected)["answers"])
+        del response["answers"]["modify"]
+        return io.BytesIO(json.dumps(response).encode())
+    decision, raw = ClefIntentRouter(endpoint="http://localhost/v1/systemone", urlopen=respond).classify(
+        "把张伟改成张玮", target, {"messages": [{"speaker": "self", "text": "张伟"}]})
+    trace = json.loads(raw)
+    assert len(calls) == 1
+    assert decision == RoutingDecision(task, EditPlan(selected) if selected else None)
+    assert trace["request_schema"] == calls[0]["questions"]
+    assert trace["task_availability"]["excluded_tasks"] == {"modify": "no_editable_source"}
+    assert "modify" not in trace["stages"][0]["answers"]
+    assert "modify" not in trace["raw_tasks"] and not trace["warning"]
+
+
+@pytest.mark.parametrize("violation", ["extra_modify", "missing_translate"])
+def test_empty_source_response_must_match_the_reduced_schema(violation):
+    response = result()
+    if violation == "missing_translate":
+        del response["answers"]["modify"]
+        del response["answers"]["translate"]
+    with pytest.raises(ValueError, match="完整的分类问题") as caught:
+        client(response).classify("修改", "")
+    trace = json.loads(caught.value.model_output)
+    assert "edit_plan" not in trace and trace["consistency"] == "rejected"
+
+
+def test_empty_source_all_skip_still_falls_back_to_dictation():
+    response = result()
+    response["answers"].update(edit_result(())["answers"])
+    del response["answers"]["modify"]
+    decision, raw = client(response).classify("删掉最后一句", "")
+    assert decision == RoutingDecision("dictation")
+    trace = json.loads(raw)
+    assert trace["warning_codes"] == ["edit_without_tasks"]
+    assert trace["warning_level"] == "yellow"
+
+
+@pytest.mark.parametrize("target", ["空", " \n原文\n "])
+def test_literal_empty_marker_and_nonempty_source_keep_modify_available(target):
+    decision, raw = client().classify("改成新内容", target)
+    assert decision.edit_plan == EditPlan(("modify",))
+    assert "modify" in json.loads(raw)["request_schema"]
+
+
+def test_decision_validation_cannot_accept_modify_when_source_is_empty():
+    from proximic_ring.text_processing.task_routing import resolve_joint_decision
+    with pytest.raises(ValueError, match="可用任务"):
+        resolve_joint_decision(result()["answers"], target="")

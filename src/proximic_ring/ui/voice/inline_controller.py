@@ -290,6 +290,23 @@ class InlineInputController(QObject):
 
     @Property(str, notify=changed)
     def status(self):
+        if self.session_automatic and not self.error:
+            phase = self._view.get("phase")
+            stage = self._view.get("automatic_stage", "")
+            labels = {"modify": "修改", "insert": "插入", "polish": "润色", "format": "整理格式", "translate": "翻译", "compose": "创作"}
+            tasks = "、".join(labels[k] for k in self._view.get("automatic_tasks", []) if k in labels)
+            if self._view.get("awaiting_readback") and phase in {"dictated", "edited"}:
+                return "正在写入"
+            if phase == "dictated":
+                return {"route_failed": "路由失败 · 已保留听写", "dictation_failed": "整理失败 · 已保留听写"}.get(stage, "已听写")
+            if phase in {"listening", "finishing", "editing"}:
+                if stage == "routing": return "正在判断"
+                if stage == "routed": return "正在" + (tasks or "准备听写")
+                if stage == "generating": return "正在编辑" + (" · " + tasks if tasks else "")
+                if stage == "dictation": return "正在听写"
+                if stage == "route_failed": return "路由失败 · 正在保留听写"
+                if stage == "dictation_failed": return "整理失败 · 正在保留听写"
+                return "请说话" if phase == "listening" else "正在识别"
         return {"starting": "正在准备", "listening": "听写中", "finishing": "编辑 · 正在收尾" if self._view.get("edit_requested") else "正在定稿", "dictated": "已润色" if self._view.get("polished") else "已听写", "polishing": "正在润色", "editing": "正在编辑", "edited": "已编辑", "undone": "已撤销", "interrupted": "已停止", "error": "输入停止"}.get(self._view.get("phase"), self.connectionStatus)
 
     @Property(str, notify=changed)
@@ -1016,6 +1033,12 @@ class InlineInputController(QObject):
             self._wait_for_reply("final")
         return accepted
 
+    def automatic_progress(self, stage, tasks=()):
+        if (self.session_automatic and self.active and not self._startup_buffering
+                and self._view.get("phase") in {"listening", "finishing", "editing"}):
+            return self._send("automatic_progress", stage=str(stage), tasks=list(tasks))
+        return False
+
     def finish(self):
         if self._startup_buffering:
             self._pending_finish = True
@@ -1026,6 +1049,9 @@ class InlineInputController(QObject):
 
     @Slot()
     def convert(self):
+        if self.session_automatic:
+            self.finish()
+            return
         if self.stroke_mode:
             return
         if self.canRequestConversion:
@@ -1062,7 +1088,7 @@ class InlineInputController(QObject):
 
     @Property(bool, notify=changed)
     def canPolish(self):
-        return bool(self.ready and self._utterance_id and self._view.get("phase") == "dictated"
+        return bool(not self.session_automatic and self.ready and self._utterance_id and self._view.get("phase") == "dictated"
                     and self._view.get("raw") and not self._view.get("polished")
                     and not self._view.get("awaiting_readback") and not self._action_pending)
 
@@ -1306,7 +1332,7 @@ class InlineInputController(QObject):
                                   and utterance_id == self._utterance_id and message.get("ready")
                                   and message.get("phase") == "listening")
             if (begin_acknowledged and self.session_automatic
-                    and (not message.get("automatic_mode") or message.get("automatic_routing_version") != 2)):
+                    and (not message.get("automatic_mode") or message.get("automatic_routing_version") != 3)):
                 self._transport_failed("请先在设置中更新输入法组件，再使用自动判断")
                 return
             previous_active = self.active

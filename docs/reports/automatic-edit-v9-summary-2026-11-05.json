@@ -1,0 +1,927 @@
+{
+  "title": "v9 信息忠实性与 OCR 上下文完整流程验证",
+  "model": "deepseek-v4-1-flash-260910",
+  "routing_prompt_version": "voice-intent-joint-v19-source-gated-schema",
+  "generation_prompt_version": "automatic-composed-v9-user-meaning",
+  "baseline_metrics": {
+    "samples": 130,
+    "completed": 130,
+    "routing_errors": 0,
+    "generation_errors": 0,
+    "root_correct": 130,
+    "raw_exact_match": 125,
+    "final_route_correct": 130,
+    "warnings": 5,
+    "generation_review_passed": 114,
+    "generation_review_failed": 16,
+    "generation_review_pending": 0,
+    "route_correct_generation_failed": 16,
+    "both_passed": 114,
+    "constraint_scored": 26,
+    "constraint_passed": 25,
+    "generation_failures_by_category": {
+      "扩写增加未提供的事实": 2,
+      "创作编造安排": 1,
+      "创作编造安排或承诺": 1,
+      "插入衔接缺少标点": 2,
+      "创作增加未授权承诺": 1,
+      "翻译时间边界变化": 1,
+      "听写残留照录引导语": 3,
+      "扩写增加未提供的功能": 1,
+      "润色改变要求强度": 1,
+      "创作增加未确认的安排": 1,
+      "译文表达不自然": 1,
+      "创作改变归还日期边界": 1
+    },
+    "generation_failures_by_severity": {
+      "medium": 9,
+      "high": 4,
+      "minor": 3
+    },
+    "timing_successful": {
+      "n": 130,
+      "routing": {
+        "n": 130,
+        "p50_s": 2.4923915414992734,
+        "p95_s": 2.7070518339987757,
+        "max_s": 2.9238052500004414
+      },
+      "generation": {
+        "n": 130,
+        "p50_s": 0.9886563124991881,
+        "p95_s": 1.7357900839997455,
+        "max_s": 3.48171079200074
+      },
+      "total": {
+        "n": 130,
+        "p50_s": 3.4943185415004336,
+        "p95_s": 4.101277083000241,
+        "max_s": 5.983576415999778
+      }
+    },
+    "by_expected_intent": {
+      "dictation": {
+        "samples": 40,
+        "review_passed": 37,
+        "n": 40,
+        "routing": {
+          "n": 40,
+          "p50_s": 2.4991828749998604,
+          "p95_s": 2.8475868749992514,
+          "max_s": 2.9238052500004414
+        },
+        "generation": {
+          "n": 40,
+          "p50_s": 0.8735062499999913,
+          "p95_s": 1.231686166000145,
+          "max_s": 1.3902189580003323
+        },
+        "total": {
+          "n": 40,
+          "p50_s": 3.3848261670000284,
+          "p95_s": 3.8342293749992677,
+          "max_s": 4.0503799170001
+        }
+      },
+      "edit": {
+        "samples": 90,
+        "review_passed": 77,
+        "n": 90,
+        "routing": {
+          "n": 90,
+          "p50_s": 2.4900120835000052,
+          "p95_s": 2.65569320800023,
+          "max_s": 2.805550166998728
+        },
+        "generation": {
+          "n": 90,
+          "p50_s": 1.0273983745000805,
+          "p95_s": 1.8768519999994169,
+          "max_s": 3.48171079200074
+        },
+        "total": {
+          "n": 90,
+          "p50_s": 3.5249067080003442,
+          "p95_s": 4.394125917000565,
+          "max_s": 5.983576415999778
+        }
+      }
+    }
+  },
+  "runs": {
+    "clef-v19-generation-v9-pipeline-2026-11-05.json": {
+      "samples": 130,
+      "completed": 130,
+      "routing_errors": 0,
+      "generation_errors": 0,
+      "root_correct": 130,
+      "raw_exact_match": 125,
+      "final_route_correct": 130,
+      "warnings": 5,
+      "generation_review_passed": 122,
+      "generation_review_failed": 8,
+      "generation_review_blocked": 0,
+      "generation_review_pending": 0,
+      "route_correct_generation_failed": 8,
+      "both_passed": 122,
+      "constraint_scored": 26,
+      "constraint_passed": 25,
+      "generation_failures_by_category": {
+        "扩写的推断边界": 1,
+        "创作增加未授权承诺": 1,
+        "创作增加未授权安排": 1,
+        "翻译时间边界变化": 1,
+        "漏执行已明确采纳的要求": 1,
+        "润色改变要求条件": 1,
+        "润色遗漏时间要求": 1,
+        "译文表达不自然": 1
+      },
+      "generation_failures_by_severity": {
+        "medium": 6,
+        "high": 1,
+        "minor": 1
+      },
+      "timing_successful": {
+        "n": 130,
+        "routing": {
+          "n": 130,
+          "p50_s": 2.4820637085013004,
+          "p95_s": 2.7118016250005894,
+          "max_s": 2.991739790999418
+        },
+        "generation": {
+          "n": 130,
+          "p50_s": 2.7800265415007743,
+          "p95_s": 3.291226875000575,
+          "max_s": 6.625297541000691
+        },
+        "total": {
+          "n": 130,
+          "p50_s": 5.205313416499848,
+          "p95_s": 5.825717583000369,
+          "max_s": 9.295486458000596
+        }
+      },
+      "by_expected_intent": {
+        "dictation": {
+          "samples": 40,
+          "review_passed": 40,
+          "n": 40,
+          "routing": {
+            "n": 40,
+            "p50_s": 2.4688020419998793,
+            "p95_s": 2.7328092499992636,
+            "max_s": 2.991739790999418
+          },
+          "generation": {
+            "n": 40,
+            "p50_s": 2.8143788119996316,
+            "p95_s": 3.1690664170000673,
+            "max_s": 3.3523967920009454
+          },
+          "total": {
+            "n": 40,
+            "p50_s": 5.240485353999247,
+            "p95_s": 5.701608041999862,
+            "max_s": 5.856978792000518
+          }
+        },
+        "edit": {
+          "samples": 90,
+          "review_passed": 82,
+          "n": 90,
+          "routing": {
+            "n": 90,
+            "p50_s": 2.490762375500708,
+            "p95_s": 2.69062383399978,
+            "max_s": 2.9090475410012004
+          },
+          "generation": {
+            "n": 90,
+            "p50_s": 2.7578043960002105,
+            "p95_s": 3.38612804100012,
+            "max_s": 6.625297541000691
+          },
+          "total": {
+            "n": 90,
+            "p50_s": 5.180302437499449,
+            "p95_s": 5.913557165999009,
+            "max_s": 9.295486458000596
+          }
+        }
+      }
+    },
+    "clef-v19-generation-v9-ocr-2026-11-05.json": {
+      "samples": 16,
+      "completed": 14,
+      "routing_errors": 0,
+      "generation_errors": 2,
+      "root_correct": 15,
+      "raw_exact_match": 13,
+      "final_route_correct": 14,
+      "warnings": 1,
+      "generation_review_passed": 13,
+      "generation_review_failed": 1,
+      "generation_review_blocked": 2,
+      "generation_review_pending": 0,
+      "route_correct_generation_failed": 1,
+      "both_passed": 13,
+      "constraint_scored": 12,
+      "constraint_passed": 12,
+      "generation_failures_by_category": {
+        "回复增加后续行动承诺": 1
+      },
+      "generation_failures_by_severity": {
+        "medium": 1
+      },
+      "timing_successful": {
+        "n": 14,
+        "routing": {
+          "n": 14,
+          "p50_s": 2.4783083124993937,
+          "p95_s": 2.7976216250008292,
+          "max_s": 2.7976216250008292
+        },
+        "generation": {
+          "n": 14,
+          "p50_s": 2.6529763545004243,
+          "p95_s": 3.492017541999303,
+          "max_s": 3.492017541999303
+        },
+        "total": {
+          "n": 14,
+          "p50_s": 5.167528229000709,
+          "p95_s": 6.037711458000558,
+          "max_s": 6.037711458000558
+        }
+      },
+      "by_expected_intent": {
+        "dictation": {
+          "samples": 2,
+          "review_passed": 2,
+          "n": 2,
+          "routing": {
+            "n": 2,
+            "p50_s": 2.6083239165000123,
+            "p95_s": 2.7976216250008292,
+            "max_s": 2.7976216250008292
+          },
+          "generation": {
+            "n": 2,
+            "p50_s": 2.4375116669998533,
+            "p95_s": 2.7323306670004968,
+            "max_s": 2.7323306670004968
+          },
+          "total": {
+            "n": 2,
+            "p50_s": 5.046108354500575,
+            "p95_s": 5.151564375000817,
+            "max_s": 5.151564375000817
+          }
+        },
+        "edit": {
+          "samples": 14,
+          "review_passed": 11,
+          "n": 12,
+          "routing": {
+            "n": 12,
+            "p50_s": 2.4783083124993937,
+            "p95_s": 2.7590804579995165,
+            "max_s": 2.7590804579995165
+          },
+          "generation": {
+            "n": 12,
+            "p50_s": 2.7616767920007987,
+            "p95_s": 3.492017541999303,
+            "max_s": 3.492017541999303
+          },
+          "total": {
+            "n": 12,
+            "p50_s": 5.302449562500442,
+            "p95_s": 6.037711458000558,
+            "max_s": 6.037711458000558
+          }
+        }
+      }
+    },
+    "clef-v19-generation-v9-fidelity-2026-11-05.json": {
+      "samples": 12,
+      "completed": 12,
+      "routing_errors": 0,
+      "generation_errors": 0,
+      "root_correct": 12,
+      "raw_exact_match": 8,
+      "final_route_correct": 8,
+      "warnings": 0,
+      "generation_review_passed": 9,
+      "generation_review_failed": 3,
+      "generation_review_blocked": 0,
+      "generation_review_pending": 0,
+      "route_correct_generation_failed": 3,
+      "both_passed": 5,
+      "constraint_scored": 12,
+      "constraint_passed": 11,
+      "generation_failures_by_category": {
+        "扩写夸大未给出的程度": 1,
+        "超出明确长度范围": 1,
+        "误删照录正文内部文字": 1
+      },
+      "generation_failures_by_severity": {
+        "medium": 2,
+        "minor": 1
+      },
+      "timing_successful": {
+        "n": 12,
+        "routing": {
+          "n": 12,
+          "p50_s": 2.5070201460002863,
+          "p95_s": 2.5707893329999933,
+          "max_s": 2.5707893329999933
+        },
+        "generation": {
+          "n": 12,
+          "p50_s": 2.9800619379993805,
+          "p95_s": 4.0273112499999115,
+          "max_s": 4.0273112499999115
+        },
+        "total": {
+          "n": 12,
+          "p50_s": 5.453312271000868,
+          "p95_s": 6.5558840409994446,
+          "max_s": 6.5558840409994446
+        }
+      },
+      "by_expected_intent": {
+        "dictation": {
+          "samples": 2,
+          "review_passed": 1,
+          "n": 2,
+          "routing": {
+            "n": 2,
+            "p50_s": 2.4728583959995376,
+            "p95_s": 2.4798892090002482,
+            "max_s": 2.4798892090002482
+          },
+          "generation": {
+            "n": 2,
+            "p50_s": 2.9800619379993805,
+            "p95_s": 3.0095599589985795,
+            "max_s": 3.0095599589985795
+          },
+          "total": {
+            "n": 2,
+            "p50_s": 5.453312271000868,
+            "p95_s": 5.489693625000655,
+            "max_s": 5.489693625000655
+          }
+        },
+        "edit": {
+          "samples": 10,
+          "review_passed": 8,
+          "n": 10,
+          "routing": {
+            "n": 10,
+            "p50_s": 2.519436479000433,
+            "p95_s": 2.5707893329999933,
+            "max_s": 2.5707893329999933
+          },
+          "generation": {
+            "n": 10,
+            "p50_s": 2.9873013544993228,
+            "p95_s": 4.0273112499999115,
+            "max_s": 4.0273112499999115
+          },
+          "total": {
+            "n": 10,
+            "p50_s": 5.434050583499811,
+            "p95_s": 6.5558840409994446,
+            "max_s": 6.5558840409994446
+          }
+        }
+      }
+    }
+  },
+  "validation": [
+    {
+      "report": "clef-v19-generation-v9-pipeline-2026-11-05.json",
+      "cases": 130,
+      "routing_calls": 130,
+      "generation_calls": 130,
+      "probability_values": 1760,
+      "blank_source_without_modify": 30,
+      "source_hashes_current": true,
+      "inputs_and_actual_plan_verified": true
+    },
+    {
+      "report": "clef-v19-generation-v9-ocr-2026-11-05.json",
+      "cases": 16,
+      "routing_calls": 16,
+      "generation_calls": 14,
+      "probability_values": 212,
+      "blank_source_without_modify": 6,
+      "source_hashes_current": true,
+      "inputs_and_actual_plan_verified": true
+    },
+    {
+      "report": "clef-v19-generation-v9-fidelity-2026-11-05.json",
+      "cases": 12,
+      "routing_calls": 12,
+      "generation_calls": 12,
+      "probability_values": 158,
+      "blank_source_without_modify": 5,
+      "source_hashes_current": true,
+      "inputs_and_actual_plan_verified": true
+    }
+  ],
+  "comparison": [
+    {
+      "id": "expand",
+      "utterance": "把延期的理由展开说一下",
+      "target": "测试尚未完成，因此需要延期。",
+      "context": {
+        "messages": []
+      },
+      "before": "测试尚未完成，因此需要延期。之所以需要延期，是因为测试还没有全部完成：一些测试项目仍在进行中，尚未得出结果，所以在测试全部完成并确认结果之前，暂时无法进入下一环节，只能将时间往后顺延。",
+      "after": "由于测试尚未完成，原定的进度无法按计划推进，因此需要延期。测试未完成意味着还需要继续验证，在测试结果出来之前，相关工作无法进入下一步，只能先延期。",
+      "old_review": {
+        "status": "fail",
+        "category": "扩写增加未提供的事实",
+        "severity": "medium",
+        "note": "把“测试尚未完成”展开成“一些测试项目仍在进行中、尚未得出结果”，补充了原文没有确认的具体测试状态。可说明未完成导致延期，但不应把猜测写成既成事实。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "扩写的推断边界",
+        "severity": "medium",
+        "note": "仍补出“测试结果出来之前相关工作无法进入下一步”的具体依赖关系，输入只确认测试未完成导致延期。此项可被理解为解释，是较保守的边界判定，与明确编造功能区别记录；原判据下仍未通过。",
+        "reviewer": "assistant_semantic_review",
+        "review_uncertainty": "borderline"
+      },
+      "change": "仍未通过"
+    },
+    {
+      "id": "compose-empty",
+      "utterance": "帮我写封邮件说明会议延期到周五",
+      "target": "",
+      "context": {
+        "messages": []
+      },
+      "before": "尊敬的各位：\n\n大家好！\n\n原定于本周的会议因故需要延期，现调整至本周五举行，具体时间与地点不变。\n\n因会议时间变动给大家带来的不便，敬请谅解。请各位提前做好相应安排，如有时间冲突，请及时与我联系。\n\n感谢大家的理解与配合！\n\n此致\n敬礼",
+      "after": "您好：\n\n原定会议需要延期，改到周五举行。具体时间安排将另行通知，给您带来的不便敬请谅解。\n\n谢谢！\n\n此致\n敬礼",
+      "old_review": {
+        "status": "fail",
+        "category": "创作编造安排",
+        "severity": "high",
+        "note": "新增“具体时间与地点不变”，输入只说明延期到周五，未提供原安排或不变约束；并增加联系要求。应围绕已知延期信息组织邮件。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "创作增加未授权承诺",
+        "severity": "medium",
+        "note": "不再编造时间地点不变，但改为“具体时间安排将另行通知”，仍新增未授权的后续通知承诺。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "仍未通过"
+    },
+    {
+      "id": "compose-style-not-extra-task",
+      "utterance": "帮我写一封客气的英文邮件，通知对方会议延期到周五，分成三点",
+      "target": "",
+      "context": {
+        "messages": []
+      },
+      "before": "Subject: Notice of Meeting Postponement\n\nDear [Recipient Name],\n\nI hope this message finds you well. I am writing to let you know that our meeting has been postponed to this Friday. Please kindly note the following points:\n\n1. The meeting has been rescheduled to this Friday.\n2. The time and venue remain unchanged unless we inform you otherwise.\n3. Please let us know if this new arrangement causes any inconvenience, and we will do our best to accommodate you.\n\nWe sincerely apologize for any inconvenience this may cause and appreciate your understanding.\n\nBest regards,\n[Your Name]",
+      "after": "Subject: Regarding the Rescheduling of Our Meeting\n\nDear [Name],\n\nI hope this message finds you well. I am writing to let you know that our meeting has been postponed. Please allow me to explain the following points:\n\n1. The meeting has been postponed to Friday.\n2. I apologize for any inconvenience this change may cause you.\n3. Please let me know if Friday does not work for you, and we can look for an alternative.\n\nThank you very much for your understanding and patience.\n\nBest regards,\n[Your Name]",
+      "old_review": {
+        "status": "fail",
+        "category": "创作编造安排或承诺",
+        "severity": "high",
+        "note": "第 2 点编造时间、地点不变，第 3 点增加尽力协调的承诺；满足英文、三点和礼貌形式仍不等于内容正确。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "创作增加未授权安排",
+        "severity": "medium",
+        "note": "删除了时间地点不变，但第 3 点仍主动提出若周五不方便则寻找其他日期；用户只要求告知延期到周五，未授权协商改期。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "仍未通过"
+    },
+    {
+      "id": "mixed-no-comma",
+      "utterance": "删掉第二句再在开头加一句您好",
+      "target": "请明天提交。不要迟到。",
+      "context": {
+        "messages": []
+      },
+      "before": "您好请明天提交。",
+      "after": "您好。请明天提交。",
+      "old_review": {
+        "status": "fail",
+        "category": "插入衔接缺少标点",
+        "severity": "minor",
+        "note": "删除第二句及开头插入均完成，但“您好请明天提交。”把新增的一句您好直接黏连正文，缺少必要句号或逗号。应为“您好。请明天提交。”等清楚衔接。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "逐条对照相同输入及 v8 输出，新正文符合当前有效要求，未见额外事实或遗漏。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "v-edit-compose",
+      "utterance": "替我拟一条请假消息，说明今天身体不舒服",
+      "target": "",
+      "context": {
+        "messages": []
+      },
+      "before": "领导您好，我今天身体不太舒服，需要请假一天休息，特此向您报备并请假。如有工作需要，我会尽量保持联系；若情况有变，我会及时向您说明。给您添麻烦了，谢谢您的理解和批准。",
+      "after": "领导您好，我今天身体不太舒服，想请假一天休息，麻烦您批准，谢谢您。",
+      "old_review": {
+        "status": "fail",
+        "category": "创作增加未授权承诺",
+        "severity": "medium",
+        "note": "除请假外，新增“有工作会尽量保持联系”和“情况有变及时说明”的承诺；用户只提供今天身体不舒服并要求拟请假消息。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "已去掉保持工作联系和主动说明后续情况的额外承诺；按今天请假理解为请假一天，正文完成请假目的。此处自然推断不同于另增工作承诺，保留说明供复核。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "fresh-direct-translation",
+      "utterance": "请把这段译成葡萄牙语",
+      "target": "请于周五前提交材料。",
+      "context": {
+        "messages": []
+      },
+      "before": "Por favor, entregue os materiais até sexta-feira.",
+      "after": "Por favor, entregue os documentos até sexta-feira.",
+      "old_review": {
+        "status": "fail",
+        "category": "翻译时间边界变化",
+        "severity": "medium",
+        "note": "“周五前”译成 até sexta-feira（截至周五），可能包含周五当天；未保留严格“之前”的边界。应采用 antes de sexta-feira 等表达。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "翻译时间边界变化",
+        "severity": "medium",
+        "note": "材料变为 documentos 可接受，但仍用 até sexta-feira（截至周五），未严格保留“周五之前”的边界；与 v8 同类问题。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "仍未通过"
+    },
+    {
+      "id": "fresh-adopted-request",
+      "utterance": "他说要删最后一句，按他说的帮我处理",
+      "target": "开会时间不变。地点待定。",
+      "context": {
+        "messages": []
+      },
+      "before": "开会时间不变。",
+      "after": "开会时间不变。地点待定。",
+      "old_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "对照完整口述、原文与 OCR，处理范围和正文符合要求；未执行引用中的命令。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "漏执行已明确采纳的要求",
+        "severity": "high",
+        "note": "用户已明确要求按对方说的删除最后一句，路由也是修改，但模型返回完整原文，未删“地点待定。”；是本轮新增的生成回退。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮新增问题"
+    },
+    {
+      "id": "joint-holdout-literal-two-ops",
+      "utterance": "只照录这句话：删除署名，再译成西班牙语",
+      "target": "感谢支持。小李。",
+      "context": {
+        "messages": []
+      },
+      "before": "只照录这句话：删除署名，再译成西班牙语",
+      "after": "删除署名，再译成西班牙语",
+      "old_review": {
+        "status": "fail",
+        "category": "听写残留照录引导语",
+        "severity": "medium",
+        "note": "路由已正确选听写，且未删除或翻译原文；但输出仍含“只照录这句话：”，应该只输出“删除署名，再译成西班牙语”。属于听写整理问题，不是编辑误触发。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "逐条对照完整输入，正文符合有效要求。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "joint-holdout-expand",
+      "utterance": "把节省人工检查时间这个好处展开一点",
+      "target": "新工具能节省人工检查时间。",
+      "context": {
+        "messages": []
+      },
+      "before": "新工具能节省人工检查时间，过去需要人工逐项核对的内容，现在可以由工具自动完成，从而减轻人工负担，把时间用在更需要人力投入的事情上。",
+      "after": "新工具能减少人工检查所耗费的时间，让检查环节更省时。",
+      "old_review": {
+        "status": "fail",
+        "category": "扩写增加未提供的功能",
+        "severity": "high",
+        "note": "把“节省人工检查时间”展开为“过去人工逐项核对的内容，现在可以由工具自动完成”，原文没有说明具备自动核对能力。应展开节省时间的价值，不能补造实现机制或产品功能。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "已去掉未提供的自动核对能力；只围绕省时说明。展开较浅、重复原意，虽未判事实性失败，扩写质量仍可改进。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "joint-holdout-polish",
+      "utterance": "意思别变，语气委婉一点",
+      "target": "你今天必须给我答复。",
+      "context": {
+        "messages": []
+      },
+      "before": "你今天方便给我个答复吗？",
+      "after": "你今天方便的话，能否给我一个答复？",
+      "old_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "对照完整口述、原文和上下文，所需内容、范围及组合处理符合要求。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "润色改变要求条件",
+        "severity": "medium",
+        "note": "“今天必须给我答复”改为“今天方便的话”，显式增加是否方便的条件；用户要求意思别变。v8 疑问句只使用礼貌措辞，本轮出现更明确的条件化回退。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮新增问题"
+    },
+    {
+      "id": "joint-holdout-mixed-delete-insert",
+      "utterance": "去掉最后的署名然后开头加上各位同事好",
+      "target": "会议改在周六。小赵。",
+      "context": {
+        "messages": []
+      },
+      "before": "各位同事好会议改在周六。",
+      "after": "各位同事好，会议改在周六。",
+      "old_review": {
+        "status": "fail",
+        "category": "插入衔接缺少标点",
+        "severity": "minor",
+        "note": "删除署名和前置问候完成，但输出“各位同事好会议改在周六。”黏连两部分，缺少必要分隔。应为“各位同事好。会议改在周六。”等。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "删除署名且加上开头问候，新增逗号解决原先两句黏连。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "organize-polish-only",
+      "utterance": "意思不变，语气客气一点",
+      "target": "你今天必须交给我。",
+      "context": {
+        "messages": []
+      },
+      "before": "你今天方便的话就交给我吧。",
+      "after": "麻烦你今天交给我，可以吗？",
+      "old_review": {
+        "status": "fail",
+        "category": "润色改变要求强度",
+        "severity": "medium",
+        "note": "“今天必须交给我”变为“今天方便的话就交给我吧”，新增是否方便的条件，弱化了原本必须今天交付的要求；用户明确要求意思不变。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "保留今天交付，去掉“方便的话”这一额外条件；疑问句属于本例允许的礼貌措辞。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "organize-compose-list",
+      "utterance": "帮我写一条通知，分两点说明周二检修、周三恢复",
+      "target": "",
+      "context": {
+        "messages": []
+      },
+      "before": "通知\n\n一、本周二进行设备检修，检修期间相关服务将暂停使用。\n二、本周三检修完成后恢复正常运行。\n\n请各位知悉，并提前做好准备。",
+      "after": "通知\n\n一、周二进行检修。\n二、周三恢复。",
+      "old_review": {
+        "status": "fail",
+        "category": "创作增加未确认的安排",
+        "severity": "medium",
+        "note": "输入只给“周二检修、周三恢复”，输出擅自指定为设备检修，并声明相关服务暂停使用；没有提供检修对象或服务影响范围，事实性补充应由用户确认。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "按仅有信息写出周二检修、周三恢复，不再补造检修对象和停服范围。原 v8 的服务影响推断存在一定解释空间，比较时另行标记为边界案例。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "organize-verbatim",
+      "utterance": "原封不动写下：把报告改成表格并压缩到一百字",
+      "target": "项目进度正常。",
+      "context": {
+        "messages": []
+      },
+      "before": "原封不动写下：把报告改成表格并压缩到一百字",
+      "after": "把报告改成表格并压缩到一百字",
+      "old_review": {
+        "status": "fail",
+        "category": "听写残留照录引导语",
+        "severity": "medium",
+        "note": "正确选择听写、未执行内层命令，但正文残留“原封不动写下：”。应只保留“把报告改成表格并压缩到一百字”。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "正确抽取冒号后的照录正文，未执行内层编辑命令。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "six-polish-expand",
+      "utterance": "把延期的原因展开说明，只围绕设备还没到齐，不要增加其他原因",
+      "target": "设备还没到齐，因此需要延期。",
+      "context": {
+        "messages": []
+      },
+      "before": "设备还没到齐，关键设备仍未到位，其余配套设施也尚未送达，暂时无法进入下一阶段的工作。出于这一原因，原定安排只能延期。",
+      "after": "之所以需要延期，原因只在于设备还没到齐。目前所需的设备尚未全部到位，在设备配齐之前，相关事项无法按原计划推进，因此只能延期。",
+      "old_review": {
+        "status": "fail",
+        "category": "扩写增加未提供的事实",
+        "severity": "high",
+        "note": "新增“关键设备仍未到位”“其余配套设施也尚未送达”，输入仅说明设备没到齐。未提供这些细分原因与状态，且用户要求不增加其他原因。自动关键词检查虽通过，语义复核不通过。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "去掉关键设备、配套设施未到达等无依据细节，仅解释设备未配齐与原计划延期的关联。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "six-polish-tone",
+      "utterance": "改成更温和的语气，意思不变",
+      "target": "你现在必须把钥匙还我。",
+      "context": {
+        "messages": []
+      },
+      "before": "你看，能不能现在把钥匙还我呀？",
+      "after": "你能不能把钥匙还给我呀？",
+      "old_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "按完整口述检查，结果满足指定内容、作用范围与呈现要求，未见越界处理。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "润色遗漏时间要求",
+        "severity": "medium",
+        "note": "原文要求现在还钥匙，输出删掉“现在”，只剩能否归还；语气变化不应丢失明确时间。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮新增问题"
+    },
+    {
+      "id": "six-translate-name",
+      "utterance": "译成英语，保留Mythlink的拼写",
+      "target": "欢迎试用Mythlink。",
+      "context": {
+        "messages": []
+      },
+      "before": "Welcome to try Mythlink.",
+      "after": "Welcome to try Mythlink.",
+      "old_review": {
+        "status": "fail",
+        "category": "译文表达不自然",
+        "severity": "minor",
+        "note": "“Welcome to try Mythlink.” 保留了产品名和大意，但为不自然的英语搭配；可用“You’re welcome to try Mythlink.”或更自然的试用邀请表达。属于语言质量问题，非事实或路由错误。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "fail",
+        "category": "译文表达不自然",
+        "severity": "minor",
+        "note": "“Welcome to try Mythlink.” 保留了产品名和大意，但为不自然的英语搭配；可用“You’re welcome to try Mythlink.”或更自然的试用邀请表达。属于语言质量问题，非事实或路由错误。",
+        "reviewer": "assistant_semantic_review",
+        "comparison_note": "本轮同一输入下正文与 v8 相同，保留相同复核口径。"
+      },
+      "change": "仍未通过"
+    },
+    {
+      "id": "six-compose-reply",
+      "utterance": "替我拟个回复，表示可以借给他，但要周五归还",
+      "target": "",
+      "context": {
+        "messages": [
+          {
+            "speaker": "other",
+            "text": "能借你的投影仪用两天吗？"
+          }
+        ]
+      },
+      "before": "可以的，投影仪借你用两天没问题。不过麻烦你周五之前归还给我，谢谢～",
+      "after": "可以借给你，不过麻烦周五归还。",
+      "old_review": {
+        "status": "fail",
+        "category": "创作改变归还日期边界",
+        "severity": "medium",
+        "note": "“要周五归还”被写成“周五之前归还”，将归还时间提前；可以借用及投影仪上下文正确，但日期关系未保留。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "归还时间保留为周五，不再提前成周五之前。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    },
+    {
+      "id": "six-dictation-literal",
+      "utterance": "逐字记录：把这段扩写成三百字",
+      "target": "今天晴天。",
+      "context": {
+        "messages": []
+      },
+      "before": "逐字记录：把这段扩写成三百字",
+      "after": "把这段扩写成三百字",
+      "old_review": {
+        "status": "fail",
+        "category": "听写残留照录引导语",
+        "severity": "medium",
+        "note": "输出包含“逐字记录：”，应只输入“把这段扩写成三百字”。路由正确且未真的扩写原文，问题在听写正文提取。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "new_review": {
+        "status": "pass",
+        "category": "符合要求",
+        "severity": "none",
+        "note": "正确去除最外层逐字记录引导语，正文与预设要求相同。",
+        "reviewer": "assistant_semantic_review"
+      },
+      "change": "本轮通过"
+    }
+  ],
+  "limitations": [
+    "原 130 条为开发回归集；12 条和 16 条为冻结提示词后的合成首轮边界样例，不等于真实使用准确率。",
+    "本助手逐条语义复核，非独立人工盲评；解释空间及标签歧义在条目中说明。",
+    "客户端路由和生成延迟均包含网络、服务排队和处理；不含 ASR、实际 OCR、IME 写回，不能称为纯模型时间。",
+    "v8/v9 不是同时随机交错测试，生成耗时变化不能全归因于提示词；未改模型或接口设置。",
+    "两条 OCR 空框回复因多选 polish 被校验拦截，DeepSeek 未被调用。保持 v19 及校验逻辑，不用改标签或指定预期计划掩盖问题。"
+  ]
+}

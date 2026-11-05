@@ -172,7 +172,7 @@ ColumnLayout {
             preferenceStyle: true
             title: "语音处理模式"
             description: pane.controller.inputRoutingMode === "auto"
-                ? "实验模式：自动识别听写、精确编辑、改写或创作，结合当前窗口上文处理。分类准确率仍在验证。"
+                ? "开始后说话，再结束即可自动判断听写或编辑。请先在服务设置中配置自动路由服务器。"
                 : "先听写，通过转换操作将本句作为编辑指令。"
             FigmaSelect {
                 objectName: "inputRoutingModeCombo"
