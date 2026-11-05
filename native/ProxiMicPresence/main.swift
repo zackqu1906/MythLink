@@ -354,8 +354,8 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         if canTrackActivity {
             let idle = keyboardMouseIdleSeconds()
             activityCalibration.activity(.keyboardMouse, at: sampleTime - idle, now: sampleTime)
-            if canLearnFromActivity,
-               let capture = activityCalibration.observe(value, now: sampleTime, eligible: true) {
+            if canLearnFromActivity, let baseline = calibration.baseline,
+               let capture = activityCalibration.observe(value, now: sampleTime, eligible: true, baseline: baseline) {
                 calibration = ProximityCalibration(baseline: capture.baseline)
                 if let thresholds = calibration.thresholds() {
                     policy.setThresholds(lock: thresholds.lockRSSI, unlock: thresholds.unlockRSSI)
@@ -540,7 +540,8 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 "calibration_window": calibration.samples,
                 "calibration_active": false,
                 "activity_calibration_samples": activityCalibration.samples,
-                "activity_calibration_active": canLearnFromActivity && !activityCalibration.activeSources(now: now).isEmpty,
+                "activity_calibration_active": canLearnFromActivity && activityCalibration.signalAllowsLearning
+                    && !activityCalibration.activeSources(now: now).isEmpty,
                 "activity_lock_protected": locallyActive,
                 "rssi_samples": rssiSamples,
                 "thresholds_ready": policy.thresholdsReady, "disconnect_evidence": policy.disconnectEvidence,

@@ -1,0 +1,8441 @@
+{
+  "kind": "same-prompt-routing-rerun-comparison",
+  "prompt_version": "voice-intent-joint-v14-modify-skip-boundary",
+  "previous_report": "docs/reports/clef-modify-boundary-v14-2026-11-05.json",
+  "current_report": "docs/reports/clef-rerun-2026-11-05-134552.json",
+  "same_prompts_inputs_and_labels": true,
+  "previous_metrics": {
+    "samples": 130,
+    "errors": 0,
+    "root_correct": 129,
+    "exact_plan_correct": 125,
+    "raw_exact_plan_correct": 124,
+    "warnings": 1,
+    "edit_samples": 90,
+    "edit_plan_correct": 86,
+    "dictation_samples": 40,
+    "false_edit_count": 1,
+    "requests": 130,
+    "contradictions": 1,
+    "latency_median_s": 3.085683020500028,
+    "latency_p95_s": 3.754368583999991,
+    "latency_by_expected_intent": {
+      "dictation": {
+        "n": 40,
+        "median_s": 3.0401652495000064,
+        "p95_s": 3.79907504199997
+      },
+      "edit": {
+        "n": 90,
+        "median_s": 3.1066783745000066,
+        "p95_s": 3.6267814169999895
+      }
+    }
+  },
+  "current_metrics": {
+    "samples": 130,
+    "errors": 0,
+    "root_correct": 129,
+    "exact_plan_correct": 125,
+    "raw_exact_plan_correct": 124,
+    "warnings": 1,
+    "edit_samples": 90,
+    "requests": 130,
+    "contradictions": 1,
+    "edit_plan_correct": 86,
+    "dictation_samples": 40,
+    "false_edit_count": 1,
+    "latency_median_s": 3.0778786245000447,
+    "latency_p95_s": 3.5388420420001694,
+    "latency_by_expected_intent": {
+      "dictation": {
+        "n": 40,
+        "median_s": 3.102553332999946,
+        "p95_s": 3.5388420420001694
+      },
+      "edit": {
+        "n": 90,
+        "median_s": 3.077191437500005,
+        "p95_s": 3.5240492080001786
+      }
+    }
+  },
+  "changed_choices": [],
+  "changed_final_plans": [],
+  "cases_with_probability_changes": 0,
+  "max_abs_probability_delta": 0.0,
+  "final_mismatches": [
+    "mixed-no-comma",
+    "mixed-translate-condense",
+    "joint-holdout-mixed-delete-insert",
+    "six-compose-from-notes",
+    "six-dictation-reported"
+  ],
+  "warnings": [
+    "joint-holdout-quoted-explain"
+  ],
+  "cases": [
+    {
+      "id": "dictation-message",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "dictation-question",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "dictation-quote",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "dictation-name",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "dictation-plan",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "dictation-literal-command",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "dictation-short-no-source",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "precise-replace",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "precise-delete",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "precise-second-occurrence",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "redictation-fragment",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "redictation-with-command",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "character-explanation",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "spelling",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "comma-support",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "literal-insert",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "literal-insert-empty",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "comma-in-content",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "expand",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "polish",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "condense",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "structure",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "move",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "translate",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "compose-empty",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "compose-style-not-extra-task",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "compose-context",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "mixed-precise-polish",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "mixed-no-comma",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "mixed-translate-condense",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "correction-cancels-polish",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "ocr-command-is-reference",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-confirm",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-reply",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-quoted-delete",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-quoted-translate",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-personal-plan",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-future-plan",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-literal",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-explicit-literal",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-question",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-name",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-short",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-dictation-ocr-injection",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "v-edit-translate",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-translate-polite",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-replace",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-delete",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-redictation",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-character",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-insert-empty",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-compose",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-reply-context",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-polish",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-condense",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "v-edit-structure",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "fresh-report-delete",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "fresh-literal-replace",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "fresh-literal-translate",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "fresh-described-translation",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "fresh-reported-question",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "fresh-context-reply",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "fresh-direct-translation",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "fresh-adopted-request",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "fresh-compose-reply",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "fresh-replace",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "fresh-insert",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "fresh-correct-time",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-reported-format",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "joint-holdout-verbatim-compose",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "joint-holdout-future-edit",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "joint-holdout-ordinary-answer",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-name-no-source",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "joint-holdout-quoted-explain",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "joint-holdout-reported-translation",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "joint-holdout-literal-two-ops",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "joint-holdout-correct-fragment",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-character",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-spelling",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-specific-delete",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-insert",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-insert-empty",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-expand",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-polish",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-condense",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-reorder",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-translate",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-compose-format",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-compose-context",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-mixed-correction-style",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-mixed-delete-insert",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "joint-holdout-adopted-request",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "organize-format-only",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "organize-move-only",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "organize-summary",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "organize-summary-list",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish",
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish",
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "organize-format-negative",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "organize-cancel-summary",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "organize-polish-only",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "organize-precise-delete",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "organize-compose-list",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "organize-reported",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "organize-verbatim",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "organize-mixed",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "six-replace-sentence",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "six-correct-unit",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "six-explain-name",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "six-delete-repeat",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify"
+        ]
+      }
+    },
+    {
+      "id": "six-insert-opening",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "six-insert-between",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "six-insert-condition",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert"
+        ]
+      }
+    },
+    {
+      "id": "six-polish-expand",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "six-polish-shorten",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "six-polish-tone",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "six-format-move",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "six-format-numbered",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "six-format-table",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "six-translate-french",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "six-translate-name",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "apply",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "translate"
+        ]
+      }
+    },
+    {
+      "id": "six-compose-from-notes",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish",
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish",
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "six-compose-story",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "six-compose-reply",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "apply"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "compose"
+        ]
+      }
+    },
+    {
+      "id": "six-dictation-reported",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "six-dictation-plan",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "six-dictation-literal",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "six-modify-polish",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "apply",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "polish"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "modify",
+          "polish"
+        ]
+      }
+    },
+    {
+      "id": "six-insert-format",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "apply",
+        "polish": "skip",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert",
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "insert",
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "six-polish-format",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "edit",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "apply",
+        "format": "apply",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish",
+          "format"
+        ]
+      },
+      "after_actual": {
+        "task": "edit",
+        "tasks": [
+          "polish",
+          "format"
+        ]
+      }
+    },
+    {
+      "id": "six-dictation-quantity-no-source",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    },
+    {
+      "id": "six-dictation-name-no-source",
+      "choices_changed": false,
+      "final_plan_changed": false,
+      "probability_delta": {
+        "voice_intent": {
+          "dictation": 0.0,
+          "edit": 0.0
+        },
+        "modify": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "insert": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "polish": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "format": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "translate": {
+          "apply": 0.0,
+          "skip": 0.0
+        },
+        "compose": {
+          "apply": 0.0,
+          "skip": 0.0
+        }
+      },
+      "max_abs_probability_delta": 0.0,
+      "before_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "after_choices": {
+        "voice_intent": "dictation",
+        "modify": "skip",
+        "insert": "skip",
+        "polish": "skip",
+        "format": "skip",
+        "translate": "skip",
+        "compose": "skip"
+      },
+      "before_actual": {
+        "task": "dictation"
+      },
+      "after_actual": {
+        "task": "dictation"
+      }
+    }
+  ]
+}

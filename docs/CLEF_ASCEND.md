@@ -203,7 +203,7 @@ bash scripts/clef-remote.sh pipeline --case character-explanation --case redicta
 [当前全部概率与新旧对照数据](reports/clef-dictation-criteria-v9-2026-11-04.html)，[JSON 对照](reports/clef-dictation-criteria-v9-2026-11-04.json)，[精确提示词 diff](reports/clef-dictation-criteria-prompts-2026-11-04.diff)。104 条均为已用于开发的回归样例，不能视为独立泛化测试；本轮未调用文本生成或执行 IME 写回。52 项相关接口／报告测试通过。v6、v7、v8 是未采用候选，此轮记录的源码为 v9，后续已改为下述六类 v12。
 
 
-### 六类 v12 与听写优先校验（2026-11-04 当前源码）
+### 六类 v12 与听写优先校验（2026-11-04 基线）
 
 分类字段为修改、插入、润色、格式整理、翻译、按目标创作。整句替换仍属于修改；插入要求已给出的原话；扩写、缩写、摘要并入润色；格式整理单独保留。标签、分类提示词、生成模块和活动样例均已更新。
 
@@ -222,3 +222,13 @@ bash scripts/clef-remote.sh pipeline --case character-explanation --case redicta
 bash scripts/clef-remote.sh check --cases docs/reports/clef-six-tasks-cases-2026-11-04.json --output .runtime/clef/my-six-routing.json
 bash scripts/clef-remote.sh pipeline --cases tools/data/clef_six_task_boundary_cases.json --output .runtime/clef/my-six-pipeline.json
 ```
+
+### 修改的转述边界（2026-11-05，v14）
+
+当前源码版本为 `voice-intent-joint-v14-modify-skip-boundary`。相对 v12，仅加强 `routing_schema()` 中修改的 `skip` 条件，并更新版本号；公共输入、六类定义、修改的 `apply`、其他问题、生成提示词和 `dictation-priority-v1` 校验保持一致。排除仅转述他人要求或姓名解释、个人计划、照录、无原文自我介绍／释字／日期数量片段；转述后另行委托执行和真正更新已有输入仍属于修改。
+
+同一批 130 条合成开发样例实际请求返回 130 次、无接口错误；原始总体意图 129/130，原始完整分类 124/130（v12 为 112/130），最终处理匹配 125/130（v12 为 124/130），标黄 1 条（v12 为 12 条）。原先 10 条听写误选修改修复 9 条，无新增原始完整分类或最终处理回归。剩余“她说她的名字是草字头的菁”仍误选修改 apply 92.25%，但总体意图为听写，最终不执行修改并标黄。真正修改样例未漏选修改；最终仍有 5 条其他任务错误，详见报告。
+
+[v14 全部概率](reports/clef-modify-boundary-v14-2026-11-05.html) · [v12/v14 逐条对照](reports/clef-modify-boundary-v14-2026-11-05-comparison.html) · [精确提示词 diff](reports/clef-modify-boundary-v14-2026-11-05.diff)。两个分段的完整提示词、版本、输入及预期标签已核对一致，没有混入 v13 响应。较大改写的 v13 候选只完成前 71 条，出现退步，未采用：[部分结果归档](reports/clef-modify-boundary-v13-partial-2026-11-04.html)。
+
+分类延迟 P50/P95 为 3.086/3.754 秒，包含网络与服务端处理；分段运行及网络状态不同，不能把时间差单独归因于提示词。70 项现有路由、样例、报告回归通过。本轮只修改和实测分类，没有重新运行文本生成或输入法写回；130 条均已参与调优，不是独立测试集。

@@ -157,7 +157,7 @@ ColumnLayout {
         description: "选择哪些操作可以用于采集桌前信号，减轻长期漂移的影响。"
         FigmaFormRow {
             title: "根据操作更新基线"
-            description: "开启后，在所选操作后的 15 秒内采样。最近 120 秒内至少 5 个有效读数、跨度至少 2 秒即可更新。键鼠操作及已启用的手势、语音证据可保护 10 秒不因远离锁屏，不必等基线更新完成。"
+            description: "开启后，仅在所选操作后的 3 秒内采集近处信号；信号低于近处边界时暂停更新。最近 120 秒内至少 5 个有效读数、跨度至少 2 秒即可更新。键鼠操作及已启用的手势、语音证据仍可独立保护 10 秒不因远离锁屏。"
             controlWidth: 48
             FigmaSwitch {
                 objectName: "proximityBaseline_enabled"

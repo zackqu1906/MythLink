@@ -46,7 +46,7 @@ struct ProximityCalibration {
     }
 }
 
-/// Collect only fresh RSSI callbacks covered by an explicitly enabled activity.
+/// Collect near RSSI callbacks covered by a fresh, explicitly enabled activity.
 /// A short interaction can recalibrate; independent activity protection needs no capture.
 struct ActivityCalibration {
     enum Source: String, CaseIterable {
@@ -67,7 +67,9 @@ struct ActivityCalibration {
         let rssi: Double
         let sources: [Source]
     }
-    static let evidenceLifetime = 15.0
+    // Learning needs fresher evidence than the independent anti-lock lease:
+    // the wearer may leave immediately after the last operation.
+    static let evidenceLifetime = 3.0
     static let lockProtectionLifetime = 10.0
     static let minimumSamples = 5
     static let minimumDuration = 2.0
@@ -78,6 +80,7 @@ struct ActivityCalibration {
     private var readings: [Reading] = []
     private var lastSampleAt: Double?
     private var resetAt = -Double.infinity
+    private(set) var signalAllowsLearning = false
     var samples: Int { readings.count }
 
     mutating func configure(mask: Int, revision: Int, now: Double) {
@@ -90,10 +93,11 @@ struct ActivityCalibration {
     }
     mutating func reset(now: Double) {
         evidence.removeAll(); readings.removeAll(); lastSampleAt = nil; resetAt = now
+        signalAllowsLearning = false
     }
     mutating func activity(_ source: Source, at: Double, now: Double) {
         guard mask & source.bit != 0, at.isFinite, now.isFinite,
-              at >= resetAt, at <= now, now - at < Self.evidenceLifetime else { return }
+              at >= resetAt, at <= now, now - at < Self.lockProtectionLifetime else { return }
         evidence[source] = max(evidence[source] ?? -Double.infinity, at)
     }
     private func sources(now: Double, lifetime: Double) -> [Source] {
@@ -113,13 +117,19 @@ struct ActivityCalibration {
     mutating func expire(now: Double) {
         readings.removeAll { now - $0.at > Self.window || $0.at > now }
     }
-    mutating func observe(_ rssi: Double, now: Double, eligible: Bool) -> Capture? {
+    mutating func observe(_ rssi: Double, now: Double, eligible: Bool, baseline: Double) -> Capture? {
         guard eligible else { reset(now: now); return nil }
         guard mask != 0, now.isFinite, now >= resetAt,
               rssi.isFinite, (-100 ... -20).contains(rssi),
               lastSampleAt.map({ now > $0 }) ?? true else { return nil }
         expire(now: now)
         lastSampleAt = now
+        // Recent input grants protection, not proof that a weak signal is near.
+        // Gate raw callbacks before updating the baseline or clearing departure
+        // evidence, even while the ten-second protection is still active.
+        signalAllowsLearning = baseline.isFinite && (-100 ... -20).contains(baseline)
+            && rssi >= baseline - 4
+        guard signalAllowsLearning else { readings.removeAll(); return nil }
         let sources = activeSources(now: now)
         guard !sources.isEmpty else { return nil }
         readings.append(Reading(at: now, rssi: rssi, sources: sources))
