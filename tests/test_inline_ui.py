@@ -649,7 +649,8 @@ def test_conversion_uses_sentence_snapshot_and_native_revision(inline_ui):
 
 
 @pytest.mark.parametrize("subtask", ["dictation", "modify", "compose", "insert"])
-def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeypatch, subtask):
+@pytest.mark.parametrize("cleanup", [True, False])
+def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeypatch, subtask, cleanup):
     from proximic_ring.text_processing.task_routing import EditPlan
     task = "dictation" if subtask == "dictation" else "edit"
     plan = None if task == "dictation" else EditPlan((subtask,))
@@ -663,6 +664,7 @@ def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeyp
     monkeypatch.setattr(controller._text_processing_worker, "capture_context", lambda target: context)
     monkeypatch.setattr(controller._text_processing_worker, "submit_routing", routes.append)
     controller.inputRoutingMode = "auto"
+    controller.automaticDictationCleanupEnabled = cleanup
     # The setting takes effect at the next native BEGIN.
     event(phase="dictated", ready=True, revision=1, raw="", error="")
     event("settled", phase="dictated", revision=1, text="")
@@ -684,19 +686,26 @@ def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeyp
     r = routes[0]
     controller._apply_input_mode_routed(InputModeRoutingResult(r.request_id, 2, r.raw_text,
         "dictation" if task == "dictation" else "edit", .1, task_type=task, screen_context=context, edit_plan=plan))
+    if task == "dictation" and not cleanup:
+        assert not requests and not controller._automatic_dictations
+        assert not controller._pending_mode_routes and not controller._pending_text_requests
+        assert bridge.messages[-1]["type"] == "update" and bridge.messages[-1]["final"]
+        assert bridge.messages[-1]["automatic_task"] == "dictation"
+        assert bridge.messages[-1]["text"] == r.raw_text
+        return
     if task != "dictation":
         assert not requests  # The IME still owns the authoritative source.
         assert bridge.messages[-1]["automatic_task"] == task
         event(phase="editing", ready=True, revision=1, edit_requested=True)
-        assert bridge.messages[-1]["automatic_allow_empty"] == plan.allows_empty_source
-        source = "" if plan.allows_empty_source else "明天三点"
+        assert "automatic_allow_empty" not in bridge.messages[-1]
+        source = ""
         event("edit_requested", revision=1, instruction=r.raw_text, original=source)
     assert len(requests) == 1
     request = requests[0]
     assert request.task_type == task and request.screen_context == context
     assert request.settings.enabled
     assert request.edit_plan == plan
-    if plan and plan.allows_empty_source:
+    if plan:
         assert request.target_text == ""
     controller._apply_text_processed(TextProcessingResult(request.request_id, 2, request.mode,
         request.raw_text, "处理后的文字", .1, True, task_type=task))

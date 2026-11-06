@@ -68,6 +68,10 @@ class ClickTrace:
         self.event_timestamp = event.timestamp
         self.fields = dict(click_id=uuid.uuid4().hex, step=event.step, mode=mode,
                            event_timestamp=event.timestamp, submitted_at=self.submitted_at)
+        if getattr(event, 'session_id', None) is not None:
+            self.fields.update(sdk_click_id=event.click_id, sdk_session=event.session_id,
+                               sdk_generation=event.generation, button=event.button, count=event.count,
+                               source_timestamp=event.source_timestamp)
         self.finished = False
 
     def record(self, stage, **fields):

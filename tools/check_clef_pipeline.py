@@ -75,6 +75,7 @@ def main():
                 ROOT/'src/proximic_ring/text_processing/router_prompts.py',ROOT/'src/proximic_ring/text_processing/intent_router.py',
                 ROOT/'src/proximic_ring/text_processing/task_routing.py',ROOT/'src/proximic_ring/text_processing/automatic_prompts.py',
                 ROOT/'src/proximic_ring/text_processing/automatic_processing.py',ROOT/'src/proximic_ring/text_processing/llm.py',
+                ROOT/'src/proximic_ring/text_processing/automatic_inputs.py',
                 ROOT/'src/proximic_ring/text_processing/worker.py',Path(__file__))},
             'prompts': {'joint': routing_schema(), 'joint_without_source': routing_schema(target=''),
                         'shared_input_prefix': joint_router_input('')},

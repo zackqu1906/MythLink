@@ -18,7 +18,7 @@ def test_mnn_native_libraries_are_collected_only_for_windows(system, monkeypatch
     hooks.copy_metadata = lambda *args, **kwargs: []
     def dynamic(package):
         calls.append(package)
-        return [('windows-mnn.dll', '.')]
+        return [(package + '-native', package)]
     hooks.collect_dynamic_libs = dynamic
     monkeypatch.setitem(sys.modules, 'PyInstaller.utils.hooks', hooks)
     monkeypatch.setitem(sys.modules, 'platform', SimpleNamespace(system=lambda: system))
@@ -28,8 +28,11 @@ def test_mnn_native_libraries_are_collected_only_for_windows(system, monkeypatch
     exec(compile(source, 'mythlink.spec', 'exec'), namespace)
     assert namespace['hiddenimports'].count('MNN') == 1
     assert namespace['hiddenimports'].count('_mnncengine') == 1
-    assert calls == (['MNN'] if system == 'Windows' else [])
-    assert namespace['binaries'] == ([('windows-mnn.dll', '.')] if system == 'Windows' else [])
+    expected = ['MNN'] if system == 'Windows' else ['ring_mac_sdk', 'onnxruntime']
+    assert calls == expected
+    for name in expected:
+        assert (name+'-native', name) in namespace['binaries']
+    assert ('onnxruntime' in namespace['hiddenimports']) is (system == 'Darwin')
 
 
 def test_mac_touchpad_dependencies_keep_existing_versions():
@@ -38,6 +41,6 @@ def test_mac_touchpad_dependencies_keep_existing_versions():
         extras = tomllib.load(stream)['project']['optional-dependencies']
     requirements = [Requirement(value) for value in extras['touchpad']]
     active = {row.name: str(row.specifier) for row in requirements
-              if row.marker is None or row.marker.evaluate(dict(platform_system='Darwin'))}
+              if row.marker is None or row.marker.evaluate(dict(platform_system='Darwin', platform_machine='arm64'))}
     assert active == {'MNN': '==3.6.1', 'pyobjc-framework-Quartz': '>=12.2.2',
-                      'pyobjc-framework-ApplicationServices': '>=12.2.2'}
+                      'pyobjc-framework-ApplicationServices': '>=12.2.2', 'onnxruntime': '==1.21.0'}

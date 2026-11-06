@@ -58,6 +58,12 @@ _ASR_CONTEXT_CAPTURE_MAX_CHARS = 1600
 def _gesture_health_status(stats: dict, failed: bool = False) -> str:
     if failed or stats.get("error"):
         return "error"
+    # A known Raw2 failure needs fresh evidence after its bounded recovery.
+    # This does not treat ordinary idle time without gestures as a failure.
+    if stats.get('recovery_state') == 'failed':
+        return 'recovery_failed'
+    if stats.get('recovery_state') in {'resetting', 'awaiting_packets'}:
+        return 'recovering'
     # Firmware sends confirmed events only. Silence is normal, not a stalled
     # inference stream. START readiness and link health govern availability.
     return "running" if stats.get("stream_ready") else "starting"

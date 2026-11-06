@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ring Studio · 戒指试用台</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<main>
+  <header><div class="brand"><span class="brand-mark">◎</span><div><strong>Ring Studio</strong><span class="subtitle">戒指 SDK 试用台</span></div></div><div class="header-right"><span class="local">仅在本机运行</span><span id="service" class="pill">正在连接页面服务</span></div></header>
+  <div id="mode" class="banner">本地试用 · 选择设备后连接，触摸板事件只显示在此页面</div>
+  <div id="offline" class="notice" hidden role="alert"></div>
+  <section class="intro"><div class="eyebrow">从指尖，看见交互</div><h1>连接戒指，试一试。</h1><p>观察触控轨迹、接触状态与点击事件，让每一个动作都有迹可循。</p></section>
+  <section class="panel system-panel"><div class="section-top"><div class="system-title"><h2>系统光标</h2><span id="cursor-state" class="pill">已关闭</span></div><div class="touch-actions"><button id="cursor-permission" class="secondary">检查辅助功能权限</button><button id="cursor-enable" class="primary" disabled>开启系统控制</button><button id="cursor-stop" class="emergency" disabled>停止系统控制 · Esc</button></div></div><p id="cursor-message" class="muted">默认关闭。先开始触摸板，再明确开启系统光标；系统点击需单独勾选。</p><div class="system-options"><label>系统光标倍率（X/Y 相同）<input id="cursor-gain" type="number" min="0.25" max="8" step="0.25" value="1"></label><label>系统滚动倍率<input id="scroll-gain" type="number" min="0.25" max="8" step="0.25" value="1"></label><label class="check"><input id="finger-mapping" type="checkbox" checked>双指纵向滚动</label><label class="check"><input id="system-clicks" type="checkbox">派发正式点击（默认关）</label></div><div class="small muted">系统倍率独立于下方页面倍率，不会重复相乘。参数修改需先停止系统控制。Esc 仅在此页面获得键盘焦点时生效。</div></section>
+  <div class="workspace">
+    <aside class="panel device-panel">
+      <div class="section-top"><h2>设备连接</h2><span class="step">01</span></div>
+      <p class="muted">先扫描，再选择要试用的戒指。</p>
+      <button id="scan" class="secondary wide">扫描附近戒指</button>
+      <label for="devices">选择设备</label><select id="devices"><option value="">尚未扫描</option></select>
+      <div id="device-hint" class="small muted">不会自动连接任何设备</div>
+      <div class="button-pair"><button id="connect" class="primary" disabled>连接设备</button><button id="disconnect" class="secondary" disabled>断开</button></div>
+      <div class="divider"></div>
+      <div class="device-title"><span class="ring-icon">◉</span><div><strong id="device-name">未连接戒指</strong><span id="link-label" class="small muted">等待选择设备</span></div></div>
+      <dl class="facts"><div><dt>固件版本</dt><dd id="firmware">—</dd></div><div><dt>设备电量</dt><dd id="battery">—</dd></div><div><dt>连接状态</dt><dd id="link">未连接</dd></div></dl>
+      <button id="refresh" class="text-button" disabled>刷新电量 ↻</button>
+      <div class="helper">蓝牙权限需在 macOS 系统设置中授予启动服务的终端或宿主应用。</div>
+    </aside>
+    <section class="panel touch-panel">
+      <div class="touch-header"><div><div class="section-top"><h2>触摸板</h2><span id="stage" class="pill">未启动</span></div><p class="muted">戴好戒指，开始后用手指滑动或轻点。</p></div><div class="touch-actions"><button id="start" class="primary" disabled>▶ 开始触摸板</button><button id="stop" class="secondary" disabled>停止</button></div></div>
+      <div class="sensitivity-control"><div class="sensitivity-heading"><label for="sensitivity">页面轨迹灵敏度</label><output id="sensitivity-value" for="sensitivity">1×</output><button id="sensitivity-reset" class="text-button">恢复默认</button></div><div class="sensitivity-slider"><span>0.25×</span><input id="sensitivity" type="range" min="0.25" max="8" step="0.25" value="1" aria-describedby="sensitivity-hint"><span>8×</span></div><p id="sensitivity-hint">只改变页面轨迹，不影响系统光标 / 滚轮；偏好保存在此浏览器。</p></div>
+      <div class="canvas-shell"><canvas id="trail" aria-label="触摸板轨迹画布"></canvas><div class="canvas-label"><span class="live-dot"></span><span id="canvas-label">等待开始</span></div><div id="empty" class="canvas-empty"><div class="orbit">◎</div><strong>你的下一次滑动，会出现在这里</strong><span>连接设备并开始触摸板</span></div><div class="canvas-footer"><span>固定显示比例 · 视口随位置平移</span><button id="clear" class="canvas-clear">清空轨迹 ↺</button></div></div>
+      <div class="metrics"><div><span class="metric-label">当前位置</span><strong id="position" class="mono">X 0.0 <em>/</em> Y 0.0</strong></div><div><span class="metric-label">接触状态</span><strong id="contact">未接触</strong></div><div><span class="metric-label">点击反馈</span><strong id="click">等待点击</strong><span id="preview" class="preview" hidden>点击预告 · 尚未确认</span></div></div>
+      <div class="session-line"><span id="session">尚无触摸板会话</span><span>单指 <i class="legend single"></i> 双指 <i class="legend two"></i></span></div>
+    </section>
+  </div>
+  <section id="error" class="error-panel" hidden role="alert"><div><strong>操作未完成</strong><p id="error-hint"></p><div id="error-summary" class="mono"></div></div><details><summary>查看详细响应</summary><pre id="error-detail"></pre></details></section>
+  <section class="panel log-panel"><div class="section-top"><div class="log-title"><h2>事件记录</h2><span id="log-count" class="small muted">最近 0 条 / 最多 100 条</span></div><span class="small muted">位移绘制在上方，日志保留状态与点击</span></div><div id="logs" class="logs"><div class="log-empty">准备就绪。扫描设备，开启第一次试用。</div></div></section>
+  <footer><span>Ring macOS SDK <span id="version">· 本地试用</span></span><span>页面关闭后停止并断开 · 系统控制默认关闭</span></footer>
+</main>
+</body></html>

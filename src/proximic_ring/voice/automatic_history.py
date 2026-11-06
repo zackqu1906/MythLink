@@ -12,6 +12,44 @@ def _probability_text(probabilities, labels):
                       if isinstance(probabilities.get(key), (int, float)))
 
 
+def _model_ocr_details(mode, trace, request):
+    """Use saved model inputs; never re-truncate an old record using today's rules."""
+    router_text = trace.get("ocr_text", mode.get("router_ocr_text"))
+    if isinstance(router_text, str):
+        router_status = f"请求中的 OCR 共 {len(router_text)} 字符；最多取最后 4 块，再保留末 360 字符。"
+        if mode.get("router_error") or trace.get("error"):
+            router_status += "路由失败，不能据此确认服务器已收到。"
+        router_text = router_text or "无 OCR 文字（分类输入中使用“无”）"
+    else:
+        router_status = "未单独记录此版本；若有历史分类输入，可在下方查看。"
+        router_text = "未记录"
+
+    task = request.get("task_type") or mode.get("task_type") or trace.get("task")
+    title = {"dictation": "听写整理 OCR", "edit": "编辑生成 OCR"}.get(task, "听写整理／编辑生成 OCR")
+    context = None
+    if not request:
+        status = ("听写整理已关闭，直接使用 ASR 文本；未调用正文模型。"
+                  if task == "dictation" and mode.get("dictation_cleanup_enabled") is False
+                  else "未进入正文处理阶段，没有对应请求。")
+    elif "request_input" in request:
+        actual = request["request_input"]
+        if isinstance(actual, dict):
+            context = actual.get("screen_context")
+            status = "已保存正文模型请求中的完整 screen_context。"
+            status += "请求失败，不能据此确认服务器已收到。" if request.get("status") == "failed" else "处理已完成。"
+        else:
+            status = "正文处理在请求输入构造前结束，没有对应请求。"
+    elif request.get("status") in {"processing", "cancelled"}:
+        status = "尚未取得实际正文请求输入记录。"
+    else:
+        saved_input = request.get("input") or {}
+        context = saved_input.get("screen_context")
+        status = "旧记录：展示当时保存的正文输入，未进行重新裁剪。"
+    text = json.dumps(context, ensure_ascii=False, indent=2) if isinstance(context, dict) else "未记录"
+    return {"routerOcrText": router_text, "routerOcrStatus": router_status,
+            "generationOcrTitle": title, "generationOcrText": text, "generationOcrStatus": status}
+
+
 def automatic_history_details(directory: Path, record: dict) -> dict:
     mode = record.get("mode", {})
     if mode.get("routing") != "auto":
@@ -114,6 +152,8 @@ def automatic_history_details(directory: Path, record: dict) -> dict:
         request_status = {"completed": "已完成", "processing": "已准备，尚无完成记录",
                           "failed": "失败", "cancelled": "已取消"}.get(last_request.get("status"), "状态未知")
         status += "；文本模型请求：" + request_status
+    elif task == "dictation" and mode.get("dictation_cleanup_enabled") is False:
+        status += "；听写整理已关闭，直接使用 ASR 文本"
     else:
         status += "；尚未创建文本模型请求"
     speakers = {"self": "自己", "other": "对方", "unknown": "未知发言人"}
@@ -126,6 +166,7 @@ def automatic_history_details(directory: Path, record: dict) -> dict:
                          for line in evidence.get("ocr_lines", []))
     model_name = trace.get("model") or mode.get("router_model", "")
     return {"level1Text": level1, "level2Text": level2, "hintText": hint_text,
+            **_model_ocr_details(mode, trace, last_request),
             "probabilityText": "\n".join(answer_lines), "timingText": " · ".join(timings),
             "modelText": str(model_name), "errorText": str(mode.get("router_error") or trace.get("error") or ""),
             "warningText": warning_text, "warningLevel": "yellow" if warning_text else "",

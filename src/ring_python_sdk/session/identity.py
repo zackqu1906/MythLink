@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import secrets
 
 from ring_python_sdk.ble import (
@@ -17,12 +16,13 @@ from ring_python_sdk.core.identity import (
     IdentityStatus,
     verify_identity_signature,
 )
+from ring_python_sdk.session.control import serialized_control, wait_control_reply
 
 
 class IdentityMixin:
     async def _wait_identity_response(self, timeout_s: float) -> bool:
         try:
-            await asyncio.wait_for(self._identity_event.wait(), timeout_s)
+            await wait_control_reply(self, self._identity_event, timeout_s)
         except TimeoutError:
             print("identity request timed out")
             return False
@@ -38,6 +38,7 @@ class IdentityMixin:
         self._identity_event.clear()
         self.identity_error = None
 
+    @serialized_control
     async def query_identity(self, timeout_s: float = 2.0) -> IdentityStatus | None:
         if self.client is None or not self.client.is_connected or not self.rx_uuid:
             print("identity status skipped (not connected)")
@@ -48,6 +49,8 @@ class IdentityMixin:
         if not await self._wait_identity_response(timeout_s):
             return None
         return self.identity_status
+
+    @serialized_control
     async def provision_identity(
         self, sn: str, timeout_s: float = 5.0
     ) -> IdentityStatus | None:
@@ -61,6 +64,7 @@ class IdentityMixin:
             return None
         return self.identity_status
 
+    @serialized_control
     async def challenge_identity(
         self, timeout_s: float = 5.0
     ) -> IdentityChallengeResult | None:
@@ -91,6 +95,7 @@ class IdentityMixin:
             verified=True,
         )
 
+    @serialized_control
     async def lock_identity(self, timeout_s: float = 5.0) -> IdentityStatus | None:
         if self.client is None or not self.client.is_connected or not self.rx_uuid:
             print("identity lock skipped (not connected)")

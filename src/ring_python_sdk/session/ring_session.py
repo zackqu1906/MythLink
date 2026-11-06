@@ -154,6 +154,8 @@ class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, Stat
     time_status: TimeStatus | None = None
     _time_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     device_info: DeviceInfo | None = None
+    connection_backend: str = 'legacy'
+    _sdk_transport: Any = field(default=None, repr=False)
     mac_status: MacStatus | None = None
     mac_str: str | None = None
     mac_addr_type: int | None = None
@@ -182,6 +184,8 @@ class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, Stat
     )
 
     def __post_init__(self) -> None:
+        if self.connection_backend not in {'legacy', 'sdk'}:
+            raise ValueError('connection_backend must be legacy or sdk')
         if self.data_root is not None:
             set_data_dir(self.data_root)
 

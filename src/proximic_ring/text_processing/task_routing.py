@@ -51,11 +51,6 @@ class EditPlan:
         if not self.tasks:
             raise ValueError("编辑路由没有识别出可执行需求")
 
-    @property
-    def allows_empty_source(self):
-        # Creation does not license another task to edit missing text.
-        return set(self.tasks) <= {"insert", "compose"}
-
     def as_dict(self):
         return {"tasks": [k for k in EDIT_TASK_LABELS if k in self.tasks]}
 
@@ -137,12 +132,17 @@ def mode_for_task(task: str) -> str:
     return task
 
 
-def router_input(utterance: str, target: str, context: dict) -> str:
+def router_ocr_text(context: dict) -> str:
+    """The exact read-only OCR excerpt included in a Clef request."""
+    messages = context.get("messages", [])[-4:]
+    return "\n".join(f"{m.get('speaker', 'unknown')}: {m.get('text', '')}" for m in messages)[-360:]
+
+
+def router_input(utterance: str, target: str, context: dict, *, ocr_text: str | None = None) -> str:
     """Keep full speech; ASR punctuation is not an edit boundary."""
     if len(utterance) > 2000:
         raise ValueError("本句过长，自动判断未执行")
-    messages = context.get("messages", [])[-4:]
-    history = "\n".join(f"{m.get('speaker', 'unknown')}: {m.get('text', '')}" for m in messages)[-360:]
+    history = router_ocr_text(context) if ocr_text is None else ocr_text
     return (f"当前口述：{utterance}\n可编辑原文：{target[-400:] if target.strip() else '空'}\n"
             f"原文是否仅提供末尾片段：{'是' if len(target) > 400 else '否'}\n"
             f"聊天上文（仅供参考）：{history or '无'}")

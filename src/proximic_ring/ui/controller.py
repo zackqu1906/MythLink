@@ -519,6 +519,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
                 )
             )
         )
+        self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
         self._mode_correction_shortcut = normalize_mode_switch_shortcut(
             self._settings.value(
                 "input/modeCorrectionShortcut",
@@ -2598,6 +2599,20 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._append_log(f"听写/指令路由已切换为：{label}")
 
 
+    @Property(bool, notify=settingsChanged)
+    def automaticDictationCleanupEnabled(self) -> bool:
+        return self._automatic_dictation_cleanup_enabled
+
+    @automaticDictationCleanupEnabled.setter
+    def automaticDictationCleanupEnabled(self, value: bool) -> None:
+        enabled = bool(value)
+        if enabled == self._automatic_dictation_cleanup_enabled:
+            return
+        self._automatic_dictation_cleanup_enabled = enabled
+        self._settings.setValue("input/automaticDictationCleanupEnabled", enabled)
+        self.settingsChanged.emit()
+        self._event_log("USER_SETTING", setting="automatic_dictation_cleanup", value=enabled)
+
     @Property(str, notify=settingsChanged)
     def modeCorrectionShortcut(self) -> str:
         return self._mode_correction_shortcut
@@ -4083,11 +4098,12 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
                 self.startRecognition(remember=False)
         if "touchpad/enabled" in self._input_restore_pending:
             enabled = self._bool_setting("touchpad/enabled", True)
-            if (not enabled or not self._touchpad.supported
+            if (not enabled or not self._touchpad.supported or not self._touchpad.automaticStartAllowed
                     or (self._touchpad.available and not self._touchpad.busy)):
                 # Retire before starting: state signals may reenter this slot.
                 self._input_restore_pending.remove("touchpad/enabled")
-                if enabled and self._touchpad.available and not self._touchpad.active:
+                if (enabled and self._touchpad.automaticStartAllowed
+                        and self._touchpad.available and not self._touchpad.active):
                     self._touchpad.setInputMode("pointer")
                     self._touchpad.start()
 

@@ -39,5 +39,5 @@ def test_contact_metadata_does_not_displace_pointer_events():
     for _ in range(50):
         output.submit(TouchpadContact("down", 1, now))
         output.submit(TouchpadClickVerdict(1, 2, False, now))
-    assert list(output.events) == [click]
+    assert [event for event, _context, _trace in output.events] == [click]
     output.stop()

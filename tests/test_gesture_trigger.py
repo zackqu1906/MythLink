@@ -231,10 +231,16 @@ QTest.qWait(600)
 assert toast.window.isVisible() and names() == ['click']
 QTest.qWait(350)
 assert not toast.window.isVisible() and not toast._timer.isActive()
-for name in ('tap', 'click', 'double-click'):
+touchpad_names = ['left-click', 'left-double-click', 'right-click', 'two-finger-scroll']
+for name in touchpad_names:
     controller.submit(name, owner._disconnect_event)
-QTest.qWait(30)
-assert names() == ['tap', 'click', 'double-click']
+QTest.qWait(200)  # Capture after the upward push animation has settled.
+assert names() == touchpad_names
+assert [card.property('gestureLabel') for card in cards()] == ['左键单击', '左键双击', '右键单击', '双指纵向滚动']
+assert [card.mapToScene(QPointF()).y() for card in cards()] == [0, 80, 160, 240]
+assert toast.window.geometry().bottom() == bottom
+assert app.focusWidget() is focus and not toast.window.isActive()
+assert toast.window.grabWindow().save(str(shots / 'gesture-trigger-touchpad.png'))
 controller.enabled = False
 assert not toast.window.isVisible() and not toast._timer.isActive() and not names()
 controller.enabled = True

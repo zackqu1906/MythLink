@@ -46,11 +46,11 @@ def normalize_llm_provider(value: str) -> str:
     return provider if provider in LLM_PROVIDERS else LLM_PROVIDER_LOCAL
 
 
-def validate_edit_target_text(value: str) -> str:
+def validate_edit_target_text(value: str, *, allow_empty: bool = False) -> str:
     """Reject captures that cannot safely fit in one local edit request."""
 
     text = str(value or "")
-    if not text.strip():
+    if not allow_empty and not text.strip():
         raise ValueError("修改模式需要已有的目标文本")
     if len(text) > MAX_EDIT_TARGET_CHARS:
         raise ValueError(
@@ -179,3 +179,4 @@ class TextProcessingResult:
     winner_branch: str = ""
     task_type: str = ""
     edit_plan: EditPlan | None = None
+    model_input: dict | None = None

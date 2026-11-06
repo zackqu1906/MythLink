@@ -18,6 +18,7 @@ class AutomaticUtterance:
     task_type: str = ""
     context: object = None
     edit_plan: EditPlan | None = None
+    cleanup_dictation: bool = True
 
 
 class AutomaticVoiceMixin:
@@ -107,7 +108,8 @@ class AutomaticVoiceMixin:
         self._text_request_id += 1
         request_id = self._text_request_id
         pending = AutomaticUtterance(self._automatic_generation, text, int(session_id), target,
-                                    snapshot=snapshot, inline_key=self._automatic_key() if inline else ())
+                                    snapshot=snapshot, inline_key=self._automatic_key() if inline else (),
+                                    cleanup_dictation=self._automatic_dictation_cleanup_enabled)
         self._automatic_routes[request_id] = pending
         self._pending_mode_routes.add(request_id)
         request = InputModeRoutingRequest(request_id, int(session_id), text,
@@ -154,11 +156,22 @@ class AutomaticVoiceMixin:
         self._append_log(f"自动判断：{TASK_LABELS[result.task_type]}（{result.latency_s:.3f}s）")
         if result.edit_plan:
             self._append_log("编辑需求：" + "、".join(EDIT_TASK_LABELS[k] for k in result.edit_plan.tasks))
+        if result.task_type == DICTATION:
+            self._automatic_record("record_dictation_cleanup", pending.session_id, pending.cleanup_dictation)
+            if not pending.cleanup_dictation:
+                self._append_log("听写整理已关闭，直接使用 ASR 文本")
+                if pending.inline_key:
+                    self._inline_input.automatic_progress("routed")
+                    self._inline_input.update(pending.text, True, pending.session_id, automatic_task=DICTATION)
+                else:
+                    from ...text_processing.model import TextProcessingResult
+                    self._commit_input_text(TextProcessingResult(0, pending.session_id, DICTATION,
+                        pending.text, pending.text, 0, False, task_type=DICTATION), pending.target)
+                return True
         if pending.inline_key and result.task_type != DICTATION:
             self._automatic_inline_edit = pending
             self._inline_input.automatic_progress("routed", result.edit_plan.tasks)
-            self._inline_input.update(pending.text, True, pending.session_id, automatic_task=result.task_type,
-                                      automatic_allow_empty=result.edit_plan.allows_empty_source)
+            self._inline_input.update(pending.text, True, pending.session_id, automatic_task=result.task_type)
         else:
             if result.task_type != DICTATION and pending.snapshot is None:
                 self._reject_edit_request("没有取得原文本框，无法应用自动编辑")

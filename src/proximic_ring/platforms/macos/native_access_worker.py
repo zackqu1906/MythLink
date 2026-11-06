@@ -230,7 +230,7 @@ class Dispatcher:
         trace = message.get("click_trace")
         mouse = self.touchpad_mouse
         before = {name: getattr(mouse, name, 0) for name in
-                  ('moves', 'clicks', 'click_down_posts', 'click_up_posts')}
+                  ('moves', 'clicks', 'click_down_posts', 'click_up_posts', 'scrolls')}
         result = dict(ipc_age_ms=round(age*1000, 3) if math.isfinite(age) else None,
                       ipc_limit_ms=round(TOUCHPAD_REQUEST_MAX_AGE*1000))
         if trace:
@@ -267,6 +267,7 @@ class Dispatcher:
             raise
         finally:
             result.update(moves=getattr(mouse, 'moves', 0)-before['moves'],
+                          scrolls=getattr(mouse, 'scrolls', 0)-before['scrolls'],
                           clicks_posted=getattr(mouse, 'clicks', 0)-before['clicks'],
                           down_posts=getattr(mouse, 'click_down_posts', 0)-before['click_down_posts'],
                           up_posts=getattr(mouse, 'click_up_posts', 0)-before['click_up_posts'],

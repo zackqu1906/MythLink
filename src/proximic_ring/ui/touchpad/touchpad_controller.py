@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import platform
 import sys
 import time
 from types import SimpleNamespace
@@ -51,6 +52,10 @@ class TouchpadController(QObject):
         self._gain = self._number("gain", 1., .25, 3.)
         owner._settings.remove("touchpad/seconds")
         self._clicks = owner._settings.value("touchpad/clicks", True, type=bool)
+        self._double_click = owner._settings.value("touchpad/doubleClick", True, type=bool)
+        self._right_click = owner._settings.value("touchpad/rightClick", True, type=bool)
+        self._scroll = owner._settings.value("touchpad/scroll", True, type=bool)
+        self._scroll_gain = self._number('scrollGain', 1., .25, 3.)
         self._invert_y = owner._settings.value("touchpad/invertY", False, type=bool)
         self._warm = False
         self.stroke_output_factory = TouchpadStrokeOutput
@@ -75,6 +80,7 @@ class TouchpadController(QObject):
         self._local_stroke_input = self._prediction_mode = False
         self._stroke_context = ""
         self._stroke_gate = self._voice_was_enabled = False
+        self._automatic_restart_blocked = False
         self._voice_gate = False
         self._standard_trace = False
         self._tap_commit_at = None
@@ -130,6 +136,9 @@ class TouchpadController(QObject):
     @Property(bool, constant=True)
     def macPermissionsRequired(self): return sys.platform == "darwin"
 
+    @Property(bool, constant=True)
+    def raw2Supported(self): return sys.platform == 'darwin' and platform.machine() == 'arm64'
+
     @Property(bool, notify=changed)
     def available(self):
         return (self.supported and not self._closed and self.owner.connected
@@ -142,6 +151,9 @@ class TouchpadController(QObject):
 
     @Property(bool, notify=changed)
     def busy(self): return self._state in {"starting", "stopping"}
+
+    @Property(bool, notify=changed)
+    def automaticStartAllowed(self): return not self._automatic_restart_blocked
 
     @Property(str, notify=changed)
     def state(self): return self._state
@@ -510,10 +522,43 @@ class TouchpadController(QObject):
 
     @clicks.setter
     def clicks(self, value):
-        if not self._run:
-            self._clicks = bool(value)
-            self.owner._settings.setValue("touchpad/clicks", self._clicks)
-            self.changed.emit()
+        self._set_pointer_feature('_clicks', 'clicks', bool(value))
+
+    def _set_pointer_feature(self, attr, key, value):
+        setattr(self, attr, value)
+        self.owner._settings.setValue('touchpad/' + key, value)
+        if self._run and self._run.mode == 'pointer':
+            configure = getattr(self._run.output, 'configure', None)
+            if configure:
+                configure(clicks=self._clicks, double_click=self._double_click,
+                          right_click=self._right_click, scroll=self._scroll, scroll_gain=self._scroll_gain)
+        self.changed.emit()
+
+    @Property(bool, notify=changed)
+    def doubleClick(self): return self._double_click
+
+    @doubleClick.setter
+    def doubleClick(self, value): self._set_pointer_feature('_double_click', 'doubleClick', bool(value))
+
+    @Property(bool, notify=changed)
+    def rightClick(self): return self._right_click
+
+    @rightClick.setter
+    def rightClick(self, value): self._set_pointer_feature('_right_click', 'rightClick', bool(value))
+
+    @Property(bool, notify=changed)
+    def scroll(self): return self._scroll
+
+    @scroll.setter
+    def scroll(self, value): self._set_pointer_feature('_scroll', 'scroll', bool(value))
+
+    @Property(float, notify=changed)
+    def scrollGain(self): return self._scroll_gain
+
+    @scrollGain.setter
+    def scrollGain(self, value):
+        if math.isfinite(value) and .25 <= value <= 3:
+            self._set_pointer_feature('_scroll_gain', 'scrollGain', round(value, 2))
 
     @Property(bool, notify=changed)
     def invertY(self): return self._invert_y
@@ -852,6 +897,9 @@ class TouchpadController(QObject):
                     stroke_target=lambda: dict(local=True) if self._local_stroke_focus else None)
             output = self.output_factory(**common, **pointer_options, gain=self._gain, clicks=self._clicks,
                                          invert_y=self._invert_y, on_double_click=double_click,
+                                         scroll=self._scroll, double_click=self._double_click,
+                                         right_click=self._right_click, scroll_gain=self._scroll_gain,
+                                         raw2=run.protocol == 'raw2',
                                          click_context=click_context,
                                          on_capture_click=self._capture_click)
             output.pointer_after_step = pointer_after_step
@@ -865,6 +913,7 @@ class TouchpadController(QObject):
     def start(self):
         if not self.available or self._run is not None:
             return
+        self._automatic_restart_blocked = False
         if self._mode == "stroke" and self._speech_busy():
             self._message = "请先完成或取消当前语音输入／改写，再开启笔画输入。"
             self._commit_message = self._message
@@ -874,6 +923,7 @@ class TouchpadController(QObject):
                               output_ready=False, switch_pending=None, mode=self._mode,
                               last_move_step=0,
                               diagnostics=TouchpadDiagnostics())
+        run.protocol = 'raw2' if self.raw2Supported else 'legacy'
         self._run = run
         self._state, self._warm = "starting", False
         self._message = "正在准备笔画输入…" if run.mode == "stroke" else "正在准备鼠标控制…"
@@ -929,6 +979,12 @@ class TouchpadController(QObject):
         error = error or getattr(run, "output_error", None)
         if isinstance(error, InterruptedError):
             run.reason, error = str(error), None
+        if error and run.protocol == 'raw2' and getattr(error, 'reason', None) in {
+                'input_timeout', 'inference_timeout', 'model_timeout', 'stream_failed',
+                'stop_unconfirmed', 'timeout', 'device_error'}:
+            # Preserve the preference, but a failed device stream must not
+            # immediately fail again when the user reconnects to recover gestures.
+            self._automatic_restart_blocked = True
         self._state = "error" if error else "idle"
         if isinstance(error, (PermissionError, MacPermissionError)):
             if isinstance(error, MacPermissionError) and error.state.accessibility is True:
@@ -960,7 +1016,8 @@ class TouchpadController(QObject):
                     elif event.kind == 'contact' and event.state == 'reset' and event.step == 0:
                         run.last_move_step = 0
                         run.output.pointer_after_step = 0
-                    if run.mode == 'stroke' or event.kind != 'move':
+                    if (run.mode == 'stroke' or (event.kind != 'move' and
+                            (run.protocol == 'legacy' or (event.kind == 'contact' and event.state == 'reset')))):
                         run.output.submit(event)
                 def discarded(event, reason):
                     if event.kind == 'click':
@@ -969,7 +1026,7 @@ class TouchpadController(QObject):
                 def pointer_moved(event):
                     if run is self._run and run.mode == 'pointer':
                         output = run.output
-                        if event.step > output.pointer_after_step:
+                        if event.kind == 'click' or event.step > output.pointer_after_step:
                             run.diagnostics.note('pointer_frame')
                             output.submit(event)
                 def stats(value):
@@ -980,6 +1037,7 @@ class TouchpadController(QObject):
                     on_pointer_move=pointer_moved,
                     on_stats=stats,
                     on_stopped=ended,
+                    protocol=run.protocol,
                     duration_s=None), "started")
             except Exception as exc:
                 self._finish(run, exc)
@@ -1142,10 +1200,13 @@ class TouchpadController(QObject):
             report = run.diagnostics.report(value, counts, captured_at, foreground=foreground,
                                              visibility_epoch=self._visibility_epoch, now=time.monotonic())
             if report is not None:
+                if run.protocol == 'raw2':
+                    report['pipeline'] = 'raw2-v2'
                 # Keep reason counts numeric; the generic logger truncates long string fields.
                 reasons = {'count_' + key: count for key, count in report.pop('events').items()}
                 self.owner._event_log('TOUCHPAD_STATS', _live_message='', mode=run.mode, **report, **reasons)
-            warm = value.warmup_frames >= 200
+            ready = getattr(value, 'ready', None)
+            warm = bool(ready) if ready is not None else value.warmup_frames >= 200
             if warm != self._warm:
                 self._warm = warm
                 self._message = ("用 Ring 书写笔画，轻触确认候选字。" if run.mode == "stroke" else "用 Ring 移动指针，点击「停止触摸板」结束。") if warm else "信号恢复中，正在重新准备…"

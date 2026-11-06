@@ -541,6 +541,7 @@ class ModificationDatasetCollector:
                     "screen_context": dict(context) if isinstance(context, dict) else None,
                     "router_output": raw_output,
                     "router_trace": trace if isinstance(trace, dict) else {},
+                    "router_ocr_text": trace.get("ocr_text") if isinstance(trace, dict) else None,
                     "router_latency_ms": round(
                         float(getattr(result, "latency_s", 0.0) or 0.0) * 1000,
                         3,
@@ -561,6 +562,15 @@ class ModificationDatasetCollector:
                     "error": getattr(result, "error", None),
                 },
             )
+
+    def record_dictation_cleanup(self, session_id: int, enabled: bool) -> None:
+        """Record the per-utterance choice without inventing a model request."""
+        with self._lock:
+            interaction_id = self._ensure_interaction_locked(int(session_id))
+            record = self._interaction_data(interaction_id)
+            record["mode"]["dictation_cleanup_enabled"] = bool(enabled)
+            record["updated_at"] = _utc_now()
+            self._write_json(self._interaction_path(interaction_id), record)
 
     def _save_screen_evidence_locked(self, interaction_id, record, context):
         """Keep the exact OCR frame beside its record; never in model input JSON."""
@@ -631,6 +641,7 @@ class ModificationDatasetCollector:
     def record_text_request(self, request) -> None:
         """Bind every dictation/edit LLM call to the utterance record."""
         from ..text_processing.automatic_prompts import AUTOMATIC_PROMPT_VERSION, automatic_system_prompt
+        from ..text_processing.automatic_inputs import dictation_model_input, edit_model_input
         request_id = int(getattr(request, "request_id", 0))
         session_id = int(getattr(request, "session_id", 0))
         if request_id <= 0:
@@ -642,6 +653,16 @@ class ModificationDatasetCollector:
             mode = str(getattr(request, "mode", ""))
             raw_text = str(getattr(request, "raw_text", ""))
             target_text = str(getattr(request, "target_text", ""))
+            context = getattr(request, "screen_context", None)
+            # Do not wait for OCR here or retain mutable objects in the history cache.
+            context = json.loads(json.dumps(dict(context), ensure_ascii=False)) if isinstance(context, dict) else None
+            task_type = str(getattr(request, "task_type", ""))
+            if task_type == "dictation":
+                model_input = dictation_model_input(raw_text, context)
+            elif task_type == "edit":
+                model_input = edit_model_input(raw_text, target_text, context, edit_plan=getattr(request, "edit_plan", None))
+            else:
+                model_input = self._llm_input(mode, raw_text, target_text)
             llm_request = {
                 "request_id": request_id,
                 "mode": mode,
@@ -653,11 +674,8 @@ class ModificationDatasetCollector:
                 "edit_plan": request.edit_plan.as_dict() if getattr(request, "edit_plan", None) else None,
                 "system_prompt": (automatic_system_prompt(request.task_type, getattr(request, "edit_plan", None))
                                   if getattr(request, "task_type", "") else ""),
-                "screen_context": getattr(request, "screen_context", None) if isinstance(getattr(request, "screen_context", None), dict) else None,
-                "input": ({"utterance": raw_text, "editable_text": target_text,
-                           "edit_plan": request.edit_plan.as_dict() if getattr(request, "edit_plan", None) else None,
-                           "screen_context": getattr(request, "screen_context", None)}
-                          if getattr(request, "task_type", "") else self._llm_input(mode, raw_text, target_text)),
+                "screen_context": context,
+                "input": model_input,
                 "started_at": _utc_now(),
                 "status": "processing",
             }
@@ -711,6 +729,14 @@ class ModificationDatasetCollector:
                 ),
                 "branches": branches,
             }
+            if getattr(result, "task_type", ""):
+                # Recorded from the serialized generation input, after OCR resolution
+                # and validation. None distinguishes a failure before request creation.
+                model_input = getattr(result, "model_input", None)
+                updates["request_input"] = model_input
+                if isinstance(model_input, dict):
+                    updates["input"] = model_input
+                    updates["screen_context"] = model_input.get("screen_context")
             self._update_llm_request_locked(interaction_id, int(request_id), updates)
             self._append_event_locked(
                 interaction_id,

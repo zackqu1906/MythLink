@@ -28,6 +28,8 @@ datas.append((str(version_file), 'proximic_ring'))
 # The local ASR tokenizer/model inspects dependency metadata lazily.
 datas += copy_metadata("transformers", recursive=True)
 datas += collect_data_files("ring_python_sdk", includes=["touchpad/assets/*"])
+if platform.system() == 'Darwin':
+    datas += collect_data_files("ring_mac_sdk", includes=["assets/*", "licenses/*", "py.typed"])
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
 datas += collect_data_files("funasr", includes=["version.txt"])
@@ -41,6 +43,8 @@ datas += [
 
 binaries = []
 if platform.system() == "Darwin":
+    binaries += collect_dynamic_libs('ring_mac_sdk')
+    binaries += collect_dynamic_libs('onnxruntime')
     node_root = project_root / ".runtime/node"
     if not (node_root / "bin/node").is_file():
         raise RuntimeError("Run bash scripts/install-node-macos.sh before packaging.")
@@ -59,7 +63,7 @@ if notices.is_file():
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
 if platform.system() == "Darwin":
-    hiddenimports += ["Vision", "CoreML"]
+    hiddenimports += ["Vision", "CoreML", "ring_mac_sdk.model", "onnxruntime"]
 if platform.system() in {"Darwin", "Windows"}:
     hiddenimports += ["MNN", "_mnncengine"]
 if platform.system() == "Windows":

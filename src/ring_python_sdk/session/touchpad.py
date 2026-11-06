@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ring_python_sdk.touchpad import TouchpadEvent, TouchpadStats
+
+log = logging.getLogger(__name__)
 
 
 class TouchpadMixin:
@@ -16,8 +19,9 @@ class TouchpadMixin:
                           on_stopped: Callable[[Exception | None], None] | None = None,
                           on_pointer_move: Callable[[TouchpadEvent], None] | None = None,
                           on_discarded_event: Callable[[TouchpadEvent, str], None] | None = None,
-                          model_path: Path | None = None, duration_s: float | None = 90.):
-        """Start original-AAR touchpad inference, without moving the OS pointer.
+                          model_path: Path | None = None, duration_s: float | None = 90.,
+                          protocol: str = 'legacy'):
+        """Start legacy or Raw2 touchpad inference, without posting OS input.
 
         Call on the session BLE event loop. Callbacks are synchronous on that
         loop; use a Qt signal or your own queue to reach a GUI. Callback errors
@@ -26,11 +30,18 @@ class TouchpadMixin:
         Optional on_pointer_move receives the original paced mouse movement;
         on_event keeps the current full trajectory and click/stroke decisions.
         on_discarded_event optionally observes expired/closed event delivery.
+        protocol='raw2' uses the paired 0.3.0 receiver on this BLE connection.
+        In that mode on_pointer_move also receives confirmed button/count
+        events; on_event retains full-frame geometry and legacy stroke verdicts.
         """
         if not callable(on_event) or any(cb is not None and not callable(cb) for cb in (on_stats, on_stopped, on_pointer_move, on_discarded_event)):
             raise TypeError('Touchpad callbacks must be callable')
         if duration_s is not None and (not math.isfinite(duration_s) or duration_s <= 0):
             raise ValueError('duration_s must be positive and finite, or None')
+        if protocol not in {'legacy', 'raw2'}:
+            raise ValueError('Unknown touchpad protocol')
+        if protocol == 'raw2' and model_path is not None:
+            raise ValueError('Raw2 requires the paired provider model')
         async with self._touchpad_lock:
             if self.imu_active or self._imu_starting or self._imu_stopping or self.quaternion_active or self.touchpad_active:
                 raise RuntimeError('Stop the current IMU/quaternion/touchpad stream first')
@@ -39,7 +50,13 @@ class TouchpadMixin:
             from ring_python_sdk.touchpad.core import START
             from ring_python_sdk.touchpad.stream import TouchpadStream
             client, rx_uuid = self.client, self.rx_uuid
-            stream = TouchpadStream(on_event, on_stats=on_stats, model_path=model_path,
+            if protocol == 'raw2':
+                from ring_python_sdk.touchpad.raw2 import Raw2Stream
+                stream = Raw2Stream(self, on_event, on_stats=on_stats,
+                                    duration_s=duration_s, on_end=self._touchpad_finished,
+                                    on_pointer_move=on_pointer_move, on_discarded_event=on_discarded_event)
+            else:
+                stream = TouchpadStream(on_event, on_stats=on_stats, model_path=model_path,
                                     duration_s=duration_s, on_end=self._touchpad_finished,
                                     on_pointer_move=on_pointer_move, on_discarded_event=on_discarded_event)
             self.touchpad, self.touchpad_active = stream, True
@@ -47,14 +64,21 @@ class TouchpadMixin:
             self._touchpad_stopped_cb = on_stopped
             attempted = False
             try:
+                if protocol == 'raw2':
+                    await self._pause_gestures_for_raw2_start(stream)
+                if stream.closed:
+                    raise RuntimeError('Touchpad startup cancelled')
                 await stream.prepare()
                 if stream.closed or self.touchpad is not stream or self.client is not client or not client.is_connected:
                     raise ConnectionError('Ring disconnected during touchpad startup')
                 # Publish queue before START: firmware may notify immediately.
                 attempted = True
-                await client.write_gatt_char(rx_uuid, START, response=False)
+                if protocol == 'legacy':
+                    await client.write_gatt_char(rx_uuid, START, response=False)
                 if self.touchpad is not stream or not client.is_connected:
                     raise ConnectionError('Ring disconnected during touchpad START')
+                if protocol == 'raw2':
+                    await self._resume_gestures_after_raw2_start(stream)
                 stream.start()
             except BaseException as exc:
                 self.touchpad_error = exc if isinstance(exc, Exception) else RuntimeError('Touchpad startup cancelled')
@@ -66,6 +90,43 @@ class TouchpadMixin:
                 except Exception as cleanup_error:
                     self.emit_live(f'touchpad startup cleanup failed: {cleanup_error}')
                 raise
+
+    async def _pause_gestures_for_raw2_start(self, stream):
+        """dev9 needs Raw2's first sample before the Swipe producer is active.
+
+        Reproduced with the untouched provider SDK on Ringo: Swipe -> Raw2
+        yields START success but zero frames; Raw2 -> Swipe runs both streams.
+        MIC may stay active. Keep the existing processor and user intent.
+        """
+        info = stream.transport.device_info
+        if (info is None or info.hardware_revision != 1
+                or info.firmware_version != '2.1.6-dev.touchpad.9.debug'
+                or not self.swipe_active or self.swipe is None):
+            return
+        from ring_python_sdk.ble.control import send_swipe_stop
+        stream.paused_swipe = self.swipe
+        self._raw2_gesture_recovery = {
+            'state': 'resetting', 'packet_baseline': self.swipe.stats.packet_count,
+        }
+        log.info('[RAW2_START_ORDER] dev9: pausing Swipe until Raw2 first token; MIC unchanged')
+        async with asyncio.timeout(3):
+            await send_swipe_stop(self.client, self.rx_uuid)
+            await asyncio.sleep(.3)
+
+    async def _resume_gestures_after_raw2_start(self, stream):
+        if (stream.paused_swipe is None or not self.swipe_active
+                or self.swipe is not stream.paused_swipe
+                or self._sdk_transport is not stream.transport
+                or not self.client.is_connected):
+            return
+        from ring_python_sdk.ble.control import send_swipe_start
+        recovery = {'state': 'resetting', 'packet_baseline': self.swipe.stats.packet_count}
+        self._raw2_gesture_recovery = recovery
+        async with asyncio.timeout(3):
+            await send_swipe_start(self.client, self.rx_uuid)
+        stream.paused_swipe = None
+        recovery['state'] = 'awaiting_packets'
+        log.info('[RAW2_START_ORDER] first token received; Swipe resumed, awaiting fresh packets')
 
     async def touchpad_off(self):
         """Stop callbacks immediately, stop token production and release MNN."""
@@ -80,7 +141,10 @@ class TouchpadMixin:
             except Exception as exc:self.emit_live(f'touchpad stopped callback failed: {exc}')
 
     async def _stop_touchpad(self, *, send_stop):
-        stream, self.touchpad = self.touchpad, None
+        stream = self.touchpad
+        raw2 = getattr(stream, 'protocol', None) == 'raw2'
+        if not raw2:
+            self.touchpad = None
         callback, self._touchpad_stopped_cb = self._touchpad_stopped_cb, None
         if stream is None:
             self.touchpad_active = False
@@ -89,15 +153,54 @@ class TouchpadMixin:
         # just before this STOP and have its new stream accidentally stopped.
         stream.stop_now()
         try:
-            if send_stop and self.client is not None and self.client.is_connected:
+            if not raw2 and send_stop and self.client is not None and self.client.is_connected:
                 await asyncio.wait_for(self.client.write_gatt_char(self.rx_uuid, b'\x21\x01', response=False), 2.)
         except Exception as exc:
             self.touchpad_error = exc
             raise
         finally:
-            try:await stream.close()
-            finally:self.touchpad_active = False
+            try:
+                await stream.close()
+                if raw2:
+                    await self._restore_gestures_after_raw2(stream)
+            finally:
+                self.touchpad_active = False
+                if self.touchpad is stream:
+                    self.touchpad = None
+                if raw2 and stream.error is not None:
+                    self.touchpad_error = stream.error
             self._notify_touchpad_stopped(callback, self.touchpad_error)
+
+    async def _restore_gestures_after_raw2(self, stream):
+        """Return the shared sensor to an existing gesture capture after Raw2.
+
+        Keep the processor/callbacks and microphone alive. A completed write is
+        only recovery intent; new gesture packets are the recovery evidence.
+        """
+        transport = stream.transport
+        paused = stream.paused_swipe is not None
+        if ((not transport.controls_started and not paused) or not self.swipe_active or self.swipe is None
+                or self._sdk_transport is not transport or not self.client.is_connected):
+            return
+        recovery = {'state': 'resetting', 'packet_baseline': self.swipe.stats.packet_count}
+        self._raw2_gesture_recovery = recovery
+        try:
+            if transport.controls_started and not transport.stop_confirmed:
+                raise RuntimeError('Raw2 STOP 未确认，不能安全重启手势；请重连戒指')
+            from ring_python_sdk.ble.control import send_swipe_start, send_swipe_stop
+            self.emit_live('[GESTURE_RECOVERY] Raw2 stopped; restoring existing gesture stream')
+            async with asyncio.timeout(3):
+                await send_swipe_stop(self.client, self.rx_uuid)
+                await asyncio.sleep(.3)
+                # Do not count in-flight packets from before the new START.
+                recovery['packet_baseline'] = self.swipe.stats.packet_count
+                await send_swipe_start(self.client, self.rx_uuid)
+            recovery['state'] = 'awaiting_packets'
+            stream.paused_swipe = None
+            self.emit_live('[GESTURE_RECOVERY] STOP/START sent; awaiting fresh device packets')
+        except Exception as exc:
+            recovery.update(state='failed', error=str(exc))
+            self.emit_live(f'[GESTURE_RECOVERY] failed: {exc}')
 
     def _touchpad_finished(self, stream):
         if self.touchpad is not stream:return

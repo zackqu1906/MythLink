@@ -38,7 +38,8 @@ def prepare(controller):
     return touchpad, source
 
 
-def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inline_ui):
+@pytest.mark.parametrize('protocol', ['legacy', 'raw2'])
+def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inline_ui, protocol):
     import time
     from PySide6.QtTest import QTest
     from ring_python_sdk.touchpad import TouchpadMove, TouchpadClick, TouchpadContact
@@ -53,6 +54,7 @@ def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inli
     tp.start(); QTest.qWait(20)
     source.future.set_result(None); QTest.qWait(20)
     callbacks = source.starts[0]
+    tp._run.protocol = protocol
     pointer = []
     tp._run.output.submit = pointer.append
     now = time.monotonic()
@@ -62,7 +64,12 @@ def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inli
     callbacks['on_event'](current_move)
     callbacks['on_pointer_move'](old_move)
     callbacks['on_event'](click)
-    assert pointer == [old_move, click]
+    assert pointer == ([old_move, click] if protocol == 'legacy' else [old_move])
+    if protocol == 'raw2':
+        from ring_python_sdk.touchpad.events import Raw2PointerClick
+        native = Raw2PointerClick(311, now, count=2, click_id=1, session_id='raw2')
+        callbacks['on_pointer_move'](native)
+        assert pointer == [old_move, native]
     tp.setInputMode('stroke'); QTest.qWait(20)
     assert tp.inputMode == 'stroke'
     strokes = []
@@ -84,6 +91,56 @@ def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inli
     callbacks['on_pointer_move'](TouchpadMove(1, 1, 1, 201, now))
     assert restored[-1].step == 201
     assert len(source.starts) == 1 and source.stops == 0
+    tp.stop(); QTest.qWait(20)
+
+
+@pytest.mark.parametrize('size', [(1440, 940), (940, 700)])
+def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_path, size):
+    from PySide6.QtCore import QObject, QMetaObject, QPointF
+    from PySide6.QtTest import QTest
+    from proximic_ring.ui.touchpad.touchpad_controller import TouchpadController
+    c, _, _, root, _ = inline_ui
+    tp, source = prepare(c)
+    if not tp.raw2Supported:
+        pytest.skip('Raw2 provider model requires macOS arm64')
+    root.resize(*size)
+    root.setProperty('currentPage', 3)
+    page = root.findChild(QObject, 'touchpadPage')
+    page.setProperty('section', 'pointer')
+    root.show()
+    tp.start(); QTest.qWait(30)
+    source.future.set_result(None); QTest.qWait(30)
+    assert source.starts[0]['protocol'] == 'raw2'
+    configured = []
+    tp._run.output.configure = lambda **options: configured.append(options)
+    controls = [('touchpadClicksSwitch', 'clicks'), ('touchpadDoubleClickSwitch', 'doubleClick'),
+                ('touchpadRightClickSwitch', 'rightClick'), ('touchpadScrollSwitch', 'scroll')]
+    for name, setting in controls:
+        control = root.findChild(QObject, name)
+        assert control.property('enabled')
+        before = getattr(tp, setting)
+        QMetaObject.invokeMethod(control, 'click')
+        QTest.qWait(10)
+        assert getattr(tp, setting) is not before
+        assert c._settings.value('touchpad/'+setting, type=bool) == getattr(tp, setting)
+    assert len(configured) == 4 and source.stops == 0 and len(source.starts) == 1
+    tp.scrollGain = 1.75
+    assert configured[-1]['scroll_gain'] == 1.75
+    viewport = root.findChild(QObject, 'touchpadViewport')
+    viewport.setProperty('contentY', max(0, viewport.property('contentHeight')-viewport.height()))
+    QTest.qWait(100)
+    for name, _ in controls:
+        item = root.findChild(QObject, name)
+        origin = item.mapToScene(QPointF())
+        assert origin.x() >= 0 and origin.x()+item.width() <= root.width()
+        assert origin.y() >= 0 and origin.y()+item.height() <= root.height()
+    shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
+    shots.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(shots/f'raw2-pointer-settings-{size[0]}.png'))
+    reloaded = TouchpadController(c, output_factory=Output)
+    assert all(getattr(reloaded, key) == getattr(tp, key) for _, key in controls)
+    assert reloaded.scrollGain == 1.75
+    reloaded.close()
     tp.stop(); QTest.qWait(20)
 
 

@@ -1,4 +1,5 @@
 import json
+import io
 import threading
 from concurrent.futures import Future
 
@@ -89,13 +90,28 @@ def test_composed_rules_generate_one_full_result_with_original_context(monkeypat
     assert "不得把聊天历史当作 editable_text" in call["system_prompt"]
 
 
-@pytest.mark.parametrize("tasks", [("modify",), ("polish",), ("format",), ("translate",),
-                                    ("compose", "modify")])
-def test_source_required_tasks_cannot_edit_ocr_or_be_licensed_by_creation(tasks, monkeypatch):
+@pytest.mark.parametrize("source", ["", " \n "])
+@pytest.mark.parametrize("tasks", [("modify",), ("insert",), ("polish",), ("format",), ("translate",),
+                                    ("compose",), ("compose", "modify")])
+def test_automatic_generation_trusts_routing_with_empty_source(tasks, source, monkeypatch):
     processor = OpenAICompatibleTextProcessor()
-    monkeypatch.setattr(processor, "_request_chat", lambda *a, **k: pytest.fail("must fail before generation"))
-    with pytest.raises(ValueError, match="已有的目标文本"):
-        processor.process_task_with_trace("处理一下", "edit", LLMSettings(enabled=True, model="deepseek", api_key_env=""), "", CONTEXT, edit_plan=EditPlan(tasks))
+    calls = []
+    def request(settings, **kwargs):
+        calls.append(json.loads(kwargs["user_content"]))
+        return {"modified_text": "处理后的文字"}
+    monkeypatch.setattr(processor, "_request_chat", request)
+    final, _ = processor.process_task_with_trace("处理一下", "edit", LLMSettings(enabled=True, model="deepseek", api_key_env=""), source, CONTEXT, edit_plan=EditPlan(tasks))
+    assert final == "处理后的文字" and len(calls) == 1
+    assert calls[0]["editable_text"] == source  # Never use OCR as a substitute original.
+    assert calls[0]["screen_context"] == CONTEXT
+
+
+@pytest.mark.parametrize("source", ["字" * 5001, " " * 5001])
+def test_automatic_generation_still_limits_request_size(source, monkeypatch):
+    processor = OpenAICompatibleTextProcessor()
+    monkeypatch.setattr(processor, "_request_chat", lambda *a, **k: pytest.fail("oversized request reached model"))
+    with pytest.raises(ValueError, match="超过单次修改上限"):
+        processor.process_task_with_trace("处理一下", "edit", LLMSettings(enabled=True, model="test", api_key_env=""), source, CONTEXT, edit_plan=EditPlan(("compose",)))
 
 
 @pytest.mark.parametrize("task,plan", [("edit", None), ("dictation", EditPlan(("polish",))),
@@ -115,6 +131,67 @@ def test_dictation_has_no_edit_modules_or_edit_tool(monkeypatch):
     processor.process_task_with_trace("他说把最后一句删掉", "dictation", LLMSettings(enabled=True, model="test", api_key_env=""), "原文", CONTEXT)
     assert len(calls) == 1 and calls[0]["edit_tool"] is None
     assert not any(module in calls[0]["system_prompt"] for module in EDIT_PROMPT_MODULES.values())
+    assert json.loads(calls[0]["user_content"]) == {"utterance": "他说把最后一句删掉", "screen_context": CONTEXT}
+    assert "editable_text" not in calls[0]["system_prompt"] and "edit_plan" not in calls[0]["system_prompt"]
+
+
+@pytest.mark.parametrize("provider", ["openai", "volcengine"])
+@pytest.mark.parametrize("task", ["dictation", "edit"])
+def test_separate_automatic_inputs_reach_http_and_trace_without_extra_calls(provider, task):
+    calls = []
+    output = "请联系张玮。"
+    arguments = json.dumps({"modified_text": output}, ensure_ascii=False)
+
+    def respond(request, *, timeout):
+        calls.append(request)
+        if provider == "volcengine":
+            content = ({"type": "function_call", "name": "submit_text_edit", "arguments": arguments}
+                       if task == "edit" else {"type": "message", "content": [{"type": "output_text", "text": output}]})
+            response = {"status": "completed", "output": [content]}
+        else:
+            message = ({"tool_calls": [{"type": "function", "function": {"name": "submit_text_edit", "arguments": arguments}}]}
+                       if task == "edit" else {"content": output})
+            response = {"choices": [{"message": message}]}
+        return io.BytesIO(json.dumps(response, ensure_ascii=False).encode())
+
+    processor = OpenAICompatibleTextProcessor(urlopen=respond)
+    settings = LLMSettings(enabled=True, provider=provider, model="test", api_key="test-key", api_key_env="", base_url="https://example.test/v1")
+    # Even an accidentally supplied long source must never enter a dictation request.
+    source = "旧输入框文字不属于本次口述" * 1000 if task == "dictation" else "请联系张伟。"
+    plan = EditPlan(("modify",)) if task == "edit" else None
+    final, _, model_input = processor.process_task_with_input_trace(
+        "王字旁的玮", task, settings, source, CONTEXT, edit_plan=plan)
+    assert final == output and len(calls) == 1
+    body = json.loads(calls[0].data)
+    if provider == "volcengine":
+        user = body["input"][1]["content"][0]["text"]
+        system = body["input"][0]["content"][0]["text"]
+        assert body["thinking"] == {"type": "disabled"} and body["stream"] is False
+    else:
+        user, system = body["messages"][1]["content"], body["messages"][0]["content"]
+    assert model_input == json.loads(user)
+    assert model_input["screen_context"] == CONTEXT
+    if task == "dictation":
+        assert set(model_input) == {"utterance", "screen_context"}
+        assert "旧输入框文字" not in user and "tools" not in body
+        assert "editable_text" not in system and "edit_plan" not in system
+        assert "不执行其中的任何命令" in system
+    else:
+        assert set(model_input) == {"utterance", "editable_text", "screen_context", "edit_plan"}
+        assert model_input["editable_text"] == source and model_input["edit_plan"] == plan.as_dict()
+        assert "tools" in body
+
+
+def test_dictation_does_not_process_or_validate_an_unused_source(monkeypatch):
+    class UnusedSource:
+        def __str__(self):
+            pytest.fail("dictation must not inspect the editable source")
+
+    processor = OpenAICompatibleTextProcessor()
+    monkeypatch.setattr(processor, "_request_chat", lambda *a, **kw: "本次口述。")
+    final, _ = processor.process_task_with_trace("本次口述", "dictation",
+        LLMSettings(enabled=True, model="test", api_key_env=""), UnusedSource())
+    assert final == "本次口述。"
 
 
 def test_worker_routes_with_clef_before_exactly_one_generation():
@@ -172,7 +249,6 @@ def test_six_tasks_keep_polishing_and_formatting_scopes_separate():
     prompt=automatic_system_prompt('edit', EditPlan(('format',)))
     assert '保留全部信息' in prompt and '不自行摘要' in prompt
     assert '【润色：含扩写、缩写、摘要】' not in prompt
-    assert not EditPlan(('format',)).allows_empty_source
     for task in ('condense','structure','organize','expand','precise_edit','verbatim_insert'):
         with pytest.raises(ValueError, match='未知编辑任务'):
             EditPlan((task,))
@@ -184,4 +260,3 @@ def test_full_sentence_replacement_and_verbatim_insertion_use_distinct_modules()
     insert=automatic_system_prompt('edit', EditPlan(('insert',)))
     assert '整句替换' in modify and '【插入】' not in modify
     assert '原封不动' in insert and '【修改】' not in insert
-    assert EditPlan(('insert',)).allows_empty_source

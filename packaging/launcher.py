@@ -36,6 +36,13 @@ def _verify_touchpad_runtime() -> None:
     if velocities.shape != (5, 3) or not np.isfinite(velocities).all():
         raise RuntimeError('触摸板模型自检失败')
     print('[startup] touchpad model ready')
+    if sys.platform == 'darwin' and platform.machine() == 'arm64':
+        from ring_mac_sdk.model import TouchpadModel
+        receiver = TouchpadModel()
+        raw2 = receiver.step(np.zeros(8, dtype=np.float32))
+        if raw2.shape != (2, 4) or not np.isfinite(raw2).all():
+            raise RuntimeError('新版触摸板模型自检失败')
+        print('[startup] Raw2 touchpad model ready')
 
 
 def _verify_bundled_qml_runtime(resource_root: Path) -> None:

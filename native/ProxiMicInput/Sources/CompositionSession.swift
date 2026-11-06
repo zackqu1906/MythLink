@@ -153,7 +153,6 @@ final class CompositionSession {
     private(set) var automaticTask = ""
     private(set) var automaticStage = ""
     private(set) var automaticTasks: [String] = []
-    private(set) var automaticAllowsEmptySource = false
     private(set) var error = ""
     private(set) var lastSequence: Int
     private(set) var hasComposition = false
@@ -658,12 +657,11 @@ final class CompositionSession {
         onChanged?() // Presentation only: no phase, text, revision or ownership changes.
     }
 
-    func setAutomaticTask(_ task: String, allowEmptySource: Bool = false) {
+    func setAutomaticTask(_ task: String) {
         guard automaticMode, !finalReceived, !cancelPending,
               [.listening, .finishing].contains(phase),
               ["dictation", "edit"].contains(task) else { return }
         automaticTask = task
-        automaticAllowsEmptySource = task == "edit" && allowEmptySource
         editRequested = task != "dictation"
     }
 
@@ -843,7 +841,9 @@ final class CompositionSession {
     }
 
     private func startEditing() {
-        guard let source = editRequestText, (!source.isEmpty || automaticAllowsEmptySource),
+        // Automatic routing already chose its available tasks. Do not reject
+        // that decision because the source is empty; retain the manual guard.
+        guard let source = editRequestText, (automaticMode || !source.isEmpty),
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             editRequested = false
             restoreDictation(error: editRequestText == nil ? "当前输入框未提供光标前的完整原文，已保留听写" :

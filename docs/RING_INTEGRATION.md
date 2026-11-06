@@ -1,5 +1,21 @@
 # Ringo SDK integration
 
+## 2026-11-05 delivery: Raw2 product integration
+
+The complete provider `ring_mac_sdk` 0.3.0 package is now vendored, unchanged,
+under `src/ring_mac_sdk`. Its original wheel, documentation, examples, calibration
+utility and dev9 firmware are retained under
+`third_party/ringo-touchpad-delivery-20261105`. See
+[the update and feature inventory](RING_MAC_SDK.md) for provenance, standalone
+validation and dependencies. On macOS the provider Transport owns BLE connection,
+NUS/INFO validation, notifications, and all control writes (Bleak 1.1.1).
+Apple Silicon touchpad uses `ring_python_sdk.touchpad.raw2`; audio and firmware
+gestures share that validated connection through compatibility processors. Mouse settings expose independent
+single, double, right-click and vertical scroll controls. Other sensor APIs and
+unsupported platforms retain their existing compatibility paths.
+
+## Existing product integration
+
 This project is no longer protocol-neutral: it is wired to the supplied
 `ring-python-sdk` implementation.
 

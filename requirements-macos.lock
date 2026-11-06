@@ -20,7 +20,7 @@ pyobjc-framework-ScreenCaptureKit==12.2.2
 pyobjc-framework-CoreMedia==12.2.2
 pyobjc-framework-Vision==12.2.2
 pyobjc-framework-CoreML==12.2.2
-bleak==3.0.2
+bleak==1.1.1
 asr-decoder==0.1.2
 online-fbank==0.0.4
 kaldi-native-fbank==1.22.3
@@ -28,3 +28,5 @@ websocket-client==1.9.0
 
 # Optional original-AAR touchpad inference.
 MNN==3.6.1
+# Paired Raw2 receiver supplied with the Ringo dev9 firmware.
+onnxruntime==1.21.0

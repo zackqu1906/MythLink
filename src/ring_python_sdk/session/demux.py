@@ -87,6 +87,10 @@ class DemuxMixin:
         if len(data) < 1:
             return
         cmd = data[0]
+        if cmd == 0x3C:
+            if self.touchpad is not None and getattr(self.touchpad, 'protocol', None) == 'raw2':
+                self.touchpad.submit(bytes(data))
+            return
         if (
             cmd == CMD_MIC
             and len(data) >= 2

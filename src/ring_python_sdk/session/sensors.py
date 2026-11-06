@@ -37,6 +37,7 @@ from ring_python_sdk.ble import (
 )
 from ring_python_sdk.ble_test.processor import BleTestProcessor
 from ring_python_sdk.button.processor import ButtonProcessor
+from ring_python_sdk.session.control import serialized_control, wait_control_reply
 from ring_python_sdk.core.constants import (
     DEFAULT_BLE_TEST_DURATION_S,
     DEFAULT_BLE_TEST_PACKET_COUNT,
@@ -189,18 +190,20 @@ class SensorsMixin:
         finally:
             self._imu_stopping = False
 
+    @serialized_control
     async def mic_recording_status_get(self):
         assert self.client is not None
         self._mic_record_status_event.clear()
         await send_mic_record_status_get(self.client, self.rx_uuid)
         try:
-            await asyncio.wait_for(
-                self._mic_record_status_event.wait(), timeout=self.timeout_s
+            await wait_control_reply(
+                self, self._mic_record_status_event, self.timeout_s
             )
         except TimeoutError:
             pass
         return self.mic_recording_status
 
+    @serialized_control
     async def _mic_recording_control(self, *, start: bool):
         assert self.client is not None
         self._mic_record_status_event.clear()
@@ -209,8 +212,8 @@ class SensorsMixin:
         else:
             await send_mic_record_stop(self.client, self.rx_uuid)
         try:
-            await asyncio.wait_for(
-                self._mic_record_status_event.wait(), timeout=self.timeout_s
+            await wait_control_reply(
+                self, self._mic_record_status_event, self.timeout_s
             )
         except TimeoutError:
             pass
@@ -224,6 +227,7 @@ class SensorsMixin:
         """Stop the active local Opus-to-flash recording and finalize it."""
         return await self._mic_recording_control(start=False)
 
+    @serialized_control
     async def mic_recording_list(self):
         assert self.client is not None
         self._mic_record_list_event.clear()
@@ -231,13 +235,14 @@ class SensorsMixin:
         self.mic_recording_latest_info = None
         await send_mic_record_list(self.client, self.rx_uuid)
         try:
-            await asyncio.wait_for(
-                self._mic_record_list_event.wait(), timeout=self.timeout_s
+            await wait_control_reply(
+                self, self._mic_record_list_event, self.timeout_s
             )
         except TimeoutError:
             pass
         return self.mic_recording_latest_info
 
+    @serialized_control
     async def mic_recording_read(
         self,
         recording_id: int = MIC_RECORD_ID_LATEST,
@@ -254,8 +259,8 @@ class SensorsMixin:
             self.client, self.rx_uuid, recording_id, offset, max_len
         )
         try:
-            await asyncio.wait_for(
-                self._mic_record_read_event.wait(), timeout=self.timeout_s
+            await wait_control_reply(
+                self, self._mic_record_read_event, self.timeout_s
             )
         except TimeoutError:
             pass
@@ -661,6 +666,7 @@ class SensorsMixin:
         assert self.client is not None
         await send_health_status_get(self.client, self.rx_uuid)
 
+    @serialized_control
     async def health_read(
         self, session_id: int = 0, offset: int = 0, max_len: int = 0
     ):
@@ -674,21 +680,22 @@ class SensorsMixin:
             self.client, self.rx_uuid, session_id, offset, max_len
         )
         try:
-            await asyncio.wait_for(
-                self._health_read_event.wait(), timeout=self.timeout_s
+            await wait_control_reply(
+                self, self._health_read_event, self.timeout_s
             )
         except TimeoutError:
             pass
         return self.health_last_data, self.health_last_read_end
 
+    @serialized_control
     async def health_list(self):
         assert self.client is not None
         self._health_list_event.clear()
         self.health_sessions = []
         await send_health_list(self.client, self.rx_uuid)
         try:
-            await asyncio.wait_for(
-                self._health_list_event.wait(), timeout=self.timeout_s
+            await wait_control_reply(
+                self, self._health_list_event, self.timeout_s
             )
         except TimeoutError:
             pass

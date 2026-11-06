@@ -1793,6 +1793,28 @@ def test_automatic_dictation_waits_for_route_then_one_llm_request(tmp_path, monk
     _close(c)
 
 
+def test_automatic_dictation_cleanup_off_injects_asr_once_without_generation(tmp_path, monkeypatch):
+    c, routes, requests, cancelled, injected = _automatic_controller(tmp_path, monkeypatch)
+    try:
+        c.automaticDictationCleanupEnabled = False
+        raw = "嗯，明天开会\n我带两份资料"
+        c._apply_runtime_update(raw, True, "", 31)
+        assert len(routes) == 1 and not requests and not injected
+        # Changing the setting cannot change a sentence already being routed.
+        c.automaticDictationCleanupEnabled = True
+        decision = _route(routes[0], "dictation")
+        c._apply_input_mode_routed(decision)
+        c._apply_input_mode_routed(decision)
+        assert injected == [raw] and not requests
+        assert not c._pending_mode_routes and not c._pending_text_requests
+        collector = c._modification_dataset
+        record = collector._interaction_data(collector._routing_interactions[routes[0].request_id])
+        assert record["mode"]["dictation_cleanup_enabled"] is False
+        assert record["llm"]["requests"] == []
+    finally:
+        _close(c)
+
+
 def test_late_edit_protocol_failure_retries_only_after_explicit_f8(
     tmp_path, monkeypatch
 ):
@@ -2213,10 +2235,10 @@ def test_automatic_edit_failure_does_not_create_alternate_candidate(tmp_path, mo
     c, routes, requests, _, injected = _automatic_controller(tmp_path, monkeypatch)
     c._apply_runtime_update("精简一下", True, "", 41)
     assert not requests
-    c._apply_input_mode_routed(_route(routes[0], "condense"))
+    c._apply_input_mode_routed(_route(routes[0], "polish"))
     assert len(requests) == 1
     r = requests[0]
-    assert r.task_type == "edit" and r.edit_plan.tasks == ("condense",) and r.target_text == "旧文本"
+    assert r.task_type == "edit" and r.edit_plan.tasks == ("polish",) and r.target_text == "旧文本"
     c._apply_text_processed(TextProcessingResult(r.request_id, 41, "edit", r.raw_text,
         "旧文本", .2, True, target_text="旧文本", error="接口失败", task_type=r.task_type))
     assert c.interactionState == "error" and not injected
@@ -2226,17 +2248,20 @@ def test_automatic_edit_failure_does_not_create_alternate_candidate(tmp_path, mo
     _close(c)
 
 
-def test_automatic_missing_target_and_cancelled_route_never_generate(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cleanup", [True, False])
+@pytest.mark.parametrize("cancelled_task", ["dictation", "compose"])
+def test_automatic_missing_target_and_cancelled_route_never_generate(tmp_path, monkeypatch, cleanup, cancelled_task):
     c, routes, requests, cancelled, injected = _automatic_controller(tmp_path, monkeypatch, has_target=False)
+    c.automaticDictationCleanupEnabled = cleanup
     c._apply_runtime_update("精简一下", True, "", 51)
-    c._apply_input_mode_routed(_route(routes[0], "condense"))
+    c._apply_input_mode_routed(_route(routes[0], "polish"))
     assert c.interactionState == "error" and not requests
     assert not c.processingModeCorrectionAvailable
     assert c._recognition_event.is_set()
     c._apply_runtime_status("[ASR] START t=2.000s")
     c._apply_runtime_update("帮我回复", True, "", 52)
     c.cancelCurrentUtterance()
-    c._apply_input_mode_routed(_route(routes[-1], "compose"))
+    c._apply_input_mode_routed(_route(routes[-1], cancelled_task))
     assert not requests and not injected
     assert routes[-1].request_id in cancelled
     _close(c)

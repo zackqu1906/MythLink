@@ -1,5 +1,9 @@
 # Windows / Mac 触摸板 SDK 开发接口
 
+2026-11-06：Apple Silicon Mac 触摸板已接入新版 `ring_mac_sdk` 0.3.0，复用现有 BLE 连接。
+新协议、模型、事件及独立调试方式见 [新版 SDK 更新记录](RING_MAC_SDK.md)。
+本文以下内容描述保留的 `ring_python_sdk` / MNN 兼容接口；新版业务入口与独立鼠标开关以上述更新记录为准。
+
 主程序的整合方案、语音互斥与双系统适配见 [2026-10-27 整合记录](TOUCHPAD_INTEGRATION_20261027.md)。本地试写已采用完整接触确认和六候选方向菜单；主程序不接入 Qwen 联想。
 
 ## Windows 适配（2026-10-10）

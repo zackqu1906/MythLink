@@ -31,6 +31,7 @@ from ring_python_sdk.core.constants import BATTERY_POLL_INTERVAL_S
 from ring_python_sdk.core.data_paths import MODE_SESSION, new_session_dir
 from ring_python_sdk.core.temperature import TemperatureStatus
 from ring_python_sdk.core.time_sync import TimeStatus
+from ring_python_sdk.session.control import serialized_control, wait_control_reply
 
 
 class ConnectionMixin:
@@ -168,6 +169,18 @@ class ConnectionMixin:
                 print(f"Session dir: {self.session_dir}")
 
             print(f"Connecting {self.target_name!r} ({self.target_address}) ...")
+            if self.connection_backend == 'sdk':
+                from .sdk_transport import connect_session
+                try:
+                    await connect_session(self, target)
+                    await self.sync_time(timeout_s=min(self.timeout_s, 2.0))
+                    await self._ensure_button_capture()
+                    await self._ensure_raise_to_wake_capture()
+                    await self._start_battery_poll()
+                    return True
+                except BaseException:
+                    await self._detach_client(send_stops=False)
+                    raise
             # Windows occasionally returns a transient WinRT E_FAIL while
             # opening GATT immediately after discovery. Retry this user-
             # initiated handshake once; this is not background auto-reconnect.
@@ -225,6 +238,11 @@ class ConnectionMixin:
             return False
         if not self.target_address:
             return False
+
+        if self.connection_backend == 'sdk':
+            # Resolve the selected device, then run the same validated SDK
+            # connection path. Never fall back to the legacy handshake.
+            return await self.connect_target(self.target_address)
 
         async with self._connect_lock:
             if self.client is not None and self.client.is_connected:
@@ -450,6 +468,7 @@ class ConnectionMixin:
         except Exception as exc:
             print(f"battery query failed: {exc}")
 
+    @serialized_control
     async def query_temperature(
         self, timeout_s: float = 2.0
     ) -> TemperatureStatus | None:
@@ -462,7 +481,7 @@ class ConnectionMixin:
         self.temperature_c = None
         try:
             await send_temperature_get(self.client, self.rx_uuid)
-            await asyncio.wait_for(self._temperature_event.wait(), timeout_s)
+            await wait_control_reply(self, self._temperature_event, timeout_s)
         except TimeoutError:
             print("temperature query timed out")
             return None
@@ -471,6 +490,7 @@ class ConnectionMixin:
             return None
         return self.temperature_status
 
+    @serialized_control
     async def sync_time(
         self, unix_ms: int | None = None, timeout_s: float = 2.0
     ) -> TimeStatus | None:
@@ -483,7 +503,7 @@ class ConnectionMixin:
         self.time_status = None
         try:
             await send_time_set(self.client, self.rx_uuid, unix_ms)
-            await asyncio.wait_for(self._time_event.wait(), timeout_s)
+            await wait_control_reply(self, self._time_event, timeout_s)
         except TimeoutError:
             print("time sync timed out")
             return None
@@ -492,6 +512,7 @@ class ConnectionMixin:
             return None
         return self.time_status
 
+    @serialized_control
     async def query_time(self, timeout_s: float = 2.0) -> TimeStatus | None:
         """Query the current UTC/uptime anchor from the ring."""
         if self.client is None or not self.client.is_connected or not self.rx_uuid:
@@ -500,7 +521,7 @@ class ConnectionMixin:
         self.time_status = None
         try:
             await send_time_get(self.client, self.rx_uuid)
-            await asyncio.wait_for(self._time_event.wait(), timeout_s)
+            await wait_control_reply(self, self._time_event, timeout_s)
         except TimeoutError:
             print("time query timed out")
             return None
@@ -614,7 +635,14 @@ class ConnectionMixin:
         else:
             self._drop_local_streams()
 
-        if self.client is not None:
+        if self._sdk_transport is not None:
+            transport, self._sdk_transport = self._sdk_transport, None
+            try:
+                await transport.close()
+            finally:
+                self.client = None
+                self._was_connected = False
+        elif self.client is not None:
             if self.client.is_connected:
                 try:
                     if self.tx_uuid:

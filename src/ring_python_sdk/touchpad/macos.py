@@ -2,6 +2,7 @@
 import math
 import threading
 import time
+from collections import deque
 
 
 PERMISSION_CHECK_INTERVAL = 1.0
@@ -49,6 +50,10 @@ class MacSystemMouse:
         self.stop_on_escape = True
         self.moves = self.clicks = 0
         self.click_down_posts = self.click_up_posts = 0
+        self.scrolls = 0
+        self._scroll_remainder = 0.
+        self._scroll_stream = None
+        self._click_ids = deque(maxlen=256)
 
     def permitted(self):
         return bool(self.ax.AXIsProcessTrusted() and self.q.CGPreflightPostEventAccess())
@@ -71,6 +76,10 @@ class MacSystemMouse:
         self.enabled = True
         self.moves = self.clicks = 0
         self.click_down_posts = self.click_up_posts = 0
+        self.scrolls = 0
+        self._scroll_remainder = 0.
+        self._scroll_stream = None
+        self._click_ids.clear()
         self._permissions = _PermissionWatch(self.permitted)
 
     def disable(self):
@@ -105,8 +114,9 @@ class MacSystemMouse:
         _, x, y = min(choices)
         return x, y
 
-    def _event(self, kind, point):
-        event = self.q.CGEventCreateMouseEvent(None, kind, point, self.q.kCGMouseButtonLeft)
+    def _event(self, kind, point, button=None):
+        event = self.q.CGEventCreateMouseEvent(None, kind, point,
+                                              self.q.kCGMouseButtonLeft if button is None else button)
         if event is None:
             raise RuntimeError('无法创建系统鼠标事件')
         return event
@@ -125,6 +135,9 @@ class MacSystemMouse:
                 self.check_health()
                 if not self.enabled:
                     break
+                expires = event.get('expires_at')
+                if expires is not None and (not math.isfinite(expires) or time.monotonic() > expires):
+                    continue
                 if event['kind'] == 'move':
                     dx, dy = float(event['dx']), float(event['dy'])
                     if not all(math.isfinite(v) for v in (dx, dy, self.gain)):
@@ -134,18 +147,50 @@ class MacSystemMouse:
                     point = self._clamp(x + dx*self.gain, y + dy*self.gain*(-1 if self.invert_y else 1))
                     self.q.CGEventPost(self.q.kCGHIDEventTap, self._event(self.q.kCGEventMouseMoved, point))
                     self.moves += 1
+                elif event['kind'] == 'scroll':
+                    dy = float(event['dy'])
+                    if not math.isfinite(dy):
+                        raise ValueError('滚轮位移不是有限数值')
+                    stream = event.get('stream')
+                    if stream != self._scroll_stream:
+                        self._scroll_remainder = 0.
+                        self._scroll_stream = stream
+                    self._scroll_remainder += dy
+                    pixels = math.trunc(self._scroll_remainder)
+                    self._scroll_remainder -= pixels
+                    if pixels:
+                        wheel = self.q.CGEventCreateScrollWheelEvent(None, self.q.kCGScrollEventUnitPixel, 1, pixels)
+                        if wheel is None:
+                            raise RuntimeError('无法创建系统滚轮事件')
+                        self.q.CGEventPost(self.q.kCGHIDEventTap, wheel)
+                        self.scrolls += 1
                 elif event['kind'] == 'click' and self.clicks_enabled:
-                    down = self._event(self.q.kCGEventLeftMouseDown, point)
-                    up = self._event(self.q.kCGEventLeftMouseUp, point)
-                    for e in (down, up):
-                        self.q.CGEventSetIntegerValueField(e, self.q.kCGMouseEventClickState, 1)
-                    try:
-                        self.q.CGEventPost(self.q.kCGHIDEventTap, down)
-                        self.click_down_posts += 1
-                    finally:
-                        self.q.CGEventPost(self.q.kCGHIDEventTap, up)
-                        self.click_up_posts += 1
-                    self.clicks += 1
+                    button, count = event.get('button', 'left'), event.get('count', 1)
+                    if button not in {'left', 'right'} or type(count) is not int or count not in {1, 2}:
+                        raise ValueError('无效鼠标按键或点击次数')
+                    click_id = event.get('click_id')
+                    if click_id is not None:
+                        if click_id in self._click_ids:
+                            continue
+                        self._click_ids.append(click_id)
+                    for index in range(1, count+1):
+                        if not self.enabled or (expires is not None and time.monotonic() > expires):
+                            break
+                        if button == 'right':
+                            down = self._event(self.q.kCGEventRightMouseDown, point, self.q.kCGMouseButtonRight)
+                            up = self._event(self.q.kCGEventRightMouseUp, point, self.q.kCGMouseButtonRight)
+                        else:
+                            down = self._event(self.q.kCGEventLeftMouseDown, point)
+                            up = self._event(self.q.kCGEventLeftMouseUp, point)
+                        for e in (down, up):
+                            self.q.CGEventSetIntegerValueField(e, self.q.kCGMouseEventClickState, index)
+                        try:
+                            self.q.CGEventPost(self.q.kCGHIDEventTap, down)
+                            self.click_down_posts += 1
+                        finally:
+                            self.q.CGEventPost(self.q.kCGHIDEventTap, up)
+                            self.click_up_posts += 1
+                        self.clicks += 1
         except Exception:
             self.disable()
             raise

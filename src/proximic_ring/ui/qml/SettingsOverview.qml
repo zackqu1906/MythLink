@@ -185,7 +185,20 @@ ColumnLayout {
         }
         FigmaFormRow {
             preferenceStyle: true
-            visible: !pane.controller.inlineInput.enabled
+            visible: pane.controller.inputRoutingMode === "auto"
+            title: "自动模式听写整理"
+            description: "开启后用文本模型整理听写；关闭后直接输入语音识别结果，省去整理等待。编辑指令照常处理。"
+            PreferenceSwitch {
+                objectName: "automaticDictationCleanupSwitch"
+                Layout.alignment: Qt.AlignRight
+                Accessible.name: "自动模式听写整理"
+                checked: pane.controller.automaticDictationCleanupEnabled
+                onClicked: pane.controller.automaticDictationCleanupEnabled = checked
+            }
+        }
+        FigmaFormRow {
+            preferenceStyle: true
+            visible: !pane.controller.inlineInput.enabled && pane.controller.inputRoutingMode !== "auto"
             title: "整理听写文本"
             description: "关闭后直接使用识别结果；编辑指令仍会使用文本模型。"
             PreferenceSwitch {
@@ -256,7 +269,7 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             title: "手势触发提示"
-            description: "识别到手势（含 click 和 double-click）时，在屏幕右下角显示提示；新提示将旧提示向上推，每条独立显示 1 秒。"
+            description: "识别到手势时，在屏幕右下角显示提示，支持触摸板左键单击、双击、右键单击和双指纵向滚动。每条显示 1 秒，连续滚动每秒最多提示一次。"
             PreferenceSwitch {
                 objectName: "gestureTriggerHintsSwitch"
                 Layout.alignment: Qt.AlignRight

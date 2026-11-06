@@ -187,6 +187,17 @@ final class NativeInputClient: HandoffClient {
             lastReadDiagnostics["context_readable_range"] = readable.map { rangeNumbers($0.range) } ?? [-1, -1]
             lastReadDiagnostics["context_characters"] = readable?.range.length ?? -1
         }
+        // Trust IMK's empty field at the origin when no readable text contradicts
+        // it. An empty substring may legitimately be nil (as in WeChat). Keep
+        // this as a bounded empty source, without claiming a full-document read.
+        if whole == nil, readable == nil, access, length == 0,
+           selected == NSRange(location: 0, length: 0),
+           !isValidRange(marked) || marked.length == 0 {
+            readable = EditorTextRange(text: "", range: NSRange(location: 0, length: 0))
+            lastReadDiagnostics["context_readable_range"] = [0, 0]
+            lastReadDiagnostics["context_characters"] = 0
+            lastReadDiagnostics["empty_context_from_imk"] = true
+        }
         // A positive marked range can outlive the reported document length.
         // Query that exact range rather than treating an unqueried -1 as nil.
         // Diagnostics deliberately contain only lengths/ranges, never text.

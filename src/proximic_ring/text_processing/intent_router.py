@@ -10,7 +10,7 @@ from urllib import error as urlerror, request as urlrequest
 from urllib.parse import urlsplit
 
 from .router_prompts import ROUTER_PROMPT_VERSION, routing_schema, joint_router_input
-from .task_routing import (DEFAULT_ROUTER_MODEL, EDIT_TASK_LABELS, router_input, resolve_joint_decision,
+from .task_routing import (DEFAULT_ROUTER_MODEL, EDIT_TASK_LABELS, router_input, router_ocr_text, resolve_joint_decision,
                            multiclass_probabilities, JOINT_POLICY_VERSION, task_availability)
 
 
@@ -57,13 +57,14 @@ class ClefIntentRouter:
 
     def classify(self, utterance, target="", context=None, *, cancelled=lambda: False):
         self.warmup()
-        state = joint_router_input(router_input(utterance, target, context or {}))
+        ocr_text = router_ocr_text(context or {})
+        state = joint_router_input(router_input(utterance, target, context or {}, ocr_text=ocr_text))
         schema = routing_schema(target=target)
         started = time.perf_counter()
         trace = {"provider": "clef_server", "requested_model": self.model,
                  "prompt_version": ROUTER_PROMPT_VERSION, "classification_type": "joint",
                  "policy_version": JOINT_POLICY_VERSION,
-                 "input_state": state,
+                 "input_state": state, "ocr_text": ocr_text,
                  "request_schema": schema, "task_availability": task_availability(target),
                  "stages": []}
         try:

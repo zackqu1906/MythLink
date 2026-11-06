@@ -1,0 +1,86 @@
+{
+  "format_version": 1,
+  "audience": "Ringo + macOS Apple Silicon integration testing",
+  "firmware": {
+    "info_version": "2.1.6-dev.touchpad.9.debug",
+    "zip_sha256": "16f0eeae2d4634f6f3b82b9b35fe6f58eea569be9ec4918bf878bdd0302d1411",
+    "image_sha256": "3ac1bce6dcdb525e1fa9b8f8e0c25b927c624a74230b9225790d141cdcf17411",
+    "source_archive_commit": "fd5c7df03ee04c88ac56f732ef510f17ff6b4cd1",
+    "built_from_commit": "ea2ff6e8528876bf4d90440ba3d426d2352ab630",
+    "built_from_dirty_tree": true,
+    "mcuboot_image_hash_sha512": "cc7f7c23e125c101d9259688d9d4c6547465d46affb5a2026a9bfe9df8d95c2b3b1e3dfe2467afaabe8ff7b40d3f3f2526fe7c4ef9894ab03da774928f322236"
+  },
+  "sdk": {
+    "version": "0.3.0",
+    "commit": "4769eaebad8755e8d679305c5b459124a5b38df7",
+    "wheel_sha256": "2cbd85231a27eb4c9f13b22ad246a41f23c705217c2f90e3ea9fba30a31d97d9",
+    "platform": "macosx_13_0_arm64"
+  },
+  "validation": {
+    "firmware_host_passed": 190,
+    "firmware_known_baseline_failures": 1,
+    "delivery_tests_passed": 18,
+    "sdk_source_tests_passed": 109,
+    "sdk_installed_wheel_tests_passed": 109,
+    "sdk_reference_tokens": 512,
+    "new_device_flash_performed": false
+  },
+  "confidentiality": {
+    "frontend_source_included": false,
+    "standalone_frontend_weights_included": false,
+    "receiver_runtime_included": true,
+    "binary_reverse_engineering_protection_claimed": false
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 2344,
+      "sha256": "d30935d6906e5625db8082d120352fb6d3a04b7decc59143974dc517b7739b0a"
+    },
+    {
+      "path": "docs/API.md",
+      "bytes": 5787,
+      "sha256": "e6ec8747851de9e9383df4c7cb9d54c0a36c6d29388fd6bc0ef7c9a7e5c81ea5"
+    },
+    {
+      "path": "docs/CALIBRATION.md",
+      "bytes": 4364,
+      "sha256": "2a0b170d5654edc488b6d035dc81051de0ab29f0008e16cd55c64c388d2ebf6c"
+    },
+    {
+      "path": "docs/INSTALL.md",
+      "bytes": 5154,
+      "sha256": "86dda5717969aeb11649e66a2c75b97891e575cd31ac0a0595be56b3b3f212bf"
+    },
+    {
+      "path": "docs/RELEASE_NOTES.md",
+      "bytes": 2616,
+      "sha256": "87ad3d3ff6f54c4be607217151a45c2d7e0405f967ac5af368bdf1eb831e2c0b"
+    },
+    {
+      "path": "docs/SDK_THIRD_PARTY_NOTICES.md",
+      "bytes": 613,
+      "sha256": "ecf717895e92154f1c34dc8e8f927c532ff3ee4cbeed6447a66a05df29a80333"
+    },
+    {
+      "path": "firmware/ringo-touchpad-dev9.zip",
+      "bytes": 444045,
+      "sha256": "16f0eeae2d4634f6f3b82b9b35fe6f58eea569be9ec4918bf878bdd0302d1411"
+    },
+    {
+      "path": "sdk/ring_mac_sdk-0.3.0-py3-none-macosx_13_0_arm64.whl",
+      "bytes": 2506675,
+      "sha256": "2cbd85231a27eb4c9f13b22ad246a41f23c705217c2f90e3ea9fba30a31d97d9"
+    },
+    {
+      "path": "tools/gyro_calibration.py",
+      "bytes": 4333,
+      "sha256": "72e5515cc24bd8c9b0c65629d54bbad475ebfc520e0bce437a1e1234fe3d551e"
+    },
+    {
+      "path": "tools/touchpad_events.py",
+      "bytes": 1164,
+      "sha256": "c17a362a5e42e628891b442f706fe31321bc9164e6960147048cfa5b1c198b16"
+    }
+  ]
+}

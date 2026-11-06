@@ -118,7 +118,9 @@ def test_windows_worker_uses_user32_and_esc_stops_while_idle(monkeypatch):
         output.thread.join(1)
 
 
-def test_windows_worker_preserves_ordinary_double_click():
+def test_windows_worker_preserves_ordinary_double_click(monkeypatch):
+    import proximic_ring.touchpad.touchpad_mouse as module
+    monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='win32'))
     api = User32()
     ready, ended = threading.Event(), threading.Event()
     sessions = []
@@ -143,6 +145,9 @@ def test_windows_worker_preserves_ordinary_double_click():
 
 def test_windows_controller_runs_local_stroke_without_mac_input_method(inline_ui, monkeypatch):
     import proximic_ring.ui.touchpad.touchpad_controller as module
+    import ring_python_sdk.touchpad.windows as windows
+    api = User32()
+    monkeypatch.setattr(windows, 'WindowsSystemMouse', lambda **kw: WindowsSystemMouse(api, **kw))
     monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='win32'))
     c, bridge, root, tp, source = idle(inline_ui)
     assert tp.supported and tp.available

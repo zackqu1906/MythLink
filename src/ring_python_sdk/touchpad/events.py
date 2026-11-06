@@ -17,7 +17,7 @@ class TouchpadMove:
 class TouchpadClick:
     step: int
     timestamp: float
-    button: Literal['left'] = 'left'
+    button: Literal['left', 'right'] = 'left'
     kind: Literal['click'] = 'click'
 
 
@@ -41,6 +41,30 @@ class TouchpadClickVerdict:
 
 TouchpadEvent = TouchpadMove | TouchpadClick | TouchpadContact | TouchpadClickVerdict
 
+
+@dataclass(frozen=True)
+class Raw2PointerMove(TouchpadMove):
+    mode: str = 'SINGLE'
+    session_id: str = ''
+    generation: int = 0
+    sequence: int = 0
+
+
+@dataclass(frozen=True)
+class Raw2PointerClick(TouchpadClick):
+    count: int = 1
+    click_id: int = 0
+    session_id: str = ''
+    generation: int = 0
+    sequence: int = 0
+    source_timestamp: float | None = None
+
+
+@dataclass(frozen=True)
+class Raw2Reset(TouchpadContact):
+    session_id: str = ''
+    generation: int = 0
+
 @dataclass(frozen=True)
 class TouchpadStats:
     packets: int = 0
@@ -62,3 +86,4 @@ class TouchpadStats:
     packet_queue_age_ms: float = 0.
     inference_thread_cpu_ms: float = 0.
     inference_batch_packets: int = 0
+    ready: bool | None = None

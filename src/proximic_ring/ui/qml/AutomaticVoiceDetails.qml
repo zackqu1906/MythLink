@@ -81,6 +81,37 @@ ColumnLayout {
     }
     Repeater {
         model: [
+            {name: "automaticVoiceRouterOcr", title: "Clef 路由 OCR", status: panel.details.routerOcrStatus, value: panel.details.routerOcrText},
+            {name: "automaticVoiceGenerationOcr", title: panel.details.generationOcrTitle, status: panel.details.generationOcrStatus, value: panel.details.generationOcrText}
+        ]
+        delegate: ColumnLayout {
+            required property var modelData
+            Layout.fillWidth: true
+            Label {
+                Layout.fillWidth: true; text: parent.modelData.title || "听写整理／编辑生成 OCR"
+                color: theme.text; font.family: theme.family; font.pixelSize: theme.detailSize
+                wrapMode: Text.Wrap; textFormat: Text.PlainText
+            }
+            Label {
+                Layout.fillWidth: true; text: parent.modelData.status || "未记录"
+                color: theme.muted; font.family: theme.family; font.pixelSize: theme.detailSize
+                wrapMode: Text.Wrap; textFormat: Text.PlainText
+            }
+            ScrollView {
+                Layout.fillWidth: true; Layout.preferredHeight: Math.min(220, modelOcrText.implicitHeight + 16)
+                clip: true; contentWidth: availableWidth
+                TextArea {
+                    id: modelOcrText
+                    objectName: modelData.name
+                    text: modelData.value || "未记录"; readOnly: true; selectByMouse: true
+                    color: theme.text; font.family: theme.family; font.pixelSize: theme.detailSize
+                    wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText
+                }
+            }
+        }
+    }
+    Repeater {
+        model: [
             {title: "各任务概率（每项独立判断启用 / 不启用）", value: panel.details.probabilityText},
             {title: "OCR 原始识别与规则处理", value: panel.details.rawOcrText},
             {title: "实际分类输入与规则", value: panel.details.routerState},

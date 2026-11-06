@@ -1,6 +1,8 @@
 import base64
 import json
 from pathlib import Path
+import threading
+from concurrent.futures import Future
 
 import numpy as np
 import pytest
@@ -9,6 +11,7 @@ from proximic_ring.text_processing.intent_router import ClefIntentRouter
 from proximic_ring.text_processing.llm import OpenAICompatibleTextProcessor
 from proximic_ring.text_processing.model import InputModeRoutingRequest, InputModeRoutingResult, LLMSettings, TextProcessingRequest
 from proximic_ring.text_processing.screen_context import filter_ocr_lines, resolve_context
+from proximic_ring.text_processing.worker import TextProcessingWorker
 from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
 from proximic_ring.voice.automatic_history import automatic_history_details
 
@@ -83,10 +86,10 @@ class Response:
         return self.data
 
 
-def record_example(tmp_path, *, task="edit", fail_joint=False, conflict=False):
+def record_example(tmp_path, *, task="edit", fail_joint=False, conflict=False, context=None):
     collector = ModificationDatasetCollector(tmp_path, "test-user")
     collector.record_audio(7, np.zeros(1600, dtype=np.float32))
-    context = context_fixture()
+    context = context_fixture() if context is None else context
     decision, trace, calls = classify(context, task=task, fail_joint=fail_joint, conflict=conflict)
     request = InputModeRoutingRequest(10, 7, "王字旁的玮", LLMSettings(), router_backend="clef", target_text="请联系张伟")
     collector.record_routing_request(request)
@@ -96,6 +99,135 @@ def record_example(tmp_path, *, task="edit", fail_joint=False, conflict=False):
     collector.record_routing_result(result)
     directory = collector._interaction_dir(collector._routing_interactions[10])
     return collector, directory, result, calls
+
+
+def test_disabled_cleanup_is_recorded_without_fabricated_model_inputs(tmp_path):
+    collector, directory, route, _ = record_example(tmp_path, task="dictation")
+    collector.record_dictation_cleanup(route.session_id, False)
+    saved = json.loads((directory / "record.json").read_text())
+    assert saved["mode"]["dictation_cleanup_enabled"] is False
+    assert saved["llm"]["requests"] == []
+    details = collector.load_entries()[0]["automaticDetails"]
+    assert "听写整理已关闭" in details["generationOcrStatus"]
+    assert "未调用正文模型" in details["generationOcrStatus"]
+    assert "直接使用 ASR" in details["contextText"]
+    assert details["routerOcrText"] == "other: 请联系张伟"
+    assert details["generationOcrText"] == "未记录" and not details["modelInput"]
+
+
+@pytest.mark.parametrize("task", ["dictation", "edit"])
+@pytest.mark.parametrize("text_size", [20, 110])
+def test_history_saves_both_exact_model_ocr_versions(tmp_path, monkeypatch, task, text_size):
+    context = context_fixture()
+    context["messages"] = [{"speaker": "other", "text": f"第{i}条" + "字" * text_size} for i in range(6)]
+    expected_context = json.loads(json.dumps(context))
+    expected_excerpt = "\n".join("other: " + m["text"] for m in context["messages"][-4:])[-360:]
+    collector, directory, route, routing_calls = record_example(tmp_path, task=task, context=context)
+    # Recording a pending future must not block or serialize the Future object.
+    pending_context = Future()
+    request = TextProcessingRequest(11, 7, task, route.raw_text,
+        LLMSettings(enabled=True, model="test", api_key_env=""), target_text="请联系张伟",
+        task_type=task, edit_plan=route.edit_plan, screen_context=pending_context)
+    collector.record_text_request(request)
+    queued = json.loads((directory / "record.json").read_text())["llm"]["requests"][0]
+    if task == "dictation":
+        assert set(queued["input"]) == {"utterance", "screen_context"}
+        assert "editable_text" not in queued["system_prompt"] and "edit_plan" not in queued["system_prompt"]
+    assert "尚未取得" in collector.load_entries()[0]["automaticDetails"]["generationOcrStatus"]
+    pending_context.set_result(context)
+    processor, calls, results, done = OpenAICompatibleTextProcessor(), [], [], threading.Event()
+
+    def respond(settings, **kwargs):
+        calls.append(json.loads(kwargs["user_content"]))
+        # A later context change must not rewrite either saved input snapshot.
+        context["messages"][0]["text"] = "后续变更，不属于这次模型输入"
+        return "请联系张伟" if task == "dictation" else {"modified_text": "请联系张玮"}
+
+    def completed(result):
+        results.append(result)
+        collector.record_llm_result(result.request_id, result)
+        done.set()
+
+    monkeypatch.setattr(processor, "_request_chat", respond)
+    worker = TextProcessingWorker(processor=processor, on_result=completed)
+    try:
+        worker.submit(request)
+        assert done.wait(3)
+    finally:
+        worker.close(wait=True)
+    assert results[0].error is None
+    assert len(calls) == len(routing_calls) == 1
+    record = json.loads((directory / "record.json").read_text())
+    assert record["mode"]["router_ocr_text"] == expected_excerpt
+    assert routing_calls[0]["state"].endswith("聊天上文（仅供参考）：" + expected_excerpt)
+    saved = record["llm"]["requests"][0]
+    assert saved["request_input"] == saved["input"] == calls[0]
+    if task == "dictation":
+        assert set(saved["input"]) == {"utterance", "screen_context"}
+    else:
+        assert saved["input"]["editable_text"] == "请联系张伟"
+        assert saved["input"]["edit_plan"] == route.edit_plan.as_dict()
+    assert saved["screen_context"] == expected_context
+    # A fresh reader verifies persistence, rather than only the in-memory view.
+    details = ModificationDatasetCollector(tmp_path, "test-user").load_entries()[0]["automaticDetails"]
+    assert details["routerOcrText"] == expected_excerpt
+    assert json.loads(details["generationOcrText"]) == expected_context
+    assert details["generationOcrTitle"] == ("听写整理 OCR" if task == "dictation" else "编辑生成 OCR")
+    assert "screenshot_png" not in details["generationOcrText"]
+    assert "后续变更" not in details["generationOcrText"]
+
+
+@pytest.mark.parametrize("failure", ["validation", "network"])
+def test_generation_failure_does_not_invent_a_sent_ocr_request(tmp_path, monkeypatch, failure):
+    collector, directory, route, _ = record_example(tmp_path)
+    processor, calls, results, done = OpenAICompatibleTextProcessor(), [], [], threading.Event()
+
+    def respond(settings, **kwargs):
+        calls.append(json.loads(kwargs["user_content"]))
+        raise OSError("offline")
+
+    def completed(result):
+        results.append(result)
+        collector.record_llm_result(result.request_id, result)
+        done.set()
+
+    monkeypatch.setattr(processor, "_request_chat", respond)
+    request = TextProcessingRequest(11, 7, "edit", route.raw_text,
+        LLMSettings(enabled=True, model="test", api_key_env=""),
+        target_text="字" * 5001 if failure == "validation" else "请联系张伟",
+        task_type="edit", edit_plan=route.edit_plan, screen_context=route.screen_context)
+    collector.record_text_request(request)
+    worker = TextProcessingWorker(processor=processor, on_result=completed)
+    try:
+        worker.submit(request)
+        assert done.wait(3)
+    finally:
+        worker.close(wait=True)
+    assert results[0].error
+    details = collector.load_entries()[0]["automaticDetails"]
+    saved = json.loads((directory / "record.json").read_text())["llm"]["requests"][0]
+    if failure == "validation":
+        assert calls == [] and saved["request_input"] is None
+        assert details["generationOcrText"] == "未记录"
+        assert "请求输入构造前" in details["generationOcrStatus"]
+    else:
+        assert saved["request_input"] == calls[0]
+        assert "请联系张伟" in details["generationOcrText"]
+        assert "请求失败" in details["generationOcrStatus"]
+
+
+def test_empty_and_missing_ocr_and_legacy_inputs_are_distinct(tmp_path):
+    collector, _, _, _ = record_example(tmp_path, context={"messages": [], "status": "unavailable"})
+    details = collector.load_entries()[0]["automaticDetails"]
+    assert "无 OCR 文字" in details["routerOcrText"]
+    assert "未进入正文处理" in details["generationOcrStatus"]
+    legacy = {"mode": {"routing": "auto", "screen_context": {"messages": [{"text": "不可据此重建"}]}},
+              "llm": {"requests": [{"task_type": "dictation", "status": "completed",
+                                    "input": {"screen_context": {"messages": [{"text": "旧请求 OCR"}]}}}]}}
+    details = automatic_history_details(tmp_path, legacy)
+    assert details["routerOcrText"] == "未记录"
+    assert "旧记录" in details["generationOcrStatus"]
+    assert "旧请求 OCR" in details["generationOcrText"] and "不可据此重建" not in details["generationOcrText"]
 
 
 def test_evidence_survives_resolution_but_never_enters_model_payload(monkeypatch):

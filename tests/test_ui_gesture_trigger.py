@@ -58,9 +58,14 @@ def test_touchpad_recognition_callback_ignores_retired_output(inline_ui):
     QTest.qWait(20)
     old.options["on_gesture"]("double-click")
     QTest.qWait(20)
-    assert shown == ["click", "double-click"]
+    new_gestures = ["left-click", "left-double-click", "right-click", "two-finger-scroll"]
+    for name in new_gestures:
+        old.options["on_gesture"](name)
+    QTest.qWait(20)
+    assert shown == ["click", "double-click", *new_gestures]
     tp.stop()
     QTest.qWait(20)
-    old.options["on_gesture"]("click")
+    for name in ["click", *new_gestures]:
+        old.options["on_gesture"](name)
     QTest.qWait(20)
-    assert shown == ["click", "double-click"]
+    assert shown == ["click", "double-click", *new_gestures]

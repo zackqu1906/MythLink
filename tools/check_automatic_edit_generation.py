@@ -35,9 +35,7 @@ def load_cases(path, selected=None):
         assert isinstance(case['utterance'], str) and case['utterance'].strip()
         assert isinstance(case['target'], str)
         assert isinstance(case['context']['messages'], list)
-        plan = EditPlan(tuple(case['edit_plan']['tasks']))
-        if not case['target'].strip() and not plan.allows_empty_source:
-            raise ValueError(f'{case_id}: plan requires editable source')
+        EditPlan(tuple(case['edit_plan']['tasks']))
         expected = case['expected']
         assert isinstance(expected, dict) and expected
         if 'modified_text' in expected: assert isinstance(expected['modified_text'], str)
@@ -139,6 +137,7 @@ def main():
             'case_sha256':hashlib.sha256(args.cases.read_bytes()).hexdigest(),'cases_path':str(args.cases.resolve()),
             'source_sha256':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (
                 ROOT/'src/proximic_ring/text_processing/automatic_prompts.py',ROOT/'src/proximic_ring/text_processing/automatic_processing.py',
+                ROOT/'src/proximic_ring/text_processing/automatic_inputs.py',
                 ROOT/'src/proximic_ring/text_processing/llm.py',Path(__file__))},'cases':[]}
     try:
         with args.output.with_suffix('.jsonl').open('w') as journal:

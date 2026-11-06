@@ -215,6 +215,7 @@ class TextProcessingWorker:
             started = time.perf_counter()
             error = None
             model_output = ""
+            model_input = None
             llm_branches = ()
             winner_branch = ""
             used_llm = bool(request.settings.enabled)
@@ -226,9 +227,13 @@ class TextProcessingWorker:
                 if request.task_type:
                     # Clef automatic lane: a validated task/plan, one composed generation.
                     from .screen_context import resolve_context
-                    final_text, model_output = self._processor.process_task_with_trace(
-                        request.raw_text, request.task_type, request.settings, request.target_text,
-                        resolve_context(request.screen_context), edit_plan=request.edit_plan)
+                    process_with_input_trace = getattr(self._processor, "process_task_with_input_trace", None)
+                    args = (request.raw_text, request.task_type, request.settings, request.target_text,
+                            resolve_context(request.screen_context))
+                    if callable(process_with_input_trace):
+                        final_text, model_output, model_input = process_with_input_trace(*args, edit_plan=request.edit_plan)
+                    else:
+                        final_text, model_output = self._processor.process_task_with_trace(*args, edit_plan=request.edit_plan)
                 elif request.mode == TEXT_MODE_POLISH:
                     # Explicit polish action; no automatic intent classification.
                     final_text, model_output = self._processor.polish_with_trace(
@@ -305,6 +310,7 @@ class TextProcessingWorker:
                 # unavailable.  Preserve the raw final ASR text as a fallback.
                 error = str(exc)
                 model_output = str(getattr(exc, "model_output", "") or "")
+                model_input = getattr(exc, "model_input", None)
                 llm_branches = tuple(getattr(exc, "branch_traces", ()) or ())
                 final_text = request.target_text or request.raw_text
             result = TextProcessingResult(
@@ -320,6 +326,7 @@ class TextProcessingWorker:
                 target_text=request.target_text,
                 error=error,
                 model_output=model_output,
+                model_input=model_input,
                 llm_branches=tuple(llm_branches),
                 winner_branch=winner_branch,
             )

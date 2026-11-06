@@ -835,6 +835,7 @@ class RingAudioSource(AudioSource):
             data_root=self.data_root,
             auto_reconnect=False,
             battery_poll_enabled=False,
+            connection_backend='sdk' if sys.platform == 'darwin' else 'legacy',
         )
         battery_refresh_task: asyncio.Task[None] | None = None
 
@@ -1144,7 +1145,7 @@ class RingAudioSource(AudioSource):
         processor = getattr(endpoint[1], "swipe", None) if endpoint else None
         stats = getattr(processor, "stats", None)
         packets = int(getattr(stats, "packet_count", 0))
-        return {
+        result = {
             "device_packet_count": packets,
             "device_trigger_count": int(getattr(stats, "trigger_count", 0)),
             "invalid_packet_count": int(getattr(stats, "invalid_packet_count", 0)),
@@ -1152,6 +1153,15 @@ class RingAudioSource(AudioSource):
             "startup_evidence": ("device_packets" if packets else
                                  "start_sent" if self.gestures_active else "not_started"),
         }
+        recovery = getattr(endpoint[1], '_raw2_gesture_recovery', None) if endpoint else None
+        if recovery:
+            state = recovery['state']
+            if state == 'awaiting_packets' and packets > recovery['packet_baseline']:
+                state = 'confirmed'
+            result['recovery_state'] = state
+            if recovery.get('error'):
+                result['recovery_error'] = recovery['error']
+        return result
 
     def _submit_touchpad(self, enabled, options):
         """Return a Future immediately; all SDK calls stay on the owning BLE loop."""

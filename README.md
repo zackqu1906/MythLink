@@ -594,7 +594,10 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
 
 ## 触摸板 SDK 开发
 
-修正后的 Mac 触摸板接口已集成到 `ring_python_sdk.touchpad`，支持复用现有蓝牙连接、移动/点击回调及可选系统鼠标适配器。入口为 `RingSession.touchpad_on()` / `touchpad_off()`；主程序可通过 `RingAudioSource(touchpad_observer=...)` 订阅。
+2026-11-05 交付版 `ring_mac_sdk` 0.3.0 已接入 Apple Silicon Mac 触摸板，支持独立开关的左键单击/双击、右键单击和双指纵向滚轮；macOS 蓝牙连接由新版 SDK 管理，音频和手势共用这一连接。
+新功能、独立验证环境和固件位置见 [新版 SDK 更新记录](docs/RING_MAC_SDK.md)。
+
+`ring_python_sdk.touchpad` 复用现有蓝牙连接，提供移动/点击回调及系统鼠标适配器。新版入口为 `RingSession(connection_backend="sdk")` 连接后的 `touchpad_on(protocol="raw2")` / `touchpad_off()`；不传 protocol 时保留旧 MNN 兼容接口。
 
 见 [触摸板 SDK 接口文档](docs/TOUCHPAD_SDK.md) 和 [可运行示例](examples/ring_touchpad.py)。默认不自动控制鼠标；手势继续使用固件识别，语音默认 ADPCM。
 
@@ -664,7 +667,8 @@ src/proximic_ring/
     └── assets/            界面素材（保持原位置）
 
 src/ring_python_sdk/       当前集成的 Ringo SDK snapshot
-third_party/               已验证的外部 ASR 源码快照
+src/ring_mac_sdk/          0.3.0 新版 Mac SDK（原件保留，管理 macOS BLE 连接）
+third_party/               外部源码快照与 Ringo 原始交付包
 tools/                     LLM、增益、设备和现场诊断工具
 tests/                     自动化测试
 docs/                      详细设计、接入与验证文档

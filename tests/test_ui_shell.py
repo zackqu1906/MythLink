@@ -132,6 +132,44 @@ def test_settings_open_advanced_in_place_with_shared_back(inline_ui, tmp_path):
 
 
 @pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+def test_automatic_dictation_cleanup_switch_is_visible_and_only_changes_its_preference(inline_ui, monkeypatch, tmp_path, size):
+    from PySide6.QtCore import QObject, QMetaObject, QPointF
+    from PySide6.QtTest import QTest
+    controller, bridge, _, root, _ = inline_ui
+    monkeypatch.setattr(controller._text_processing_worker, "warmup_router", lambda: None)
+    controller.inputRoutingMode = "auto"
+    root.resize(*size); root.show()
+    dialog = root.findChild(QObject, "runtimeSettingsDialog")
+    QMetaObject.invokeMethod(dialog, "open")
+    QTest.qWait(150)
+    QMetaObject.invokeMethod(root.findChild(QObject, "settingsAudioEntry"), "click")
+    QTest.qWait(80)
+    scroll = root.findChild(QObject, "runtimeSettingsScroll").property("contentItem")
+    scroll.setProperty("contentY", max(0, scroll.property("contentHeight") - scroll.height()))
+    QTest.qWait(50)
+    control = root.findChild(QObject, "automaticDictationCleanupSwitch")
+    assert control.property("visible") and control.property("checked")
+    point = control.mapToScene(QPointF())
+    assert 0 <= point.y() < root.height() - control.height()
+    before = {key: controller._settings.value(key) for key in controller._settings.allKeys()}
+    messages, phase = list(bridge.messages), controller.inlineInput.status
+    QMetaObject.invokeMethod(control, "click")
+    assert not controller.automaticDictationCleanupEnabled and not control.property("checked")
+    after = {key: controller._settings.value(key) for key in controller._settings.allKeys()}
+    assert {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)} == {"input/automaticDictationCleanupEnabled"}
+    assert bridge.messages == messages and controller.inlineInput.status == phase
+    shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    shots.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(shots / f"settings-dictation-cleanup-{size[0]}.png"))
+    controller.inputRoutingMode = "manual"
+    assert not control.property("visible") and not controller.automaticDictationCleanupEnabled
+    controller.inputRoutingMode = "auto"
+    assert control.property("visible") and not control.property("checked")
+    controller.automaticDictationCleanupEnabled = True
+    assert control.property("checked")
+
+
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
 def test_settings_form_navigation_preserves_configuration_and_live_voice(inline_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QMetaObject, QPointF
     from PySide6.QtTest import QTest

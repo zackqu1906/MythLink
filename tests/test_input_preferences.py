@@ -56,6 +56,21 @@ def connect(c, *, source_first=True):
     return source
 
 
+def test_automatic_dictation_cleanup_preference_defaults_on_and_survives_restart(controllers):
+    c = controllers()
+    assert c.automaticDictationCleanupEnabled
+    original_llm = c.llmEnabled
+    c.automaticDictationCleanupEnabled = False
+    c._settings.sync()
+    reopened = controllers()
+    assert not reopened.automaticDictationCleanupEnabled
+    assert reopened._settings.value("input/automaticDictationCleanupEnabled", type=bool) is False
+    assert c.llmEnabled == original_llm
+    reopened.automaticDictationCleanupEnabled = True
+    reopened._settings.sync()
+    assert controllers().automaticDictationCleanupEnabled
+
+
 def enable_proximity(c):
     from test_proximity import prepare
     p = c.proximity
@@ -297,3 +312,24 @@ def test_failed_auto_start_is_logged_without_retry_loop_or_erasing_preference(co
     assert c.recognitionEnabled
     log = (tmp_path / 'logs/diagnostic.log').read_text()
     assert 'state="error"' in log and '辅助功能' in log
+
+
+def test_raw2_stream_failure_does_not_auto_restart_on_reconnect_but_manual_retry_works(controllers):
+    from ring_mac_sdk.errors import RingError
+    c = controllers()
+    c._settings.setValue('touchpad/enabled', True)
+    first = connect(c)
+    wait_until(lambda: c.touchpad.state == 'running')
+    c.touchpad._run.protocol = 'raw2'
+    first.starts[0]['on_stopped'](RingError('input_timeout', 'Raw2 首包超时'))
+    wait_until(lambda: c.touchpad.state == 'error')
+    assert not c.touchpad.automaticStartAllowed
+    assert c._bool_setting('touchpad/enabled', False)
+    c._apply_runtime_finished('test disconnect')
+    second = connect(c)
+    QCoreApplication.processEvents()
+    assert not second.starts and not c.touchpad.active
+    assert c.recognitionEnabled and not c.touchpad.blocksVoice
+    c.touchpad.toggle()
+    wait_until(lambda: c.touchpad.state == 'running')
+    assert len(second.starts) == 1 and c.touchpad.automaticStartAllowed

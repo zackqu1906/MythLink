@@ -14,12 +14,14 @@ from .click_diagnostics import ClickTrace, start_click_diagnostics
 class TouchpadMouseOutput:
     def __init__(self, *, connection, gain, clicks, invert_y, on_ready, on_end,
                  mouse_factory=None, on_double_click=None, on_gesture=None, on_diagnostic=None,
-                 click_context=None, on_capture_click=None):
+                 click_context=None, on_capture_click=None, scroll=True, double_click=True,
+                 right_click=True, scroll_gain=1., raw2=False):
         self.connection = connection
         self.options = (gain, clicks, invert_y)
         self.on_ready, self.on_end = on_ready, on_end
         self.mouse_factory = mouse_factory
         self.on_double_click = on_double_click
+        self.on_gesture = on_gesture
         self.on_diagnostic = on_diagnostic
         self.click_context = click_context or (lambda: (0, 'closed'))
         self.on_capture_click = on_capture_click
@@ -34,6 +36,11 @@ class TouchpadMouseOutput:
         self.overflowed = False
         self.active = False
         self._pending_clicks = {}
+        self._features = (bool(clicks), bool(double_click), bool(right_click), bool(scroll), float(scroll_gain))
+        self.raw2 = raw2
+        self._stream_key = None
+        self._seen_clicks = deque(maxlen=256)
+        self._last_scroll_hint = None
         start_click_diagnostics()
 
     def start(self):
@@ -44,8 +51,28 @@ class TouchpadMouseOutput:
         self.active = True
         self.paused = False
 
+    def configure(self, *, clicks, double_click, right_click, scroll, scroll_gain):
+        # One immutable snapshot; the pointer worker reads it before dispatch.
+        self._features = (bool(clicks), bool(double_click), bool(right_click), bool(scroll), float(scroll_gain))
+        self.options = (self.options[0], bool(clicks), self.options[2])
+
+    def _reset_stream(self, event):
+        with self.lock:
+            self._stream_key = (event.session_id, event.generation)
+            self._seen_clicks.clear()
+            for _, _, trace in self.events:
+                if trace:
+                    trace.finish('session_reset')
+                    self._pending_clicks.pop(trace.fields['click_id'], None)
+            self.events.clear()
+        if self.clicks:
+            self.clicks.clear()
+
     def submit(self, event):
         # Called on BLE: no Quartz, Qt signals, model work or blocking queue puts.
+        if event.kind == 'contact' and event.state == 'reset' and getattr(event, 'session_id', None) is not None:
+            self._reset_stream(event)
+            return
         if event.kind not in {"move", "click"} and not (
                 self.clicks and event.kind == "contact" and event.state == "reset"):
             return  # Stroke metadata must not occupy the pointer's bounded queue.
@@ -60,6 +87,13 @@ class TouchpadMouseOutput:
                 if trace: trace.finish(blocked)
                 return
             if len(self.events) == self.events.maxlen:
+                if getattr(event, 'session_id', None) is not None:
+                    # A lost Raw2 event must not turn a partial gesture into input.
+                    self.stopped.set()
+                    self.active = False
+                    if trace: trace.finish('queue_overflow')
+                    self.wake.set()
+                    return
                 self.overflowed = True
                 evicted = self.events[0][2]
                 if evicted:
@@ -117,6 +151,10 @@ class TouchpadMouseOutput:
                     factory = NativeTouchpadMouse
             self.mouse = factory()
             self.mouse.gain, self.mouse.clicks_enabled, self.mouse.invert_y = self.options
+            # Raw2's independent button switches are checked at dispatch.
+            # The native output must allow right/double clicks even if singles are off.
+            if self.raw2:
+                self.mouse.clicks_enabled = True
             self.mouse.stop_on_escape = sys.platform == 'win32' and hasattr(self.mouse, 'check_health')
             if self.stopped.is_set() or self.connection.is_set():
                 return
@@ -145,6 +183,20 @@ class TouchpadMouseOutput:
                 for event, submitted_context, trace in events:
                     if trace:
                         trace.dequeued(queue_depth=len(events))
+                    if getattr(event, 'session_id', None) is not None:
+                        if trace and batch:
+                            self._apply(batch)
+                            batch = []
+                        value = self._raw2_event(event, submitted_context, trace)
+                        if value:
+                            if batch and batch[-1]['kind'] == value['kind'] and batch[-1].get('stream') == value['stream']:
+                                for axis in ('dx', 'dy'):
+                                    if axis in value:
+                                        batch[-1][axis] += value[axis]
+                                batch[-1]['expires_at'] = min(batch[-1]['expires_at'], value['expires_at'])
+                            else:
+                                batch.append(value)
+                        continue
                     if self.paused or now - event.timestamp > .1:
                         note(self.on_diagnostic, 'mouse_paused' if self.paused else 'mouse_event_stale')
                         self._finish_click(trace, 'output_paused' if self.paused else 'mouse_queue_expired',
@@ -243,24 +295,98 @@ class TouchpadMouseOutput:
             self.on_end(reason, error)
 
     def _apply(self, batch):
+        # Recheck after coalescing: reset or a live toggle can occur while the
+        # worker is processing its local batch. Legacy events have no stream.
+        batch = [e for e in batch if 'stream' not in e or
+                 (tuple(e['stream']) == self._stream_key and
+                  (e['kind'] != 'scroll' or self._features[3]))]
+        if not batch or self._blocked_reason():
+            return {}
         result = self.mouse.apply(batch)
         # Count actual Quartz posts reported by the child, not SDK frames or
         # requests (zero movement and expired IPC requests post nothing).
         if isinstance(result, dict):
             for _ in range(result.get('moves', 0)):
                 note(self.on_diagnostic, 'pointer_post')
+            for _ in range(result.get('scrolls', 0)):
+                note(self.on_diagnostic, 'scroll_post')
         return result
 
-    def _send_click(self, trace):
+    def _raw2_event(self, event, submitted_context, trace):
+        key = (event.session_id, event.generation)
+        if self._stream_key is None:
+            self._stream_key = key
         blocked = self._blocked_reason()
+        if blocked or key != self._stream_key:
+            self._finish_click(trace, blocked or 'session_reset')
+            return
+        limit = .25 if trace else .2
+        now = time.monotonic()
+        age = now - event.timestamp
+        if not 0 <= age <= limit:
+            self._finish_click(trace, 'mouse_queue_expired', queue_limit_ms=limit*1000)
+            return
+        singles, doubles, right, scroll, gain = self._features
+        if trace:
+            click_id = (key, event.click_id)
+            if click_id in self._seen_clicks:
+                self._finish_click(trace, 'duplicate_click')
+                return
+            self._seen_clicks.append(click_id)
+            context = self.click_context()
+            if context != submitted_context or context[1] in {'loading', 'activating'}:
+                self._finish_click(trace, 'click_context_changed')
+                return
+            if context[1] == 'capture':
+                if event.button == 'left' and self.on_capture_click:
+                    self.on_capture_click(context)
+                    self._finish_click(trace, 'capture_callback_requested', outcome='routed')
+                else:
+                    self._finish_click(trace, 'capture_owns_input')
+                return
+            enabled = (singles if event.count == 1 else doubles) if event.button == 'left' else right
+            if event.button not in {'left', 'right'} or event.count not in {1, 2}:
+                self._finish_click(trace, 'invalid_click')
+            elif not enabled:
+                self._finish_click(trace, 'clicks_disabled')
+            else:
+                self._notify_gesture(event.button + ('-double-click' if event.count == 2 else '-click'))
+                self._send_click(trace, event)
+        elif event.mode == 'TWO_FINGER':
+            if scroll:
+                # Movement arrives at sensor rate. Keep recognition feedback
+                # to one card per second per stream, independent of OS receipts.
+                last = self._last_scroll_hint
+                if event.dy * gain and (last is None or last[0] != key or now - last[1] >= 1.):
+                    self._last_scroll_hint = (key, now)
+                    self._notify_gesture('two-finger-scroll')
+                return dict(kind='scroll', dy=-event.dy*gain,
+                            stream=list(key), expires_at=event.timestamp+.2)
+        else:
+            return dict(kind='move', dx=event.dx, dy=event.dy,
+                        stream=list(key), expires_at=event.timestamp+.2)
+
+    def _notify_gesture(self, name):
+        if self.on_gesture is not None:
+            try:
+                self.on_gesture(name)
+            except Exception:
+                pass  # Optional feedback cannot interrupt pointer output.
+
+    def _send_click(self, trace, event=None):
+        blocked = self._blocked_reason()
+        if event is not None and (event.session_id, event.generation) != self._stream_key:
+            blocked = 'session_reset'
         if blocked:
             self._finish_click(trace, blocked)
             return
         trace.fields['native_click_requested'] = True
         trace.record('dispatch')
         apply_click = getattr(self.mouse, 'apply_click', None)
-        result = (apply_click(dict(trace.fields)) if apply_click is not None
-                  else self._apply([dict(kind="click")]))
+        params = (dict(button=event.button, count=event.count, click_id=f'{event.session_id}:{event.generation}:{event.click_id}',
+                       expires_at=event.timestamp+.25) if event is not None else {})
+        result = (apply_click(dict(trace.fields), **params) if apply_click is not None
+                  else self._apply([dict(kind="click", **params)]))
         result = result if isinstance(result, dict) else {}
         posted = result.get('clicks_posted')
         why = result.get('reason', 'missing_native_receipt')

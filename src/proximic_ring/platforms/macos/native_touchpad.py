@@ -63,8 +63,8 @@ class NativeTouchpadMouse:
                         down_posts=None, up_posts=None)
         return {**result, 'ipc_roundtrip_ms': round((time.monotonic()-created)*1000, 3)}
 
-    def apply_click(self, click_trace):
-        return self._traced_request("touchpad_apply", click_trace, events=[dict(kind='click')])
+    def apply_click(self, click_trace, **options):
+        return self._traced_request("touchpad_apply", click_trace, events=[dict(kind='click', **options)])
 
     def resolve_double_click(self, click_trace):
         return self._traced_request("touchpad_double_click_target", click_trace)

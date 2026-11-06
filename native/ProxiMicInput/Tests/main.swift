@@ -1395,7 +1395,7 @@ test("Automatic composition accepts an empty prefix without a partial") {
     session.automaticMode = true
     var requested = false
     session.onEdit = { text, _, _ in requested = true; check(text.isEmpty, "empty source changed") }
-    session.setAutomaticTask("edit", allowEmptySource: true)
+    session.setAutomaticTask("edit")
     session.update("帮我写一封邮件", final: true)
     check(requested && session.phase == .editing, "composition did not request generation")
     session.applyEdit(text: "您好，会议延期。", revision: session.revision, error: nil)
@@ -1417,12 +1417,12 @@ test("Automatic dictation commits once and late edit routing cannot convert it")
 test("Manual sessions ignore automatic route fields") {
     let client = FakeClient("原文")
     let session = try begin(client)
-    session.setAutomaticTask("edit", allowEmptySource: true)
+    session.setAutomaticTask("edit")
     session.update("普通听写", final: true)
     check(!session.editRequested && client.body == "原文普通听写", "manual path changed")
 }
 
-test("Automatic editing cannot use an empty source unless the plan permits it") {
+test("Automatic editing trusts the route without an empty-source permission flag") {
     let client = FakeClient()
     let session = try begin(client)
     session.automaticMode = true
@@ -1430,14 +1430,14 @@ test("Automatic editing cannot use an empty source unless the plan permits it") 
     session.onEdit = { _, _, _ in requested = true }
     session.setAutomaticTask("edit")
     session.update("精简一下", final: true)
-    check(!requested && session.phase == .dictated, "source requirement bypassed")
+    check(requested && session.phase == .editing, "post-routing empty-source check blocked generation")
 }
 
 test("Automatic insertion into empty text can be undone") {
     let client = FakeClient()
     let session = try begin(client)
     session.automaticMode = true
-    session.setAutomaticTask("edit", allowEmptySource: true)
+    session.setAutomaticTask("edit")
     session.update("加一句谢谢", final: true)
     session.applyEdit(text: "谢谢", revision: session.revision, error: nil)
     check(client.body == "谢谢", "empty insertion failed")

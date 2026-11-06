@@ -1,5 +1,6 @@
 """Device controls stay on Home; history presentation never changes live input."""
 import os
+import json
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,9 @@ def test_automatic_history_details_load_frame_and_keep_live_input_unchanged(inli
     record["automaticDetails"]["screenshotUrl"] = image_path.as_uri()
     record["automaticDetails"]["systemPrompt"] = "测试提示词：只修改指定文字，保留其余原文。\n" * 24
     record["automaticDetails"]["modelInput"] = '{"utterance":"王字旁的玮","editable_text":"请联系张伟"}'
+    generation_context = {"messages": [{"speaker": "other", "text": "请联系张伟"}]}
+    record["automaticDetails"]["generationOcrText"] = json.dumps(generation_context, ensure_ascii=False, indent=2)
+    record["automaticDetails"]["generationOcrStatus"] = "已保存正文模型请求中的完整 screen_context。处理已完成。"
     controller._voice_history_entries = [record]
     controller.voiceHistoryChanged.emit()
     root.resize(*size); root.setProperty("currentPage", 4); root.show(); QTest.qWait(120)
@@ -78,10 +82,19 @@ def test_automatic_history_details_load_frame_and_keep_live_input_unchanged(inli
     assert point.x() >= 0 and point.x() + screenshot.width() <= entry.width()
     ocr_text = visual_child(panel, "automaticVoiceOcrText").property("text")
     assert "请联系张伟" in ocr_text and "16:29" not in ocr_text
+    assert visual_child(panel, "automaticVoiceRouterOcr").property("text") == "other: 请联系张伟"
+    generation_ocr = visual_child(panel, "automaticVoiceGenerationOcr")
+    assert json.loads(generation_ocr.property("text")) == generation_context
+    assert generation_ocr.property("readOnly") and generation_ocr.property("selectByMouse")
     directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     directory.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(directory / f"automatic-history-{size[0]}.png"))
     assert (bridge.messages, controller.inlineInput._view) == before
+    router_ocr = visual_child(panel, "automaticVoiceRouterOcr")
+    ocr_y = router_ocr.mapToItem(view, QPointF()).y()
+    view.setProperty("contentY", max(0, view.property("contentY") + ocr_y - 90))
+    QTest.qWait(80)
+    assert root.grabWindow().save(str(directory / f"automatic-history-ocr-{size[0]}.png"))
     view.setProperty("contentY", max(0, view.property("contentHeight") - view.height()))
     QTest.qWait(80)
     assert root.grabWindow().save(str(directory / f"automatic-history-bottom-{size[0]}.png"))

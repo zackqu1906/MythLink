@@ -15,7 +15,12 @@ from ..shared.overlay_stacking import OverlayVisibilityGuard
 TRIGGER_DURATION_MS = 1000
 TRIGGER_WIDTH, TRIGGER_HEIGHT = 248, 72
 TRIGGER_GAP = 8
-TRIGGER_LABELS = {**GESTURE_LABELS, "click": "单击", "double-click": "双击"}
+TRIGGER_LABELS = {
+    **GESTURE_LABELS, "click": "单击", "double-click": "双击",
+    "left-click": "左键单击", "left-double-click": "左键双击",
+    "right-click": "右键单击", "right-double-click": "右键双击",
+    "two-finger-scroll": "双指纵向滚动",
+}
 
 
 def trigger_geometry(area, count=1):

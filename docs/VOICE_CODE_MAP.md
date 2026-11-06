@@ -12,13 +12,18 @@
 | `text_processing/task_routing.py` | 分类类型、原文决定的可用任务、编辑计划校验、路由输入裁剪 |
 | `text_processing/router_prompts.py` | 联合分类提示词、按原文生成问题 schema、类别边界 |
 | `text_processing/automatic_prompts.py` | 按六类任务组合生成提示词，修改包含释字及重述 |
-| `text_processing/automatic_processing.py` | `process_task_with_trace`：按计划一次生成完整结果，不走手动候选竞速 |
+| `text_processing/automatic_inputs.py` | 听写与编辑的独立输入结构，同时供实际请求和历史记录使用 |
+| `text_processing/automatic_processing.py` | `process_task_with_trace` 分派到独立的听写整理／编辑生成接口；各调用一次模型，不走手动候选竞速 |
 | `text_processing/screen_context.py` | 当次目标窗口截图、OCR、规则过滤及本地诊断证据 |
 | `voice/automatic_history.py` | 自动分类及截图证据的历史展示数据 |
 | `ui/qml/AutomaticVoiceDetails.qml` | 由记录展开区按钮打开的自动识别完整记录 |
 
 流程：配置的开始动作 → 录音并预取 OCR → 配置的结束动作 → ASR 最终文本 →
 Clef 联合七字段 → 一致性校验 → 组合提示词 → 一次生成 → 共用校验与写回。
+原文为空时的分类限制只在路由前处理；自动正文生成与原生编辑不再重复进行非空校验。
+写回仍校验输入目标、光标和本次可操作范围。
+“自动模式听写整理”关闭时，听写分类结果直接进入原有注入流程，跳过正文模型；
+该设置不改变 Clef 分类或编辑生成，历史记录会说明跳过原因。
 
 ## 原有用户明确选择的处理
 
@@ -58,6 +63,9 @@ Worker 仅接受 Clef；显式传入旧 `llm` 或 `gliner` 后端会报不支持
 `controller.py` 中 `_AutoInteraction`、`_prepare_auto_candidates` 等名称来自原有可切换候选流程，
 目前手动桌面链路仍使用它们；它们不属于新的 Clef 自动流程。保留这些内部名称，避免连带改变候选、撤销和异步回调。
 
-当前分类提示词为 `router_prompts.py` 的 v19，自动生成提示词为 `automatic_prompts.py` 的 v9。
-本次清理未改这两套文本，仍在使用的手动编辑、润色、听写、OCR 与热词提示词保留。
+当前分类提示词为 `router_prompts.py` 的 v20，沿用 v19 的联合分类及空原文 schema；
+v20 将直接重述／释义纠错推广到任意字词、片段或整句，不限定姓名等词类或解释形式。
+自动生成版本为 `automatic_prompts.py` 的 v10。
+v10 将听写输入限为 `utterance` 和 `screen_context`，使用独立的只读 OCR 规则；编辑输入继续包含
+`editable_text` 和 `edit_plan`，六类编辑模块及组合提示词沿用 v9。手动提示词和 Clef 路由未变。
 旧两级／分支方案的冻结提示词仅供 `tools/` 历史评测及 `docs/reports/` 结果追溯，不会被应用加载。

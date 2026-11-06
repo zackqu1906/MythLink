@@ -573,7 +573,7 @@ final class ProxiMicInputController: IMKInputController {
                     if (text as NSString).length > 65_536 { session.failASR("本句超过长度限制，已保留当前听写") }
                     else {
                         if message["final"] as? Bool == true, let task = message["automatic_task"] as? String {
-                            session.setAutomaticTask(task, allowEmptySource: message["automatic_allow_empty"] as? Bool ?? false)
+                            session.setAutomaticTask(task)
                         }
                         session.update(text, final: message["final"] as? Bool ?? false)
                     }

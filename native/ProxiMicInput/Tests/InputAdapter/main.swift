@@ -24,6 +24,7 @@ final class StrictIMKClient: NSObject, IMKTextInput {
     var ignoreMarkedReplacementRange = false
     var staleDocumentRead = false
     var unavailableDocumentRead = false
+    var reportedLength = 0
     var unselectedCachedSuffix = ""
     var dropNonemptyInsert = false
     var trailingParagraphSentinel = false
@@ -93,7 +94,7 @@ final class StrictIMKClient: NSObject, IMKTextInput {
         }
         return wrongMarkedRange && view.hasMarkedText() ? NSRange(location: range.location + 1, length: range.length) : range
     }
-    func length() -> Int { 0 }
+    func length() -> Int { reportedLength }
     func string(from range: NSRange, actualRange: NSRangePointer!) -> String! {
         reads += 1
         if unavailableDocumentRead { actualRange?.pointee = NSRange(location: 0, length: 0); return nil }
@@ -348,6 +349,36 @@ test("Production adapter reads original when oversized query is rejected") {
         check(snapshot.readableContext?.range == NSRange(location: 0, length: 7), "wrong UTF16 context range")
         check(proxy.reads <= 12, "short input performed excessive queries")
     }
+}
+
+test("IMK zero length and origin caret provide an empty source despite nil substrings") {
+    let proxy = StrictIMKClient("")
+    let adapter = NativeInputClient(proxy)
+    let snapshot = try adapter.snapshotForBeginning()
+    check(snapshot.readableContext?.text == "" && snapshot.readableContext?.range == NSRange(location: 0, length: 0),
+          "an empty IMK input field was treated as missing source")
+    check(!snapshot.complete && snapshot.selectedText == "", "empty prefix claimed full-document access")
+    check(adapter.lastReadDiagnostics["empty_context_from_imk"] as? Bool == true, "empty context evidence was not recorded")
+}
+
+test("Missing text with a nonzero or unknown IMK length or caret does not become empty") {
+    for (length, selection) in [(NSNotFound, NSRange(location: 0, length: 0)),
+                                (2, NSRange(location: 0, length: 0)),
+                                (0, NSRange(location: 2, length: 0)),
+                                (0, NSRange(location: 0, length: 2))] {
+        let proxy = StrictIMKClient("原文", selection: selection)
+        proxy.reportedLength = length
+        proxy.unavailableDocumentRead = true
+        let snapshot = try NativeInputClient(proxy).snapshotForBeginning()
+        check(snapshot.text == nil && snapshot.readableContext == nil, "unreadable nonempty context was discarded")
+    }
+    let proxy = StrictIMKClient("")
+    let adapter = NativeInputClient(proxy)
+    adapter.mark("已有组合文本")
+    proxy.fixedReportedSelection = NSRange(location: 0, length: 0)
+    proxy.unavailableDocumentRead = true
+    let snapshot = try adapter.snapshot()
+    check(snapshot.readableContext == nil, "a positive marked range was treated as an empty input field")
 }
 
 test("Codex stale substring cache does not block partials, final or live cancellation") {
@@ -888,6 +919,52 @@ final class WeChatFixture {
             if !adapter.clientOperationPending && !session.awaitingReadback { return }
         }
         fatalError("operation hung")
+    }
+}
+
+for partial in [false, true] {
+    for (instruction, result) in [("帮我回复一下", "好的，我会处理。"), ("加一句谢谢", "谢谢")] {
+        test("WeChat empty-source generation, replacement and undo: \(instruction), partial=\(partial)") {
+            let f = WeChatFixture("")
+            let s = try f.session()
+            s.automaticMode = true
+            var requests = 0
+            s.onEdit = { source, spoken, _ in
+                requests += 1
+                check(source.isEmpty && spoken == instruction, "empty-source request changed its inputs")
+            }
+            check(s.editContextAvailable && s.editRequestText == "", "empty field cannot participate in routing")
+            if partial { s.update("帮我", final: false) }
+            s.setAutomaticTask("edit")
+            s.update(instruction, final: true); f.drain(s)
+            check(requests == 1 && s.phase == .editing && s.error.isEmpty, "empty source blocked generation")
+            check(f.keys.isEmpty && f.proxy.view.string == instruction && f.proxy.view.hasMarkedText(),
+                  "instruction was committed or removed before generation completed")
+            s.applyEdit(text: result, revision: s.revision, error: nil); f.drain(s)
+            check(s.phase == .edited && s.error.isEmpty && f.proxy.view.string == result && !f.proxy.view.hasMarkedText(),
+                  "generated text did not replace the owned instruction")
+            s.cancel(); f.drain(s)
+            check(s.phase == .dictated && f.proxy.view.string == instruction, "undo lost the spoken instruction")
+            s.cancel(); f.drain(s)
+            check(s.phase == .undone && f.proxy.view.string.isEmpty, "second undo did not restore the empty field")
+            check(requests == 1, "replacement or undo issued another model request")
+        }
+    }
+}
+
+test("WeChat automatic editing trusts its route while manual editing still needs text") {
+    for automatic in [false, true] {
+        let f = WeChatFixture("")
+        let s = try f.session()
+        s.automaticMode = automatic
+        var requests = 0
+        s.onEdit = { _, _, _ in requests += 1 }
+        s.update("把三点改成四点", final: false)
+        if automatic { s.setAutomaticTask("edit") } else { s.convert() }
+        s.update("把三点改成四点", final: true); f.drain(s)
+        check(requests == (automatic ? 1 : 0) && s.phase == (automatic ? .editing : .dictated),
+              "automatic routing was revalidated or manual editing changed")
+        check(f.proxy.view.string == "把三点改成四点", "source validation changed the instruction")
     }
 }
 

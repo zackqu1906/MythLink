@@ -119,9 +119,9 @@ ScrollView {
                 ColumnLayout {
                     id: settings
                     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24 }
-                    spacing: 24
+                    spacing: 16
                     Label { text: "鼠标设置"; color: theme.text; font.pixelSize: 18; font.weight: Font.Medium }
-                    Label { Layout.fillWidth: true; text: "停止触摸板后调整，下次开启时生效。"; color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap }
+                    Label { Layout.fillWidth: true; text: "以下功能仅在触摸板开启时生效。功能开关可随时调整，指针速度和方向需停止后调整。"; color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap }
                     Label { text: "指针速度"; color: theme.text; font.pixelSize: 14 }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 16
@@ -137,17 +137,44 @@ ScrollView {
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { Layout.fillWidth: true; text: "轻触点击"; color: theme.text; font.pixelSize: 14 }
-                        FigmaSwitch { objectName: "touchpadClicksSwitch"; checked: page.touchpad.clicks; enabled: !page.touchpad.active && !page.touchpad.busy; Accessible.name: "轻触点击"; onToggled: page.touchpad.clicks = checked }
+                        Label { Layout.fillWidth: true; text: "左键单击"; color: theme.text; font.pixelSize: 14 }
+                        FigmaSwitch { objectName: "touchpadClicksSwitch"; checked: page.touchpad.clicks; enabled: !page.touchpad.busy && (page.touchpad.raw2Supported || !page.touchpad.active); Accessible.name: "左键单击"; onToggled: page.touchpad.clicks = checked }
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { Layout.fillWidth: true; text: "反转上下方向"; color: theme.text; font.pixelSize: 14 }
-                        FigmaSwitch { objectName: "touchpadInvertSwitch"; checked: page.touchpad.invertY; enabled: !page.touchpad.active && !page.touchpad.busy; Accessible.name: "反转上下方向"; onToggled: page.touchpad.invertY = checked }
+                        Label { Layout.fillWidth: true; text: "左键双击"; color: theme.text; font.pixelSize: 14 }
+                        FigmaSwitch { objectName: "touchpadDoubleClickSwitch"; checked: page.touchpad.doubleClick; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "左键双击"; onToggled: page.touchpad.doubleClick = checked }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; text: "右键单击"; color: theme.text; font.pixelSize: 14 }
+                        FigmaSwitch { objectName: "touchpadRightClickSwitch"; checked: page.touchpad.rightClick; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "右键单击"; onToggled: page.touchpad.rightClick = checked }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; text: "双指滚轮翻页"; color: theme.text; font.pixelSize: 14 }
+                        FigmaSwitch { objectName: "touchpadScrollSwitch"; checked: page.touchpad.scroll; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "双指滚轮翻页"; onToggled: page.touchpad.scroll = checked }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 16
+                        Label { text: "滚动速度"; color: theme.text; font.pixelSize: 14 }
+                        Slider {
+                            objectName: "touchpadScrollGainSlider"
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
+                            from: 0.25; to: 3; stepSize: 0.05; value: page.touchpad.scrollGain
+                            enabled: page.touchpad.raw2Supported && page.touchpad.scroll && !page.touchpad.busy
+                            Accessible.name: "滚动速度"; onMoved: page.touchpad.scrollGain = value
+                        }
+                        Label { text: page.touchpad.scrollGain.toFixed(2) + "×"; color: theme.text }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; text: "反转指针上下方向"; color: theme.text; font.pixelSize: 14 }
+                        FigmaSwitch { objectName: "touchpadInvertSwitch"; checked: page.touchpad.invertY; enabled: !page.touchpad.active && !page.touchpad.busy; Accessible.name: "反转指针上下方向"; onToggled: page.touchpad.invertY = checked }
                     }
                     Label {
                         Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted
-                        text: page.touchpad.externalStrokeSupported ? "双击当前输入框进入笔画输入，再双击或离开输入框回到鼠标。外部输入需要启用 Mythlink 输入法。" : "支持移动、单击和双击；按 Esc 停止鼠标控制。笔画输入可在本程序的书写区使用。"
+                        text: page.touchpad.raw2Supported ? "双击执行系统鼠标双击；笔画输入请使用书写区的「开始试写」。连接重置时自动清空旧操作，断流时停止输出，重复和过期点击自动忽略。需要配套新版触摸板固件。" : "当前平台使用兼容触摸板，暂不支持新版双指滚动和独立点击设置。笔画输入可在书写区使用。"
                     }
                 }
             }

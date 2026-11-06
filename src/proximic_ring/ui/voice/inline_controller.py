@@ -1001,7 +1001,7 @@ class InlineInputController(QObject):
             while len(self._utterance_sessions) > 256:
                 self._utterance_sessions.pop(next(iter(self._utterance_sessions)))
 
-    def update(self, text, final, session_id, error="", *, automatic_task="", automatic_allow_empty=False):
+    def update(self, text, final, session_id, error="", *, automatic_task=""):
         if (self._closed or not self.active or self._final_sent or
                 self._view.get("phase") not in {"starting", "listening", "finishing"}):
             return False
@@ -1013,12 +1013,11 @@ class InlineInputController(QObject):
             # Coalesce partials; a buffered final/error always wins.
             if self._pending_update and (self._pending_update[1] or self._pending_update[3]):
                 return False
-            self._pending_update = (str(text), bool(final), self._session_id, str(error), str(automatic_task), bool(automatic_allow_empty))
+            self._pending_update = (str(text), bool(final), self._session_id, str(error), str(automatic_task))
             return True
         fields = dict(text=str(text), final=bool(final), error=str(error))
         if automatic_task and self.session_automatic and final:
             fields["automatic_task"] = automatic_task
-            fields["automatic_allow_empty"] = bool(automatic_allow_empty)
         accepted = self._send("update", **fields)
         if not accepted:
             self._transport_failed("输入法连接已断开，已停止本句")
@@ -1379,7 +1378,7 @@ class InlineInputController(QObject):
                 pending, finish, as_dictation = self._pending_update, self._pending_finish, self._finish_as_dictation
                 self._clear_startup()
                 if pending:
-                    self.update(*pending[:4], automatic_task=pending[4], automatic_allow_empty=pending[5])
+                    self.update(*pending[:4], automatic_task=pending[4])
                 if finish and not self._final_sent:
                     self._finish_as_dictation = as_dictation
                     self.finish()
