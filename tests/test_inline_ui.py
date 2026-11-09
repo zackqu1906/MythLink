@@ -194,6 +194,8 @@ def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_
     event = QKeyEvent(QEvent.KeyPress, Qt.Key_BraceLeft, Qt.ControlModifier | Qt.ShiftModifier,
                       0, 33, 0x120000, "{")
     QCoreApplication.sendEvent(root, event)
+    QCoreApplication.sendEvent(root, QKeyEvent(QEvent.KeyRelease, Qt.Key_BracketLeft,
+                                               Qt.NoModifier, 0, 33, 0, "["))
     QTest.qWait(20)
     assert c.appGestures._profiles["codex"]["next"].shortcut == "Cmd+Shift+["
     click_field()
