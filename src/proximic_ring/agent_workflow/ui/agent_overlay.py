@@ -183,8 +183,11 @@ class AgentOverlay(QObject):
         if window is not None:
             self._focus_changed(window)
             return
-        source = self.host._inline_input._source_activation
-        if source is not None and source.owns_foreground():
+        inline = self.host._inline_input
+        returning = getattr(inline, '_source_return', None)
+        resume_helper = returning.helper if returning is not None and returning.stage == 'selecting' else None
+        if any(source is not None and source.owns_foreground()
+               for source in (inline._source_activation, resume_helper)):
             self._focus_timer.start(25)
             return
         self._release_focus()

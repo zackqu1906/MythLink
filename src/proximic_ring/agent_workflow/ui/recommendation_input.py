@@ -115,7 +115,11 @@ class RecommendationInput(QObject, HubVoice, EditorGestureActions):
         if name in set(DIRECTIONS)|{'tap'}:
             self._navigation.emit(name,connection,time.monotonic(),self.generation);return True
         if self.interaction.mode=='word' and self.key and name in set(bindings.undo+bindings.switch_mode):
-            self._inputGestureReceived.emit(name,self.key,connection,time.monotonic(),
+            key = self.key
+            if name in bindings.undo and not self.owner._ring_gestures.speech_busy():
+                if not self.owner._inline_input.resume_for_gesture():return True
+                if key != self.key:return True
+            self._inputGestureReceived.emit(name,key,connection,time.monotonic(),
                 (self.owner._app_gestures.sentence(),bindings));return True
         return name in voice  # Hub tap semantics replace only this surface's voice endpoints.
 

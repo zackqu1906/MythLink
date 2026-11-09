@@ -3,6 +3,11 @@ import Foundation
 /// Bounded history for one continuously owned editor activation. No polling,
 /// I/O or document reads are added to BEGIN or partial updates.
 final class CompositionUndoHistory {
+    struct Snapshot {
+        fileprivate let enabled: Bool
+        fileprivate let entries: [CompositionUndoRecord]
+        fileprivate let current: CompositionUndoRecord?
+    }
     private(set) var enabled = false
     private var entries: [CompositionUndoRecord] = []
     private var current: CompositionUndoRecord?
@@ -26,6 +31,17 @@ final class CompositionUndoHistory {
         entries.removeAll(keepingCapacity: false)
         current = nil
         retainedUnits = 0
+    }
+
+    func snapshot() -> Snapshot { Snapshot(enabled: enabled, entries: entries, current: current) }
+
+    func restore(_ snapshot: Snapshot) {
+        clear()
+        guard enabled, snapshot.enabled else { return }
+        entries = snapshot.entries
+        current = snapshot.current
+        retainedUnits = entries.reduce(0) { $0 + $1.retainedUnits }
+        trim()
     }
 
     func settled(_ session: CompositionSession, sourceUtteranceID: String? = nil) {

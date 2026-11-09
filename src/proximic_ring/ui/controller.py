@@ -506,6 +506,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._gesture_settings_error = ""
         self._multi_undo_enabled = self._bool_setting("input/multiUndoEnabled", True)
+        self._auto_return_input_source = self._bool_setting("input/autoReturnInputSource", False)
         try:
             self._voice_hud_scale = max(80, min(140, int(self._settings.value("ui/voiceHudScale", 80))))
         except (TypeError, ValueError):
@@ -887,6 +888,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         from .voice.inline_controller import InlineInputController
         self._inline_input = InlineInputController(self, enabled=inline_input_enabled)
+        self._inline_input.set_auto_return_input_source(self._auto_return_input_source)
         self._init_automatic_voice()
         self._init_voice_capture()
         self._inline_input.began.connect(self._begin_voice_capture)
@@ -2690,6 +2692,20 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._multi_undo_enabled = value
         self._settings.setValue("input/multiUndoEnabled", value)
         self._inline_input.configure(self._mode_correction_shortcut, multi_undo_enabled=value)
+        self.settingsChanged.emit()
+
+    @Property(bool, notify=settingsChanged)
+    def autoReturnInputSource(self) -> bool:
+        return self._auto_return_input_source
+
+    @autoReturnInputSource.setter
+    def autoReturnInputSource(self, value: bool) -> None:
+        value = bool(value)
+        if value == self._auto_return_input_source:
+            return
+        self._auto_return_input_source = value
+        self._settings.setValue("input/autoReturnInputSource", value)
+        self._inline_input.set_auto_return_input_source(value)
         self.settingsChanged.emit()
 
     @Property(str, notify=settingsChanged)
@@ -6946,6 +6962,12 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot(object, object)
     def _apply_gesture(self, event: object, connection: object) -> None:
+        try:
+            self._apply_gesture_current(event, connection)
+        finally:
+            self._inline_input.finish_resumed_gesture()
+
+    def _apply_gesture_current(self, event: object, connection: object) -> None:
         # Resolve state on the GUI thread, including target focus and visibility.
         # Pending notifications from a disconnected/replaced Ring are inert.
         if not self._ring_gestures.accepts(event):

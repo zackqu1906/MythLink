@@ -269,5 +269,8 @@ class HubClickAway:
 
 def input_helper_active(dialog):
     owner = dialog.runtime.agent.owner
-    sources = (owner._inline_input._source_activation, getattr(owner._touchpad.strokeSession, '_source', None))
+    inline = owner._inline_input
+    returning = getattr(inline, '_source_return', None)
+    resume_helper = returning.helper if returning is not None and returning.stage == 'selecting' else None
+    sources = (inline._source_activation, getattr(owner._touchpad.strokeSession, '_source', None), resume_helper)
     return any(source and source.owns_foreground() for source in sources)

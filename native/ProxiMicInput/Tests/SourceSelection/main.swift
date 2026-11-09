@@ -10,18 +10,18 @@ precondition(!matchesSourceApplication(pid: 0, bundle: nil, expectedPID: 0, expe
 let voice = "test.voice.dictation"
 var current = voice
 var selections = 0
-func run(_ app: @escaping () -> Bool = { true }, _ select: (() throws -> Void)? = nil) throws -> Bool {
+func run(_ app: @escaping () -> Bool = { true }, _ select: (() throws -> Void)? = nil) throws -> VoiceSourceSelection {
     try ensureVoiceSource(modeID: voice, currentSource: { current }, sameApplication: app,
         select: select ?? { selections += 1; current = voice })
 }
-func rejects(_ action: () throws -> Bool) {
+func rejects<T>(_ action: () throws -> T) {
     do { _ = try action(); fatalError("Expected selection to fail") } catch { }
 }
 let already = try run()
-precondition(already && selections == 0)
+precondition(already.alreadySelected && already.previousSource == voice && selections == 0)
 current = "system.pinyin"
 let switched = try run()
-precondition(!switched && selections == 1 && current == voice)
+precondition(!switched.alreadySelected && switched.previousSource == "system.pinyin" && selections == 1 && current == voice)
 _ = try run()
 precondition(selections == 1) // no re-selection of an existing composition
 current = ""
@@ -35,7 +35,69 @@ precondition(selections == 1)
 rejects { try run({ true }, { throw SourceSelectionFailure("Not installed") }) }
 rejects { try run({ true }, { }) } // unsuccessful system switch
 precondition(current == "system.abc" && selections == 1)
-print("Source selection: 8 scenarios passed; no AX or real source switching")
+var sourceReads = 0
+rejects {
+    try ensureVoiceSource(modeID: voice, currentSource: {
+        sourceReads += 1
+        return sourceReads == 1 ? "system.abc" : "system.pinyin"
+    }, sameApplication: { true }, select: { fatalError("must not override a new input source") })
+}
+print("Source selection and previous-source capture passed; no AX or real source switching")
+
+var returnSource = voice
+var returnApp: (Int32, String) = (123, "test.editor")
+var returnSelections: [String] = []
+func returnSelect(_ source: String) throws {
+    returnSelections.append(source)
+    returnSource = source
+}
+func restoreVoice(_ previous: String = "system.pinyin", expected: String = voice,
+                  pid: Int32 = 123, bundle: String = "test.editor",
+                  foreground: (() -> (Int32, String))? = nil,
+                  select: (String) throws -> Void = returnSelect) -> VoiceSourceRestore {
+    restoreVoiceSource(previousSource: previous, expectedSource: expected, voiceIDs: [voice],
+        pid: pid, bundle: bundle, currentSource: { returnSource },
+        foreground: foreground ?? { returnApp }, select: select)
+}
+let returned = restoreVoice()
+precondition(returned.restored && returned.reason == "restored")
+precondition(returnSource == "system.pinyin" && returnSelections == ["system.pinyin"])
+precondition(restoreVoice().reason == "already_original")
+returnSource = "system.abc"
+precondition(restoreVoice().reason == "source_changed")
+returnSource = voice
+returnApp = (456, "test.editor")
+precondition(restoreVoice().reason == "application_changed")
+returnApp = (123, "other.app")
+precondition(restoreVoice().reason == "application_changed")
+returnApp = (123, "test.editor")
+precondition(restoreVoice("").reason == "invalid_handoff")
+precondition(restoreVoice(expected: "other.voice").reason == "invalid_handoff")
+precondition(restoreVoice(pid: 0).reason == "invalid_handoff")
+precondition(restoreVoice(voice).reason == "already_original")
+var returnAppReads = 0
+precondition(restoreVoice(foreground: {
+    returnAppReads += 1
+    return returnAppReads == 1 ? returnApp : (456, "other.app")
+}).reason == "application_changed")
+returnAppReads = 0
+precondition(restoreVoice(foreground: {
+    returnAppReads += 1
+    if returnAppReads == 2 { returnSource = "system.abc" }
+    return returnApp
+}).reason == "source_changed")
+precondition(returnSelections.count == 1 && returnSource == "system.abc")
+returnSource = voice
+let unavailable = restoreVoice(select: { _ in throw SourceSelectionFailure("disabled or removed") })
+precondition(!unavailable.restored && unavailable.reason == "selection_failed" && unavailable.error != nil)
+precondition(restoreVoice(select: { _ in }).reason == "selection_unconfirmed")
+precondition(returnSelections.count == 1 && returnSource == voice)
+// Source-run Qt has no bundle ID; its PID still fences restoration.
+returnApp = (123, "")
+precondition(restoreVoice(bundle: "").restored)
+let receipt = try JSONSerialization.jsonObject(with: JSONEncoder().encode(returned)) as! [String: Any]
+precondition(receipt["event"] as? String == "restored" && receipt["restored"] as? Bool == true)
+print("Voice source restoration scenarios passed; no focus changes or real source switching")
 
 let abc = "com.apple.keylayout.ABC"
 let updateVoiceIDs: Set<String> = [voice]

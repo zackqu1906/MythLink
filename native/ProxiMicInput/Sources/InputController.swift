@@ -3,6 +3,14 @@ import InputMethodKit
 import Carbon
 
 final class IMEService {
+    struct SuspendedInput {
+        let token: String
+        let application: String
+        let clientIdentifier: String
+        let session: CompositionSession.Suspension
+        let history: CompositionUndoHistory.Snapshot
+        let undoSourceUtteranceID: String?
+    }
     static let shared = IMEService()
     let transport = IPCClient()
     let activation = InputActivation<ProxiMicInputController>()
@@ -13,6 +21,7 @@ final class IMEService {
     var gestureHints = VoiceHudBindings()
     var hudAppearance = VoiceHudAppearance()
     var multiUndoEnabled = true
+    var suspendedInput: SuspendedInput?
     private lazy var noticePanel = ActionPanel()
 
     private init() {
@@ -20,6 +29,7 @@ final class IMEService {
         transport.onDisconnect = { [weak self] in
             guard let self else { return }
             self.epoch = nil
+            self.suspendedInput = nil
             self.noticePanel.hide()
             self.activeController?.hostDisconnected()
         }
@@ -48,13 +58,21 @@ final class IMEService {
         guard let type = message["type"] as? String else { return }
         if type == "welcome" {
             guard message["protocol"] as? Int == 1, let next = message["epoch"] as? String, !next.isEmpty else { return }
-            if epoch != next { activeController?.hostConnected() }
+            if epoch != next {
+                suspendedInput = nil
+                activeController?.hostConnected()
+            }
             epoch = next
             if let active = activeController { active.sendState(includeSnapshot: true) }
             else { inactiveState() }
             return
         }
         guard let epoch, message["epoch"] as? String == epoch else { return }
+        if type == "discard_suspended_input" {
+            if message["token"] as? String == suspendedInput?.token { suspendedInput = nil }
+            if let token = message["token"] as? String { activeController?.discardResumedInput(token: token) }
+            return
+        }
         if type == "input_notice" {
             guard let pid = message["foreground_pid"] as? Int32,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
@@ -106,9 +124,10 @@ final class IMEService {
 final class ProxiMicInputController: IMKInputController {
     private var adapter: NativeInputClient?
     private let sessionLifetime = CompositionSessionLifetime()
+    private var resumedInputToken: String?
     private var session: CompositionSession? {
         get { sessionLifetime.current }
-        set { sessionLifetime.current = newValue }
+        set { sessionLifetime.current = newValue; resumedInputToken = nil }
     }
     private var timer: Timer?
     private var activationTimer: Timer?
@@ -386,6 +405,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func invalidate(_ reason: String, preservingUndo: Bool = false) {
+        resumedInputToken = nil
         preservingHistory = preservingUndo
         defer { preservingHistory = false }
         if !preservingUndo { undoHistory.clear(); adapter?.discardContextHint() }
@@ -404,6 +424,8 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostDisconnected() {
+        IMEService.shared.suspendedInput = nil
+        resumedInputToken = nil
         clearStroke()
         undoHistory.clear()
         rejectedBeginID = nil
@@ -418,6 +440,8 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostConnected() {
+        IMEService.shared.suspendedInput = nil
+        resumedInputToken = nil
         clearStroke()
         undoHistory.clear()
         rejectedBeginID = nil
@@ -456,6 +480,7 @@ final class ProxiMicInputController: IMKInputController {
     func receive(_ message: [String: Any]) {
         guard activated, ownsActivation, !preparingActivation, let adapter, let type = message["type"] as? String else { return }
         if type == "reset", message["all"] as? Bool == true {
+            IMEService.shared.suspendedInput = nil
             clearStroke()
             lastLifecycleEvent = "reset"
             invalidate("主程序已结束本句")
@@ -469,8 +494,13 @@ final class ProxiMicInputController: IMKInputController {
         guard message["client_id"] as? String == currentClientID,
               let utteranceID = message["utterance_id"] as? String,
               let sequence = message["seq"] as? Int else { return }
+        if type == "resume_input" {
+            resumeInput(message, adapter: adapter, utteranceID: utteranceID, sequence: sequence)
+            return
+        }
         if type == "begin" {
             if strokeActive { return }
+            IMEService.shared.suspendedInput = nil
             let requestedClientID = currentClientID
             if session?.utteranceID == utteranceID { return }
             if let session, session.phase == .error, session.hasComposition || session.awaitingReadback {
@@ -515,6 +545,13 @@ final class ProxiMicInputController: IMKInputController {
             return
         }
         guard let session, session.utteranceID == utteranceID, session.accepts(sequence: sequence) else { return }
+        // A real follow-up command confirms the host accepted the resume ACK.
+        // A later timeout from that handshake must not cancel this new work.
+        resumedInputToken = nil
+        if type == "suspend_input" {
+            suspendInput(message, session: session, adapter: adapter)
+            return
+        }
         if type == "end_input" {
             guard let outcome = message["outcome"] as? String, ["sent", "replaced"].contains(outcome),
                   !session.hasComposition, !session.awaitingReadback,
@@ -601,6 +638,129 @@ final class ProxiMicInputController: IMKInputController {
                 session.interrupt("主程序已结束本句")
             default: break
             }
+        }
+    }
+
+    private func suspensionReply(_ type: String, token: String, utteranceID: String,
+                                 revision: Int, success: Bool, error: String = "") -> [String: Any] {
+        ["type": type, "token": token, "client_id": currentClientID,
+         "utterance_id": utteranceID, "revision": revision, "success": success,
+         "error": error, "reason": error]
+    }
+
+    func discardResumedInput(token: String) {
+        guard !token.isEmpty, resumedInputToken == token, let previous = session else { return }
+        // A host timeout can arrive after resume consumed its saved snapshot.
+        // Detach first so cleanup cannot emit callbacks or commit old text.
+        session = nil
+        previous.interrupt("输入恢复已取消", commitIfOwned: false)
+        undoHistory.clear()
+        undoSourceUtteranceID = nil
+        compatibilityKeyReply = nil
+        lastContext = nil
+        lastError = ""
+        lastLifecycleEvent = "resume_discarded"
+        panel.hide()
+        sendState(includeSnapshot: true)
+    }
+
+    private func suspendInput(_ message: [String: Any], session current: CompositionSession, adapter: NativeInputClient) {
+        let token = message["token"] as? String ?? ""
+        let lease = activationLease
+        let clientID = currentClientID
+        let revision = current.revision
+        func owns() -> Bool {
+            activated && IMEService.shared.activation.owns(self, lease) && currentClientID == clientID
+                && self.adapter === adapter && session === current && current.revision == revision
+        }
+        do {
+            guard !token.isEmpty, token.count <= 128, message["revision"] as? Int == revision,
+                  !isWriting, !strokeActive else {
+                throw CompositionError.unsupported("输入会话已变化，未切回输入法")
+            }
+            isWriting = true
+            defer { isWriting = false }
+            let restorable = current.phase != .undone || undoHistory.count > 0
+            if restorable {
+                let identifier = adapter.client.uniqueClientIdentifierString() ?? ""
+                guard owns(), !identifier.isEmpty else {
+                    throw CompositionError.unsupported("当前输入框无法确认身份，未切回输入法")
+                }
+                let saved = try current.suspension()
+                guard owns() else { throw CompositionError.interrupted("输入会话已变化，未切回输入法") }
+                IMEService.shared.suspendedInput = IMEService.SuspendedInput(token: token,
+                    application: activationApplication, clientIdentifier: identifier, session: saved,
+                    history: undoHistory.snapshot(), undoSourceUtteranceID: undoSourceUtteranceID)
+            } else {
+                guard !current.hasComposition, !current.awaitingReadback, !adapter.clientOperationPending else {
+                    throw CompositionError.unsupported("本句尚未完成，暂不能切回输入法")
+                }
+                // No operation remains after the final undo. Returning to the
+                // keyboard does not need to grant a new text-write capability.
+                IMEService.shared.suspendedInput = nil
+            }
+            // Detach without interruption; all retained values are immutable.
+            session = nil
+            undoHistory.clear()
+            undoSourceUtteranceID = nil
+            panel.hide()
+            lastLifecycleEvent = "suspended"
+            IMEService.shared.send(suspensionReply("input_suspended", token: token,
+                utteranceID: current.utteranceID, revision: revision, success: true)
+                .merging(["restorable": restorable]) { _, value in value })
+            sendState(includeSnapshot: true)
+        } catch {
+            IMEService.shared.send(suspensionReply("input_suspended", token: token,
+                utteranceID: current.utteranceID, revision: revision, success: false, error: error.localizedDescription))
+        }
+    }
+
+    private func resumeInput(_ message: [String: Any], adapter: NativeInputClient,
+                             utteranceID: String, sequence: Int) {
+        let service = IMEService.shared
+        let token = message["token"] as? String ?? ""
+        let lease = activationLease
+        let clientID = currentClientID
+        let saved = service.suspendedInput
+        func owns() -> Bool {
+            activated && service.activation.owns(self, lease) && currentClientID == clientID
+                && self.adapter === adapter && session == nil && service.suspendedInput?.token == token
+        }
+        do {
+            guard !token.isEmpty, let saved, saved.token == token,
+                  saved.session.utteranceID == utteranceID, !isWriting, !strokeActive,
+                  session == nil, saved.application == activationApplication else {
+                throw CompositionError.interrupted("原输入会话已失效，未恢复语音操作")
+            }
+            isWriting = true
+            defer { isWriting = false }
+            let identifier = adapter.client.uniqueClientIdentifierString() ?? ""
+            guard owns(), !identifier.isEmpty, identifier == saved.clientIdentifier else {
+                throw CompositionError.interrupted("已切换输入框，未恢复语音操作")
+            }
+            let next = try CompositionSession(client: adapter, resuming: saved.session, sequence: sequence)
+            guard owns() else { throw CompositionError.interrupted("输入会话已变化，未恢复语音操作") }
+            service.suspendedInput = nil
+            session = next
+            resumedInputToken = token
+            undoHistory.restore(saved.history)
+            undoSourceUtteranceID = saved.undoSourceUtteranceID
+            lastContext = next.original
+            rejectedBeginID = nil
+            lastError = ""
+            lastLifecycleEvent = "resumed"
+            wire(next)
+            guard sendState(includeSnapshot: true, reply: suspensionReply("input_resumed", token: token,
+                utteranceID: utteranceID, revision: next.revision, success: true)) else {
+                throw CompositionError.interrupted("输入会话已变化，未恢复语音操作")
+            }
+            configureGestureHints()
+            panel.update(next, historyDepth: undoHistory.count)
+        } catch {
+            if service.suspendedInput?.token == token { service.suspendedInput = nil }
+            IMEService.shared.send(suspensionReply("input_resumed", token: token,
+                utteranceID: utteranceID, revision: saved?.session.revision ?? 0,
+                success: false, error: error.localizedDescription))
         }
     }
 
@@ -816,19 +976,23 @@ final class ProxiMicInputController: IMKInputController {
         IMEService.shared.send(event)
     }
 
-    func sendState(includeSnapshot: Bool = false, requestID: String? = nil, failedUtteranceID: String? = nil) {
-        guard activated, ownsActivation, !preparingActivation, !stateReadInProgress, let adapter else { return }
+    @discardableResult
+    func sendState(includeSnapshot: Bool = false, requestID: String? = nil, failedUtteranceID: String? = nil,
+                   reply: [String: Any]? = nil) -> Bool {
+        guard activated, ownsActivation, !preparingActivation, !stateReadInProgress, let adapter else { return false }
         // IMK reads can pump the run loop; coalesce nested host pings instead
         // of recursively reading the same document on a half-built snapshot.
         stateReadInProgress = true
         defer { stateReadInProgress = false }
         let stateClientID = currentClientID
+        let replySession = session
         let context: EditorSnapshot?
         if strokeActive { context = lastContext }
         else if let session, session.active, requestID == nil || [.listening, .finishing].contains(session.phase) { context = session.original }
         else if includeSnapshot { context = try? adapter.snapshotForBeginning() }
         else { context = lastContext }
-        guard activated, ownsActivation, currentClientID == stateClientID, self.adapter === adapter else { return }
+        guard activated, ownsActivation, currentClientID == stateClientID, self.adapter === adapter,
+              reply == nil || session === replySession else { return false }
         if includeSnapshot, requestID == nil { lastContext = context }
         let complete = context?.complete ?? false
         let access = context?.documentAccess ?? false
@@ -844,7 +1008,8 @@ final class ProxiMicInputController: IMKInputController {
                                            "range_replacement": session?.replacementVerified == true ? "verified" : (access && complete && (session?.documentVerified ?? true) ? "advertised" : "unavailable"),
                                            "selection_restore": false]
         let application = adapter.client.bundleIdentifier() ?? ""
-        guard activated, ownsActivation, currentClientID == stateClientID, self.adapter === adapter else { return }
+        guard activated, ownsActivation, currentClientID == stateClientID, self.adapter === adapter,
+              reply == nil || session === replySession else { return false }
         var state: [String: Any] = ["type": "state", "ready": ready,
                                     "client_id": currentClientID, "utterance_id": rejectedBeginID ?? session?.utteranceID ?? failedUtteranceID ?? "",
                                     "phase": session?.phase.rawValue ?? (failedUtteranceID == nil ? "idle" : "error"),
@@ -879,7 +1044,9 @@ final class ProxiMicInputController: IMKInputController {
             state["selection"] = isValidRange(selection) ? [selection.location, selection.length] : [-1, -1]
         }
         if let requestID { state["request_id"] = requestID }
+        if let reply { IMEService.shared.send(reply.merging(["state": state]) { _, value in value }) }
         IMEService.shared.send(state)
+        return true
     }
 
     private func changed(includeSnapshot: Bool = false) {

@@ -142,6 +142,36 @@ final class CompositionSession {
     enum Phase: String {
         case listening, finishing, dictated, polishing, editing, edited, undone, interrupted, error
     }
+    /// Settled values only: suspending must not retain an old IMK client or
+    /// executable ASR/model work while another input method owns the editor.
+    struct Suspension {
+        let utteranceID: String
+        let revision: Int
+        let lastSequence: Int
+        fileprivate let original: EditorSnapshot
+        fileprivate let phase: Phase
+        fileprivate let raw: String
+        fileprivate let editRequested: Bool
+        fileprivate let automaticMode: Bool
+        fileprivate let automaticTask: String
+        fileprivate let automaticAllowsEmptySource: Bool
+        fileprivate let error: String
+        fileprivate let hasModifiedText: Bool
+        fileprivate let replacementVerified: Bool
+        fileprivate let documentVerified: Bool
+        fileprivate let committedRangeVerified: Bool
+        fileprivate let committedRange: NSRange?
+        fileprivate let instructionRemoved: Bool
+        fileprivate let expectedEditText: String?
+        fileprivate let freshEditContext: Bool
+        fileprivate let polished: Bool
+        fileprivate let polishOriginal: String?
+        fileprivate let expectedText: String?
+        fileprivate let lastAppliedText: String?
+        fileprivate let selection: NSRange
+        fileprivate let proof: EditorTextRange
+        fileprivate let wholeDocument: Bool
+    }
     let utteranceID: String
     private(set) var original: EditorSnapshot
     private let client: CompositionClient
@@ -254,6 +284,113 @@ final class CompositionSession {
         nativeUndoEligible = false
         polished = record.polished
         polishOriginal = record.polishOriginal
+    }
+
+    func suspension() throws -> Suspension {
+        guard [.dictated, .edited, .undone].contains(phase), !hasComposition,
+              !awaitingReadback, !client.clientOperationPending, !sendingNativeWrite,
+              !cancelPending, deferredCommands.isEmpty else {
+            throw CompositionError.unsupported("本句尚未完成，暂不能切回输入法")
+        }
+        let now = try client.snapshot()
+        guard isValidRange(now.selection), phase == .undone || now.selection == expectedSelection,
+              !isValidRange(now.markedRange) || now.markedRange.length == 0 else {
+            throw CompositionError.interrupted("本句文字或光标已变化，未切回输入法")
+        }
+        if phase != .undone, let expectedText, now.text != expectedText {
+            throw CompositionError.interrupted("输入框内容已变化，未切回输入法")
+        }
+        let owned: EditorTextRange?
+        if phase == .dictated, !raw.isEmpty { owned = EditorTextRange(text: raw, range: sentenceRange) }
+        else if phase == .edited, let text = lastAppliedText, let context = editOriginal {
+            owned = EditorTextRange(text: text, range: NSRange(location: context.range.location, length: (text as NSString).length))
+        } else { owned = nil }
+        if let owned {
+            let observed: String?
+            if let text = now.text, isValidRange(owned.range, length: (text as NSString).length) {
+                observed = (text as NSString).substring(with: owned.range)
+            } else { observed = client.readText(in: owned.range) }
+            guard observed == owned.text else {
+                throw CompositionError.interrupted("本句文字已变化，未切回输入法")
+            }
+        }
+        let proof: EditorTextRange
+        if now.complete, let text = now.text {
+            proof = EditorTextRange(text: text, range: NSRange(location: 0, length: (text as NSString).length))
+        } else if phase == .dictated, !raw.isEmpty {
+            proof = EditorTextRange(text: raw, range: sentenceRange)
+        } else if phase == .edited, let text = lastAppliedText, let context = editOriginal {
+            proof = EditorTextRange(text: text, range: NSRange(location: context.range.location, length: (text as NSString).length))
+        } else if let readable = now.readableContext, !readable.text.isEmpty {
+            proof = readable
+        } else {
+            throw CompositionError.unsupported("当前输入框无法复核本句，未切回输入法")
+        }
+        guard isValidRange(proof.range), (proof.text as NSString).length == proof.range.length,
+              now.complete || client.readText(in: proof.range) == proof.text else {
+            throw CompositionError.unsupported("当前输入框无法复核本句，未切回输入法")
+        }
+        let probe = client.probe()
+        guard probe.selection == now.selection,
+              !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else {
+            throw CompositionError.interrupted("本句文字或光标已变化，未切回输入法")
+        }
+        return Suspension(utteranceID: utteranceID, revision: revision, lastSequence: lastSequence,
+            original: original, phase: phase, raw: raw, editRequested: editRequested, automaticMode: automaticMode,
+            automaticTask: automaticTask, automaticAllowsEmptySource: automaticAllowsEmptySource,
+            error: error, hasModifiedText: hasModifiedText, replacementVerified: replacementVerified,
+            documentVerified: documentVerified, committedRangeVerified: committedRangeVerified,
+            committedRange: committedRange, instructionRemoved: instructionRemoved,
+            expectedEditText: expectedEditText, freshEditContext: freshEditContext,
+            polished: polished, polishOriginal: polishOriginal, expectedText: expectedText,
+            lastAppliedText: lastAppliedText, selection: now.selection, proof: proof, wholeDocument: now.complete)
+    }
+
+    init(client: CompositionClient, resuming saved: Suspension, sequence: Int,
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) throws {
+        guard sequence > saved.lastSequence else {
+            throw CompositionError.interrupted("输入恢复请求已过期")
+        }
+        let now = try client.snapshot()
+        guard now.selection == saved.selection,
+              !isValidRange(now.markedRange) || now.markedRange.length == 0,
+              saved.wholeDocument ? now.complete && now.text == saved.proof.text
+                  : client.readText(in: saved.proof.range) == saved.proof.text else {
+            throw CompositionError.interrupted("本句文字或光标已变化，未恢复语音操作")
+        }
+        let probe = client.probe()
+        guard probe.selection == saved.selection,
+              !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else {
+            throw CompositionError.interrupted("输入位置已变化，未恢复语音操作")
+        }
+        self.client = client
+        utteranceID = saved.utteranceID
+        revision = saved.revision
+        lastSequence = sequence
+        self.clock = clock
+        original = saved.original
+        phase = saved.phase
+        raw = saved.raw
+        editRequested = saved.editRequested
+        automaticMode = saved.automaticMode
+        automaticTask = saved.automaticTask
+        automaticAllowsEmptySource = saved.automaticAllowsEmptySource
+        error = saved.error
+        hasModifiedText = saved.hasModifiedText
+        replacementVerified = saved.replacementVerified
+        documentVerified = saved.documentVerified
+        committedRangeVerified = saved.committedRangeVerified
+        committedRange = saved.committedRange
+        instructionRemoved = saved.instructionRemoved
+        expectedEditText = saved.expectedEditText
+        freshEditContext = saved.freshEditContext
+        polished = saved.polished
+        polishOriginal = saved.polishOriginal
+        expectedText = saved.expectedText
+        expectedSelection = saved.selection
+        lastAppliedText = saved.lastAppliedText
+        finalReceived = true
+        nativeUndoEligible = false
     }
 
     func undoRecord(sourceUtteranceID: String? = nil) -> CompositionUndoRecord? {
