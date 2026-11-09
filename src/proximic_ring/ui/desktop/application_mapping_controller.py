@@ -558,6 +558,7 @@ class ApplicationMappingController(QObject):
         active = self._background_active[0] if self._background_active else ""
         self._background_menus = list(dict.fromkeys(app["value"] for app in self._candidates
             if app.get("running") and self._is_added(app["value"])
+            and app["value"] not in self._menu_cache
             and app["value"] not in {self._bundle, active}))
         self._continue_background_menus()
 
@@ -568,7 +569,7 @@ class ApplicationMappingController(QObject):
             return
         while self._background_menus:
             bundle = self._background_menus.pop(0)
-            if bundle != self._bundle and self._is_added(bundle):
+            if bundle != self._bundle and self._is_added(bundle) and bundle not in self._menu_cache:
                 self._background_active = (bundle, self._menu_revisions.get(bundle, 0))
                 self._request("background_menu", bundle)
                 return
@@ -589,9 +590,25 @@ class ApplicationMappingController(QObject):
         if changed:
             self._save()
 
-    def _cache_menu(self, bundle, result):
+    def _cache_menu(self, bundle, result, error=""):
+        if error:
+            # Retry failed first reads only on explicit refresh; retain any
+            # previous successful cache when a later manual refresh fails.
+            self._menu_cache.setdefault(bundle, dict(actions=[], error=error, read_at=""))
+            return
         self._menu_cache[bundle] = dict(result, read_at=datetime.now().strftime("%H:%M:%S"))
         self._update_menu_bindings(bundle, result)
+
+    def _show_menu_result(self, result, error=""):
+        error = error or result.get("error", "")
+        self._menus = result.get("actions", []) if not error else []
+        self._menu_state = "error" if error else "partial" if result.get("partial") else "ready"
+        self._menu_read_at = "" if error else result.get("read_at", datetime.now().strftime("%H:%M:%S"))
+        self._message = error or ("已读取部分菜单，可展开目标应用菜单后刷新" if result.get("partial")
+            else f"已读取 {len(self._menus)} 个菜单快捷键；仅包含应用向系统菜单公开的按键" if self._menus
+            else "应用尚未暴露可识别的菜单快捷键。可展开它的菜单后刷新")
+        if not error and result.get("unresolved"):
+            self._message += f"；另有 {result['unresolved']} 项按键暂无法解析"
 
     @Slot(str, int, str, object, str)
     def _apply_result(self, kind, generation, bundle, result, error):
@@ -600,8 +617,8 @@ class ApplicationMappingController(QObject):
         if kind == "background_menu":
             stamp, self._background_active = self._background_active, None
             if (stamp == (bundle, self._menu_revisions.get(bundle, 0))
-                    and bundle != self._bundle and self._is_added(bundle) and not error):
-                self._cache_menu(bundle, result or {})
+                    and bundle != self._bundle and self._is_added(bundle)):
+                self._cache_menu(bundle, result or {}, error)
             QTimer.singleShot(0, self._continue_background_menus)
             return
         if kind == "apps":
@@ -640,16 +657,8 @@ class ApplicationMappingController(QObject):
         elif bundle == self._bundle and self._is_added(bundle):
             result = result or {}
             self._busy = False
-            self._menus = result.get("actions", []) if result and not error else []
-            self._menu_state = "error" if error else "partial" if result.get("partial") else "ready"
-            self._menu_read_at = "" if error else datetime.now().strftime("%H:%M:%S")
-            self._message = error or ("已读取部分菜单，可展开目标应用菜单后刷新" if result.get("partial")
-                else f"已读取 {len(self._menus)} 个菜单快捷键；仅包含应用向系统菜单公开的按键" if self._menus
-                else "应用尚未暴露可识别的菜单快捷键。可展开它的菜单后刷新")
-            if not error and result.get("unresolved"):
-                self._message += f"；另有 {result['unresolved']} 项按键暂无法解析"
-            if not error:
-                self._cache_menu(bundle, result)
+            self._show_menu_result(result, error)
+            self._cache_menu(bundle, result, error)
             QTimer.singleShot(0, self._continue_background_menus)
         self.discoveryChanged.emit()
 
@@ -689,6 +698,9 @@ class ApplicationMappingController(QObject):
 
     @Slot(str)
     def selectApplication(self, bundle):
+        self._select_application(bundle)
+
+    def _select_application(self, bundle, *, refresh=False):
         self._generation["menu"] += 1
         selected = bundle if self._is_added(bundle) else ""
         if selected != self._bundle:
@@ -698,10 +710,12 @@ class ApplicationMappingController(QObject):
         self._background_menus = [item for item in self._background_menus if item != selected]
         cached = self._menu_cache.get(selected, {})
         self._menus = cached.get("actions", [])
-        self._busy = bool(self._bundle)
+        self._busy = bool(self._bundle) and (refresh or selected not in self._menu_cache)
         self._menu_state = "loading" if self._busy else "idle"
         self._menu_read_at = cached.get("read_at", "")
         self._message = "正在读取应用菜单…" if self._busy else "先添加一个应用"
+        if self._bundle and not self._busy:
+            self._show_menu_result(cached)
         self.changed.emit()
         self.discoveryChanged.emit()
         if self._busy:
@@ -711,7 +725,7 @@ class ApplicationMappingController(QObject):
 
     @Slot()
     def refreshMenu(self):
-        self.selectApplication(self._bundle)
+        self._select_application(self._bundle, refresh=True)
 
     @Slot(str, result=bool)
     def clearApplicationBindings(self, bundle):

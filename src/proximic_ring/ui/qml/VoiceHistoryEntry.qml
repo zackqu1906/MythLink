@@ -231,14 +231,6 @@ Rectangle {
                 text: row.textExpanded ? "收起全文" : "展开全文"
                 onClicked: row.textExpanded = !row.textExpanded
             }
-            Label {
-                objectName: "voiceHistoryTechnicalDetails"
-                Layout.fillWidth: true; visible: row.detailsVisible
-                text: [row.entry.durationLabel, row.entry.backend, row.entry.dataSummary].filter(function(s) { return Boolean(s) }).join("  ·  ")
-                color: theme.muted; font.family: theme.family; font.pixelSize: theme.detailSize
-                lineHeight: theme.detailLineHeight; lineHeightMode: Text.FixedHeight
-                wrapMode: Text.Wrap; textFormat: Text.PlainText
-            }
             Loader {
                 Layout.fillWidth: true
                 active: row.detailsVisible

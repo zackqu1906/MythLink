@@ -28,6 +28,8 @@ Item {
     readonly property real touchColumn: touchCardWidth + touchColumnGap
     readonly property real touchLeft: 932 - 3 * touchCardWidth - 2 * touchColumnGap - groupPadding
     readonly property rect rotateGroup: Qt.rect(0, 0, 312 + 2 * groupPadding, cardHeight + 2 * groupPadding)
+    readonly property rect fistGroup: Qt.rect(0, 494 - cardHeight - 2 * groupPadding,
+                                             312 + 2 * groupPadding, cardHeight + 2 * groupPadding)
     readonly property rect touchGroup: Qt.rect(touchLeft - groupPadding, 0,
                                               3 * touchCardWidth + 2 * touchColumnGap + 2 * groupPadding,
                                               3 * cardHeight + 2 * cardGap + 2 * groupPadding)
@@ -37,8 +39,8 @@ Item {
         {key:"circle-clockwise",title:"顺时针",x:164+groupPadding,y:groupPadding,width:148,asset:"clockwise",iw:15,ih:13.8,outline:"#0F6D78"},
         {key:"index-pinch",doubleKey:"double-index-pinch",title:"食拇捏合",x:0,y:170,width:184,asset:"index-pinch",iw:6.6,ih:11.4,outline:"#AF832C"},
         {key:"middle-pinch",doubleKey:"double-middle-pinch",title:"中拇捏合",x:0,y:306,width:184,asset:"middle-pinch",iw:11.4,ih:10.2,outline:"#02A1BA"},
-        {key:"clench",title:"握拳",x:0,y:418,width:148,asset:"fist",iw:13.9804,ih:13.9804,dx:0.09,dy:0.09},
-        {key:"snap",title:"响指",x:164,y:418,width:148,asset:"snap",iw:16.4998,ih:16.4998,dx:0.15,dy:0.15},
+        {key:"clench",title:"握拳",x:groupPadding,y:fistGroup.y+groupPadding,width:148,asset:"fist",iw:13.9804,ih:13.9804,dx:0.09,dy:0.09},
+        {key:"snap",title:"响指",x:164+groupPadding,y:fistGroup.y+groupPadding,width:148,asset:"snap",iw:16.4998,ih:16.4998,dx:0.15,dy:0.15},
         {key:"swipe-up",title:"上滑",x:touchLeft+touchColumn,y:groupPadding,width:touchCardWidth,asset:"up",iw:19.2,ih:19.2,touch:true},
         {key:"swipe-left",title:"左滑",x:touchLeft,y:groupPadding+cardHeight+cardGap,width:touchCardWidth,asset:"left",iw:19.2,ih:19.2,touch:true},
         {key:"tap",doubleKey:"double-tap",title:"点击",x:touchLeft+touchColumn,y:groupPadding+cardHeight+cardGap,width:touchCardWidth,asset:"tap",iw:16.2,ih:16.2,touch:true},
@@ -75,6 +77,8 @@ Item {
         var middle = markerCenter("middle"), fist = markerCenter("fist"), touch = markerCenter("touch")
         var rotateX = rotateGroup.x + rotateGroup.width / 2
         var rotateBottom = rotateGroup.y + rotateGroup.height
+        var fistX = fistGroup.x + fistGroup.width / 2
+        var fistBusY = fistGroup.y - 12
         return [
             {name:"rotate",keys:["circle-clockwise","circle-counterclockwise"],color:"#0F6D78",
                 path:"M " + rotate.x + " " + (rotate.y-10) + " C " + rotate.x + " " + (rotateBottom+20)
@@ -83,8 +87,8 @@ Item {
                 path:sideLink(Qt.point(index.x-10,index.y),Qt.point(184,208))},
             {name:"middle",keys:["middle-pinch","double-middle-pinch"],color:"#02A1BA",
                 path:sideLink(Qt.point(middle.x-10,middle.y),Qt.point(184,344))},
-            {name:"fist",keys:["clench"],color:"#949CA9",
-                path:route([[fist.x,fist.y+10],[fist.x,398],[74,398],[74,418]])},
+            {name:"fist",keys:["clench","snap"],color:"#949CA9",
+                path:route([[fist.x,fist.y+10],[fist.x,fistBusY],[fistX,fistBusY],[fistX,fistGroup.y]])},
             {name:"touch",keys:["tap","double-tap","swipe-up","swipe-down","swipe-left","swipe-right"],color:"#0225BA",
                 path:sideLink(Qt.point(touch.x+10,touch.y),Qt.point(touchGroup.x,touchGroup.y+touchGroup.height/2))}
         ]
@@ -105,7 +109,8 @@ Item {
         Repeater {
             model: [
                 {name:"rotate",bounds:map.rotateGroup,color:"#F8FBFB",border:"#EAF3F3"},
-                {name:"touch",bounds:map.touchGroup,color:"#F8F9FD",border:"#EDF0F9"}
+                {name:"touch",bounds:map.touchGroup,color:"#F8F9FD",border:"#EDF0F9"},
+                {name:"fist",bounds:map.fistGroup,color:"#F9FAFC",border:"#EEF0F4"}
             ]
             Rectangle {
                 required property var modelData

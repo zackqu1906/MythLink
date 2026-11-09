@@ -39,7 +39,7 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     from PySide6.QtTest import QTest
     from test_shared_voice_capture import raw_capture, finish_asr
     from proximic_ring.text_processing.screen_context import filter_context
-    from proximic_ring.text_processing.model import InputModeRoutingResult
+    from proximic_ring.text_processing.model import InputModeRoutingResult, TextProcessingRequest, TextProcessingResult, LLMSettings
     controller, bridge, _, root, _ = inline_ui
     collector = controller._voice_history
     collector.record_screen_capture(7, raw_capture(), routing=routing, input_context={
@@ -48,6 +48,11 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
         "long_identifier": "https://example.test/" + "abcdefgh0123456789" * 100,
     })
     finish_asr(collector)
+    source = "输入框原文\n" + "没有空格的长文本" * 120 + "\nhttps://example.test/" + "abcdefgh0123456789" * 100
+    collector.record_text_request(TextProcessingRequest(20, 7, "edit", "把今晚改成明晚",
+        LLMSettings(enabled=True, model="deepseek-test"), source, routing_mode=routing))
+    collector.record_llm_result(20, TextProcessingResult(20, 7, "edit", "把今晚改成明晚", "我们明晚开会。", .8, True,
+        target_text=source, routing_mode=routing))
     identifier = collector.interaction_id_for_session(7)
     if routing == "auto":
         collector.record_routing_result(InputModeRoutingResult(10, 7, "你好", "dictation", .1,
@@ -89,6 +94,15 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     panel = visual_child(entry, "voiceHistoryDetails")
     assert panel is not None and reads == [identifier]
     assert visual_child(entry, "automaticVoiceDetailsToggle") is None
+    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    directory.mkdir(parents=True, exist_ok=True)
+    assert root.grabWindow().save(str(directory / f"{routing}-history-simple-{size[0]}.png"))
+    assert visual_child(panel, "voiceHistoryDetail_llm_0").property("text") == "我们明晚开会。"
+    assert not visual_child(panel, "voiceHistoryDetailScroll_llm_0_input").property("visible")
+    QMetaObject.invokeMethod(visual_child(panel, "voiceHistoryInputToggle_llm_0"), "click")
+    QMetaObject.invokeMethod(visual_child(panel, "voiceHistoryOutputToggle_raw_ocr"), "click")
+    QMetaObject.invokeMethod(visual_child(panel, "voiceHistoryScreenshotToggle"), "click")
+    QTest.qWait(100)
     screenshot = visual_child(panel, "voiceHistoryScreenshot")
     assert screenshot.property("paintedWidth") > 0
     point = screenshot.mapToItem(entry, QPointF())
@@ -96,20 +110,17 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     raw_ocr = visual_child(panel, "voiceHistoryDetail_raw_ocr")
     assert "联系人" in raw_ocr.property("text") and "输入框草稿" in raw_ocr.property("text")
     assert raw_ocr.property("readOnly") and raw_ocr.property("selectByMouse")
-    for key in ("asr_context", "input_context", "mode", "llm", "outcome", "feedback", "asr_updates", "events", "imu_samples"):
-        assert visual_child(panel, "voiceHistoryDetail_" + key) is not None
-    assert "输入框原文" in visual_child(panel, "voiceHistoryDetail_input_context").property("text")
-    assert (visual_child(panel, "voiceHistoryDetail_ocr_filter") is not None) == (routing == "auto")
-    directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
-    directory.mkdir(parents=True, exist_ok=True)
+    for key in ("input_context", "mode", "feedback", "asr_updates", "events", "imu_samples", "ocr_filter"):
+        assert visual_child(panel, "voiceHistoryDetail_" + key) is None
+    assert "输入框原文" in visual_child(panel, "voiceHistoryDetail_llm_0_input").property("text")
     assert root.grabWindow().save(str(directory / f"{routing}-history-{size[0]}.png"))
     assert (bridge.messages, controller.inlineInput._view) == before
     ocr_y = raw_ocr.mapToItem(view, QPointF()).y()
     view.setProperty("contentY", max(0, view.property("contentY") + ocr_y - 90)); QTest.qWait(80)
     assert root.grabWindow().save(str(directory / f"{routing}-history-ocr-{size[0]}.png"))
     # Long Chinese text and unbroken identifiers wrap within the fixed frame.
-    text = visual_child(panel, "voiceHistoryDetail_input_context")
-    scroll = visual_child(panel, "voiceHistoryDetailScroll_input_context")
+    text = visual_child(panel, "voiceHistoryDetail_llm_0_input")
+    scroll = visual_child(panel, "voiceHistoryDetailScroll_llm_0_input")
     viewport = scroll.property("contentItem")
     assert text.width() == pytest.approx(scroll.property("availableWidth"))
     assert text.property("contentWidth") <= text.width() - text.property("leftPadding") - text.property("rightPadding") + 1

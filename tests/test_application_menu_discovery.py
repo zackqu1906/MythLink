@@ -14,6 +14,7 @@ def prepared(route, monkeypatch):
     catalog._candidates.append(dict(value=OTHER, label='Other'))
     catalog.addApplication(OTHER)
     catalog.selectApplication('')
+    catalog._menu_cache.clear()  # Model startup before the first background scan.
     requests = []
     monkeypatch.setattr(catalog, '_request', lambda *args: requests.append(args))
     return catalog, requests
@@ -46,8 +47,8 @@ def test_background_scan_reads_each_added_running_app_and_keeps_current_selectio
     assert set(catalog._menu_cache) == {BUNDLE, OTHER}
     assert len(requests) == 2
     catalog.selectApplication(OTHER)
-    assert catalog.actions == [other] and catalog.busy
-    assert requests[-1] == ('menu', OTHER)  # Cached choices still get a fresh check.
+    assert catalog.actions == [other] and not catalog.busy
+    assert len(requests) == 2
 
 
 def test_selected_app_read_takes_priority_and_background_failure_continues(route, monkeypatch):
@@ -57,7 +58,7 @@ def test_selected_app_read_takes_priority_and_background_failure_continues(route
     complete(catalog, BUNDLE, [], error='Application has no accessible menus')
     assert requests == [('background_menu', BUNDLE), ('menu', OTHER)]
     assert catalog.busy and catalog.selectedApp == OTHER
-    assert catalog._menu_cache.get(BUNDLE, {}).get('actions') == [ACTION]
+    assert catalog._menu_cache[BUNDLE]['error'] == 'Application has no accessible menus'
     catalog._apply_result('menu', catalog._generation['menu'], OTHER, dict(actions=[]), '')
     assert catalog.menuState == 'ready' and catalog.actions == []
 
@@ -93,3 +94,65 @@ def test_real_menu_commands_precede_adapter_presets_in_application_category(rout
     actions = catalog.actions
     assert actions[0] == ACTION
     assert any(item.get('preset') for item in actions[1:])
+
+
+@pytest.mark.parametrize('result', [dict(actions=[ACTION]), dict(actions=[]),
+    dict(actions=[ACTION], partial=True, unresolved=1)])
+def test_switching_apps_reuses_cache_including_empty_and_partial_results(route, monkeypatch, result):
+    catalog, requests = prepared(route, monkeypatch)
+    catalog._cache_menu(BUNDLE, result)
+    catalog._cache_menu(OTHER, dict(actions=[]))
+    read_at = catalog._menu_cache[BUNDLE]['read_at']
+    for _ in range(5):
+        catalog.selectApplication(OTHER)
+        catalog.selectApplication(BUNDLE)
+        assert not catalog.busy and catalog.actions == result['actions']
+        assert catalog.menuReadAt == read_at
+        assert catalog.menuState == ('partial' if result.get('partial') else 'ready')
+    assert requests == []
+    if result['actions']:
+        assert catalog.setBinding(BUNDLE, 'circle-clockwise', ACTION['id'])
+    candidates(catalog)
+    assert requests == []  # Refreshing the app picker also reuses read menus.
+
+
+def test_manual_refresh_rereads_cached_menu_and_updates_saved_command(route, monkeypatch):
+    catalog, requests = prepared(route, monkeypatch)
+    catalog._cache_menu(BUNDLE, dict(actions=[ACTION]))
+    catalog.selectApplication(BUNDLE)
+    assert catalog.setBinding(BUNDLE, 'circle-clockwise', ACTION['id'])
+    catalog.refreshMenu()
+    assert requests == [('menu', BUNDLE)] and catalog.busy
+    updated = dict(ACTION, id='updated-key', shortcut='Cmd+J')
+    catalog._apply_result('menu', catalog._generation['menu'], BUNDLE, dict(actions=[updated]), '')
+    assert not catalog.busy and catalog.actions == [updated]
+    assert catalog.bindings[BUNDLE]['circle-clockwise']['shortcut'] == 'Cmd+J'
+    catalog.selectApplication('')
+    catalog.selectApplication(BUNDLE)
+    assert len(requests) == 1 and catalog.actions == [updated]
+
+
+def test_failed_first_read_waits_for_manual_refresh_instead_of_retrying_each_switch(route, monkeypatch):
+    catalog, requests = prepared(route, monkeypatch)
+    catalog.selectApplication(BUNDLE)
+    catalog._apply_result('menu', catalog._generation['menu'], BUNDLE, None, '请先打开应用')
+    catalog.selectApplication('')
+    catalog.selectApplication(BUNDLE)
+    assert requests == [('menu', BUNDLE)]
+    assert catalog.menuState == 'error' and not catalog.busy and catalog.message == '请先打开应用'
+    catalog.refreshMenu()
+    assert requests == [('menu', BUNDLE), ('menu', BUNDLE)]
+    catalog._apply_result('menu', catalog._generation['menu'], BUNDLE, dict(actions=[ACTION]), '')
+    assert catalog.actions == [ACTION] and catalog.menuState == 'ready'
+
+
+def test_failed_manual_refresh_keeps_previous_cache_for_later_switch(route, monkeypatch):
+    catalog, requests = prepared(route, monkeypatch)
+    catalog._cache_menu(BUNDLE, dict(actions=[ACTION]))
+    catalog.selectApplication(BUNDLE)
+    catalog.refreshMenu()
+    catalog._apply_result('menu', catalog._generation['menu'], BUNDLE, None, '请先打开应用')
+    assert catalog.menuState == 'error'
+    catalog.selectApplication('')
+    catalog.selectApplication(BUNDLE)
+    assert requests == [('menu', BUNDLE)] and catalog.actions == [ACTION] and not catalog.busy

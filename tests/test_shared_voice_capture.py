@@ -170,7 +170,7 @@ def test_cancelled_record_still_receives_ocr_and_failed_capture_has_a_reason(tmp
     assert store._interaction_data(store.interaction_id_for_session(8))["screen_capture"]["reason"] == "屏幕录制不可用"
 
 
-def test_details_include_all_evidence_and_sidecars_without_expanding_list_rows(tmp_path):
+def test_details_show_readable_outputs_and_keep_full_evidence_on_disk(tmp_path):
     store = ModificationDatasetCollector(tmp_path, "user")
     store.record_screen_capture(7, raw_capture(), routing="manual", input_context={"original": "完整原文"})
     finish_asr(store)
@@ -185,11 +185,13 @@ def test_details_include_all_evidence_and_sidecars_without_expanding_list_rows(t
     details = store.load_details(identifier)
     sections = {section["key"]: section["text"] for section in details["sections"]}
     assert "输入框草稿" in sections["raw_ocr"] and "联系人" in sections["raw_ocr"]
-    assert "完整原文" in sections["input_context"] and "仍需显示" in sections["metadata"]
-    assert '"ax": 0.3' in sections["imu_samples"]
-    assert "screen_captured" in sections["events"] and "你好" in sections["asr_updates"]
-    assert "未保存有效上下文文字" in details["asrContextStatus"]
-    assert "ocr_filter" not in sections
+    assert sections["asr"] == "你好"
+    assert not {"input_context", "metadata", "imu_samples", "events", "asr_updates", "ocr_filter"} & sections.keys()
+    assert '"box"' not in sections["raw_ocr"] and '"confidence"' not in sections["raw_ocr"]
+    saved = store._interaction_data(identifier)
+    assert saved["input_context"]["original"] == "完整原文"
+    assert saved["future_evidence"]["unknown"] == "仍需显示"
+    assert (store._interaction_dir(identifier) / saved["imu"]["samples_file"]).is_file()
     assert store.load_details("../escape")["error"]
     outside = tmp_path / "outside.jsonl"
     outside.write_text("do not show")

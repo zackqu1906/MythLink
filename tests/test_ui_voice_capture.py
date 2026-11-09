@@ -89,9 +89,9 @@ def test_open_manual_details_refresh_when_ocr_finishes_in_same_millisecond(inlin
     root.setProperty("currentPage", 4); root.show(); QTest.qWait(80)
     entry = visual_child(root.findChild(QObject, "voiceHistoryList"), "voiceHistoryEntry")
     entry.setProperty("detailsVisible", True); QTest.qWait(30)
-    before = visual_child(entry, "voiceHistoryDetail_screen_capture").property("text")
-    assert '"status": "pending"' in before
+    before = visual_child(entry, "voiceHistoryDetail_raw_ocr").property("text")
+    assert "正在识别屏幕文字" in before
     future.set_result(raw_capture()); QTest.qWait(100)
     assert entry.property("detailsVisible")
     assert "联系人" in visual_child(entry, "voiceHistoryDetail_raw_ocr").property("text")
-    assert visual_child(entry, "voiceHistoryScreenshot").property("paintedWidth") > 0
+    assert visual_child(entry, "voiceHistoryScreenshot").property("source")

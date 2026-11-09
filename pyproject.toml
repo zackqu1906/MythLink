@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mythlink"
-version = "0.6.11"
+version = "0.6.12"
 description = "An integrated smart ring platform for voice input, mouse control, gesture recognition, and contextual interactions"
 readme = "README.md"
 requires-python = ">=3.11"

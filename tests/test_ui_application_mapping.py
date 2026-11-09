@@ -60,6 +60,24 @@ def test_application_shortcut_menu_shows_discovered_commands_before_presets(mapp
     assert root.grabWindow().save(str(shots / "application-menu-discovery-first.png"))
 
 
+def test_switching_cached_app_tabs_keeps_shortcuts_editable_without_rereading(mapping_ui):
+    from PySide6.QtCore import QObject
+    _, _, root, catalog, requests, click, add = mapping_ui
+    add()
+    other = "com.example.Other"
+    assert catalog.addApplication(other)
+    previous_requests = list(requests)
+    for bundle in [BUNDLE, other, BUNDLE]:
+        click("gestureApplication_" + bundle)
+        assert catalog.selectedApp == bundle and not catalog.busy
+        assert catalog.menuState == "ready" and requests == previous_requests
+    click("menuAction_next-tab")
+    assert root.findChild(QObject, "gestureActionEditor").property("savedId") == "next-tab"
+    assert requests == previous_requests
+    catalog.refreshMenu()
+    assert requests == previous_requests + [("menu", BUNDLE)]
+
+
 @pytest.mark.parametrize("size", [(1440, 1040), (940, 700)])
 def test_powerpoint_scene_tabs_reserved_gestures_and_separate_bindings(mapping_ui, tmp_path, size):
     from PySide6.QtCore import QObject
