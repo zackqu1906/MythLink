@@ -1020,6 +1020,9 @@ class TouchpadController(QObject):
     @Slot(object, str, object)
     def _receive(self, run, kind, value):
         if run is not self._run: return
+        if (self._state == "stopping" and kind in {"started", "ended"}
+                and getattr(value, "reason", None) == "cancelled"):
+            return  # The requested STOP reports its own completion or failure.
         if kind == "ready" and self._state == "starting" and value is run.output:
             try:
                 run.sdk_started = True

@@ -260,6 +260,34 @@ def test_stop_queued_during_touchpad_start_cannot_leave_an_orphan_stream(ring):
     assert source._resume_finished.wait(2) and session.mic_active
 
 
+def test_raw2_stop_can_interrupt_first_token_wait_with_microphone_active(ring):
+    import asyncio
+    from ring_mac_sdk.errors import RingError
+
+    source, state = ring
+    source.set_audio_enabled(True)
+    session = state['session']
+    entered = threading.Event()
+    async def wait_for_token(**options):
+        stopped = asyncio.Event()
+        def interrupt(error):
+            stopped.set()
+            options['on_stopped'](error)
+        session.touchpad_stopped = interrupt
+        session.touchpad_active = True
+        entered.set()
+        await stopped.wait()
+        raise RingError('cancelled')
+    session.touchpad_on = wait_for_token
+    starting = source.start_touchpad(protocol='raw2', on_event=lambda _: None)
+    assert entered.wait(2)
+    source.stop_touchpad().result(2)
+    with pytest.raises(RingError, match='cancelled'):
+        starting.result(2)
+    assert not session.touchpad_active and not source._touchpad_activities
+    assert session.mic_active and source.gestures_active and source.error is None
+
+
 def test_automatic_touchpad_end_keeps_microphone_running(ring):
     import asyncio
     source, state = ring

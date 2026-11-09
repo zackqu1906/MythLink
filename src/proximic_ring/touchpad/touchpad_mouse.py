@@ -43,6 +43,7 @@ class TouchpadMouseOutput:
                           bool(invert_scroll), bool(horizontal_swipe), bool(tap_drag))
         self.raw2 = raw2
         self._stream_key = None
+        self._input_gap_at = 0.
         self._seen_clicks = deque(maxlen=256)
         self._last_scroll_hint = None
         self._drag_context = None
@@ -70,8 +71,15 @@ class TouchpadMouseOutput:
 
     def _reset_stream(self, event):
         with self.lock:
-            self._stream_key = (event.session_id, event.generation)
-            self._seen_clicks.clear()
+            key = (event.session_id, event.generation)
+            if key == self._stream_key:
+                # 0.4 keeps the same generation across quiet input. Release
+                # any held button, but keep duplicate click IDs for this stream.
+                self._input_gap_at = event.timestamp
+            else:
+                self._stream_key = key
+                self._input_gap_at = 0.
+                self._seen_clicks.clear()
             for _, _, trace in self.events:
                 if trace:
                     trace.finish('session_reset')
@@ -359,11 +367,11 @@ class TouchpadMouseOutput:
         self._send_click(ClickTrace(event), event)
 
     def _sync_drag(self):
-        context = (self._stream_key, self.click_context(), self._features[0], self._features[1], self._features[7])
+        context = (self._stream_key, self._input_gap_at, self.click_context(), self._features[0], self._features[1], self._features[7])
         if context != self._drag_context or self._blocked_reason():
             self.drag.cancel()
             self._drag_context = context
-        swipe_context = (self._stream_key, self.click_context(), self._features[6])
+        swipe_context = (self._stream_key, self._input_gap_at, self.click_context(), self._features[6])
         if swipe_context != self._swipe_context or self._blocked_reason():
             self.swipe.reset()
             self._swipe_context = swipe_context
@@ -390,6 +398,10 @@ class TouchpadMouseOutput:
         blocked = self._blocked_reason()
         if blocked or key != self._stream_key:
             self._finish_click(trace, blocked or 'session_reset')
+            return
+        source = getattr(event, 'source_timestamp', None)
+        if (event.timestamp if source is None else source) < self._input_gap_at:
+            self._finish_click(trace, 'input_gap')
             return
         limit = .25 if trace else .2
         now = time.monotonic()

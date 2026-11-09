@@ -1,0 +1,17 @@
+{
+  "version": "0.4.0",
+  "platform": "macOS 13+ arm64",
+  "firmware_frontend_included": false,
+  "backend_runtime_included": true,
+  "files": {
+    "README.md": "2b4726d616017ade4cf77583c2e98555067393021c3ceabb4f1bfd331d2fe3bd",
+    "THIRD_PARTY_NOTICES.md": "fc6a11ff9da3f650b88b0fb818ebfc9ef6996b2abc16a60dcc8b8b15da23539e",
+    "docs/CHANGES.md": "0c559acdf12c4e9db2d7ea315163c1f5a35cee8528feccd114c188770e686ff2",
+    "docs/INSTALL.md": "b9b44c80944ada99bf9915f32bbeebaeb5df9b4a6cb62a2f1f737d638b6cceb8",
+    "docs/INTEGRATION.md": "ca5bed408299a8bc8d6bb8cf5fd2e43f21cf1872794e87cb52f9155d07e4f999",
+    "docs/SYSTEM_CURSOR.md": "28479f47bae7c650c3dea152c6177ccf4c05891338315c59faa6bc7b45078de5",
+    "examples/gestures.py": "640d98c727eeea39ab4fd7f1e7777c33cd449422284ae092cf42d33d249db77c",
+    "examples/touchpad.py": "324b8515fb6869c0dc198150f2804c8b6e5c084b569920014fa01160eb4bbafc",
+    "sdk/ring_mac_sdk-0.4.0-py3-none-macosx_13_0_arm64.whl": "d491794a09bec21af9e4a781e0f220b551e565bdbb821d9b6d8e614f7b371506"
+  }
+}

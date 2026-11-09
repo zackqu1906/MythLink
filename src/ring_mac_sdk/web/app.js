@@ -70,7 +70,7 @@ function render(s){
   $('cursor-state').textContent=cursor?.enabled?'控制中':cursor?.preparing?'准备中 · 尚未开启':'已关闭';
   $('cursor-state').className='pill'+(cursor?.enabled?' active':'');
   const permission={unchecked:'权限未检查',allowed:'辅助功能已允许',denied:'缺少辅助功能权限',unavailable:'依赖或权限检查不可用',demo:'模拟模式'};
-  $('cursor-message').textContent=!cursor?'系统控制需要重启 Python 服务加载新后端。':s.demo?'模拟模式禁止系统输出，不会移动鼠标、滚动或点击。':`${permission[cursor.permission]||cursor.permission} · ${cursor.message} · 待派发 ${cursor.pending} / 过期丢弃 ${cursor.expired}`;
+  $('cursor-message').textContent=!cursor?'系统控制需要重启 Python 服务加载新后端。':s.demo?'模拟模式禁止系统输出，不会移动鼠标、滚动或点击。':`${permission[cursor.permission]||cursor.permission} · ${cursor.message} · 待派发 ${cursor.pending} / 迟到继续 ${cursor.late||0}`;
   $('mode').className='banner'+(s.demo?' demo':'');
   $('mode').textContent=s.demo?'模拟模式 · 所有设备、电量、轨迹和点击均为演示数据，不访问蓝牙，不代表真机测试结果':'真机模式 · 选择设备后连接；系统控制默认关闭，开启后会影响本机光标和滚轮';
   const key=JSON.stringify(s.devices);
@@ -90,6 +90,7 @@ function render(s){
   $('preview').hidden=!s.preview;
   $('session').textContent=s.session?`会话 ${s.session.slice(0,8)} · generation ${s.generation}`:'尚无触摸板会话';
   $('empty').hidden=Boolean(motion.points.length);
+  $('diagnostics').textContent=s.diagnostics ? `${s.diagnostics.severity} · ${s.diagnostics.active_issues.join(', ') || '无持续告警'}\n${s.diagnostics.message}\n${JSON.stringify(s.diagnostics.counters)}` : '暂无触摸板诊断';
   $('error').hidden=!s.error;
   if(s.error){$('error-hint').textContent=s.error.hint;$('error-summary').textContent=`${s.error.reason} · 设备码 ${s.error.device_code??'—'} · 阶段 ${s.error.phase??'—'}`;$('error-detail').textContent=JSON.stringify(s.error,null,2);}
   const lk=s.logs.map(l=>l.id).join(',');

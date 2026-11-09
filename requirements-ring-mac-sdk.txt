@@ -2,4 +2,4 @@
 # The provider pins bleak==1.1.1 and onnxruntime==1.21.0; Mythlink macOS
 # uses the same versions. This file additionally installs the standalone CLI.
 # Includes the provider's CLI, local playground, and opt-in cursor adapter.
-./third_party/ringo-touchpad-delivery-20261105/sdk/ring_mac_sdk-0.3.0-py3-none-macosx_13_0_arm64.whl[web,cursor]
+./third_party/ring-mac-sdk-0.4.0-macos-arm64/sdk/ring_mac_sdk-0.4.0-py3-none-macosx_13_0_arm64.whl[web,cursor]

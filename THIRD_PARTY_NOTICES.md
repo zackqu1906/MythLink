@@ -52,17 +52,16 @@ Mythlink integrates the following third-party components. Most downloaded ASR/LL
 - License: no standalone license file was found in the supplied snapshot. Redistribution permission
   must be confirmed with the SDK/device provider before this repository is made public.
 
-## Ringo macOS SDK 0.3.0 delivery (2026-11-05)
+## Ring macOS SDK 0.4.0
 
-- Location: `src/ring_mac_sdk` (all 21 package files copied unchanged from the supplied wheel).
-- Original delivery: `third_party/ringo-touchpad-delivery-20261105`, including its wheel,
-  firmware, tools, release manifest, hashes and provider documentation.
-- SDK commit: `4769eaebad8755e8d679305c5b459124a5b38df7`.
+- Location: `src/ring_mac_sdk` (all 23 package files copied unchanged from the supplied wheel).
+- Original wheel, hashes, examples and documentation: [0.4.0 delivery](third_party/ring-mac-sdk-0.4.0-macos-arm64/).
+- The [0.3.0 delivery](third_party/ringo-touchpad-delivery-20261105/) retains the earlier firmware, calibration utility and original notices.
 - The encrypted receiver asset and native library are supplied runtime components;
   no ring frontend source or standalone frontend weights are included.
 - The native library includes Monocypher; its upstream notice is preserved in
   `src/ring_mac_sdk/licenses/monocypher.md`.
-- See the provider's `docs/SDK_THIRD_PARTY_NOTICES.md` inside the delivery for
+- See the provider's [third-party notices](third_party/ring-mac-sdk-0.4.0-macos-arm64/THIRD_PARTY_NOTICES.md) for
   third-party dependencies and the permission boundary for SDK/model redistribution.
 - Apple Silicon Mac touchpad control uses this receiver through the existing
   `ring_python_sdk` BLE session; see `docs/RING_MAC_SDK.md`.

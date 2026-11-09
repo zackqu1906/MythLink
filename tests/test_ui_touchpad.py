@@ -38,6 +38,29 @@ def prepare(controller):
     return touchpad, source
 
 
+@pytest.mark.parametrize('stop_fails', [False, True])
+def test_cancel_raw2_start_waits_for_stop_result(inline_ui, stop_fails):
+    from PySide6.QtTest import QTest
+    from ring_mac_sdk.errors import RingError
+    c, *_ = inline_ui
+    tp, source = prepare(c)
+    stopping = Future()
+    source.stop_touchpad = lambda: stopping
+    tp.start(); QTest.qWait(20)
+    tp.stop()
+    cancelled = RingError('cancelled')
+    source.starts[0]['on_stopped'](cancelled)
+    source.future.set_exception(cancelled)
+    QTest.qWait(20)
+    assert tp.state == 'stopping'
+    if stop_fails:
+        stopping.set_exception(RingError('stop_unconfirmed'))
+    else:
+        stopping.set_result(None)
+    QTest.qWait(20)
+    assert tp.state == ('error' if stop_fails else 'idle')
+
+
 @pytest.mark.parametrize('protocol', ['legacy', 'raw2'])
 def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inline_ui, protocol):
     import time

@@ -165,7 +165,7 @@ class Tracker:
         self.sequence = self.uptime = 0
         self.first = True
 
-    def accept(self, t: Token) -> bool:
+    def accept(self, t: Token, check_clock=True) -> bool:
         if t.session != self.session:
             raise ProtocolError("Session changed; STOP/START required")
         if self.first:
@@ -178,7 +178,7 @@ class Tracker:
                 raise ProtocolError("Invalid epoch transition")
             if t.epoch == self.epoch and t.reset:
                 raise ProtocolError("Repeated reset")
-            if not 0 < ((t.uptime-self.uptime) & MASK) <= 3000:
+            if check_clock and not 0 < ((t.uptime-self.uptime) & MASK) <= 3000:
                 raise ProtocolError("Invalid device time progression")
         reset = self.first or t.epoch != self.epoch
         self.first = False
@@ -192,3 +192,46 @@ class Tracker:
         resets = [trial.accept(t) for t in batch]
         self.__dict__.update(trial.__dict__)
         return resets
+
+    def accept_recoverable(self, batch, skipped=0):
+        if not batch or skipped < 0:
+            raise ProtocolError("Invalid recoverable batch")
+        trial = copy(self)
+        resets, clocks = [], 0
+        for i, t in enumerate(batch):
+            if t.session != trial.session:
+                raise ProtocolError("Session changed; STOP/START required")
+            dt = (t.uptime-trial.uptime) & MASK
+            clock = not trial.first and (dt == 0 or dt > 3000)
+            if i == 0 and skipped:
+                expected = (skipped if trial.first else trial.sequence+1+skipped) & MASK
+                if t.sequence != expected:
+                    raise ProtocolError("Gap exceeds locally discarded tokens")
+                if not trial.first and t.epoch == trial.epoch and t.reset:
+                    raise ProtocolError("Repeated reset")
+                if (t.epoch-trial.epoch) & MASK > 0x7fffffff:
+                    raise ProtocolError("Epoch moved backwards")
+                trial.first = False
+                trial.epoch, trial.sequence, trial.uptime = t.epoch, t.sequence, t.uptime
+                reset = True
+            else:
+                reset = trial.accept(t, check_clock=False) or (clock and dt > 3000)
+            resets.append(reset)
+            clocks += int(clock)
+        self.__dict__.update(trial.__dict__)
+        return resets, clocks
+
+
+def diagnostics(data):
+    if len(data) != 64 or data[:3] != b'\x3c\x12\x02':
+        raise ProtocolError('Invalid Raw2 diagnostics')
+    fields = ('session', 'input_depth', 'input_high_water', 'tx_depth', 'tx_high_water',
+              'max_consume_gap_ms', 'max_input_age_ms', 'max_send_us', 'max_tx_age_ms',
+              'tx_busy_ms', 'fault_phase', 'fault_input', 'fault_tx', 'last_send_result', 'fault_kind')
+    result = dict(zip(fields, struct.unpack_from('<15I', data, 4)))
+    result['last_send_result'] = struct.unpack_from('<i', data, 56)[0]
+    names = ('No fault', 'IMU input queue full', 'Feature TX queue full', 'Feature TX age exceeded',
+             'BLE send failed', 'Frontend compute fault', 'Invalid IMU input', 'Worker wake failed')
+    kind = result['fault_kind']
+    result['fault_name'] = names[kind] if kind < len(names) else f'Unknown fault {kind}'
+    return result

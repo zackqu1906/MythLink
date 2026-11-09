@@ -1225,6 +1225,10 @@ class RingAudioSource(AudioSource):
                 self._touchpad_requests.discard(task)
 
         async def serialized_apply():
+            # Raw2 may wait indefinitely for the first token. RingSession
+            # owns its lifecycle lock and lets STOP interrupt a pending START.
+            if enabled and options.get('protocol') == 'raw2':
+                return await apply()
             if self._touchpad_control_lock is None:
                 self._touchpad_control_lock = asyncio.Lock()
             async with self._touchpad_control_lock:

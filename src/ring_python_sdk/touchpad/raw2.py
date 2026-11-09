@@ -4,33 +4,21 @@ The vendor package stays unchanged. Only 0x3c packets are routed here; audio,
 firmware gestures and all other sensors retain their existing session owner.
 """
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import logging
+import threading
 import time
 
 from ring_mac_sdk.errors import RingError
 from ring_mac_sdk.interaction import Engine, delta
 from ring_mac_sdk.touchpad import Touchpad
-from ring_mac_sdk.types import Click, ContactUpdate, Motion
+from ring_mac_sdk.types import Click, ContactUpdate, EventMeta, Motion
 
 from .core import ClickDetector
 from .events import TouchpadClick, TouchpadClickVerdict, TouchpadContact, TouchpadMove, TouchpadStats
 from .events import Raw2PointerClick, Raw2PointerContact, Raw2PointerMove, Raw2Reset
 
 log = logging.getLogger(__name__)
-
-
-class InputQueue(asyncio.Queue):
-    """Expose the wait stage without changing the provider's time budgets."""
-    def __init__(self, stream):
-        super().__init__(maxsize=64)
-        self.stream = stream
-
-    async def get(self):
-        self.stream.phase = ('first_token' if self.stream.receiver.ordinal == 0 else 'stream_input')
-        item = await super().get()
-        self.stream.phase = 'inference'
-        return item
 
 
 class FrameEngine(Engine):
@@ -45,11 +33,67 @@ class FrameEngine(Engine):
 
     def recognize(self, recognition, now):
         super().recognize(recognition, now)
-        self.frame(recognition, now, self.stroke_clicks)
+        self.frame(recognition, self.stroke_clicks)
+
+
+@dataclass(frozen=True)
+class ClickMeta(EventMeta):
+    emitted_ns: int
+    first_down_ns: int
+
+
+class StrokeTouchpad(Touchpad):
+    """Extend the paired receiver with the full frames and click timing the product needs."""
+    # A disconnected Mac may create a new asyncio loop before an old native call returns.
+    _model_running = threading.Lock()
+
+    def __init__(self, stream, model_factory):
+        super().__init__(stream.transport, stream._pointer_event, stream._status,
+                         model_factory, stream._diagnostics)
+        self.stream = stream
+        self.output_after_ns = 0
+
+    async def _model_call(self, function, timeout):
+        if not self._model_running.acquire(blocking=False):
+            raise RingError('busy', 'Previous Raw2 native model call is still running')
+
+        def run():
+            try:
+                return function()
+            finally:
+                self._model_running.release()
+
+        return await super()._model_call(run, timeout)
+
+    def _event(self, kind, now, **data):
+        self.click_timing = None
+        if kind in ('preview', 'click'):
+            first = data['contact'] if kind == 'preview' else data['contacts'][0]
+            self.click_timing = (now, first.down)
+        super()._event(kind, now, **data)
+
+    def _meta(self, source):
+        meta = super()._meta(source)
+        if self.click_timing is None:
+            return meta
+        return ClickMeta(meta.session_id, meta.generation, meta.sequence, source, *self.click_timing)
+
+    def _report(self, issue, message, severity='WARNING', **counts):
+        if issue == 'INPUT_TIMEOUT' and self.status.stage == 'RUNNING':
+            self.output_after_ns = time.monotonic_ns()
+            self.engine.stroke_clicks = ClickDetector()
+            self.stream._queue_interrupt()
+        super()._report(issue, message, severity, **counts)
+
+    async def _run(self):
+        # start() creates a fresh interaction engine for each SDK session.
+        self.engine = FrameEngine(self._event, self.stream._queue_frame)
+        await super()._run()
 
 
 class Raw2Stream:
     protocol = 'raw2'
+    _callback_running = threading.Lock()
 
     def __init__(self, session, on_event, *, on_pointer_move=None, on_stats=None,
                  on_end=None, on_discarded_event=None, duration_s=None, model_factory=None):
@@ -63,21 +107,27 @@ class Raw2Stream:
         self._last_stats = self._last_data = 0.
         self._watcher = None
         self._key = None
-        self.phase = 'model_load'
+        self._packets = 0
         self.token_packets = 0
         self.transport = session._sdk_transport
         if self.transport is None or not self.transport.ready:
             raise RingError('not_ready', 'Raw2 requires the validated ring_mac_sdk BLE connection')
         # Scope cleanup evidence to this stream, on the shared connection.
         self.transport.stop_confirmed = False
-        self.receiver = Touchpad(self.transport, self._pointer_event, self._status, model_factory)
-        self.receiver.queue = InputQueue(self)
-        self.receiver.engine = FrameEngine(self.receiver._event, self._frame)
+        self.receiver = StrokeTouchpad(self, model_factory)
+
+    def _deliver(self, callback, value):
+        # RingCallbacks is shared by all connections. A stuck application callback
+        # must release the actual worker before another session starts.
+        with self._callback_running:
+            if (not self.closed and self.receiver.accepting
+                    and self._key == (self.receiver.session, self.receiver.generation)):
+                callback(value)
 
     def submit(self, packet):
         if not self.closed:
             self._last_data = time.monotonic()
-            self.stats = replace(self.stats, packets=self.stats.packets + 1)
+            self._packets += 1
             if packet[:2] in (b'\x3c\x02', b'\x3c\x13'):
                 self.token_packets += 1
                 if self.token_packets == 1:
@@ -87,39 +137,45 @@ class Raw2Stream:
             # the product demux. Do not feed packets back into Transport.
             self.receiver.receive(packet)
 
-    def _status(self, status):
-        if status.stage == 'STARTING_STREAM':
-            self.phase = 'start_ack'
-        if status.stage == 'FAILED' and str(self.receiver.error) == 'Input/inference timeout':
-            messages = {
-                'first_token': ('input_timeout', '戒指已确认触摸板 START，但 3 秒内未收到首个 Raw2 数据包'),
-                'stream_input': ('input_timeout', '触摸板 Raw2 数据断流超过 1 秒'),
-                'inference': ('inference_timeout', '触摸板模型推理或调度超过 200 毫秒'),
-                'model_load': ('model_timeout', '触摸板模型加载超过 10 秒'),
-            }
-            reason, message = messages.get(self.phase, ('stream_failed', str(self.receiver.error)))
-            self.receiver.error = RingError(reason, message)
-        log.info('[RAW2_STATE] stage=%s phase=%s token_packets=%d inferred_tokens=%d stop_confirmed=%s error=%s',
-                 status.stage, self.phase, self.token_packets, self.receiver.ordinal,
-                 self.transport.stop_confirmed, self.receiver.error)
-        if status.stage == 'RUNNING':
+    async def _status(self, status):
+        log.info('[RAW2_STATE] stage=%s generation=%d token_packets=%d stop_confirmed=%s message=%s',
+                 status.stage, status.generation, self.token_packets, self.transport.stop_confirmed, status.message)
+        if status.stage == 'RUNNING' and not self.closed:
             key = (status.session_id, status.generation)
             if key != self._key:
-                self.stats = replace(self.stats, resets=self.stats.resets + int(self._key is not None),
-                                     ready=True)
                 self._key = key
-                self.on_event(Raw2Reset('reset', 0, time.monotonic(),
-                                             session_id=key[0], generation=key[1]))
-            self._report(force=True)
+                await self.receiver.delivery.invoke(self._reset, (key, time.monotonic()))
+
+    def _queue_interrupt(self):
+        receiver = self.receiver
+        key = (receiver.session, receiver.generation)
+        interrupted_at = receiver.output_after_ns/1e9
+
+        self._enqueue(self._reset, (key, interrupted_at))
+
+    def _reset(self, value):
+        key, timestamp = value
+        self.stats = replace(self.stats, resets=self.stats.resets + int(self.stats.ready is True), ready=True)
+        self._deliver(self.on_event, Raw2Reset('reset', 0, timestamp, session_id=key[0], generation=key[1]))
+        self._report(force=True)
+
+    async def _diagnostics(self, value):
+        if value.issue:
+            level = getattr(logging, value.severity)
+            log.log(level, '[RAW2_DIAGNOSTICS] generation=%d issue=%s active=%s recovered=%s counters=%s message=%s',
+                    value.generation, value.issue, value.active_issues, value.recovered_issues,
+                    value.counters, value.message)
 
     def _report(self, *, force=False):
         now = time.monotonic()
         if self.on_stats and (force or now - self._last_stats >= .5):
             self._last_stats = now
-            self.on_stats(replace(self.stats, last_data_age_s=max(0., now-self._last_data)))
+            self._deliver(self.on_stats, replace(self.stats, packets=self._packets, last_data_age_s=max(0., now-self._last_data)))
 
     def _pointer_event(self, event):
-        if self.closed or self.pointer is None or self._key != (event.meta.session_id, event.meta.generation):
+        if (self.closed or self.pointer is None or self._key != (event.meta.session_id, event.meta.generation)
+                or self.receiver.generation != event.meta.generation
+                or event.meta.source_time_ns < self.receiver.output_after_ns):
             return
         meta = dict(session_id=event.meta.session_id, generation=event.meta.generation,
                     sequence=event.meta.sequence)
@@ -128,6 +184,8 @@ class Raw2Stream:
                                  event.meta.source_time_ns/1e9, mode=event.mode,
                                  episode_id=event.episode_id, **meta)
         elif isinstance(event, ContactUpdate):
+            if event.range.start_time_ns < self.receiver.output_after_ns:
+                return
             value = Raw2PointerContact(event.phase, event.mode, event.episode_id,
                 self.receiver.ordinal*2, event.meta.source_time_ns/1e9,
                 event.range.start_time_ns/1e9,
@@ -135,46 +193,62 @@ class Raw2Stream:
         elif isinstance(event, Click):
             # Pairing intentionally waits before confirming a single click.
             # Expiry starts at formal emission; retain source time for diagnostics.
-            value = Raw2PointerClick(self.receiver.ordinal*2, time.monotonic(),
+            if event.meta.first_down_ns < self.receiver.output_after_ns:
+                return
+            value = Raw2PointerClick(self.receiver.ordinal*2, event.meta.emitted_ns/1e9,
                                   button=event.button.lower(), count=event.count,
                                   click_id=event.click_id, source_timestamp=event.meta.source_time_ns/1e9,
                                   is_preview=event.is_preview, **meta)
         else:
             return
-        self.pointer(value)
+        self._deliver(self.pointer, value)
 
-    def _frame(self, frame, now, detector):
-        if self.closed:
+    def _queue_frame(self, frame, detector):
+        self._enqueue(self._frame, (self.receiver.generation, frame, detector))
+
+    def _enqueue(self, callback, value):
+        receiver = self.receiver
+        key = (receiver.session, receiver.generation)
+        # Stroke and pointer callbacks share the SDK FIFO and its generation/stop fence.
+        async def dispatch():
+            if not self.closed and receiver.accepting and self._key == key:
+                await receiver.delivery.invoke(callback, value)
+        if not receiver.delivery.offer(dispatch):
+            receiver.invalidate('Callback delivery capacity exceeded', 'DELIVERY_OVERFLOW')
+
+    def _frame(self, value):
+        generation, frame, detector = value
+        if (self.closed or generation != self.receiver.generation
+                or frame.source < self.receiver.output_after_ns):
             return
         step = frame.frame+1
-        if now-frame.source > 200_000_000:
-            detector.reset()
-            self.on_event(TouchpadContact('reset', step, time.monotonic()))
-            return
         # Stroke recognition keeps its full 200 Hz geometry and its own tap
         # verdicts. It never feeds those legacy clicks into Raw2 mouse output.
         clicks = detector.probability(step, frame.touch)
         clicks += detector.movement(step, (frame.x, frame.y))
         stamp = frame.source/1e9
-        for down, edge, confirmed in detector.contact_edges:
-            self.on_event(TouchpadContact('down' if down else 'up', edge, stamp, confirmed))
+        edges, verdicts = tuple(detector.contact_edges), tuple(detector.contact_verdicts)
         detector.contact_edges.clear()
-        dx, dy = delta(frame.x, frame.y)
-        self.on_event(TouchpadMove(dx, dy, frame.touch, step, stamp))
-        for click in clicks:
-            self.on_event(TouchpadClick(click['step'], stamp))
-        for start, end, is_click in detector.contact_verdicts:
-            self.on_event(TouchpadClickVerdict(start, end, is_click, stamp))
         detector.contact_verdicts.clear()
-        self.stats = replace(self.stats, tokens=self.stats.tokens + int(step % 2 == 0),
+        for down, edge, confirmed in edges:
+            self._deliver(self.on_event, TouchpadContact('down' if down else 'up', edge, stamp, confirmed))
+        dx, dy = delta(frame.x, frame.y)
+        self._deliver(self.on_event, TouchpadMove(dx, dy, frame.touch, step, stamp))
+        for click in clicks:
+            self._deliver(self.on_event, TouchpadClick(click['step'], stamp))
+        for start, end, is_click in verdicts:
+            self._deliver(self.on_event, TouchpadClickVerdict(start, end, is_click, stamp))
+        self.stats = replace(self.stats, packets=self._packets, tokens=self.stats.tokens + int(step % 2 == 0),
                              contact_probability=frame.touch)
         self._report()
 
     async def prepare(self):
+        if self._callback_running.locked():
+            raise RingError('busy', 'Previous Raw2 application callback is still running')
         await self.receiver.start()
         if self.closed:
             await self.receiver.stop()
-            raise RuntimeError('Touchpad startup cancelled')
+            raise self.receiver.error or RingError('cancelled', 'Touchpad start cancelled')
 
     def start(self):
         self._watcher = asyncio.create_task(self._watch(), name='raw2-session-watch')

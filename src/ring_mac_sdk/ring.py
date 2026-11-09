@@ -11,12 +11,14 @@ log = logging.getLogger(__name__)
 
 
 class Ring:
-    """Use on one asyncio loop. Callbacks are synchronous and must not block.
+    """Use APIs on one asyncio loop. Synchronous touchpad callbacks run off-loop;
+    async touchpad callbacks run on the owner loop and must yield promptly.
+    Gesture/connection callbacks remain synchronous on the owner loop.
 
     disconnect() releases this app's data channel; it never unbinds the owner.
     """
     def __init__(self, device, *, on_gesture=None, on_touchpad=None,
-                 on_touchpad_status=None, on_connection=None, _client_factory=None, _model_factory=None):
+                 on_touchpad_status=None, on_connection=None, on_touchpad_diagnostics=None, _client_factory=None, _model_factory=None):
         self.device_info = None
         self.link_state = "DISCONNECTED"
         self._callbacks = dict(gesture=on_gesture, touchpad=on_touchpad,
@@ -24,8 +26,8 @@ class Ring:
         self._lifecycle = asyncio.Lock()
         self._transport = Transport(device, self._receive, self._disconnected, _client_factory)
         self.gesture = GestureClient(self._transport)
-        self.touchpad = Touchpad(self._transport, lambda e: self._emit("touchpad", e),
-                                 lambda s: self._emit("touchpad_status", s), _model_factory)
+        self.touchpad = Touchpad(self._transport, on_touchpad,
+                                 on_touchpad_status, _model_factory, on_touchpad_diagnostics)
 
     def _emit(self, name, event):
         callback = self._callbacks[name]

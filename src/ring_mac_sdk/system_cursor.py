@@ -114,7 +114,7 @@ class ApplicationSink:
 
 class SystemCursor:
     def __init__(self, *, demo=False, output_factory=NativeOutput, permission_check=accessibility_allowed,
-                 on_fault=None, capacity=128, clock=time.monotonic):
+                 on_fault=None, capacity=512, clock=time.monotonic):
         self.demo, self.output_factory, self.permission_check = demo, output_factory, permission_check
         self.on_fault, self.clock = on_fault, clock
         self.queue = asyncio.Queue(maxsize=capacity)
@@ -128,7 +128,10 @@ class SystemCursor:
         self.token = threading.Event()
         self.sink = self.key = None
         self.sequence = -1
-        self.expired = 0
+        self.expired = 0  # Compatibility field: age no longer discards events.
+        self.late = 0
+        self.last_motion = None
+        self.playback_interval = .004
 
     async def background(self, function):
         if self.preparation is not None and not self.preparation.done():
@@ -203,6 +206,8 @@ class SystemCursor:
             raise PermissionError(PERMISSION_HELP)
         self.sink = ApplicationSink(output, config)
         self.config, self.key, self.sequence = config, key, -1
+        self.last_motion = None
+        self.playback_interval = .004
         self.enabled = True
         self.message = '系统控制已开启'
         return True
@@ -211,6 +216,8 @@ class SystemCursor:
         self.epoch += 1
         self.enabled = False
         self.token.clear()
+        self.last_motion = None
+        self.playback_interval = .004
         self.sink = self.key = None  # Old worker owns its sink; never reuse its remainder.
         while not self.queue.empty():
             self.queue.get_nowait()
@@ -230,6 +237,8 @@ class SystemCursor:
         if isinstance(event, Click) and event.is_preview:
             return
         try:
+            if self.queue.qsize()+int(self.task is not None and not self.task.done()) >= self.queue.maxsize:
+                raise asyncio.QueueFull
             self.queue.put_nowait((event, self.clock(), self.token, self.sink))
         except asyncio.QueueFull:
             self.fault(RuntimeError('系统输出队列已满，已停用；请手动重新开启'))
@@ -246,12 +255,9 @@ class SystemCursor:
             now = self.clock()
             expired = ((isinstance(event, Motion) and (now-event.meta.source_time_ns/1e9 > .2 or now-arrived > .2))
                        or (isinstance(event, Click) and now-arrived > .25))
-            if expired:
-                if not expiry_reported:
-                    self.expired += 1
-                    sink.reset()
-                    expiry_reported = True
-                return False
+            if expired and not expiry_reported:
+                self.late += 1
+                expiry_reported = True
             if not self.permission_check():
                 raise PermissionError(PERMISSION_HELP)
             return token.is_set()
@@ -262,14 +268,25 @@ class SystemCursor:
             event, arrived, token, sink = self.queue.get_nowait()
             if not token.is_set():
                 continue
-            limit = .2 if isinstance(event, Motion) else .25 if isinstance(event, Click) else None
-            source_old = isinstance(event, Motion) and self.clock()-event.meta.source_time_ns/1e9 > .2
-            if source_old or (limit is not None and self.clock()-arrived > limit):
-                self.expired += 1
-                sink.reset()
-                continue
             try:
-                await asyncio.to_thread(self.dispatch, event, token, sink, arrived)
+                if isinstance(event, Motion):
+                    age = self.clock()-arrived
+                    if age > .05:
+                        self.playback_interval = .002
+                    elif age > .025:
+                        self.playback_interval = min(self.playback_interval, .003)
+                    elif age < .015:
+                        self.playback_interval = .004
+                    if self.last_motion is not None:
+                        await asyncio.sleep(max(0, self.last_motion+self.playback_interval-self.clock()))
+                def dispatch():
+                    if token.is_set():
+                        if isinstance(event, Motion):
+                            self.last_motion = self.clock()
+                        self.dispatch(event, token, sink, arrived)
+                await asyncio.to_thread(dispatch)
+                if self.queue.empty():
+                    self.playback_interval = .004
             except Exception as exc:
                 if token.is_set():
                     if isinstance(exc, PermissionError):
@@ -290,4 +307,4 @@ class SystemCursor:
         preparing = bool(self.preparation and not self.preparation.done())
         return dict(enabled=self.enabled, permission=self.permission, message=self.message, preparing=preparing,
                     pending=self.queue.qsize(), inflight=bool(self.task and not self.task.done()) or preparing,
-                    expired=self.expired, config=asdict(self.config))
+                    expired=self.expired, late=self.late, playback_interval_ms=self.playback_interval*1000, config=asdict(self.config))

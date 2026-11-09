@@ -1,4 +1,4 @@
-"""Offline acceptance of the staged 2026-11-05 SDK; never uses real BLE/input."""
+"""Offline acceptance of the supplied SDK; never uses real BLE/input."""
 import asyncio
 import base64
 import csv
@@ -22,26 +22,24 @@ from ring_mac_sdk.system_cursor import ApplicationSink, CursorConfig
 from ring_mac_sdk.types import Click, EventMeta
 
 ROOT = Path(__file__).resolve().parents[1]
-DELIVERY = ROOT / "third_party/ringo-touchpad-delivery-20261105"
-WHEEL = DELIVERY / "sdk/ring_mac_sdk-0.3.0-py3-none-macosx_13_0_arm64.whl"
-PREFIX = "ring_mac_sdk-0.3.0.data/purelib/ring_mac_sdk/"
+DELIVERY = ROOT / "third_party/ring-mac-sdk-0.4.0-macos-arm64"
+WHEEL = DELIVERY / "sdk/ring_mac_sdk-0.4.0-py3-none-macosx_13_0_arm64.whl"
+PREFIX = "ring_mac_sdk-0.4.0.data/purelib/ring_mac_sdk/"
 
 
 def test_delivery_and_vendored_package_are_byte_identical_to_provider():
-    manifest = json.loads((DELIVERY / "release-manifest.json").read_text())
-    assert manifest["sdk"]["version"] == "0.3.0"
+    manifest = json.loads((DELIVERY / "manifest.json").read_text())
+    assert manifest["version"] == "0.4.0"
     assert hashlib.sha256(WHEEL.read_bytes()).hexdigest() == (
-        "2cbd85231a27eb4c9f13b22ad246a41f23c705217c2f90e3ea9fba30a31d97d9"
+        "d491794a09bec21af9e4a781e0f220b551e565bdbb821d9b6d8e614f7b371506"
     )
-    for entry in manifest["files"]:
-        raw = (DELIVERY / entry["path"]).read_bytes()
-        assert len(raw) == entry["bytes"]
-        assert hashlib.sha256(raw).hexdigest() == entry["sha256"]
+    for name, digest in manifest["files"].items():
+        assert hashlib.sha256((DELIVERY / name).read_bytes()).hexdigest() == digest
     for line in (DELIVERY / "SHA256SUMS").read_text().splitlines():
         digest, name = line.split(maxsplit=1)
         assert hashlib.sha256((DELIVERY / name.lstrip("*")).read_bytes()).hexdigest() == digest
     with zipfile.ZipFile(WHEEL) as wheel:
-        record = wheel.read("ring_mac_sdk-0.3.0.dist-info/RECORD").decode()
+        record = wheel.read("ring_mac_sdk-0.4.0.dist-info/RECORD").decode()
         for name, digest, size in csv.reader(io.StringIO(record)):
             if digest:
                 raw = wheel.read(name)
@@ -71,7 +69,7 @@ def test_import_does_not_load_ble_inference_or_native_input():
     result = subprocess.run([sys.executable, "-c", """
 import sys
 import ring_mac_sdk
-assert ring_mac_sdk.__version__ == '0.3.0'
+assert ring_mac_sdk.__version__ == '0.4.0'
 assert not {'bleak', 'onnxruntime', 'pynput', 'Quartz', 'ApplicationServices'} & sys.modules.keys()
 """], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -156,8 +154,8 @@ class FakeModel:
 @pytest.mark.parametrize("gap", [False, True])
 def test_mock_ring_lifecycle_and_stream_failure_cleanup(gap):
     async def run():
-        events, states, gestures = [], [], []
-        ring = Ring("offline", on_touchpad=events.append, on_touchpad_status=states.append,
+        events, gestures = asyncio.Queue(), []
+        ring = Ring("offline", on_touchpad=events.put,
                     on_gesture=gestures.append, _client_factory=FakeClient, _model_factory=FakeModel)
         async with ring:
             client = ring._transport.client
@@ -169,8 +167,9 @@ def test_mock_ring_lifecycle_and_stream_failure_cleanup(gap):
             assert gestures[0].class_id == 8
             await asyncio.wait_for(ring.touchpad.start(), 2)
             assert ring.touchpad.status.stage == "RUNNING"
-            assert events and isinstance(events[0], Motion)
-            assert events[0].meta.session_id == ring.touchpad.status.session_id
+            event = await asyncio.wait_for(events.get(), 2)
+            assert isinstance(event, Motion)
+            assert event.meta.session_id == ring.touchpad.status.session_id
             if gap:
                 client.callback(None, token(3, reset=False))
                 await asyncio.wait_for(asyncio.shield(ring.touchpad.task), 2)
@@ -179,9 +178,9 @@ def test_mock_ring_lifecycle_and_stream_failure_cleanup(gap):
             else:
                 await ring.touchpad.stop()
                 assert ring.touchpad.status.stage == "STOPPED"
-            count = len(events)
+            count = events.qsize()
             client.callback(None, token(4, reset=False))
-            assert len(events) == count
+            assert events.qsize() == count
         assert ring.link_state == "DISCONNECTED"
         assert client.commands.count(p.START) == 1
         assert client.commands.count(p.STOP) == 2  # Initial handshake and final cleanup.
@@ -228,7 +227,7 @@ def test_real_receiver_load_reset_and_finite_output():
 
 @pytest.mark.parametrize("run", [False, True])
 def test_calibration_utility_is_read_only_unless_explicitly_requested(run):
-    utility = runpy.run_path(str(DELIVERY / "tools/gyro_calibration.py"))
+    utility = runpy.run_path(str(ROOT / "third_party/ringo-touchpad-delivery-20261105/tools/gyro_calibration.py"))
 
     async def check():
         operations, stopped = [], []

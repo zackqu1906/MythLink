@@ -5,7 +5,7 @@ import time
 
 from proximic_ring.touchpad.stroke.stroke_input import StrokeCollector, StrokeDictionary, SYMBOLS
 from proximic_ring.touchpad.touchpad_strokes import TouchpadStrokeOutput
-from ring_python_sdk.touchpad import TouchpadMove, TouchpadContact, TouchpadClickVerdict
+from ring_python_sdk.touchpad import Raw2Reset, TouchpadMove, TouchpadContact, TouchpadClickVerdict
 
 
 def test_trace_observer_is_bounded_and_cannot_mutate_or_interrupt_recognition():
@@ -208,6 +208,53 @@ def test_multiple_strokes_in_one_batch_keep_separate_sdk_boundaries():
     output.wake.set(); assert written.wait(1)
     output.stop(); assert done.wait(1)
     assert [path[-1] for path in paths]==[(9.,0.),(9.,0.)]
+
+
+def test_raw2_reset_discards_queued_strokes_and_invalidates_an_inflight_contact():
+    preview, resume, new_stroke = (threading.Event() for _ in range(3))
+    paths, errors = [], []
+
+    def trace(points, finished):
+        if finished and points and not preview.is_set():
+            preview.set()
+            resume.wait(2)
+
+    def stroke(points):
+        paths.append(points[-1])
+        if points[-1] == (0., 18.):
+            new_stroke.set()
+
+    output = TouchpadStrokeOutput(connection=threading.Event(), on_ready=lambda: None,
+        on_end=lambda _, error: errors.append(error), on_stroke=stroke, on_tap=lambda: None,
+        on_trace=trace)
+
+    def submit_stroke(start, dx, dy):
+        now = time.monotonic()
+        output.submit(TouchpadContact('down', start, now))
+        output.submit(TouchpadContact('up', start+10, now))
+        for step in range(start, start+10):
+            output.submit(TouchpadMove(dx, dy, .9, step, now))
+        output.submit(TouchpadClickVerdict(start, start+10, False, now))
+
+    output.activate()
+    submit_stroke(10, 1, 0)
+    output.start()
+    try:
+        assert preview.wait(1)  # Old contact is detached and about to be committed.
+        submit_stroke(30, 2, 0)
+        output.submit(Raw2Reset('reset', 0, time.monotonic(), session_id='ring', generation=1))
+        submit_stroke(0, 0, 1)
+        for step in range(10, 50):
+            output.submit(TouchpadMove(0, 0, 0., step, time.monotonic()))
+        submit_stroke(50, 0, 2)  # Wait past all old frame indices before checking output.
+        resume.set()
+        assert new_stroke.wait(1)
+    finally:
+        resume.set()
+        output.stop()
+        output.thread.join(1)
+    assert errors == [None]
+    assert paths == [(0., 9.), (0., 18.)]
 
 
 def test_late_click_with_already_received_lift_frames_never_publishes_a_stroke():

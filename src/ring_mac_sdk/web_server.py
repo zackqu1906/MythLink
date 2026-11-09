@@ -28,7 +28,7 @@ class Controller:
         self.revision = self.log_id = 0
         self.state = dict(demo=demo, busy=False, link='DISCONNECTED', stage='STOPPED',
                           name=None, firmware=None, battery=None, devices=[], error=None,
-                          session=None, generation=0, has_ring=False, status_message='')
+                          session=None, generation=0, has_ring=False, status_message='', diagnostics=None)
         self.cursor = cursor or SystemCursor(demo=demo)
         self.cursor.on_fault = self.error
         self.clear()
@@ -57,6 +57,8 @@ class Controller:
         if key != self.key or value.stage != 'RUNNING':
             self.cursor.disable('触摸板停止、故障或代次变化；系统控制需手动重新开启')
             self.clear()
+        if self.key and self.key[0] != key[0]:
+            self.state['diagnostics'] = None
         self.key = key
         self.state.update(stage=value.stage, session=value.session_id, generation=value.generation,
                           status_message=value.message)
@@ -153,8 +155,17 @@ class Controller:
                     self.clear()
                     device = next(d for d in self.state['devices'] if d['identifier'] == identifier)
                     self.state.update(name=device['name'], firmware=None, battery=None)
-                    self.ring = self.factory(self.devices[identifier], on_connection=self.connection,
-                                             on_touchpad=self.event, on_touchpad_status=self.status)
+                    callbacks = dict(on_connection=self.connection, on_touchpad=self.event, on_touchpad_status=self.status)
+                    if not self.demo:
+                        async def event(value):
+                            self.event(value)
+                        async def status(value):
+                            self.status(value)
+                        async def diagnostic(value):
+                            if value.session_id == self.state['session']:
+                                self.state['diagnostics'] = asdict(value)
+                        callbacks.update(on_touchpad=event, on_touchpad_status=status, on_touchpad_diagnostics=diagnostic)
+                    self.ring = self.factory(self.devices[identifier], **callbacks)
                     self.state['has_ring'] = True
                     info = await self.ring.connect()
                     self.state['firmware'] = info.firmware_version

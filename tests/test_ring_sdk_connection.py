@@ -65,7 +65,10 @@ def test_product_connect_uses_provider_info_before_sensors_and_one_notification_
         assert session.touchpad.transport is session._sdk_transport
         client.callback(None, compact())
         client.callback(None, audio_packet())
-        assert gestures and pcm and frames
+        async with asyncio.timeout(1):
+            while not frames:
+                await asyncio.sleep(.001)
+        assert gestures and pcm
         await session.query_battery()
         assert session.battery_pct == 85
         await session.touchpad_off()

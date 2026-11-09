@@ -23,10 +23,10 @@ async def until(predicate):
             await asyncio.sleep(.001)
 
 
-async def shared_session(monkeypatch, tmp_path):
+async def shared_session(monkeypatch, tmp_path, model=FakeModel):
     from ring_python_sdk.touchpad import raw2
     factory = raw2.Raw2Stream
-    monkeypatch.setattr(raw2, 'Raw2Stream', lambda *a, **kw: factory(*a, **kw, model_factory=FakeModel))
+    monkeypatch.setattr(raw2, 'Raw2Stream', lambda *a, **kw: factory(*a, **kw, model_factory=model))
     session = RingSession('offline', 1, data_root=tmp_path)
     client = FakeClient(disconnected_callback=lambda _: None)
     from ring_python_sdk.session.sdk_transport import connect_session
@@ -139,8 +139,8 @@ def test_shared_connection_preserves_audio_and_resets_both_output_lanes(monkeypa
                                       on_pointer_move=pointer.append, on_stopped=stopped.append, duration_s=None)
             assert session.touchpad_active
             assert client.commands == [p.STOP, p.START]
-            assert any(isinstance(e, TouchpadMove) for e in frames)
-            assert pointer and pointer[0].session_id
+            await until(lambda: any(isinstance(e, TouchpadMove) for e in frames) and pointer)
+            assert isinstance(frames[0], Raw2Reset) and pointer[0].session_id
             old_key = (pointer[0].session_id, pointer[0].generation)
             client.callback(None, token(1, epoch=5))
             await until(lambda: any(getattr(e, 'generation', 0) == 1 for e in pointer))
@@ -161,19 +161,14 @@ def test_shared_connection_preserves_audio_and_resets_both_output_lanes(monkeypa
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('failure', ['gap', 'idle', 'overflow'])
-def test_shared_stream_failure_cleans_up_without_disconnecting_mic(monkeypatch, tmp_path, failure):
+def test_unknown_sequence_gap_cleans_up_without_disconnecting_mic(monkeypatch, tmp_path):
     async def run():
         session, client = await shared_session(monkeypatch, tmp_path)
         stopped = []
         session.mic_active = True
         await session.touchpad_on(protocol='raw2', on_event=lambda _: None,
                                   on_stopped=stopped.append, duration_s=None)
-        if failure == 'gap':
-            client.callback(None, token(3, reset=False))
-        elif failure == 'overflow':
-            for i in range(1, 67):
-                client.callback(None, token(i, reset=False))
+        client.callback(None, token(3, reset=False))
         await until(lambda: bool(stopped))
         await session._wait_touchpad_cleanup()
         assert stopped[0] is not None
@@ -183,7 +178,10 @@ def test_shared_stream_failure_cleans_up_without_disconnecting_mic(monkeypatch, 
     asyncio.run(run())
 
 
-def test_stop_during_raw2_start_waits_for_stop_ack_on_shared_demux(monkeypatch, tmp_path):
+@pytest.mark.parametrize('confirmed', [False, True])
+def test_stop_during_raw2_start_waits_for_stop_ack_on_shared_demux(monkeypatch, tmp_path, confirmed):
+    from ring_mac_sdk.errors import RingError
+
     async def run():
         session, client = await shared_session(monkeypatch, tmp_path)
         original = client.write_gatt_char
@@ -193,14 +191,21 @@ def test_stop_during_raw2_start_waits_for_stop_ack_on_shared_demux(monkeypatch, 
                 client.commands.append(command)
                 client.callback(None, status())
                 started.set()  # No first token; start is still pending.
+            elif command == p.STOP and started.is_set() and not confirmed:
+                client.commands.append(command)
+                bad = bytearray(status(0))
+                struct.pack_into('<i', bad, 4, -16)
+                client.callback(None, bad)
             else:
                 await original(uuid, command, **kw)
         client.write_gatt_char = write
         task = asyncio.create_task(session.touchpad_on(protocol='raw2', on_event=lambda _: None))
         await asyncio.wait_for(started.wait(), 1)
         await asyncio.wait_for(session.touchpad_off(), 1)
-        with pytest.raises(Exception):
+        with pytest.raises(RingError) as exc:
             await task
+        assert exc.value.reason == ('cancelled' if confirmed else 'stop_unconfirmed')
+        assert session.touchpad_error is exc.value
         assert client.commands.count(p.STOP) == 2
         assert not session.touchpad_active and client.is_connected
     asyncio.run(run())
@@ -239,78 +244,154 @@ def test_repeated_stop_does_not_cancel_delayed_cleanup_ack(monkeypatch, tmp_path
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('stop_confirmed', [False, True])
-def test_missing_first_token_reports_input_timeout_without_restarting_existing_gestures(monkeypatch, tmp_path, stop_confirmed, caplog):
-    from ring_python_sdk.swipe.processor import SwipeProcessor
-    from proximic_ring.audio.ring import RingAudioSource
-    from proximic_ring.voice.app_runtime import _gesture_health_status
+def test_quiet_input_is_inspected_and_resumes_on_the_existing_session(monkeypatch, tmp_path, caplog):
+    from ring_mac_sdk.interaction import ContactTimes
     from test_public_sdk_integration import compact
-    from ring_mac_sdk.errors import RingError
 
     async def run():
         session, client = await shared_session(monkeypatch, tmp_path)
-        observed, stopped = [], []
-        session.swipe = SwipeProcessor(tmp_path/'gestures.csv', on_trigger=observed.append)
-        processor = session.swipe
-        session.swipe_active = session.mic_active = True
-        client.callback(None, compact())
-        source = RingAudioSource(selector='offline')
-        source._touchpad_endpoint = (asyncio.get_running_loop(), session)
-        source.gestures_active = True
+        frames, pointer, gestures, stopped = [], [], [], []
+        processor = enable_gestures(session, tmp_path, gestures.append)
+        session.mic_active = True
         original = client.write_gatt_char
         async def write(uuid, command, **kw):
             if command == p.START:
                 client.commands.append(command)
-                client.callback(None, status())  # ACK succeeds, but no token follows.
-            elif command[:1] == b'\x26':
+                client.callback(None, status())
+            elif command == b'\x3c\x03':
                 client.commands.append(command)
-            elif command == p.STOP and p.START in client.commands and not stop_confirmed:
+                client.callback(None, status())
+            elif command == b'\x3c\x04':
                 client.commands.append(command)
-                bad = bytearray(status(0))
-                struct.pack_into('<i', bad, 4, -16)
-                client.callback(None, bad)
+                client.callback(None, b'\x3c\x12\x02\x00' + struct.pack('<15I', 42, *([0]*14)))
             else:
                 await original(uuid, command, **kw)
         client.write_gatt_char = write
+        start = asyncio.create_task(session.touchpad_on(protocol='raw2', on_event=frames.append,
+            on_pointer_move=pointer.append, on_stopped=stopped.append, duration_s=None))
         try:
-            with pytest.raises(RingError, match='3 秒内未收到首个 Raw2 数据包') as error:
-                await session.touchpad_on(protocol='raw2', on_event=lambda _: None,
-                                          on_stopped=stopped.append, duration_s=None)
-            assert error.value.reason == 'input_timeout'
-            assert stopped == [error.value]
-            assert not session.touchpad_active and session.touchpad is None
-            assert session.swipe is processor and session.swipe_active and session.mic_active
-            assert client.is_connected
-            diagnostics = source.gesture_diagnostics()
-            assert client.commands == [p.STOP, p.START, p.STOP]
-            assert 'recovery_state' not in diagnostics
-            assert _gesture_health_status(dict(diagnostics, stream_ready=True)) == 'running'
-            client.callback(None, compact(seq=2))
-            assert len(observed) == 2
-            assert source.gesture_diagnostics()['device_packet_count'] == 2
+            await until(lambda: p.START in client.commands)
+            receiver = session.touchpad.receiver
+            receiver.first_input_timeout = receiver.input_timeout = .03
+            await until(lambda: receiver.diagnostics.device is not None)
+            assert not start.done() and 'INPUT_TIMEOUT' in receiver.diagnostics.active_issues
+            client.callback(None, compact())
+            client.callback(None, token())
+            await start
+            await until(lambda: pointer and frames)
+            first = next(e for e in frames if isinstance(e, Raw2Reset))
+            await until(lambda: len([e for e in frames if isinstance(e, Raw2Reset)]) == 2)
+            assert [(e.session_id, e.generation) for e in frames if isinstance(e, Raw2Reset)] == [
+                (first.session_id, first.generation)] * 2
+            assert stopped == [] and gestures and session.mic_active and session.swipe_active
+            # A paired click crossing the quiet interval must not be revived at dispatch.
+            boundary = receiver.output_after_ns
+            contact = ContactTimes(boundary-1, boundary+1, 0, 1)
+            fresh = ContactTimes(boundary+1, boundary+3, 2, 3)
+            emitted = time.monotonic_ns()
+            receiver._event('click', emitted, id=90, button='LEFT', contacts=(contact, fresh))
+            receiver._event('click', emitted, id=91, button='LEFT', contacts=(fresh,))
+            await until(lambda: any(getattr(e, 'click_id', None) == 91 for e in pointer))
+            assert [e.click_id for e in pointer if e.kind == 'click'] == [91]
+            assert pointer[-1].timestamp == emitted/1e9
+            client.callback(None, token(1, reset=False))
+            await until(lambda: receiver.ordinal == 2)
+            assert receiver.generation == 0
         finally:
+            await session.touchpad_off()
             processor.close()
+        assert stopped == [None] and client.is_connected and client.commands.count(p.START) == 1
     with caplog.at_level('INFO'):
         asyncio.run(run())
-    assert 'phase=first_token token_packets=0 inferred_tokens=0' in caplog.text
-    assert '[RAW2_CONTROL] command=START stage=complete' in caplog.text
+    assert '[RAW2_DIAGNOSTICS]' in caplog.text and 'INPUT_TIMEOUT' in caplog.text
 
 
-def test_actual_inference_timeout_is_distinct_from_missing_input(monkeypatch, tmp_path):
+def test_known_local_loss_recovers_both_output_lanes(monkeypatch, tmp_path):
+    async def run():
+        session, client = await shared_session(monkeypatch, tmp_path)
+        frames, pointer = [], []
+        await session.touchpad_on(protocol='raw2', on_event=frames.append, on_pointer_move=pointer.append,
+                                  duration_s=None)
+        receiver = session.touchpad.receiver
+        await until(lambda: pointer and frames)
+        for seq in range(1, 67):
+            client.callback(None, token(seq, reset=False))
+        await until(lambda: receiver.generation == 1 and any(e.generation == 1 for e in pointer))
+        assert receiver.diagnostics.counters['input_dropped_packets'] == 2
+        assert [e.generation for e in frames if isinstance(e, Raw2Reset)] == [0, 1]
+        assert receiver.error is None and client.commands == [p.STOP, p.START]
+        await session.touchpad_off()
+    asyncio.run(run())
+
+
+def test_cancelled_native_call_fences_reconnect_until_the_worker_returns(monkeypatch, tmp_path):
+    from ring_mac_sdk.errors import RingError
     from ring_python_sdk.touchpad import raw2
+    entered, release = threading.Event(), threading.Event()
     stream_class = raw2.Raw2Stream
     class SlowModel(FakeModel):
         def step(self, features):
-            time.sleep(.25)
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError('test did not release model')
             return super().step(features)
-    async def run():
-        session, client = await shared_session(monkeypatch, tmp_path)
-        monkeypatch.setattr(raw2, 'Raw2Stream', lambda *a, **kw: stream_class(*a, **kw, model_factory=SlowModel))
-        with pytest.raises(Exception, match='推理或调度超过 200 毫秒'):
-            await session.touchpad_on(protocol='raw2', on_event=lambda _: None)
-        assert session.touchpad_error.reason == 'inference_timeout'
+
+    async def first_loop():
+        session, client = await shared_session(monkeypatch, tmp_path, SlowModel)
+        start = asyncio.create_task(session.touchpad_on(protocol='raw2', on_event=lambda _: None))
+        await until(entered.is_set)
+        await session.touchpad_off()
+        with pytest.raises(RingError, match='cancelled'):
+            await start
         assert client.commands == [p.STOP, p.START, p.STOP]
-    asyncio.run(run())
+
+    async def after_reconnect():
+        monkeypatch.setattr(raw2, 'Raw2Stream', stream_class)
+        session, client = await shared_session(monkeypatch, tmp_path)
+        with pytest.raises(RingError, match='still running'):
+            await session.touchpad_on(protocol='raw2', on_event=lambda _: None)
+        assert not client.commands
+        release.set()
+        await until(lambda: not raw2.StrokeTouchpad._model_running.locked())
+        await session.touchpad_on(protocol='raw2', on_event=lambda _: None)
+        assert session.touchpad.receiver.status.stage == 'RUNNING'
+        await session.touchpad_off()
+
+    try:
+        asyncio.run(first_loop())
+        asyncio.run(after_reconnect())
+    finally:
+        release.set()
+
+
+def test_busy_application_callback_fences_new_connection_until_it_returns(monkeypatch, tmp_path):
+    from ring_mac_sdk.errors import RingError
+    from ring_python_sdk.touchpad.raw2 import Raw2Stream
+    entered, release = threading.Event(), threading.Event()
+    def slow_callback(event):
+        entered.set()
+        assert release.wait(5)
+
+    async def run():
+        first, _ = await shared_session(monkeypatch, tmp_path)
+        await first.touchpad_on(protocol='raw2', on_event=slow_callback)
+        await until(entered.is_set)
+        await first.touchpad_off()
+        monkeypatch.setattr('ring_python_sdk.touchpad.raw2.Raw2Stream', Raw2Stream)
+        second, client = await shared_session(monkeypatch, tmp_path)
+        with pytest.raises(RingError, match='callback is still running'):
+            await second.touchpad_on(protocol='raw2', on_event=lambda _: None)
+        assert not client.commands
+        release.set()
+        await until(lambda: not Raw2Stream._callback_running.locked())
+        await second.touchpad_on(protocol='raw2', on_event=lambda _: None)
+        assert client.commands == [p.STOP, p.START]
+        await second.touchpad_off()
+
+    try:
+        asyncio.run(run())
+    finally:
+        release.set()
 
 
 class Mouse:
