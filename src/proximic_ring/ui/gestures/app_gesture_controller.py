@@ -589,7 +589,7 @@ class AppGestureController(QObject):
             return target
         return None
 
-    def _passive_undo_target(self, gesture, front):
+    def _passive_outside_target(self, gesture, front):
         target = self.backend.capture(menu_action=True, scene=True, passive_undo=True)
         if not target or target.blocked or (target.bundle, target.pid) != front:
             return None
@@ -600,7 +600,7 @@ class AppGestureController(QObject):
             return target
         return None
 
-    def envelope(self, event, *, audio_busy=False, start_focus=None, input_only=False):
+    def envelope(self, event, *, audio_busy=False, start_focus=None, input_only=False, end_only=False):
         """Only gestures sharing an input binding need focus-based arbitration."""
         source = event.event if isinstance(event, BoundGestureEvent) else event
         name = str(getattr(source, "name", ""))
@@ -629,14 +629,14 @@ class AppGestureController(QObject):
         # With nothing left to undo, probing must not borrow the just-restored keyboard.
         empty_undo = (input_priority and not busy and not resume_failure and name in bindings.undo
                       and name != self._source_gesture and inline.empty_undo_after_return())
-        def ignored_undo():
-            self._trace(trace_id, "outcome", "no_cancel_or_visible_undo", gesture=name)
+        def ignored(reason):
+            self._trace(trace_id, "outcome", reason, gesture=name)
             return AppGestureEvent(BoundGestureEvent(source, bindings), None, generation, created,
                                    sentence=sentence, route="ignored", trace_id=trace_id, **state)
 
         if (empty_undo and not self.owner._global_gesture_bindings.action_for(name)
                 and not self.foreground_has_binding(name)):
-            return ignored_undo()
+            return ignored("no_cancel_or_visible_undo")
         target, error, capture_error = None, None, ""
         input_method_target = None
         try:
@@ -649,9 +649,11 @@ class AppGestureController(QObject):
                 if start_focus is None:
                     options = ({"native_fallback": lambda front: self._presentation_fallback_target(name, front)}
                                if not input_only and self._catalog.uses_scene(name) else {})
-                    if empty_undo:
+                    if name in bindings.confirm:
+                        options["require_editable"] = True
+                    elif empty_undo or end_only:
                         options = {"allow_activation": False,
-                                   "native_fallback": lambda front: self._passive_undo_target(name, front)}
+                                   "native_fallback": lambda front: self._passive_outside_target(name, front)}
                     start_focus = inline.capture_start_focus(**options)
                 if start_focus is None:
                     raise SceneActionError("input_method_not_ready")
@@ -659,7 +661,9 @@ class AppGestureController(QObject):
                     self._trace(trace_id, "input_focus", start_focus.reason or start_focus.status,
                                 gesture=name, elapsed_ms=start_focus.elapsed_ms)
                     if empty_undo and start_focus.status in {"text", "unavailable"}:
-                        return ignored_undo()
+                        return ignored("no_cancel_or_visible_undo")
+                    if input_only and (start_focus.status in {"nontext", "outside"} or start_focus.reason == "unknown_focus"):
+                        return ignored(start_focus.reason or "input_method_no_focus")
                     if start_focus.status == "text":
                         input_method_target = start_focus.target
                     elif start_focus.status == "unavailable":

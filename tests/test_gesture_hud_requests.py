@@ -82,3 +82,16 @@ def test_manual_hints_are_available_without_a_ring_connection(pending_hints):
     tasks[0]()
     QCoreApplication.processEvents()
     assert len(scenes) == 1 and not defaults
+
+
+def test_menu_hint_only_reads_focus(pending_hints, monkeypatch):
+    c, ring, _, tasks, _, _ = pending_hints
+    probe = c._inline_input.capture_start_focus
+    calls = []
+    def capture(**options):
+        calls.append(options)
+        return probe(**options)
+    monkeypatch.setattr(c._inline_input, "capture_start_focus", capture)
+    ring.showMenu()
+    tasks[0]()
+    assert calls == [{"allow_activation": False}]

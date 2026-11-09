@@ -24,7 +24,8 @@ class InputFocus:
     native_target: object = None
 
 
-def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_fallback=None):
+def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_fallback=None,
+                      activation_focus=None):
     """Run on the gesture worker. Source selection and replies share a deadline.
 
     A bound client's invalid selection is nontext. Outside an explicitly
@@ -99,9 +100,21 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
             if connected and state is None and not selected:
                 return unavailable("input_method_timeout")
             if not selected:
-                native = native_focus()
-                if native is not None:
-                    return native
+                if select_source is not None and activation_focus is not None:
+                    # The IMK client is inactive. Only a currently editable control can justify borrowing a keyboard.
+                    target = activation_focus(origin)
+                    if changed():
+                        return result("unavailable", "foreground_or_connection_changed")
+                    if target is None or target.blocked or (target.bundle, target.pid) != origin:
+                        return unavailable("unknown_focus")
+                    if target.input_context == "nontext":
+                        return result("outside", "passive_nontext_focus", native_target=target)
+                    if target.input_context != "text":
+                        return unavailable("unknown_focus")
+                else:
+                    native = native_focus()
+                    if native is not None:
+                        return native
                 if changed():
                     return unavailable("foreground_or_connection_changed")
                 if time.monotonic() >= deadline:

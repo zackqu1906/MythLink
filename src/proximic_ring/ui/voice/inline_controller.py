@@ -395,7 +395,7 @@ class InlineInputController(QObject):
         target = (*expected, front[1])
         return target if self.same_gesture_target(target) else None
 
-    def capture_start_focus(self, *, native_fallback=None, allow_activation=True):
+    def capture_start_focus(self, *, native_fallback=None, allow_activation=True, require_editable=False):
         """Prefer live IMK text; confirmed shows may tolerate unavailable focus."""
         from ...voice.ime.focus_probe import probe_input_focus, InputFocus
         from ...voice.ime.system_input_source import activate_voice_input_source
@@ -409,6 +409,15 @@ class InlineInputController(QObject):
                                       "presentation_focus_fallback" if allow_activation else "passive_nontext_focus",
                                       native_target=target)
             return InputFocus("unavailable", reason="input_method_not_ready")
+        borrowed_origin = None
+        def activation_focus(origin):
+            nonlocal borrowed_origin
+            from ...desktop.app_shortcuts import MacAppShortcuts
+            borrowed_origin = origin
+            return MacAppShortcuts().passive_focus(origin)
+
+        gate = self._gesture_source_activation
+        ticket = gate.invalidate_restore() if allow_activation else None
         def native_activate(origin, **options):
             self.diagnostic.emit({"type": "gesture_source_activation",
                                   "reason": "system_shortcut_unavailable",
@@ -417,13 +426,16 @@ class InlineInputController(QObject):
         previous_source = ""
         def select_source(pid, **options):
             nonlocal previous_source
-            if self._source_return.enabled:
+            if self._source_return.enabled or require_editable:
                 options["remember_source"] = True
             previous_source = activate_voice_input_source(pid, native_activate=native_activate, **options)
         proof = probe_input_focus(self._bridge, self._foreground_identity,
-                                  select_source if allow_activation else None, native_fallback=native_fallback)
+                                  select_source if allow_activation else None, native_fallback=native_fallback,
+                                  activation_focus=activation_focus if require_editable else None)
         if proof and proof.status == "text":
             self._source_return.remember_probe(proof.target, previous_source)
+        elif require_editable and borrowed_origin and self._source_return._external(previous_source):
+            gate.restore_if_unused(borrowed_origin, previous_source, ticket)
         return proof
 
     def empty_undo_after_return(self):
@@ -836,6 +848,7 @@ class InlineInputController(QObject):
         if self._installing:
             failed("输入法正在更新，请稍后重试")
             return
+        self._gesture_source_activation.invalidate_restore()
         self._source_return.discard()
         self._stop_reply_wait()
         self._clear_startup()
@@ -896,6 +909,7 @@ class InlineInputController(QObject):
             return False
         if not self._enabled or self._closed:
             return False
+        self._gesture_source_activation.invalidate_restore()
         self.actionRequested.emit("begin")
         self._clear_action_pending()
         self._stop_reply_wait()

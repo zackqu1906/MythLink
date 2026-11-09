@@ -108,6 +108,7 @@ def shortcut_capture(monkeypatch):
     monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(
         AXUIElementCreateApplication=lambda pid: "app",
         AXUIElementCopyAttributeValue=read,
+        AXUIElementIsAttributeSettable=lambda node, attribute, _: (0, values.get((node, attribute + ".writable"), False)),
         AXUIElementSetMessagingTimeout=lambda elem, timeout: None))
     app = SimpleNamespace(bundleIdentifier=lambda: "com.openai.codex", processIdentifier=lambda: 42,
                           localizedName=lambda: "Codex")
@@ -132,6 +133,43 @@ def test_passive_undo_shortcut_rechecks_native_control_before_dispatch(shortcut_
     assert target.input_context == "nontext" and backend.same_target(target)
     values[("focus", "AXRole")] = "AXTextArea"
     assert not backend.same_target(target)
+
+
+@pytest.mark.parametrize("attributes,expected", [
+    ({"AXRole": "AXTextArea", "AXValue.writable": True}, "text"),
+    ({"AXRole": "AXComboBox", "AXIsEditable": True}, "text"),
+    ({"AXRole": "AXComboBox", "AXValue.writable": True}, "unknown"),
+    ({"AXRole": "AXTextField", "AXValue.writable": True, "AXSubrole": "AXSecureTextField"}, "unknown"),
+    ({"AXRole": "AXTextField", "AXIsEditable": True, "AXEnabled": False}, "unknown"),
+    ({"AXRole": "AXTextArea", "AXIsEditable": False, "AXValue.writable": True}, "unknown"),
+    ({"AXRole": "AXWebArea", "AXIsEditable": False}, "unknown"),
+    ({"AXRole": "AXGroup"}, "unknown"),
+])
+def test_passive_focus_requires_editability_not_just_a_text_role(shortcut_capture, attributes, expected):
+    backend, values, reads = shortcut_capture
+    values.update({("focus", name): value for name, value in attributes.items()})
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target.input_context == expected
+    assert "AXValue" not in reads
+
+
+def test_passive_browser_editor_fences_readonly_fields_and_editor_changes(shortcut_capture, monkeypatch):
+    from proximic_ring.scenes.models import SceneResult
+    backend, values, _ = shortcut_capture
+    values[("focus", "AXRole")] = "AXWebArea"
+    result = SceneResult(input_context="text", page_key="page", browser_target={})
+    monkeypatch.setattr("proximic_ring.desktop.app_shortcuts.detect_scene", lambda *a, **k: result)
+    def capture():
+        return backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert capture().input_context == "unknown"  # Legacy extension does not distinguish passwords.
+    result = replace(result, browser_target={"editor": "current"})
+    target = capture()
+    assert target.input_context == "text"
+    result = replace(result, browser_target={"editor": "different"})
+    assert not backend.same_target(target)
+    result = replace(result, browser_target={"editor": "blocked"})
+    values.update({("focus", "AXRole"): "AXTextField", ("focus", "AXValue.writable"): True})
+    assert capture().input_context == "unknown"
 
 
 @pytest.mark.parametrize("bundle,role,description", [

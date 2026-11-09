@@ -147,12 +147,12 @@ def presentation(route, monkeypatch):
     class Backend(LocalMacAppShortcuts):
         target = ShortcutTarget(POWERPOINT, 42, POWERPOINT, "window", "slide", "AXImage",
                                 scene=PRESENTATION, input_context="nontext")
-        def capture(self, *, plain_enter=False, menu_action=False, scene=False, focus_sensitive=True):
+        def capture(self, *, plain_enter=False, menu_action=False, scene=False, focus_sensitive=True, passive_undo=False):
             if self.target is None:
                 return None
             return replace(self.target, plain_enter=plain_enter, menu_action=menu_action, scene_checked=scene,
-                           focus_sensitive=focus_sensitive)
-        def post(self, target, shortcut, *, require_focus=False):
+                           focus_sensitive=focus_sensitive, passive_undo=passive_undo)
+        def post(self, target, shortcut, *, require_focus=False, system_wide=False):
             if not self.same_target(target, require_focus=require_focus):
                 raise RuntimeError("放映窗口或输入状态已变化")
             sent.append((target.bundle, shortcut))
@@ -227,6 +227,7 @@ def test_queued_scene_gesture_is_dropped_without_replay_or_voice_fallback(presen
 @pytest.mark.parametrize("context", ["exit", "text", "unknown"])
 def test_tap_retains_original_voice_endpoint_outside_eligible_scene(presentation, context):
     c, _, inline, backend, _, sent, _ = presentation
+    assert c.setGestureBinding("confirm", 0, "tap")
     if context == "exit": backend.target = replace(backend.target, scene="")
     if context in {"text", "unknown"}: backend.target = replace(backend.target, input_context=context)
     if context == "voice": inline._view["phase"] = "listening"

@@ -173,19 +173,38 @@ class LocalMacAppShortcuts:
             application_category=application_category, observation=scene_observation)
             if scene else SceneResult())
         active_scene, input_context = recognized.scene, recognized.input_context
-        native_nontext = False
-        if passive_undo and focus is not None:
+        focus_source = "extension" if browser_scene else "unqueried"
+        if passive_undo:
             from .text_focus import TEXT_ROLES
-            if role in TEXT_ROLES or attr(focus, "AXIsEditable") or attr(focus, "AXEditable"):
-                input_context = "text"
+            web_editor = recognized.browser_target.get("editor") if input_context == "text" else None
+            # Older extensions included read-only fields and password boxes in "text".
+            if input_context == "text" and not web_editor:
+                input_context = "unknown"
+            sub = attr(focus, "AXSubrole")
+            editable = attr(focus, "AXIsEditable")
+            editable_fallback = attr(focus, "AXEditable")
+            text_role = role in TEXT_ROLES
+            blocked_editor = (sub == "AXSecureTextField" or bool(attr(focus, "AXProtectedContent"))
+                              or web_editor == "blocked" or attr(focus, "AXEnabled") is False
+                              or bool(attr(focus, "AXHidden")) or attr(focus, "AXFocused") is False
+                              or (text_role and (editable is False or editable_fallback is False
+                                                 or bool(attr(focus, "AXReadOnly")))))
+            native_editor = bool(editable or editable_fallback)
+            if text_role and role != "AXComboBox" and not native_editor and not blocked_editor:
+                error, writable = AX.AXUIElementIsAttributeSettable(focus, "AXValue", None)
+                native_editor = error == 0 and bool(writable)
+            if window is None or attr(focus, "AXWindow") not in (None, window) or blocked_editor:
+                input_context = "unknown"
+            elif native_editor:
+                input_context, focus_source = "text", "native_control"
+            elif text_role and not web_editor:
+                input_context = "unknown"
             elif (role in {"AXButton", "AXCheckBox", "AXRadioButton", "AXSlider", "AXPopUpButton"}
-                  and window is not None and attr(focus, "AXWindow") == window
-                  and attr(focus, "AXFocused") is not False and attr(focus, "AXEnabled") is not False
-                  and not attr(focus, "AXHidden") and input_context != "text"):
-                input_context, native_nontext = "nontext", True
+                  and attr(focus, "AXWindow") == window and recognized.input_context != "text"):
+                input_context, focus_source = "nontext", "native_control"
         info.update(recognition=recognized.diagnostic, scene=active_scene, input_context=input_context,
                     window_subrole=subrole,
-                    focus_source="native_control" if native_nontext else "extension" if browser_scene else "unqueried")
+                    focus_source=focus_source)
         # Application commands (e.g. New/Open) can create their first window.
         # A window is optional for explicit mappings, not for legacy chat keys.
         # Window state is independent of any focused control or AX parent chain.
@@ -275,7 +294,8 @@ class LocalMacAppShortcuts:
             return outcome(current.diagnostic.get("reason", "blocked_window"))
         if (target.window is not None or target.menu_action) and current.window != target.window:
             return outcome("window_changed")
-        if target.passive_undo and (current.focus != target.focus or current.input_context != target.input_context):
+        if target.passive_undo and (current.focus != target.focus or current.input_context != target.input_context
+                                    or current.browser_target.get("editor") != target.browser_target.get("editor")):
             return outcome("focus_changed")
         if target.page_key or current.page_key:
             if (current.page_key != target.page_key
@@ -334,6 +354,18 @@ class MacAppShortcuts:
             options["focus_sensitive"] = False
         value = native_access().call("capture", **options)
         return ShortcutTarget(**value) if value is not None else None
+
+    def passive_focus(self, origin):
+        """Read focused editor evidence on the native worker without selecting an input source."""
+        if not origin:
+            return None
+        try:
+            target = self.capture(menu_action=True, scene=True, passive_undo=True)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if target is not None and not target.blocked and (target.bundle, target.pid) == origin:
+            return target
+        return None
 
     def same_target(self, target, *, require_focus=False):
         from ..platforms.macos.native_access import native_access

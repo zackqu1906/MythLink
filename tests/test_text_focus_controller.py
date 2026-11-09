@@ -143,7 +143,7 @@ def test_retired_field_state_does_not_block_voice_or_application_routes(route, m
     fields.applying.set()
     fields.picker.active.set()
     try:
-        assert request(c, "tap")
+        assert request(c, c._gesture_bindings.confirm[0])
         event = ring.envelope(SimpleNamespace(name="circle-clockwise"))
         assert ring.accepts(event)
         c._apply_gesture(event, c._disconnect_event)

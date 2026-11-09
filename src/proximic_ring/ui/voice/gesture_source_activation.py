@@ -5,6 +5,7 @@ import time
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 
+from ...voice.ime.input_method_install import BUNDLE_ID
 from .input_source_activation import InputSourceActivation
 
 
@@ -18,6 +19,8 @@ class _Request:
     source: object = None
     recovering: bool = False
     previous_source: str | None = None
+    restore_source: str = ""
+    restored: bool = False
 
 
 class GestureSourceActivation(QObject):
@@ -29,20 +32,58 @@ class GestureSourceActivation(QObject):
         self._foreground = foreground
         self._factory = factory
         self._pending = set()
+        self._restore_lock = threading.Lock()
+        self._restore_ticket = None
+        self._restore_request = None
         self._closed = False
         self._requested.connect(self._start, Qt.QueuedConnection)
         self._cancelled.connect(self._cancel, Qt.QueuedConnection)
 
     def activate(self, origin, *, timeout):
+        request = _Request(origin, time.monotonic() + timeout)
+        self._wait(request)
+        return request.previous_source
+
+    def invalidate_restore(self):
+        """New input takes ownership, even if an older focus probe is still running."""
+        ticket = object()
+        with self._restore_lock:
+            self._restore_ticket = ticket
+            request, self._restore_request = self._restore_request, None
+            if request is not None and not request.done.is_set():
+                request.cancelled.set()
+        if request is not None and request.cancelled.is_set():
+            if QThread.currentThread() == self.thread():
+                self._cancel(request)
+            else:
+                self._cancelled.emit(request)
+        return ticket
+
+    def restore_if_unused(self, origin, previous, ticket, *, timeout=.5):
+        """Return a failed probe's loan only while its original request owns it."""
+        if not isinstance(previous, str) or not previous or previous in {BUNDLE_ID, BUNDLE_ID + '.dictation'}:
+            return False
+        request = _Request(origin, time.monotonic() + timeout, restore_source=previous)
+        with self._restore_lock:
+            if ticket is None or ticket is not self._restore_ticket:
+                return False
+            self._restore_ticket = None
+            self._restore_request = request
+        try:
+            self._wait(request)
+            return request.restored
+        except (RuntimeError, TimeoutError):
+            return False
+
+    def _wait(self, request):
         # Only the gesture worker may wait. The GUI must keep servicing native
         # focus changes, helper output and Agent-panel restoration throughout.
         if QThread.currentThread() == self.thread():
             raise RuntimeError('输入法激活必须在手势线程发起')
         if self._closed:
             raise RuntimeError('输入法已关闭')
-        if timeout <= 0:
+        if time.monotonic() >= request.deadline:
             raise TimeoutError('输入法切换超时')
-        request = _Request(origin, time.monotonic() + timeout)
         self._requested.emit(request)
         if (not request.done.wait(max(0, request.deadline - time.monotonic()))
                 or time.monotonic() >= request.deadline):
@@ -51,7 +92,6 @@ class GestureSourceActivation(QObject):
             raise TimeoutError('输入法切换超时')
         if request.error:
             raise RuntimeError(request.error)
-        return request.previous_source
 
     @Slot(object)
     def _start(self, request):
@@ -73,7 +113,10 @@ class GestureSourceActivation(QObject):
             source = self._factory(self, timeout_ms=max(1, int(remaining * 1000)))
             request.source = source
             source.event.connect(lambda message: self._event(request, source, message))
-            (source.recover if request.recovering else source.start)(request.origin)
+            if request.restore_source:
+                source.restore(request.origin, request.restore_source, BUNDLE_ID + '.dictation')
+            else:
+                (source.recover if request.recovering else source.start)(request.origin)
         except Exception as exc:
             self._finish(request, str(exc))
 
@@ -82,6 +125,9 @@ class GestureSourceActivation(QObject):
             return
         if request.cancelled.is_set() or time.monotonic() >= request.deadline:
             self._finish(request, '输入法切换超时')
+        elif request.restore_source:
+            request.restored = message.get('event') == 'restored' and message.get('restored') is True
+            self._finish(request)
         elif message.get('event') != 'selected':
             self._finish(request, str(message.get('error') or '输入法激活失败'))
         elif self._foreground() != request.origin:
