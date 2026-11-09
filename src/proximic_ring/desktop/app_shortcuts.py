@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import sys
 import hashlib
 import time
+from collections import deque
 
 from ..gestures.app_gestures import normalize_shortcut, profile_for_application
 from ..platforms.macos.mac_permissions import require_post_event_access
@@ -65,6 +66,47 @@ class ShortcutTarget:
 class LocalMacAppShortcuts:
     def __init__(self, *, host_pid=0):
         self.host_pid = host_pid
+        self._wechat_ax = None
+
+    def _wechat_focused_control(self, app, window, pid):
+        """Some WeChat builds omit the app's focused element even while typing."""
+        from .text_focus import FocusError
+        ax = self._wechat_ax
+        try:
+            system = ax.ax.AXUIElementCreateSystemWide()
+            ax.ax.AXUIElementSetMessagingTimeout(system, .06)
+            for owner, source in ((app, "application"), (system, "system"), (window, "window")):
+                try:
+                    node = ax.attr(owner, "AXFocusedUIElement")
+                except FocusError:
+                    continue
+                if node is None or node == app or node == window:
+                    continue
+                error, actual_pid = ax.ax.AXUIElementGetPid(node, None)
+                if error or actual_pid != pid or ax.attr(node, "AXWindow") != window:
+                    return None, ""
+                return node, source
+            # Only explicit keyboard focus counts. An existing chat editor (even
+            # one retaining a valid selection) is not proof of insertion focus.
+            deadline = time.monotonic() + .18
+            todo, seen, found = deque([window]), set(), None
+            while todo:
+                if len(seen) >= 160 or time.monotonic() >= deadline:
+                    return None, ""
+                node = todo.popleft()
+                if node in seen:
+                    continue
+                seen.add(node)
+                if node != window and ax.attr(node, "AXFocused") == True:
+                    error, actual_pid = ax.ax.AXUIElementGetPid(node, None)
+                    if found is not None or error or actual_pid != pid or ax.attr(node, "AXWindow") != window:
+                        return None, ""
+                    found = node
+                if ax.attr(node, "AXRole") not in {"AXMenu", "AXMenuBar", "AXMenuBarItem", "AXMenuItem"}:
+                    todo.extend(ax.children(node, 160))
+            return (found, "tree") if found is not None else (None, "")
+        except FocusError:
+            return None, ""
 
     def capture(self, *, plain_enter: bool = False, menu_action: bool = False,
                 scene: bool = False, scene_observation: bool = False,
@@ -141,13 +183,42 @@ class LocalMacAppShortcuts:
             if key not in cache:
                 cache[key] = (node, native_attr(node, name))
             return cache[key][1]
+        wechat = bundle in {"com.tencent.xinWeChat", "com.tencent.WeChat"}
+        wechat_passive = passive_undo and wechat
+        tree_ready = True
+        if wechat and (passive_undo or scene_observation):
+            from .text_focus import MacAX, FocusError
+            if self._wechat_ax is None:
+                self._wechat_ax = MacAX()
+            try:
+                # WeChat's uninitialized tree can report the application itself as its window.
+                tree_ready = self._wechat_ax.prepare_application(pid, element)
+            except FocusError:
+                return finish("target_unavailable")
         window = attr(element, "AXFocusedWindow")
+        if wechat_passive and not tree_ready and window in (None, element):
+            # Warming the tree once can take several seconds. Never block that
+            # long on a gesture; use it immediately if a real window appears.
+            deadline = time.monotonic() + .12
+            while window in (None, element) and time.monotonic() < deadline:
+                time.sleep(.015)
+                window = native_attr(element, "AXFocusedWindow")
         reported_window = window
+        if wechat_passive and window == element:
+            return finish("window_missing")
         # Ordinary application shortcuts need only the window. An empty undo
         # sharing a shortcut may also need to prove focus without selecting an IME.
         focus_sensitive = passive_undo or bool(plain_enter and focus_sensitive)
         info["focus_sensitive"] = focus_sensitive
         focus = attr(element, "AXFocusedUIElement") if focus_sensitive else None
+        wechat_fallback = wechat_passive and focus in (None, element, window) and window is not None
+        wechat_source = ""
+        if wechat_fallback:
+            focus, wechat_source = self._wechat_focused_control(element, window, pid)
+        elif wechat_passive and focus is not None:
+            error, owner_pid = AX.AXUIElementGetPid(focus, None)
+            if error or owner_pid != pid or window is None or attr(focus, "AXWindow") != window:
+                return finish("focus_changed")
         role = str(attr(focus, "AXRole") or "")
         if plain_enter:
             # Enter follows the focused control's own semantics, including web
@@ -196,7 +267,7 @@ class LocalMacAppShortcuts:
             if window is None or attr(focus, "AXWindow") not in (None, window) or blocked_editor:
                 input_context = "unknown"
             elif native_editor:
-                input_context, focus_source = "text", "native_control"
+                input_context, focus_source = "text", ("wechat_" + wechat_source if wechat_source else "native_control")
             elif text_role and not web_editor:
                 input_context = "unknown"
             elif (role in {"AXButton", "AXCheckBox", "AXRadioButton", "AXSlider", "AXPopUpButton"}
@@ -224,8 +295,14 @@ class LocalMacAppShortcuts:
                 return finish("foreground_changed")
             if native_attr(element, "AXFocusedWindow") != reported_window:
                 return finish("window_changed")
-            if passive_undo and native_attr(element, "AXFocusedUIElement") != focus:
-                return finish("focus_changed")
+            if passive_undo:
+                current_focus = native_attr(element, "AXFocusedUIElement")
+                if wechat_fallback and current_focus in (None, element, window):
+                    current_focus = None
+                    if focus is not None:
+                        current_focus, _ = self._wechat_focused_control(element, window, pid)
+                if current_focus != focus:
+                    return finish("focus_changed")
             if menu_action and window is None and context_read_failed:
                 return finish("target_unavailable")  # A failed AX read is not an absent window.
             if scene and not browser_scene and native_attr(window, "AXDocument") != document:

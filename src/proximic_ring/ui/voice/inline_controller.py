@@ -414,7 +414,14 @@ class InlineInputController(QObject):
             nonlocal borrowed_origin
             from ...desktop.app_shortcuts import MacAppShortcuts
             borrowed_origin = origin
-            return MacAppShortcuts().passive_focus(origin)
+            backend = MacAppShortcuts()
+            target = backend.passive_focus(origin)
+            diagnostic = target.diagnostic if target is not None else backend.last_diagnostic or {}
+            self.diagnostic.emit({"type": "dictation_focus_probe", "application": origin[0], "pid": origin[1],
+                                  "input_context": target.input_context if target else "unknown",
+                                  "role": target.role if target else "", "focus_source": diagnostic.get("focus_source", ""),
+                                  "reason": diagnostic.get("reason", ""), "ax_errors": diagnostic.get("ax_errors", {})})
+            return target
 
         gate = self._gesture_source_activation
         ticket = gate.invalidate_restore() if allow_activation else None
