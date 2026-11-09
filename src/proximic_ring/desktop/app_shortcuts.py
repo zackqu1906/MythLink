@@ -28,7 +28,8 @@ def verify_native_api() -> None:
                                "AXUIElementSetMessagingTimeout", "AXUIElementSetAttributeValue",
                                "AXUIElementCopyMultipleAttributeValues", "AXValueGetType", "AXValueGetValue")),
         (Quartz, ("CGPreflightPostEventAccess", "CGEventCreateKeyboardEvent",
-                  "CGEventGetFlags", "CGEventSetFlags", "CGEventSetIntegerValueField", "CGEventPostToPid")),
+                  "CGEventGetFlags", "CGEventSetFlags", "CGEventSetIntegerValueField", "CGEventPostToPid",
+                  "CGEventPost")),
     ):
         for name in names:
             if not callable(getattr(module, name, None)):
@@ -272,7 +273,8 @@ class LocalMacAppShortcuts:
             return outcome("focus_changed")
         return outcome("target_verified", True)
 
-    def post(self, target: ShortcutTarget, shortcut: str, *, require_focus: bool = False) -> None:
+    def post(self, target: ShortcutTarget, shortcut: str, *, require_focus: bool = False,
+             system_wide: bool = False) -> None:
         import Quartz
         parts = normalize_shortcut(shortcut).split("+")
         if target.plain_enter and parts != ["Return"]:
@@ -280,7 +282,7 @@ class LocalMacAppShortcuts:
         from ..platforms.macos.mac_shortcut_events import prepare_chord, post_chord
         events, releases, modifiers = prepare_chord(Quartz, shortcut)
         # Allocation does not authorize delivery; validate the target immediately
-        # before the first modifier event, keeping all events pinned to its PID.
+        # before the first modifier event, including system-wide shortcuts.
         if not self.same_target(target, require_focus=require_focus):
             details = getattr(self, "last_diagnostic", {})
             raise SceneActionError(details.get("reason", "target_unavailable"), details)
@@ -288,10 +290,11 @@ class LocalMacAppShortcuts:
         validation = getattr(self, "last_diagnostic", {})
         self.last_diagnostic = dict(trace_id=target.trace_id, reason="dispatch_started",
             delivery="unknown", events_posted=0, events_planned=len(events),
-            event_sequence="balanced_modifiers_v1", modifier_keys=modifiers, validation=validation)
+            event_sequence="balanced_modifiers_v1", modifier_keys=modifiers, validation=validation,
+            event_destination="hid" if system_wide else "pid")
         self.last_diagnostic["event_flags"] = [int(Quartz.CGEventGetFlags(event))
                                                 for _, _, event in events]
-        post_chord(Quartz, target.pid, events, releases, self.last_diagnostic)
+        post_chord(Quartz, target.pid, events, releases, self.last_diagnostic, system_wide=system_wide)
         self.last_diagnostic.update(reason="shortcut_posted", delivery="posted_unverified")
 
 
@@ -323,9 +326,10 @@ class MacAppShortcuts:
         channel.call("browser_action", target=target.remote_id, action=action)
         return channel.last_diagnostic
 
-    def post(self, target, shortcut, *, require_focus=False):
+    def post(self, target, shortcut, *, require_focus=False, system_wide=False):
         from ..platforms.macos.native_access import native_access
         channel = native_access()
         channel.call("shortcut", target=target.remote_id,
-                     shortcut=normalize_shortcut(shortcut), require_focus=require_focus)
+                     shortcut=normalize_shortcut(shortcut), require_focus=require_focus,
+                     system_wide=system_wide)
         return channel.last_diagnostic

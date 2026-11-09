@@ -55,7 +55,7 @@ def local_llm_platform_key() -> str:
 
 
 def bundled_local_runtime(runtime_id: str) -> Path | None:
-    """The macOS bundle carries a 13.0 build of the catalog's pinned runtime."""
+    """The macOS bundle carries the pinned runtime built for its deployment target."""
     if local_llm_platform_key() != 'macos-arm64' or runtime_id != 'llama-cpp-b10516-macos-arm64':
         return None
     from ..runtime_paths import resource_root, is_frozen

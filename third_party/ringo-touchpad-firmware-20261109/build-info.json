@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 2,
+  "releaseVersion": "2.0.2",
+  "targetVersion": "2.1.6",
+  "channel": "dev",
+  "variant": "debug",
+  "buildNumber": 15,
+  "numericBuildNumber": 0,
+  "developer": "touchpad",
+  "displayVersion": "2.1.6-dev.touchpad.15",
+  "infoVersion": "2.1.6-dev.touchpad.15",
+  "artifactVersion": "2.1.6-dev.touchpad.15",
+  "imageVersion": "2.1.6+0",
+  "securityCounter": 1,
+  "source": {
+    "commit": "fd5c7df03ee04c88ac56f732ef510f17ff6b4cd1",
+    "dirty": true,
+    "fingerprint": "9002eaa86c0baa196be595560b048e9bfe0e709d16ae84ec6a7143f634fb610b",
+    "submodules": [
+      {
+        "path": "receiver/ring-python-sdk",
+        "recordedCommit": "ea654936a3a7e1b49cfac623bb5e449908655897",
+        "commit": "ea654936a3a7e1b49cfac623bb5e449908655897",
+        "dirty": false,
+        "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "submodules": []
+      }
+    ]
+  },
+  "components": {
+    "receiver": "0.1.0",
+    "sdk": "0.2.1"
+  },
+  "imageSha256": "6ef922d79c70152cff3529c9657dbfab0f20da7bb23a137ef07376c7bffb9b91"
+}

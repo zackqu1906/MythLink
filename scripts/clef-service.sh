@@ -2,6 +2,8 @@
 # Run on the Ascend container. Survives SSH logout; restart after container reboot.
 set -euo pipefail
 CLEF_DIR="${CLEF_DIR:-/root/clef-test}"
+CLEF_BIND_HOST="${CLEF_BIND_HOST:-0.0.0.0}"
+CLEF_PORT="${CLEF_PORT:-20031}"
 CLEF_PID_FILE="$CLEF_DIR/service.pid"
 running() {
   [[ -s "$CLEF_PID_FILE" ]] || return 1
@@ -15,12 +17,13 @@ case "${1:-status}" in
     if running; then echo "Clef already running: $CLEF_PID"; exit 0; fi
     nohup env HF_HUB_OFFLINE=1 "$CLEF_DIR/venv/bin/python" -u "$CLEF_DIR/serve_clef_npu.py" \
       --model-path "$CLEF_DIR/model" --warmup-file "$CLEF_DIR/warmup.json" \
+      --host "$CLEF_BIND_HOST" --port "$CLEF_PORT" \
       >> "$CLEF_DIR/service.log" 2>&1 < /dev/null &
     echo "$!" > "$CLEF_PID_FILE"
     echo "Clef started: $(cat "$CLEF_PID_FILE"); log: $CLEF_DIR/service.log" ;;
   status)
     if running; then echo "Clef running: $CLEF_PID"; else echo "Clef stopped"; exit 1; fi
-    curl --noproxy '*' --fail --silent --show-error --max-time 10 http://127.0.0.1:30000/health
+    curl --noproxy '*' --fail --silent --show-error --max-time 10 "http://127.0.0.1:$CLEF_PORT/health"
     echo ;;
   stop)
     if running; then kill "$CLEF_PID"; echo "Clef stopping: $CLEF_PID"; else echo "Clef stopped"; fi ;;

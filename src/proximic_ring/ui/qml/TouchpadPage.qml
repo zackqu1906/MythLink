@@ -121,7 +121,7 @@ ScrollView {
                     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24 }
                     spacing: 16
                     Label { text: "鼠标设置"; color: theme.text; font.pixelSize: 18; font.weight: Font.Medium }
-                    Label { Layout.fillWidth: true; text: "以下功能仅在触摸板开启时生效。功能开关可随时调整，指针速度和方向需停止后调整。"; color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap }
+                    Label { Layout.fillWidth: true; text: "指针速度、方向和手势设置均可在使用过程中调整，立即生效并自动保存。"; color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap }
                     Label { text: "指针速度"; color: theme.text; font.pixelSize: 14 }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 16
@@ -129,7 +129,7 @@ ScrollView {
                             objectName: "touchpadGainSlider"
                             Layout.fillWidth: true; Layout.minimumWidth: 0
                             from: 0.25; to: 3; stepSize: 0.05; value: page.touchpad.gain
-                            enabled: !page.touchpad.active && !page.touchpad.busy
+                            enabled: !page.touchpad.busy
                             Accessible.name: "指针速度"
                             onMoved: page.touchpad.gain = value
                         }
@@ -147,6 +147,15 @@ ScrollView {
                     }
                     RowLayout {
                         Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 4
+                            Label { Layout.fillWidth: true; text: "轻点后按住拖动"; color: theme.text; font.pixelSize: 14 }
+                            Label { Layout.fillWidth: true; text: "轻点一次，再按住移动；抬起结束"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
+                        }
+                        FigmaSwitch { objectName: "touchpadTapDragSwitch"; checked: page.touchpad.tapDrag; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "轻点后按住拖动"; onToggled: page.touchpad.tapDrag = checked }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
                         Label { Layout.fillWidth: true; text: "右键单击"; color: theme.text; font.pixelSize: 14 }
                         FigmaSwitch { objectName: "touchpadRightClickSwitch"; checked: page.touchpad.rightClick; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "右键单击"; onToggled: page.touchpad.rightClick = checked }
                     }
@@ -154,6 +163,20 @@ ScrollView {
                         Layout.fillWidth: true
                         Label { Layout.fillWidth: true; text: "双指滚轮翻页"; color: theme.text; font.pixelSize: 14 }
                         FigmaSwitch { objectName: "touchpadScrollSwitch"; checked: page.touchpad.scroll; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "双指滚轮翻页"; onToggled: page.touchpad.scroll = checked }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { Layout.fillWidth: true; text: "翻转上下滚动方向"; color: theme.text; font.pixelSize: 14 }
+                        FigmaSwitch { objectName: "touchpadInvertScrollSwitch"; checked: page.touchpad.invertScroll; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "翻转上下滚动方向"; onToggled: page.touchpad.invertScroll = checked }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 4
+                            Label { Layout.fillWidth: true; text: "双指左右滑动"; color: theme.text; font.pixelSize: 14 }
+                            Label { Layout.fillWidth: true; text: "左滑前进 · 右滑后退"; color: theme.muted; font.pixelSize: 12 }
+                        }
+                        FigmaSwitch { objectName: "touchpadHorizontalSwipeSwitch"; checked: page.touchpad.horizontalSwipe; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "双指左右滑动，左滑前进、右滑后退"; onToggled: page.touchpad.horizontalSwipe = checked }
                     }
                     RowLayout {
                         Layout.fillWidth: true; spacing: 16
@@ -170,7 +193,7 @@ ScrollView {
                     RowLayout {
                         Layout.fillWidth: true
                         Label { Layout.fillWidth: true; text: "反转指针上下方向"; color: theme.text; font.pixelSize: 14 }
-                        FigmaSwitch { objectName: "touchpadInvertSwitch"; checked: page.touchpad.invertY; enabled: !page.touchpad.active && !page.touchpad.busy; Accessible.name: "反转指针上下方向"; onToggled: page.touchpad.invertY = checked }
+                        FigmaSwitch { objectName: "touchpadInvertSwitch"; checked: page.touchpad.invertY; enabled: !page.touchpad.busy; Accessible.name: "反转指针上下方向"; onToggled: page.touchpad.invertY = checked }
                     }
                     Label {
                         Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted

@@ -665,7 +665,9 @@ ApplicationWindow {
                 font.weight: (root.currentPage === 1 || root.currentPage === 2) ? Font.Normal : Font.Medium
                 leftPadding: (root.currentPage === 1 || root.currentPage === 2) ? 12 : 20
                 symbol: "ring"; navigation: true; quiet: true
-                text: (appController.deviceName || "Ring") + "  " + (appController.connected ? "已连接" : appController.busy ? "连接中" : "未连接")
+                text: (appController.deviceName || "Ring") + "  " + appController.connectionInfo.shortLabel
+                ToolTip.visible: hovered
+                ToolTip.text: appController.connectionInfo.detail
                 onClicked: root.currentPage = 0
                 contentItem: RowLayout {
                     spacing: (root.currentPage === 1 || root.currentPage === 2) ? 12 : 4
@@ -681,7 +683,10 @@ ApplicationWindow {
                         }
                         Label {
                             visible: (root.currentPage === 1 || root.currentPage === 2); Layout.fillWidth: true
-                            text: appController.connected ? "已连接" : appController.busy ? "连接中" : "未连接"
+                            objectName: "headerConnectionStatus"
+                            text: appController.connectionInfo.shortLabel
+                            Layout.minimumWidth: implicitWidth
+                            elide: Text.ElideRight
                             font.family: uiTheme.family; font.pixelSize: 14; color: uiTheme.muted
                         }
                     }
@@ -705,11 +710,7 @@ ApplicationWindow {
                 onHelpRequested: root.showPreferences(2)
                 onTutorialRequested: tutorialPreview.open()
                 onDevicePickerRequested: appController.requestDevicePicker()
-                onConnectionRequested: {
-                    if (appController.connected) appController.disconnectDevice()
-                    else if (appController.canReconnect) appController.reconnectDevice()
-                    else appController.requestDevicePicker()
-                }
+                onConnectionRequested: appController.activateConnectionAction()
             }
             GesturesPage {
                 id: gesturesPage

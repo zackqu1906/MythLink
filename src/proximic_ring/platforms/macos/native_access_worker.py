@@ -57,7 +57,7 @@ class Dispatcher:
                       if self.window_selector else {"status": "cancelled"})
             return {"result": result}
         if operation in {"touchpad_enable", "touchpad_apply", "touchpad_double_click_target",
-                         "touchpad_health"}:
+                         "touchpad_health", "touchpad_release", "touchpad_navigate"}:
             # Touchpad delivery uses its own background permission monitor.
             # Do not put the generic synchronous probe back on this hot path.
             try:
@@ -197,13 +197,18 @@ class Dispatcher:
             if operation == "browser_action":
                 self.shortcuts.browser_action(target, message["action"])
             else:
-                self.shortcuts.post(target, message["shortcut"], require_focus=message["require_focus"])
+                self.shortcuts.post(target, message["shortcut"], require_focus=message["require_focus"],
+                                    system_wide=message.get("system_wide", False))
             return {"result": None, "diagnostic": getattr(self.shortcuts, "last_diagnostic", {})}
         raise ValueError("未知按键通道请求")
 
     def _touchpad(self, message):
         self.last_touchpad_receipt = None
         operation = message["operation"]
+        if operation == 'touchpad_release':
+            if self.touchpad_mouse is not None:
+                self.touchpad_mouse.release_drag()
+            return {'result': None}
         if operation == "touchpad_enable":
             start_click_diagnostics()
             from .native_touchpad import WorkerTouchpadMouse
@@ -253,7 +258,16 @@ class Dispatcher:
                 result['reason'] = 'ipc_expired'
             elif not mouse.enabled:
                 result['reason'] = 'native_disabled'
+            elif operation == 'touchpad_navigate':
+                result.update(mouse.navigate(message['direction'], expires_at=float(message['expires_at'])))
             elif operation == "touchpad_apply":
+                options = message.get('pointer_options')
+                if options is not None:
+                    gain, invert_y = options['gain'], options['invert_y']
+                    if (isinstance(gain, bool) or not isinstance(gain, (int, float)) or
+                            not math.isfinite(gain) or not .25 <= gain <= 3 or type(invert_y) is not bool):
+                        raise ValueError('无效指针设置')
+                    mouse.gain, mouse.invert_y = float(gain), invert_y
                 mouse.apply(events)
                 result['reason'] = ('posted' if mouse.clicks > before['clicks'] else
                                     'clicks_disabled' if not mouse.clicks_enabled else
@@ -276,7 +290,7 @@ class Dispatcher:
             if trace:
                 click_record({**trace, **result, 'stage': 'native_result', 'operation': operation},
                              native=True)
-        if operation == "touchpad_apply":
+        if operation in {"touchpad_apply", "touchpad_navigate"}:
             return {"result": result}
         return {"result": {**result, 'target': target} if trace else target}
 
@@ -289,6 +303,14 @@ def main():
     configure_app_activation(background=True)
     import objc
     dispatcher = Dispatcher()
+    # The parent terminates a timed-out IPC child. Balance an outstanding down
+    # before exiting, including when stdin has not reached EOF yet.
+    import signal
+    def terminate(signum, frame):
+        if dispatcher.touchpad_mouse is not None:
+            dispatcher.touchpad_mouse.disable()
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, terminate)
     for line in sys.stdin.buffer:
         message = {}
         try:

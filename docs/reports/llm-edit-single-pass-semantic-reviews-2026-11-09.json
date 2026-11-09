@@ -1,0 +1,782 @@
+{
+  "precise-replace": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "precise-delete": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "precise-second-occurrence": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "redictation-fragment": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "redictation-with-command": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "character-explanation": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "spelling": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "comma-support": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "literal-insert": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "literal-insert-empty": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "comma-in-content": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "expand": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "补造部分项目未达到预期标准、还需验证调整、短期无法结束等具体测试状态和原因，原文只说测试未完成。"
+  },
+  "polish": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "condense": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "structure": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "move": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "translate": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "compose-empty": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "补造具体时间地点将另行通知这一后续承诺，违反创作模块对会议延期例子的明确限制。"
+  },
+  "compose-style-not-extra-task": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "加入 [Name] 与 [Your Name] 占位姓名，违反可直接使用且不附占位姓名的交付要求。"
+  },
+  "compose-context": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "mixed-precise-polish": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "类别选择正确，但最终正文删除了张伟／张玮这一具体收件人，未落实姓名纠正要求。"
+  },
+  "mixed-no-comma": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "mixed-translate-condense": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-cancels-polish": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-translate": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "日语保留欢迎参加研讨会的含义，但措辞略生硬；按语义保真通过，不能视为母语流畅度验收。"
+  },
+  "v-edit-translate-polite": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-replace": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-delete": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-redictation": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-character": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-insert-empty": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-compose": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "额外写入请假一天、在家休息及工作可随时联系等安排，用户仅说明今天身体不舒服；存在未经授权补充。"
+  },
+  "v-edit-reply-context": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-polish": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "把必须今天完成弱化成希望今天能完成，改变了原请求的强制性。"
+  },
+  "v-edit-condense": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "v-edit-structure": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-direct-translation": {
+    "status": "needs_review",
+    "reviewer": "Codex semantic review",
+    "note": "葡语 até sexta-feira 常表达截至周五，原文为周五前，可能存在含不含周五的边界差异；未预设译文或时间边界标注，待人工确认，不计通过或确定失败。"
+  },
+  "fresh-adopted-request": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-compose-reply": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-replace": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-insert": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-correct-time": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-ordinary-answer": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "将用于纠错的确认词没问题加入正文；当前修改模块明确要求只更新数量，不把确认词当新增正文。"
+  },
+  "joint-holdout-correct-fragment": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-character": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-spelling": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-specific-delete": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-insert": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-insert-empty": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-expand": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "补造工具自动完成核对这一实现功能，并强化为显著节省；原文仅给出节省人工检查时间的好处。"
+  },
+  "joint-holdout-polish": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "把必须今天答复改成今天方便答复吗，改变原本明确的责任。"
+  },
+  "joint-holdout-condense": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-reorder": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-translate": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-compose-format": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-compose-context": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "用户仅允许借一天，额外要求当天用完就还，将借用一天收紧为当天归还。"
+  },
+  "joint-holdout-mixed-correction-style": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-mixed-delete-insert": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "joint-holdout-adopted-request": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "organize-format-only": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "organize-move-only": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "内容和顺序正确，只额外换行；冻结全文精确匹配不通过，但用户仅要求保留信息，语义复核通过。"
+  },
+  "organize-summary": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "organize-summary-list": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "organize-format-negative": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "organize-cancel-summary": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "organize-polish-only": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "在原文没有交付对象信息时补成这份材料，增加了未提供的具体内容。"
+  },
+  "organize-precise-delete": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "organize-compose-list": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "新增系统、服务可能受影响及各项服务重新开放等具体对象与状态，用户仅给出周二检修、周三恢复。"
+  },
+  "organize-mixed": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-replace-sentence": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-correct-unit": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-explain-name": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-delete-repeat": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-insert-opening": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "原话及原文均完整保留，交界处加换行；精确全文约束不通过，按现有插入规则允许的交界换行，语义复核通过。"
+  },
+  "six-insert-between": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-insert-condition": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-polish-expand": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-polish-shorten": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-polish-tone": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "省略现在这一时间要求，并把必须归还改成方便的话再还。"
+  },
+  "six-format-move": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-format-numbered": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-format-table": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-translate-french": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-translate-name": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "保留产品名和欢迎试用的含义，英语表达较直译；语义通过，流畅度仍有改进空间。"
+  },
+  "six-compose-from-notes": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-compose-story": {
+    "status": "needs_review",
+    "reviewer": "Codex semantic review",
+    "note": "创作内容符合授权，但有132个汉字、147个总字符，超过约100字目标；未预设左右的容差，记篇幅边界待确认。"
+  },
+  "six-compose-reply": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-modify-polish": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "冻结生成预期要求保留河边和公园，输出压缩时丢掉两项路线信息；未修改预期。口述自身未逐项点名保留，评测标签存在解释空间。"
+  },
+  "six-insert-format": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "six-polish-format": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "synthetic-correction-noisy-spelling": {
+    "status": "needs_review",
+    "reviewer": "Codex semantic review",
+    "note": "口述同时给出 note 与 n 0 V a，模型采用 note；数据只预设分类标签，没有唯一正文标注，替换内容歧义待确认，不计通过。"
+  },
+  "synthetic-correction-latin": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-reversed": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-name-contrast": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-brand-contrast": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-number-contrast": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-date-contrast": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-letter-spelling": {
+    "status": "unavailable",
+    "reviewer": "Codex semantic review",
+    "note": "原始正文为 NOVA编辑器，含义可成立，但分类额外输出未知类别释字拼写；整条响应未通过类别校验，不计有效正文通过。"
+  },
+  "correction-meaning": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-short-new-value": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-negative-fact": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "correction-full-sentence": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-add-reason": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-authorized-function": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-compose-known-arrangements": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-authorized-promise": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-correct-source-date": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-preserve-uncertainty": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-authorized-condition-change": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-suggestions": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fidelity-fiction": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "虚构授权、角色和下雨情节均满足；正文100个汉字（含标点113字符），按中文汉字计数符合50至100字。"
+  },
+  "fidelity-reply-user-scope": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-reply-boss-thanks": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "增加老板支持指导这一未给定事实，以及继续完善细节、确保落地效果的个人承诺。"
+  },
+  "ocr-reply-boss-adopt": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-reply-boss-no-commitment": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "没有答应出差，但新增尽快确认、第一时间答复的后续承诺，超出用户给出的信息。"
+  },
+  "ocr-reply-select-boss": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "用户仅要求感谢建议，模型额外承诺按意见修改标题。"
+  },
+  "ocr-modify-product": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-modify-software": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-modify-person": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-modify-polish-product": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "专有名词改对，但把今天必须交改为今天方便的话交，改变原义。"
+  },
+  "ocr-polish-only-no-rename": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-modify-multiple-unique": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-modify-ambiguous": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "没有从未确定的两个候选名称中猜测，返回原文；分类与冻结标签不同，正文保守保留正确。"
+  },
+  "ocr-compose-copy": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-ignore-injection": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "ocr-user-overrides-reference": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-modify-unit": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-modify-spelling": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-insert-mid": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-insert-empty": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-polish-tone": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "增加方便的话，使原本的限时请求变为有条件才执行。"
+  },
+  "fresh-polish-summary": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-format-order": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-format-list": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-translate": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-translate-part": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-compose-constraints": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "添加 [Your Name] 占位姓名，违反当前创作模块直接交付、不附占位姓名的要求。"
+  },
+  "fresh-compose-reference": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "在可折叠、三档亮度、USB充电之外断言轻巧和无需更换电池，补充了未给出的产品事实。"
+  },
+  "fresh-modify-insert": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-modify-polish": {
+    "status": "fail",
+    "reviewer": "Codex semantic review",
+    "note": "日期已改对，但把必须来改为方便来吗，弱化原责任。"
+  },
+  "fresh-modify-format": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-insert-translate": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-polish-format": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-translate-polish": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-compose-existing-translate": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-three-tasks": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-cancel-polish": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-asr-no-punctuation": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-ocr-reply": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "fresh-ocr-reference-name": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "guard-cancel-all": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "guard-no-target-modify": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "guard-ocr-command": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "guard-quoted-instruction": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "guard-content-only": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  },
+  "guard-already-correct": {
+    "status": "pass",
+    "reviewer": "Codex semantic review",
+    "note": "逐条对照口述、原文和给定 OCR，指定修改／表达目标已完成，未发现实质遗漏或未经授权的事实变化。"
+  }
+}

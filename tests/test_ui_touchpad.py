@@ -66,10 +66,15 @@ def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inli
     callbacks['on_event'](click)
     assert pointer == ([old_move, click] if protocol == 'legacy' else [old_move])
     if protocol == 'raw2':
-        from ring_python_sdk.touchpad.events import Raw2PointerClick
+        from ring_python_sdk.touchpad.events import Raw2PointerClick, Raw2PointerContact
         native = Raw2PointerClick(311, now, count=2, click_id=1, session_id='raw2')
         callbacks['on_pointer_move'](native)
         assert pointer == [old_move, native]
+        # Contact edges must reach the pointer even at the resume watermark;
+        # otherwise a delayed END could leave the mouse button held.
+        edge = Raw2PointerContact('END', 'SINGLE', 1, 0, now, now, end_timestamp=now)
+        callbacks['on_pointer_move'](edge)
+        assert pointer[-1] is edge
     tp.setInputMode('stroke'); QTest.qWait(20)
     assert tp.inputMode == 'stroke'
     strokes = []
@@ -114,7 +119,10 @@ def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_pat
     configured = []
     tp._run.output.configure = lambda **options: configured.append(options)
     controls = [('touchpadClicksSwitch', 'clicks'), ('touchpadDoubleClickSwitch', 'doubleClick'),
-                ('touchpadRightClickSwitch', 'rightClick'), ('touchpadScrollSwitch', 'scroll')]
+                ('touchpadTapDragSwitch', 'tapDrag'),
+                ('touchpadRightClickSwitch', 'rightClick'), ('touchpadScrollSwitch', 'scroll'),
+                ('touchpadInvertScrollSwitch', 'invertScroll'), ('touchpadHorizontalSwipeSwitch', 'horizontalSwipe'),
+                ('touchpadInvertSwitch', 'invertY')]
     for name, setting in controls:
         control = root.findChild(QObject, name)
         assert control.property('enabled')
@@ -123,7 +131,17 @@ def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_pat
         QTest.qWait(10)
         assert getattr(tp, setting) is not before
         assert c._settings.value('touchpad/'+setting, type=bool) == getattr(tp, setting)
-    assert len(configured) == 4 and source.stops == 0 and len(source.starts) == 1
+    assert len(configured) == 8 and source.stops == 0 and len(source.starts) == 1
+    assert configured[-1]['tap_drag'] == tp.tapDrag
+    assert configured[-1]['invert_scroll'] == tp.invertScroll
+    assert configured[-1]['horizontal_swipe'] == tp.horizontalSwipe
+    assert configured[-1]['invert_y'] == tp.invertY
+    slider = root.findChild(QObject, 'touchpadGainSlider')
+    assert slider.property('enabled')
+    slider.setProperty('value', 2.)
+    QMetaObject.invokeMethod(slider, 'moved')
+    assert tp.gain == 2. and configured[-1]['gain'] == 2.
+    assert c._settings.value('touchpad/gain', type=float) == 2.
     tp.scrollGain = 1.75
     assert configured[-1]['scroll_gain'] == 1.75
     viewport = root.findChild(QObject, 'touchpadViewport')
@@ -140,6 +158,7 @@ def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_pat
     reloaded = TouchpadController(c, output_factory=Output)
     assert all(getattr(reloaded, key) == getattr(tp, key) for _, key in controls)
     assert reloaded.scrollGain == 1.75
+    assert reloaded.gain == 2.
     reloaded.close()
     tp.stop(); QTest.qWait(20)
 
@@ -193,7 +212,8 @@ def test_page_toggle_and_settings_share_existing_source(inline_ui, tmp_path, siz
     assert tp.active and output.active
     assert toggle.property('text') == '停止触摸板'
     assert '已启用' in root.findChild(QObject, 'touchpadRunStatus').property('text')
-    assert not root.findChild(QObject, 'touchpadGainSlider').property('enabled')
+    assert root.findChild(QObject, 'touchpadGainSlider').property('enabled')
+    assert root.findChild(QObject, 'touchpadInvertSwitch').property('enabled')
     source.starts[0]['on_stats'](SimpleNamespace(warmup_frames=200)); QTest.qWait(25)
     assert root.grabWindow().save(str(shots/f'touchpad-active-{size[0]}.png'))
     root.setProperty('currentPage', 0); QTest.qWait(25)

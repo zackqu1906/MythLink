@@ -30,8 +30,9 @@ def test_shortcut_reaches_apps_that_track_modifier_transitions(desktop,bundle,sh
     assert backend.last_diagnostic['event_sequence']=='balanced_modifiers_v1'
 
 
+@pytest.mark.parametrize('system_wide', [False, True])
 @pytest.mark.parametrize('failed_index',range(6))
-def test_any_allocation_failure_sends_nothing_including_modifiers(desktop,failed_index):
+def test_any_allocation_failure_sends_nothing_including_modifiers(desktop,failed_index,system_wide):
     backend,state,quartz=desktop
     make=quartz.CGEventCreateKeyboardEvent;calls=[]
     def allocate(source,code,down):
@@ -39,12 +40,13 @@ def test_any_allocation_failure_sends_nothing_including_modifiers(desktop,failed
         return None if len(calls)-1==failed_index else make(source,code,down)
     quartz.CGEventCreateKeyboardEvent=allocate
     with pytest.raises(SceneActionError,match='创建快捷键'):
-        backend.post(state.target,'Cmd+Shift+Return')
+        backend.post(state.target,'Cmd+Shift+Return',system_wide=system_wide)
     assert not state.sent
 
 
+@pytest.mark.parametrize('system_wide', [False, True])
 @pytest.mark.parametrize('failed_index',range(6))
-def test_partial_delivery_releases_keys_and_never_replays_keydown(desktop,failed_index):
+def test_partial_delivery_releases_keys_and_never_replays_keydown(desktop,failed_index,system_wide):
     backend,state,quartz=desktop
     attempts=[];held=set()
     def post(pid,event):
@@ -55,7 +57,8 @@ def test_partial_delivery_releases_keys_and_never_replays_keydown(desktop,failed
         else:held.discard(code)
         if len(attempts)-1==failed_index:raise RuntimeError('transport failed')
     quartz.CGEventPostToPid=post
-    with pytest.raises(RuntimeError):backend.post(state.target,'Cmd+Shift+Return')
+    quartz.CGEventPost=post
+    with pytest.raises(RuntimeError):backend.post(state.target,'Cmd+Shift+Return',system_wide=system_wide)
     assert not held
     assert all(not down for _,_,down in attempts[failed_index+1:])
     assert len([x for x in attempts if x[1:]==(36,True)])<=1
@@ -63,7 +66,8 @@ def test_partial_delivery_releases_keys_and_never_replays_keydown(desktop,failed
     assert backend.last_diagnostic['cleanup_failures']==0
 
 
-def test_foreground_change_during_allocation_cancels_before_modifier_down(desktop):
+@pytest.mark.parametrize('system_wide', [False, True])
+def test_foreground_change_during_allocation_cancels_before_modifier_down(desktop,system_wide):
     backend,state,quartz=desktop
     original=state.target
     make=quartz.CGEventCreateKeyboardEvent
@@ -71,8 +75,25 @@ def test_foreground_change_during_allocation_cancels_before_modifier_down(deskto
         state.target=replace(state.target,pid=999)
         return make(*args)
     quartz.CGEventCreateKeyboardEvent=allocate
-    with pytest.raises(SceneActionError) as error:backend.post(original,'Cmd+Return')
+    with pytest.raises(SceneActionError) as error:backend.post(original,'Cmd+Return',system_wide=system_wide)
     assert error.value.reason=='foreground_changed' and not state.sent
+
+
+@pytest.mark.parametrize('shortcut', ['Cmd+Space', 'Cmd+Tab', 'Cmd+Shift+5', 'Cmd+Ctrl+Space', 'Cmd+Alt+D', 'Ctrl+Alt+J'])
+def test_system_and_recorded_chords_reach_system_hotkey_dispatcher(desktop, shortcut):
+    backend, state, quartz = desktop
+    backend.post(state.target, shortcut, system_wide=True)
+    assert state.sent and all(destination == 'hid' for destination, _ in state.sent)
+    assert state.sent[-1][1]['flags'] == 0
+    assert backend.last_diagnostic['event_destination'] == 'hid'
+
+
+def test_system_shortcuts_still_require_event_posting_permission(desktop):
+    backend, state, quartz = desktop
+    state.permission = False
+    with pytest.raises(RuntimeError):
+        backend.post(state.target, 'Cmd+Shift+5', system_wide=True)
+    assert not state.sent
 
 
 def test_modifier_only_flags_never_survive_a_completed_chord(desktop):

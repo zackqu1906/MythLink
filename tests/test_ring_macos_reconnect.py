@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from ring_python_sdk.session import connection
 from ring_python_sdk.ble import macos_device
 
@@ -44,7 +46,8 @@ def test_unknown_uuid_falls_back_to_scan(monkeypatch):
     assert asyncio.run(Session().connect_target(TARGET))
 
 
-def test_native_retrieval_creates_delegate_in_runtime_loop_and_matches_exact_uuid(monkeypatch):
+@pytest.mark.parametrize("async_readiness", [False, True])
+def test_native_retrieval_creates_delegate_in_runtime_loop_and_matches_exact_uuid(monkeypatch, async_readiness):
     import sys
     managers = []
     class NativeUUID:
@@ -57,12 +60,20 @@ def test_native_retrieval_creates_delegate_in_runtime_loop_and_matches_exact_uui
             self.loop = asyncio.get_running_loop()
             managers.append(self)
             self.central_manager = SimpleNamespace(retrievePeripheralsWithIdentifiers_=self.retrieve)
-        async def wait_until_ready(self): pass
         def retrieve(self, ids):
             assert ids == [TARGET]
             return [peripheral]
+    if async_readiness:
+        async def wait_until_ready(self): pass
+        Manager.wait_until_ready = wait_until_ready
     monkeypatch.setitem(sys.modules, "Foundation", SimpleNamespace(NSUUID=NativeUUID))
     monkeypatch.setitem(sys.modules, "bleak.backends.corebluetooth.CentralManagerDelegate", SimpleNamespace(CentralManagerDelegate=Manager))
-    device = asyncio.run(macos_device.retrieve_device(TARGET, 2))
+    async def retrieve_twice():
+        first = await macos_device.retrieve_device(TARGET, 2)
+        second = await macos_device.retrieve_device(TARGET, 2)
+        assert second.details[1] is first.details[1]
+        assert len(managers) == 1
+        return second
+    device = asyncio.run(retrieve_twice())
     assert device.address.lower() == TARGET
     assert device.details == (peripheral, managers[0])

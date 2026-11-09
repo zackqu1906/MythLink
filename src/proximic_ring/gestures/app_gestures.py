@@ -51,6 +51,7 @@ class AppBinding:
     shortcut: str
     enabled: bool = True
     action_id: str = ""
+    system_wide: bool = False
 
     def __post_init__(self):
         if (self.gesture not in GESTURE_LABELS and self.gesture != "") or type(self.enabled) is not bool:

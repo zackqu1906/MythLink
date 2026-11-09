@@ -1,4 +1,4 @@
-"""Read-only, per-utterance OCR context. Never supplies an editable source."""
+"""Shared raw window/OCR capture and local layout helpers for context preparation."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
@@ -115,7 +115,7 @@ def _await(start, timeout=3.0):
 
 
 def recognize_image(image, application):
-    """Keep Vision evidence locally; the JSON mapping contains filtered text."""
+    """Recognize the entire window without discarding text in manual sessions."""
     import Quartz as CG
     import Vision
     import numpy as np
@@ -125,7 +125,7 @@ def recognize_image(image, application):
                                      CG.CGColorSpaceCreateDeviceRGB(), CG.kCGImageAlphaPremultipliedLast | CG.kCGBitmapByteOrder32Big)
     CG.CGContextDrawImage(canvas, CG.CGRectMake(0, 0, width, height), image)
     rgb = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 4)[:, :, :3]
-    sidebar, bottom = 0.0, 1.0
+    sidebar, bottom, layout_error = 0.0, 1.0, ""
     if application in CHAT_APPS:
         # A persistent vertical panel border, measured across many rows, avoids
         # hard-coding WeChat's resizable contact-list width.
@@ -135,7 +135,7 @@ def recognize_image(image, application):
         lo, hi = int(width * .15), int(width * .55)
         column = lo + int(np.argmax(strength[lo:hi]))
         if strength[column] < .5:
-            return unavailable("无法可靠定位聊天区域，未使用整窗文字", application)
+            layout_error = "无法可靠定位聊天区域，未使用整窗文字"
         sidebar = (column + 2) / width
         body = rgb[:, min(width - 1, column + 40):int(width * .97)].astype(np.int16)
         horizontal = np.mean(np.mean(np.abs(np.diff(body, axis=0)), axis=2) > 6, axis=1)
@@ -148,8 +148,8 @@ def recognize_image(image, application):
     request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
     request.setRecognitionLanguages_(["zh-Hans", "en-US"])
     request.setUsesLanguageCorrection_(True)
-    if sidebar:
-        request.setRegionOfInterest_(CG.CGRectMake(sidebar, 1 - bottom, 1 - sidebar, bottom))
+    # Full-window OCR is evidence shared by all three modes. Region selection
+    # and text exclusions derive separate inputs without changing this evidence.
     handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(image, {})
     ok, error = handler.performRequests_error_([request], None)
     if not ok:
@@ -161,10 +161,6 @@ def recognize_image(image, application):
             continue
         candidate, box = candidates[0], observation.boundingBox()
         x, y, w, h = box.origin.x, 1 - box.origin.y - box.size.height, box.size.width, box.size.height
-        if sidebar:
-            # Vision observations are normalized to regionOfInterest, not the
-            # original screenshot. Map back before filtering or pixel sampling.
-            x, y, w, h = sidebar + x * (1 - sidebar), y * bottom, w * (1 - sidebar), h * bottom
         speaker = "unknown"
         if application in WECHAT_APPS and y > .075:
             # Sample just outside the text, inside the bubble's padding.
@@ -176,9 +172,33 @@ def recognize_image(image, application):
                 speaker = "other"
         lines.append({"text": str(candidate.string()), "confidence": float(candidate.confidence()),
                       "box": [x, y, w, h], "speaker": speaker})
-    result = filter_ocr_lines(lines, application=application, sidebar=sidebar, history_bottom=bottom)
-    result["layout"] = {"sidebar": sidebar, "history_bottom": bottom}
-    return result
+    return ScreenContext({
+        "source": "screen_ocr", "status": "ok" if lines else "empty",
+        "application": application, "coverage": "visible_only", "processing": "raw",
+        "layout": {"sidebar": sidebar, "history_bottom": bottom}, "layout_error": layout_error,
+    }, evidence={"ocr_lines": lines, "ocr_scope": "target_window"})
+
+
+def filter_context(context):
+    """Derive automatic model context without mutating the shared raw capture.
+
+    Older callers already supply filtered contexts. Local OCR boxes, confidence
+    and PNG bytes stay outside the model-visible mapping in either case.
+    """
+    if context.get("processing") != "raw":
+        return context
+    evidence = dict(getattr(context, "evidence", {}))
+    application = context.get("application", "")
+    if context.get("layout_error") or context.get("status") == "unavailable":
+        filtered = unavailable(context.get("layout_error") or context.get("reason", "OCR 不可用"), application)
+    else:
+        layout = context.get("layout") or {}
+        filtered = filter_ocr_lines(evidence.get("ocr_lines", []), application=application,
+                                    sidebar=layout.get("sidebar", 0), history_bottom=layout.get("history_bottom", 1))
+        evidence.update({key: value for key, value in filtered.evidence.items() if key != "ocr_lines"})
+        evidence["ocr_filter_lines"] = filtered.evidence["ocr_lines"]
+    metadata = {key: value for key, value in context.items() if key not in {"status", "reason", "processing", "layout_error"}}
+    return ScreenContext({**metadata, **filtered, "processing": "filtered"}, evidence=evidence)
 
 
 def capture_context(target):
@@ -267,11 +287,14 @@ class ScreenContextProvider:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="VoiceScreenContext")
 
     def prefetch(self, target):
+        requested_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
         def work():
             try:
-                return self._capture(target)
+                context = self._capture(target)
             except Exception as exc:
-                return unavailable(str(exc), str(getattr(target, "process_name", "")))
+                context = unavailable(str(exc), str(getattr(target, "process_name", "")))
+            context["requested_at"] = requested_at
+            return context
         return self._pool.submit(work)
 
     def close(self):

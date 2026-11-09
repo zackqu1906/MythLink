@@ -134,6 +134,11 @@ def mode_for_task(task: str) -> str:
 
 def router_ocr_text(context: dict) -> str:
     """The exact read-only OCR excerpt included in a Clef request."""
+    if context.get("processing") == "llm_compact":
+        if context.get("status") != "ok":
+            return ""
+        return (f"软件类型：{context.get('app_type', 'unknown')}\n主题：{context.get('topic', '')}\n"
+                f"上文：{context.get('context', '')}\n内容不确定：{context.get('uncertain', False)}")[-800:]
     messages = context.get("messages", [])[-4:]
     return "\n".join(f"{m.get('speaker', 'unknown')}: {m.get('text', '')}" for m in messages)[-360:]
 

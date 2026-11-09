@@ -491,6 +491,7 @@ final class ProxiMicInputController: IMKInputController {
             do {
                 let next = try CompositionSession(client: adapter, utteranceID: utteranceID, sequence: sequence)
                 next.automaticMode = message["automatic_mode"] as? Bool ?? false
+                next.routedEditMode = !next.automaticMode && (message["routed_edit_mode"] as? Bool ?? false)
                 guard activated, ownsActivation, currentClientID == requestedClientID, self.adapter === adapter else { return }
                 undoHistory.begin(next.original)
                 undoSourceUtteranceID = nil
@@ -863,6 +864,8 @@ final class ProxiMicInputController: IMKInputController {
                                     "edit_context_available": session?.editContextAvailable ?? false,
                                     "edit_scope": session?.editScope ?? "unavailable",
                                     "automatic_mode": session?.automaticMode ?? false,
+                                    "routed_edit_mode": session?.routedEditMode ?? false,
+                                    "routed_edit_version": 1,
                                     "automatic_task": session?.automaticTask ?? "",
                                     "automatic_stage": session?.automaticStage ?? "",
                                     "automatic_tasks": session?.automaticTasks ?? [],

@@ -34,16 +34,18 @@ from .prompts import (
 # Automatic and explicit/manual generation share this transport.
 from .automatic_processing import AutomaticTextProcessingMixin
 from .manual_processing import ManualTextProcessingMixin
+from .routed_edit_processing import RoutedEditTextProcessingMixin
 from .processing_common import LLMResponseProcessingError, TEXT_PROCESSING_MAX_OUTPUT_TOKENS, _text_output_budget
 
 
 class OpenAICompatibleTextProcessor(
-    AutomaticTextProcessingMixin, ManualTextProcessingMixin
+    AutomaticTextProcessingMixin, ManualTextProcessingMixin, RoutedEditTextProcessingMixin
 ):
-    """Shared model transport and edit validation, exposing both processing APIs.
+    """Shared transport and validation; three explicit processing policies.
 
     Automatic policy lives in automatic_processing.py; explicit user-selected
-    policy lives in manual_processing.py. This class owns HTTP requests, local
+    policy lives in manual_processing.py; one-call manual routing lives in
+    routed_edit_processing.py. This class owns HTTP requests, local
     server lifetime, tool-response validation and shared vocabulary learning.
     """
 
@@ -228,6 +230,8 @@ class OpenAICompatibleTextProcessor(
         temperature: float,
         max_tokens: int,
         edit_tool: dict[str, Any] | None = None,
+        require_complete: bool = False,
+        preserve_whitespace: bool = False,
     ) -> str | dict[str, Any]:
         provider = normalize_llm_provider(settings.provider)
         use_ark_responses = provider == LLM_PROVIDER_VOLCENGINE
@@ -332,6 +336,8 @@ class OpenAICompatibleTextProcessor(
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("大模型 API 返回了无法解析的数据") from exc
 
+        if require_complete and (not isinstance(payload, dict) or payload.get("status") != "completed"):
+            raise LLMResponseProcessingError("大模型回复未完整结束，未应用编辑", self._model_output_text(payload))
         if edit_tool is not None:
             expected_name = edit_tool["function"]["name"]
             content = self._extract_required_edit_tool_arguments(
@@ -347,8 +353,9 @@ class OpenAICompatibleTextProcessor(
         else:
             content = self._extract_content(payload)
         if isinstance(content, str):
-            content = content.strip()
-            has_content = bool(content)
+            if not preserve_whitespace:
+                content = content.strip()
+            has_content = bool(content.strip())
         else:
             has_content = True
         if not has_content:

@@ -353,7 +353,7 @@ class RingGestureController(QObject):
         custom = self.owner._global_gesture_bindings.custom_for(source.name)
         if custom is not None:
             from ...gestures.app_gestures import AppBinding
-            service._dispatch('global:' + source.name, AppBinding(source.name, custom.shortcut),
+            service._dispatch('global:' + source.name, AppBinding(source.name, custom.shortcut, system_wide=True),
                               event.target, trace_id=event.trace_id, input_focus=event.input_focus)
             return
         canonical = {"show_menu": "index-pinch", "window_selector": "clench",

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import logging
+import math
 import select
 import threading
 import time
@@ -19,6 +20,7 @@ class NativeTouchpadMouse:
         self._channel = channel_factory(pass_fds=(self._cancel_read,))
         self._stopped = threading.Event()
         self._closed = False
+        self._may_hold = False
         self._next_health_check = 0.
         self.enabled = False
         self.gain = 1.
@@ -47,7 +49,22 @@ class NativeTouchpadMouse:
 
     def apply(self, events):
         if self.enabled and not self._stopped.is_set():
-            return self._channel.call("touchpad_apply", events=events, created=time.monotonic())
+            if any(e['kind'] == 'button_down' for e in events):
+                self._may_hold = True
+            return self._channel.call("touchpad_apply", events=events, created=time.monotonic(),
+                                      pointer_options=dict(gain=self.gain, invert_y=self.invert_y))
+
+    def release_drag(self):
+        # Cleanup is valid after disable too, and carries no expiring input.
+        if not self._closed and self._may_hold:
+            self._channel.call("touchpad_release")
+            self._may_hold = False
+
+    def navigate(self, direction, *, expires_at):
+        if self.enabled and not self._stopped.is_set():
+            return self._channel.call('touchpad_navigate', direction=direction,
+                                      expires_at=expires_at, created=time.monotonic())
+        return {'reason': 'native_disabled', 'navigations_posted': 0}
 
     @property
     def last_diagnostic(self):
@@ -88,13 +105,16 @@ class NativeTouchpadMouse:
     def close(self):
         if self._closed:
             return
-        self._closed = True
         self.disable()
         try:
-            self._channel.close()
+            self.release_drag()
         finally:
-            os.close(self._cancel_read)
-            os.close(self._cancel_write)
+            self._closed = True
+            try:
+                self._channel.close()
+            finally:
+                os.close(self._cancel_read)
+                os.close(self._cancel_write)
 
 
 class WorkerTouchpadMouse(MacSystemMouse):
@@ -102,6 +122,7 @@ class WorkerTouchpadMouse(MacSystemMouse):
     def __init__(self, cancel_fd, **kwargs):
         self._cancel_fd = cancel_fd
         self._activity = MacActivity('Mythlink system pointer output', latency_critical=True)
+        self._gate_stopped = threading.Event()
         super().__init__(**kwargs)
         self.stop_on_escape = False
 
@@ -109,10 +130,24 @@ class WorkerTouchpadMouse(MacSystemMouse):
         super().enable()
         if self.enabled:
             self._activity.start()
+            self._gate_stopped = threading.Event()
+            threading.Thread(target=self._watch_gate, args=(self._gate_stopped,),
+                             name='TouchpadStopGate', daemon=True).start()
+
+    def _watch_gate(self, stopped):
+        # A held button also needs cleanup while the IPC reader is idle or its
+        # parent exits. Never wait for another move/health request to release.
+        while not stopped.wait(.02):
+            if not self.enabled:
+                self.disable()
+                return
 
     def disable(self):
-        super().disable()
-        self._activity.close()
+        self._gate_stopped.set()
+        try:
+            super().disable()
+        finally:
+            self._activity.close()
 
     @property
     def app_nap_protected(self):
@@ -128,6 +163,30 @@ class WorkerTouchpadMouse(MacSystemMouse):
         if app is not None and int(app.processIdentifier()) > 0 and self.enabled:
             return {"bundle": str(app.bundleIdentifier() or ""), "pid": int(app.processIdentifier())}
         return None
+
+    def navigate(self, direction, *, expires_at):
+        from .mac_shortcut_events import prepare_chord, post_chord
+        from .mac_workspace import frontmost_application
+        if direction not in {'forward', 'back'}:
+            raise ValueError('无效导航方向')
+        self.check_health()
+        def valid():
+            return self.enabled and math.isfinite(expires_at) and time.monotonic() <= expires_at
+        if not valid():
+            return {'reason': 'navigation_expired_or_stopped', 'navigations_posted': 0}
+        app = frontmost_application()
+        if app is None or int(app.processIdentifier()) <= 0:
+            return {'reason': 'navigation_target_unavailable', 'navigations_posted': 0}
+        pid = int(app.processIdentifier())
+        events, releases, _ = prepare_chord(self.q, 'Cmd+]' if direction == 'forward' else 'Cmd+[')
+        current = frontmost_application()
+        if not valid() or current is None or int(current.processIdentifier()) != pid:
+            return {'reason': 'navigation_expired_or_target_changed', 'navigations_posted': 0}
+        self.release_drag()
+        receipt = dict(events_posted=0, navigations_posted=0, target_pid=pid)
+        post_chord(self.q, pid, events, releases, receipt)
+        receipt.update(reason='posted', navigations_posted=1)
+        return receipt
 
     @property
     def enabled(self):

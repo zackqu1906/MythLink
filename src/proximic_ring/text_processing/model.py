@@ -15,7 +15,13 @@ INPUT_MODE_INSTRUCTION = INPUT_MODE_EDIT
 INPUT_MODES = frozenset({INPUT_MODE_DICTATION, INPUT_MODE_EDIT})
 INPUT_ROUTING_MANUAL = "manual"
 INPUT_ROUTING_AUTO = "auto"
-INPUT_ROUTING_MODES = frozenset({INPUT_ROUTING_MANUAL, INPUT_ROUTING_AUTO})
+INPUT_ROUTING_ROUTED_EDIT = "manual_routed_edit"
+INPUT_ROUTING_LABELS = {
+    INPUT_ROUTING_MANUAL: "手动转换",
+    INPUT_ROUTING_AUTO: "自动判断",
+    INPUT_ROUTING_ROUTED_EDIT: "手动＋编辑路由",
+}
+INPUT_ROUTING_MODES = frozenset(INPUT_ROUTING_LABELS)
 LLM_PROVIDER_LOCAL = "local"
 LLM_PROVIDER_OPENAI = "openai"
 LLM_PROVIDER_VOLCENGINE = "volcengine"
@@ -117,6 +123,7 @@ class TextProcessingRequest:
     task_type: str = ""
     screen_context: object = None
     edit_plan: EditPlan | None = None
+    routing_mode: str = INPUT_ROUTING_MANUAL
 
 
 @dataclass(frozen=True)
@@ -180,3 +187,5 @@ class TextProcessingResult:
     task_type: str = ""
     edit_plan: EditPlan | None = None
     model_input: dict | None = None
+    routing_mode: str = INPUT_ROUTING_MANUAL
+    screen_context: object = None

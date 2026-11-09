@@ -1,0 +1,330 @@
+[
+  {
+    "id": "synthetic-correction-noisy-spelling",
+    "utterance": "是 note，不是星河。n 0 V a",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    },
+    "note": "脱敏构造样例；只保留纠错句式，不含原始口述、原文或真实 OCR。"
+  },
+  {
+    "id": "synthetic-correction-latin",
+    "utterance": "是 Nova，不是星河",
+    "target": "星河编辑器",
+    "context": {
+      "messages": [
+        {
+          "speaker": "other",
+          "text": "请把测试日志发来。"
+        },
+        {
+          "speaker": "self",
+          "text": "测试页面显示连接超时。"
+        }
+      ]
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    },
+    "note": "脱敏构造样例；只保留纠错句式，不含原始口述、原文或真实 OCR。"
+  },
+  {
+    "id": "correction-reversed",
+    "utterance": "不是星河，是 Nova",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-name-contrast",
+    "utterance": "是林悦，不是林月",
+    "target": "联系人是林月。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-brand-contrast",
+    "utterance": "是 Docker，不是 doctor",
+    "target": "请先安装 doctor。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-number-contrast",
+    "utterance": "不是三十份，是十三份",
+    "target": "需要准备三十份材料。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-date-contrast",
+    "utterance": "是周五上午十点，不是周四下午三点",
+    "target": "会议定在周四下午三点。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-letter-spelling",
+    "utterance": "不是星河，是 N O V A",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-meaning",
+    "utterance": "是木字旁的柯，不是科学的科",
+    "target": "名字叫陈科。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-short-new-value",
+    "utterance": "不对，是六号楼",
+    "target": "去八号楼开会。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-negative-fact",
+    "utterance": "不是不用来，是明天必须来",
+    "target": "明天不用来。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "correction-full-sentence",
+    "utterance": "我不是说已经提交了，是还没有提交",
+    "target": "材料已经提交了。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "edit",
+      "tasks": [
+        "modify"
+      ]
+    }
+  },
+  {
+    "id": "dictation-contrast-empty",
+    "utterance": "是 Nova，不是星河",
+    "target": "",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-contrast-ocr-only",
+    "utterance": "是 Nova，不是星河",
+    "target": "",
+    "context": {
+      "messages": [
+        {
+          "speaker": "other",
+          "text": "星河编辑器"
+        }
+      ]
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-quoted-correction",
+    "utterance": "他说是 Nova，不是星河",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-relayed-name",
+    "utterance": "她说联系人是林悦，不是林月",
+    "target": "联系人是林月。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-verbatim-correction",
+    "utterance": "原样输入：是 Nova，不是星河",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-quote-spelling",
+    "utterance": "逐字写下：不是星河，是 N O V A",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-unrelated-contrast",
+    "utterance": "是咖啡，不是茶",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-no-actual-change",
+    "utterance": "是 Nova，不是星河",
+    "target": "Nova语音输入法",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-unchanged-confirmation",
+    "utterance": "对，就是星河编辑器",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-cancelled-correction",
+    "utterance": "把星河改成 Nova，算了，先不改了",
+    "target": "星河编辑器",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-relayed-format",
+    "utterance": "主管说改成列表会清楚些",
+    "target": "项目进展顺利。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  },
+  {
+    "id": "dictation-verbatim-translate",
+    "utterance": "原样输入：把这段翻译成英文",
+    "target": "项目进展顺利。",
+    "context": {
+      "messages": []
+    },
+    "expected": {
+      "task": "dictation",
+      "tasks": []
+    }
+  }
+]

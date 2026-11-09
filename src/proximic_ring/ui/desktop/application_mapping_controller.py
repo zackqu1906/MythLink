@@ -8,7 +8,7 @@ import sys
 import threading
 from datetime import datetime
 
-from PySide6.QtCore import QObject, Property, Signal, Slot, Qt
+from PySide6.QtCore import QObject, Property, Signal, Slot, Qt, QTimer
 
 from ...gestures.app_gestures import AppBinding, normalize_shortcut
 from ...gestures.gesture_settings import GESTURE_LABELS, GLOBAL_ACTION_LABELS
@@ -18,8 +18,8 @@ from ...desktop.host_application import HOST_BUNDLE, HOST_LABEL, host_candidate
 from ...scenes.policy import primary_scene, enabled_profiles, scene_choices
 from ...scenes.registry import PENDING_TEMPLATES as TEMPLATES, action_label, SCENE_LABELS
 from ...scenes.defaults import (SCENE_DEFAULTS_VERSION, pending_scene_defaults as scene_defaults,
-    chat_actions, default_mappings, DEFAULTS_VERSION)
-from ...scenes.menus import start_action
+    CHAT_ACTIONS, pending_chat_defaults, default_mappings, DEFAULTS_VERSION)
+from ...scenes.menus import start_action, refresh_menu_bindings
 from ...scenes.migrations import (LEGACY_MUSIC_VOLUME, migrate_enabled_scenes,
     migrate_music_volume_defaults, migrate_presentation_presets, retire_browser_scene_navigation)
 from ...scenes.adapters.browser import NAVIGATION, shared_navigation
@@ -48,6 +48,13 @@ def _system_menu_action(item):
     return root in {"apple", "苹果", ""}
 
 
+def _keyboard_binding(gesture, item):
+    # A binding's application/scene scope controls when it runs. Recorded keys
+    # and system presets still need macOS hotkey processing when it does run.
+    return AppBinding(gesture, item["shortcut"], action_id=item.get("id", ""),
+                      system_wide=item.get("id", "").startswith("custom:") or _system_menu_action(item))
+
+
 class ApplicationMappingController(QObject):
     changed = Signal()
     discoveryChanged = Signal()
@@ -62,6 +69,10 @@ class ApplicationMappingController(QObject):
         self._apps = {}
         self._candidates = [host_candidate()] if sys.platform == "darwin" else []
         self._menus = []
+        self._menu_cache = {}
+        self._menu_revisions = {}
+        self._background_menus = []
+        self._background_active = None
         self._bundle = ""
         self._scene = "regular"
         self._scene_hints = {}
@@ -71,7 +82,7 @@ class ApplicationMappingController(QObject):
         self._menu_read_at = ""
         self._list_busy = False
         self._list_message = ""
-        self._generation = {"apps": 0, "menu": 0}
+        self._generation = {"apps": 0, "menu": 0, "background_menu": 0}
         self._closed = False
         self._defaults_scan_started = False
         self._defaults_dirty = False
@@ -149,6 +160,13 @@ class ApplicationMappingController(QObject):
                 if scenes and not removed:
                     self._apps[bundle]["scenes"] = scenes
                 app = self._apps[bundle]
+                pending_chat = data.get("pendingChatBindings", {})
+                if (not isinstance(pending_chat, dict) or any(gesture not in GESTURE_LABELS
+                        or meaning not in CHAT_ACTIONS for gesture, meaning in pending_chat.items())):
+                    raise ValueError()
+                app["pendingChatBindings"] = {} if removed else dict(pending_chat)
+                if configuration.migrate_chat_bindings(bundle, app):
+                    self._defaults_dirty = True
                 order = data.get("customActionOrder")
                 if isinstance(order, list):
                     app["customActionOrder"] = list(dict.fromkeys(
@@ -193,12 +211,6 @@ class ApplicationMappingController(QObject):
     def _upgrade_scene_defaults(self):
         if configuration.initialize_scene_defaults(self._apps, self._profiles_for):
             self._defaults_dirty = True
-
-    def _resolve_scene_defaults(self, bundle):
-        return configuration.resolve_pending_defaults(bundle, self._apps[bundle], self._profiles_for(bundle), self._menus)
-
-    def _refresh_pristine_scene_defaults(self, bundle):
-        return configuration.refresh_pristine_defaults(bundle, self._apps[bundle], self._profiles_for(bundle), self._menus)
 
     def _new_application(self, candidate):
         return configuration.new_application(candidate)
@@ -420,12 +432,15 @@ class ApplicationMappingController(QObject):
 
     @Property("QVariantMap", notify=discoveryChanged)
     def pendingBindings(self):
+        if self._scene == "regular":
+            return {gesture: CHAT_ACTIONS[meaning] for gesture, meaning in
+                    self._apps.get(self._bundle, {}).get("pendingChatBindings", {}).items()}
         return {gesture: action_label(self._scene, action) for gesture, action in
                 self._apps.get(self._bundle, {}).get("pendingDefaults", {}).get(self._scene, {}).items()}
 
     @Property(int, notify=changed)
     def pendingDefaultCount(self):
-        return sum(len(items) for scene, items in self._apps.get(self._bundle, {}).get("pendingDefaults", {}).items()
+        return len(self._apps.get(self._bundle, {}).get("pendingChatBindings", {})) + sum(len(items) for scene, items in self._apps.get(self._bundle, {}).get("pendingDefaults", {}).items()
                    if scene in self._profiles_for(self._bundle))
 
     @Property(str, notify=discoveryChanged)
@@ -447,14 +462,14 @@ class ApplicationMappingController(QObject):
         app = self._apps.get(self._bundle, {})
         presets = catalog_actions(self._bundle, self._scene, self._profiles_for(self._bundle),
                                   presentation=self._profile_for(self._bundle))
-        chat = chat_actions(self._bundle, app.get("label", ""), self._scene)
-        known_ids = {item["id"] for item in presets + chat}
+        known_ids = {item["id"] for item in presets}
         presets += [{**item, "available": None, "preset": True}
                     for item in self._defaults_for(self._bundle, app).get(self._scene, {}).values()
                     if item["id"] not in known_ids]
         # Keep Apple-menu commands out of the application's own shortcut category.
         menus = [{**item, "systemShortcut": True} if _system_menu_action(item) else item for item in self._menus]
-        return _custom_actions(app) + presets + chat + sorted(menus, key=_system_menu_action)
+        # Real menu commands lead the application category; adapters are fallbacks.
+        return _custom_actions(app) + sorted(menus, key=_system_menu_action) + presets
 
     @Property(str, notify=discoveryChanged)
     def selectedApp(self):
@@ -538,9 +553,56 @@ class ApplicationMappingController(QObject):
         self.discoveryChanged.emit()
         self._request("apps")
 
+    def _queue_running_menus(self):
+        """Read added, running apps without opening them or changing selection."""
+        active = self._background_active[0] if self._background_active else ""
+        self._background_menus = list(dict.fromkeys(app["value"] for app in self._candidates
+            if app.get("running") and self._is_added(app["value"])
+            and app["value"] not in {self._bundle, active}))
+        self._continue_background_menus()
+
+    def _continue_background_menus(self):
+        # A selected app gets priority over the next background read. All menu
+        # IO remains on the separate metadata channel, never the key-post worker.
+        if self._closed or self._busy or self._background_active:
+            return
+        while self._background_menus:
+            bundle = self._background_menus.pop(0)
+            if bundle != self._bundle and self._is_added(bundle):
+                self._background_active = (bundle, self._menu_revisions.get(bundle, 0))
+                self._request("background_menu", bundle)
+                return
+
+    def _update_menu_bindings(self, bundle, result):
+        menus, app = result.get("actions", []), self._apps[bundle]
+        changed = configuration.resolve_pending_defaults(bundle, app, self._profiles_for(bundle), menus)
+        if not result.get("partial"):
+            changed = configuration.resolve_pending_chat_bindings(bundle, app, menus) or changed
+            changed = refresh_menu_bindings(app, menus) or changed
+            changed = configuration.refresh_pristine_defaults(bundle, app, self._profiles_for(bundle), menus) or changed
+        if app.get("pendingStart"):
+            action = start_action(menus)
+            if action and "snap" not in app["bindings"]:
+                app["bindings"]["snap"] = action
+                app["pendingStart"] = False
+                changed = True
+        if changed:
+            self._save()
+
+    def _cache_menu(self, bundle, result):
+        self._menu_cache[bundle] = dict(result, read_at=datetime.now().strftime("%H:%M:%S"))
+        self._update_menu_bindings(bundle, result)
+
     @Slot(str, int, str, object, str)
     def _apply_result(self, kind, generation, bundle, result, error):
         if self._closed or generation != self._generation[kind]:
+            return
+        if kind == "background_menu":
+            stamp, self._background_active = self._background_active, None
+            if (stamp == (bundle, self._menu_revisions.get(bundle, 0))
+                    and bundle != self._bundle and self._is_added(bundle) and not error):
+                self._cache_menu(bundle, result or {})
+            QTimer.singleShot(0, self._continue_background_menus)
             return
         if kind == "apps":
             self._list_busy = False
@@ -573,6 +635,8 @@ class ApplicationMappingController(QObject):
             if self._defaults_dirty:
                 self._save()
             self.changed.emit()
+            if not error:
+                self._queue_running_menus()
         elif bundle == self._bundle and self._is_added(bundle):
             result = result or {}
             self._busy = False
@@ -580,21 +644,13 @@ class ApplicationMappingController(QObject):
             self._menu_state = "error" if error else "partial" if result.get("partial") else "ready"
             self._menu_read_at = "" if error else datetime.now().strftime("%H:%M:%S")
             self._message = error or ("已读取部分菜单，可展开目标应用菜单后刷新" if result.get("partial")
-                else f"已读取 {len(self._menus)} 个菜单快捷键" if self._menus
+                else f"已读取 {len(self._menus)} 个菜单快捷键；仅包含应用向系统菜单公开的按键" if self._menus
                 else "应用尚未暴露可识别的菜单快捷键。可展开它的菜单后刷新")
             if not error and result.get("unresolved"):
                 self._message += f"；另有 {result['unresolved']} 项按键暂无法解析"
-            defaults_changed = not error and self._resolve_scene_defaults(bundle)
-            if not error and not result.get("partial"):
-                defaults_changed = self._refresh_pristine_scene_defaults(bundle) or defaults_changed
-            if defaults_changed:
-                self._save()
-            if not error and self._apps[bundle].get("pendingStart"):
-                action = start_action(self._menus)
-                if action and "snap" not in self._apps[bundle]["bindings"]:
-                    self._apps[bundle]["bindings"]["snap"] = action
-                    self._apps[bundle]["pendingStart"] = False
-                    self._save()
+            if not error:
+                self._cache_menu(bundle, result)
+            QTimer.singleShot(0, self._continue_background_menus)
         self.discoveryChanged.emit()
 
     @Slot(str, result=bool)
@@ -638,15 +694,20 @@ class ApplicationMappingController(QObject):
         if selected != self._bundle:
             self._scene = "regular"
         self._bundle = selected
-        self._menus = []
+        self._menu_revisions[selected] = self._menu_revisions.get(selected, 0) + 1
+        self._background_menus = [item for item in self._background_menus if item != selected]
+        cached = self._menu_cache.get(selected, {})
+        self._menus = cached.get("actions", [])
         self._busy = bool(self._bundle)
         self._menu_state = "loading" if self._busy else "idle"
-        self._menu_read_at = ""
+        self._menu_read_at = cached.get("read_at", "")
         self._message = "正在读取应用菜单…" if self._busy else "先添加一个应用"
         self.changed.emit()
         self.discoveryChanged.emit()
         if self._busy:
             self._request("menu", self._bundle)
+        else:
+            self._continue_background_menus()
 
     @Slot()
     def refreshMenu(self):
@@ -657,9 +718,11 @@ class ApplicationMappingController(QObject):
         if not self._is_added(bundle):
             return False
         if (self.bindingCount(bundle) or self._apps[bundle].get("pendingStart")
-                or self._apps[bundle].get("pendingDefaults") or not self._apps[bundle].get("defaultsCleared")):
+                or self._apps[bundle].get("pendingDefaults") or self._apps[bundle].get("pendingChatBindings")
+                or not self._apps[bundle].get("defaultsCleared")):
             self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {},
-                "pendingStart": False, "pendingDefaults": {}, "defaultsCleared": True, "defaultsVersion": DEFAULTS_VERSION}}
+                "pendingStart": False, "pendingDefaults": {}, "pendingChatBindings": {},
+                "defaultsCleared": True, "defaultsVersion": DEFAULTS_VERSION}}
             self._save()
         self.applicationBindingsCleared.emit(bundle)
         return True
@@ -675,6 +738,7 @@ class ApplicationMappingController(QObject):
             return False
         _, pending = scene_defaults(bundle, self._profiles_for(bundle), menus)
         self._apps = {**self._apps, bundle: {**app, "bindings": defaults.get("regular", {}),
+            "pendingChatBindings": pending_chat_defaults(bundle, app["label"], defaults.get("regular", {})),
             "initializedScenes": [scene for scene in TEMPLATES if scene in self._profiles_for(bundle)],
             "pendingDefaults": pending, "sceneDefaultsVersion": SCENE_DEFAULTS_VERSION, "defaultsCleared": False,
             "scenes": {scene: items for scene, items in defaults.items() if scene != "regular"},
@@ -688,9 +752,13 @@ class ApplicationMappingController(QObject):
     def removeApplication(self, bundle):
         if not self._is_added(bundle):
             return False
+        self._menu_revisions[bundle] = self._menu_revisions.get(bundle, 0) + 1
+        self._menu_cache.pop(bundle, None)
+        self._background_menus = [item for item in self._background_menus if item != bundle]
         # Keep an empty ownership marker so removing a new configuration never
         # reactivates this bundle's older, explicitly saved shortcut profile.
-        self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {}, "pendingDefaults": {}, "removed": True}}
+        self._apps = {**self._apps, bundle: {**self._apps[bundle], "bindings": {}, "scenes": {},
+            "pendingDefaults": {}, "pendingChatBindings": {}, "removed": True}}
         if self._bundle == bundle:
             self.selectApplication("")  # Invalidates any in-flight menu reply.
         self._save()
@@ -754,6 +822,9 @@ class ApplicationMappingController(QObject):
                 bindings.pop(shared, None)
         updated = {**app, "bindings": bindings} if self._scene == "regular" else {
             **app, "scenes": {**app.get("scenes", {}), self._scene: bindings}}
+        if self._scene == "regular":
+            updated["pendingChatBindings"] = {g: meaning for g, meaning in app.get("pendingChatBindings", {}).items()
+                                               if g != gesture}
         order = [item["id"] for item in _custom_actions(app)]
         if action and action["id"].startswith("custom:") and action["id"] not in order:
             order.insert(0, action["id"])
@@ -790,7 +861,7 @@ class ApplicationMappingController(QObject):
         return self._can_bind_regular(gesture) and any(gesture in self._bindings_for(item) for item in bundles)
 
     def for_target(self, bundle):
-        return {"menu:" + gesture: AppBinding(gesture, item["shortcut"])
+        return {"menu:" + gesture: _keyboard_binding(gesture, item)
                 for gesture, item in self._bindings_for(bundle).items()
                 if self._can_bind_regular(gesture)}
 
@@ -810,7 +881,7 @@ class ApplicationMappingController(QObject):
     def for_scene(self, bundle, scene):
         if scene not in self._profiles_for(bundle):
             return {}
-        return {"scene:" + gesture: AppBinding(gesture, item["shortcut"], action_id=item.get("id", ""))
+        return {"scene:" + gesture: _keyboard_binding(gesture, item)
                 for gesture, item in self._bindings_for(bundle, scene).items() if self._can_bind_regular(gesture)}
 
     def close(self):

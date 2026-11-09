@@ -20,8 +20,8 @@ WORKBUDDY = "com.tencent.workbuddy.mac"
 
 @pytest.mark.parametrize("bundle,label,count", [
     (WPS, "WPS Office", 6), (WPS + ".global", "WPS Office", 6), (POWERPOINT, "PowerPoint", 6),
-    (CODEX, "Codex", 2), (WORKBUDDY, "WorkBuddy", 2),
-    ("vendor.WorkBuddy", "WorkBuddy", 2), ("com.example.Editor", "Editor", 0),
+    (CODEX, "Codex", 0), (WORKBUDDY, "WorkBuddy", 0),
+    ("vendor.WorkBuddy", "WorkBuddy", 0), ("com.example.Editor", "Editor", 0),
     ("com.example.Viewer", "WorkBuddy Helper", 0),
 ])
 def test_defaults_are_installed_only_after_add_and_persist(route, monkeypatch, bundle, label, count):
@@ -33,7 +33,7 @@ def test_defaults_are_installed_only_after_add_and_persist(route, monkeypatch, b
     catalog._candidates = [dict(value=bundle, label=label)]
     catalog.addApplication(bundle)
     assert catalog.bindingCount(bundle) == count
-    assert catalog.hasDefaultMappings == bool(count)
+    assert catalog.hasDefaultMappings == bool(count or catalog.pendingDefaultCount)
     expected = default_mappings(bundle, label)
     assert catalog.regularBindings[bundle] == expected.get("regular", {})
     for scene in expected:
@@ -88,7 +88,7 @@ def test_upgrade_preserves_empty_app_and_custom_bindings_while_filling_missing_s
     c._settings.setValue(SETTINGS_KEY, json.dumps(saved))
     restored = ApplicationMappingController(service)
     try:
-        assert restored.bindingCount(WPS) == 0 and restored.bindingCount(CODEX) == 3
+        assert restored.bindingCount(WPS) == 0 and restored.bindingCount(CODEX) == 1
         assert restored._bindings_for(CODEX)["snap"] == ACTION
         assert json.loads(c._settings.value(SETTINGS_KEY)) == saved
     finally:
@@ -130,10 +130,13 @@ def test_application_defaults_override_global_without_changing_global_or_voice_r
     assert catalog.for_target(WPS)["menu:snap"].shortcut == "Shift+F5"
 
 
-@pytest.mark.parametrize("bundle,prefix", [(CODEX, "Cmd+Shift"), (WORKBUDDY, "Cmd")])
+@pytest.mark.parametrize("bundle,prefix", [(CODEX, "Cmd+Alt"), (WORKBUDDY, "Ctrl+Alt")])
 def test_chat_defaults_use_existing_foreground_route_and_user_changes_win(route, monkeypatch, bundle, prefix):
     _, service, _, backend, sent, _, emit = route
     catalog = configure(service, monkeypatch, bundle)
+    actions = [dict(id=direction+'-chat', label=direction+' Chat', path='View › '+direction+' Chat',
+                    shortcut=prefix+'+'+key) for direction, key in [('Next', ']'), ('Previous', '[')]]
+    catalog._apply_result('menu', catalog._generation['menu'], bundle, dict(actions=actions), '')
     backend.target = replace(backend.target, bundle=bundle, profile=bundle, input_context="nontext", focus="page")
     emit("circle-clockwise")
     emit("circle-counterclockwise")
@@ -188,7 +191,8 @@ def test_installed_scan_only_discovers_candidates_until_user_adds_an_application
     assert c._settings.value(SETTINGS_KEY) == saved
     assert catalog.addApplication(WPS)
     assert catalog.addApplication(CODEX)
-    assert catalog.bindingCount(WPS) == 6 and catalog.bindingCount(CODEX) == 2
+    assert catalog.bindingCount(WPS) == 6 and catalog.bindingCount(CODEX) == 0
+    assert catalog.pendingDefaultCount == 2
     catalog.removeApplication(WPS)
     catalog.clearApplicationBindings(CODEX)
     catalog._apply_result("apps", catalog._generation["apps"], "", dict(candidates=candidates), "")

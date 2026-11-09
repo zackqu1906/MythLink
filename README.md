@@ -105,10 +105,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1 -
 新的安装包会覆盖 `dist\installer\` 中的同名文件。如果修改了 `pyproject.toml`、
 依赖锁文件或新增依赖，应先重新执行 `setup.ps1 -Compute cpu -SkipLocalLLM`，再构建安装包。
 
-### Apple Silicon macOS 13+：从源码生成 `.dmg`
+### Apple Silicon macOS 13.3+：从源码生成 `.dmg`
 
 当前只提供 Apple Silicon（M1/M2/M3/M4 等 arm64）构建，不支持 Intel Mac。
-最低部署目标为 macOS 13.0；各系统的实际验收状态见 [macOS 兼容性](docs/MACOS_COMPATIBILITY.md)。
+最低部署目标为 macOS 13.3；各系统的实际验收状态见 [macOS 兼容性](docs/MACOS_COMPATIBILITY.md)。
 构建机需要联网并安装 Xcode Command Line Tools；构建脚本会在项目目录自动准备固定版本的
 Python 3.11，不要求 Homebrew，也不会修改系统 Python：
 
@@ -478,7 +478,7 @@ PROXIMIC_PYTHON=/opt/homebrew/bin/python3.11 ./scripts/setup-macos.sh
 Mythlink（安装包启动），授权后重启程序。当前 macOS 路径使用 CPU，支持 Ring、
 ProxiMic、ASR、失焦后仍可见的悬浮窗、外部文本读取和注入；不提供 Windows 的右 Alt
 按住说话与模式切换快捷键。
-安装脚本会准备独立的 Node，并从固定版本源码编译支持 macOS 13.0 的 llama.cpp
+安装脚本会准备独立的 Node，并从固定版本源码编译支持 macOS 13.3 的 llama.cpp
 （CPU/Metal）；本地模型权重仍在首次使用时下载。首次安装需要 Xcode Command Line Tools。
 
 ## 命令行与实验

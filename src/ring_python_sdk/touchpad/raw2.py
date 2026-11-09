@@ -11,11 +11,11 @@ import time
 from ring_mac_sdk.errors import RingError
 from ring_mac_sdk.interaction import Engine, delta
 from ring_mac_sdk.touchpad import Touchpad
-from ring_mac_sdk.types import Click, Motion
+from ring_mac_sdk.types import Click, ContactUpdate, Motion
 
 from .core import ClickDetector
 from .events import TouchpadClick, TouchpadClickVerdict, TouchpadContact, TouchpadMove, TouchpadStats
-from .events import Raw2PointerClick, Raw2PointerMove, Raw2Reset
+from .events import Raw2PointerClick, Raw2PointerContact, Raw2PointerMove, Raw2Reset
 
 log = logging.getLogger(__name__)
 
@@ -63,14 +63,13 @@ class Raw2Stream:
         self._last_stats = self._last_data = 0.
         self._watcher = None
         self._key = None
-        self.paused_swipe = None
         self.phase = 'model_load'
         self.token_packets = 0
         self.transport = session._sdk_transport
         if self.transport is None or not self.transport.ready:
             raise RingError('not_ready', 'Raw2 requires the validated ring_mac_sdk BLE connection')
         # Scope cleanup evidence to this stream, on the shared connection.
-        self.transport.controls_started = self.transport.stop_confirmed = False
+        self.transport.stop_confirmed = False
         self.receiver = Touchpad(self.transport, self._pointer_event, self._status, model_factory)
         self.receiver.queue = InputQueue(self)
         self.receiver.engine = FrameEngine(self.receiver._event, self._frame)
@@ -126,13 +125,20 @@ class Raw2Stream:
                     sequence=event.meta.sequence)
         if isinstance(event, Motion):
             value = Raw2PointerMove(event.dx, event.dy, 0., event.frame_id+1,
-                                 event.meta.source_time_ns/1e9, mode=event.mode, **meta)
-        elif isinstance(event, Click) and not event.is_preview:
+                                 event.meta.source_time_ns/1e9, mode=event.mode,
+                                 episode_id=event.episode_id, **meta)
+        elif isinstance(event, ContactUpdate):
+            value = Raw2PointerContact(event.phase, event.mode, event.episode_id,
+                self.receiver.ordinal*2, event.meta.source_time_ns/1e9,
+                event.range.start_time_ns/1e9,
+                None if event.range.end_time_ns is None else event.range.end_time_ns/1e9, **meta)
+        elif isinstance(event, Click):
             # Pairing intentionally waits before confirming a single click.
             # Expiry starts at formal emission; retain source time for diagnostics.
             value = Raw2PointerClick(self.receiver.ordinal*2, time.monotonic(),
                                   button=event.button.lower(), count=event.count,
-                                  click_id=event.click_id, source_timestamp=event.meta.source_time_ns/1e9, **meta)
+                                  click_id=event.click_id, source_timestamp=event.meta.source_time_ns/1e9,
+                                  is_preview=event.is_preview, **meta)
         else:
             return
         self.pointer(value)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private, text-only SystemOne service for one Ascend NPU; access via SSH."""
+"""Text-only SystemOne service for one Ascend NPU with configurable HTTP binding."""
 from __future__ import annotations
 
 import argparse
@@ -185,6 +185,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--device", default="npu:0")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP listen address")
     parser.add_argument("--port", type=int, default=30000)
     parser.add_argument("--max-tokens", type=int, default=8192)
     parser.add_argument("--warmup-file", type=Path, required=True)
@@ -196,9 +197,9 @@ def main():
         engine = executor.submit(ClefEngine, args.model_path, args.device, args.max_tokens).result()
         for item in json.loads(args.warmup_file.read_text())["requests"]:
             executor.submit(engine.infer, validate_request(item["body"])).result()
-        with ClefServer(("127.0.0.1", args.port), engine, executor,
+        with ClefServer((args.host, args.port), engine, executor,
                         api_key=os.environ.get("CLEF_API_KEY", "")) as server:
-            LOG.info("CLEF_READY http://127.0.0.1:%d/v1/systemone", args.port)
+            LOG.info("CLEF_READY http://%s:%d/v1/systemone", args.host, args.port)
             try:
                 server.serve_forever()
             except KeyboardInterrupt:

@@ -23,6 +23,8 @@ def test_notice_is_topmost_when_main_window_is_hidden_and_requires_acknowledgeme
     controller = module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
     engine = QQmlApplicationEngine()
+    from proximic_ring.ui.desktop.application_icons import install_application_icons
+    install_application_icons(engine)
     warnings = []
     engine.warnings.connect(lambda values: warnings.extend(str(value) for value in values))
     engine.rootContext().setContextProperty("appController", controller)

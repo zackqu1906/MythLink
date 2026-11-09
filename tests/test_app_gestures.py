@@ -124,7 +124,7 @@ def route(tmp_path, monkeypatch):
             if not target.focus_sensitive:
                 current = replace(current, focus=target.focus, role=target.role, input_context=target.input_context)
             return replace(target, plain_enter=False, menu_action=False) == current
-        def post(self, target, shortcut, *, require_focus=False):
+        def post(self, target, shortcut, *, require_focus=False, system_wide=False):
             if not self.same_target(target, require_focus=require_focus):
                 raise RuntimeError("目标窗口已变化")
             sent.append((target.profile, shortcut))

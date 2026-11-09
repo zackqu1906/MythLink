@@ -2,6 +2,36 @@
 
 样例独立于测试程序。直接增删 JSON 数组中的对象即可；不用改 Python。
 
+## 手动＋编辑路由的 DeepSeek 中文标签实验
+
+`llm_edit_routing_natural_cases.json` 配合 `tools/check_llm_edit_router.py`，只测试用户已手动选择编辑后的任务路由。
+模型直接输出“修改、润色”这样的中文类别，不要求 JSON，也不再次分类听写／编辑。
+分类器沿用当前 `router_prompts.py` 的六类定义、选择／排除条件和组合规则，
+沿用原文末 400 字符与 OCR 末 360 字符的路由输入范围；正文生成直接复用自动编辑的原有提示词和处理器。
+生成使用模型实际选出的任务，预期标签和生成约束不发送给模型。
+
+默认运行 126 条既有编辑回归样例、24 条新合成样例及 6 条无有效需求边界样例。
+新样例附带 24 次实际路由后的生成。`无可执行编辑` 会阻止生成；非法类别、重复类别、
+额外解释以及空原文下的修改任务均报错，不静默改判听写、不通过关键词覆盖模型结果。
+此实验没有接入应用的模式选择、手势或输入法写回，也不能代表真实 ASR/OCR 的接受率。
+
+```sh
+.runtime/venv/bin/python tools/check_llm_edit_router.py \
+  --validate-only --output /tmp/route-validation.json
+.runtime/venv/bin/python tools/check_llm_edit_router.py \
+  --output docs/reports/my-natural-label-routing.json
+```
+
+`--fresh-only` 跳过旧回归集，`--case ID` 可重复筛选，`--repeat N` 用于重复稳定性测量。
+工具读取应用已保存的火山 DeepSeek 配置，不修改设置；请求串行、关闭深度思考、无自动重试。
+HTML/JSON/JSONL 保存原始请求正文、响应、token 用量和每阶段耗时，不保存鉴权请求头。
+路由耗时计到完整中文标签收到并通过校验；总耗时还包含正文生成，不包含 ASR、采集 OCR 或写回。
+P50/P95 使用 nearest-rank；服务端缓存命中见响应的 `usage.input_tokens_details.cached_tokens`。
+正文的自动约束检查与语义复核分别记录，不能以接口成功代替质量通过。
+退出码 0 仅表示请求／解析成功，类别是否正确、生成是否合格要看报告；重复输出路径不会覆盖旧实验。
+
+## 现有自动分类样例
+
 - `automatic_voice_routing_cases.json`：原有 32 条，含总体意图和任务集合。
 - `clef_primary_validation_cases.json`：新增 24 条边界样例，已补充六类任务预期，和原样例均用于开发。
 - `clef_primary_unseen_cases.json`：后加的 12 条措辞变化。首次盲测为 11/12，随后用失败例完善同义表达规则；因此它们也已参与调优，不能算最终版本的独立测试集。
@@ -10,6 +40,7 @@
 - `clef_joint_eight_baseline_v2.json`：合并前八类 C 方案的提示词与样例快照，保留旧标签。
 - `clef_organize_boundary_cases.json`：12 条内容整理边界样例，含纯格式不删信息、摘要、撤销精简、组合操作等。
 - `clef_six_task_boundary_cases.json`：新六类边界的 26 条样例，含整句替换、量词纠错、原话插入、扩缩写、格式、创作及组合；19 条带预设生成约束。v10 首测后已查看错误并用于 v11/v12 修正，因此最终版中也属于开发回归集。
+- `clef_correction_boundary_cases.json`：24 条直接纠错正反样例，覆盖中外文名称、拼读噪声、整句及数量更新，以及转述、照录、撤销、无原文、无对应旧内容和原文已正确等边界。均为构造或脱敏样例，已参与提示词调优；不包含真实交互和真实 OCR。
 - `clef_cases.template.json`：复制这个文件建立自己的样例集。
 
 每条必须显式包含以下字段，空输入也要写出：
@@ -140,3 +171,33 @@ bash scripts/clef-remote.sh pipeline \
 [汇总及前后对照](../../docs/reports/automatic-edit-v9-summary-2026-11-05.html)、
 [OCR 全概率明细](../../docs/reports/clef-v19-generation-v9-ocr-2026-11-05.html)、
 [信息忠实性明细](../../docs/reports/clef-v19-generation-v9-fidelity-2026-11-05.html)。
+
+## 手动编辑：单次 DeepSeek 请求分类与生成
+
+`tools/check_llm_single_pass_edit.py` 复用六类定义和现有编辑模块，在一个请求中返回
+`分类：修改、润色` 与 `正文：` 后的完整结果，不输出 JSON。输入只含口述、原文和只读 OCR 参考，
+预期类别不进入请求。此脚本是测试原型，不接设置项、手势、实时 OCR 或输入法写回。
+
+```sh
+.runtime/venv/bin/python tools/check_llm_single_pass_edit.py \
+  --output .runtime/clef/single-pass-experiment.json
+```
+
+`--validate-only` 只检查样例和提示词；`--case ID` 可筛选样例。每条只允许一次 HTTP 请求，无重试。
+完整运行使用同批 150 条编辑样例及 6 条无任务边界样例，全部生成正文。
+JSON/JSONL 保留当次原始结果，退出码 1 可能是返回格式或类别错误，应检查逐条记录。
+
+`tools/review_llm_single_pass_edit.py` 在已有响应上离线复核，兼容正文与“正文：”位于同一行，
+仍拒绝未知类别，不改模型文字、不重新请求模型。复核清单必须覆盖全部样例；正文通过数来自逐条语义评语。
+原始严格格式评分与兼容解析评分同时保留，不能把换行兼容算作模型判断提升。
+
+```sh
+.runtime/venv/bin/python tools/review_llm_single_pass_edit.py \
+  --raw docs/reports/llm-edit-single-pass-full-2026-11-09.json \
+  --reviews docs/reports/llm-edit-single-pass-semantic-reviews-2026-11-09.json \
+  --output docs/reports/llm-edit-single-pass-reviewed-2026-11-09.json \
+  --summary docs/reports/llm-edit-single-pass-summary-2026-11-09.html
+```
+
+[单次请求汇总与流程代码](../../docs/reports/llm-edit-single-pass-summary-2026-11-09.html) ·
+[全部逐条结果](../../docs/reports/llm-edit-single-pass-reviewed-2026-11-09.html)

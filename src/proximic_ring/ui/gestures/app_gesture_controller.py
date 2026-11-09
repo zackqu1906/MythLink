@@ -965,7 +965,8 @@ class AppGestureController(QObject):
             if direct:
                 self.backend.browser_action(target, direct)
             else:
-                self.backend.post(target, binding.shortcut, require_focus=action == "send")
+                self.backend.post(target, binding.shortcut, require_focus=action == "send",
+                                  **({"system_wide": True} if binding.system_wide else {}))
             self._trace(trace_id, "outcome", "browser_action_applied" if direct else "shortcut_posted",
                         target=target, action=action, shortcut=binding.shortcut,
                         delivery="acknowledged" if direct else "posted_unverified", native=self._native_diagnostic())
@@ -1020,7 +1021,8 @@ class AppGestureController(QObject):
                 if direct:
                     self.backend.browser_action(target, direct)
                 else:
-                    self.backend.post(target, binding.shortcut, require_focus=False)
+                    self.backend.post(target, binding.shortcut, require_focus=False,
+                                      **({"system_wide": True} if binding.system_wide else {}))
                 return self._native_diagnostic(), None
             except Exception as exc:
                 return getattr(exc, "diagnostic", {}) or self._native_diagnostic(), exc

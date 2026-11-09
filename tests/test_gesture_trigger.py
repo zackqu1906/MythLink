@@ -241,6 +241,12 @@ assert [card.mapToScene(QPointF()).y() for card in cards()] == [0, 80, 160, 240]
 assert toast.window.geometry().bottom() == bottom
 assert app.focusWidget() is focus and not toast.window.isActive()
 assert toast.window.grabWindow().save(str(shots / 'gesture-trigger-touchpad.png'))
+toast.hide()
+for name in ['two-finger-swipe-left', 'two-finger-swipe-right']:
+    controller.submit(name, owner._disconnect_event)
+QTest.qWait(200)
+assert [card.property('gestureLabel') for card in cards()] == ['双指左滑 · 前进', '双指右滑 · 后退']
+assert toast.window.grabWindow().save(str(shots / 'gesture-trigger-navigation.png'))
 controller.enabled = False
 assert not toast.window.isVisible() and not toast._timer.isActive() and not names()
 controller.enabled = True

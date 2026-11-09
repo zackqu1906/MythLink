@@ -8,6 +8,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 import logging
+import sys
 import time
 
 from ring_mac_sdk import protocol as p
@@ -22,6 +23,9 @@ log = logging.getLogger(__name__)
 class SessionTransport(Transport):
     def __init__(self, session, device, *, client_factory=None):
         self.session = session
+        if client_factory is None and sys.platform == 'darwin':
+            from ring_python_sdk.ble.macos_client import create_client
+            client_factory = create_client
         super().__init__(device, lambda data: session._demux(None, data), self._disconnected,
                          client_factory=client_factory)
         # Queue whole control transactions, including ACK waits. This extends
@@ -29,7 +33,6 @@ class SessionTransport(Transport):
         self.control_lock = asyncio.Lock()
         self._control_owner = None
         self._connection_lost = asyncio.Event()
-        self.controls_started = False
         self.stop_confirmed = False
         self.gesture = GestureClient(self)
 
@@ -73,10 +76,8 @@ class SessionTransport(Transport):
         # All callers, including inherited connect()/send(), use this one gate.
         async with self.control_transaction():
             raw2 = command[:1] == b'\x3c'
-            if raw2:
-                self.controls_started = True
-                if command in (p.START, p.STOP):
-                    self.stop_confirmed = False
+            if command in (p.START, p.STOP):
+                self.stop_confirmed = False
             name = {p.START: 'START', p.STOP: 'STOP', p.INFO: 'INFO', p.BATTERY: 'BATTERY'}.get(command, command.hex())
             tag = 'RAW2_CONTROL' if raw2 else 'SDK_CONTROL'
             started = time.monotonic()
@@ -159,7 +160,6 @@ class LegacyControlClient:
 async def connect_session(session, target, *, client_factory=None):
     """Called under RingSession's connection lock; no alternate BLE handshake."""
     session.device_info = None
-    session._raw2_gesture_recovery = None
     session._was_connected = False
     transport = SessionTransport(session, target, client_factory=client_factory)
     session._sdk_transport = transport

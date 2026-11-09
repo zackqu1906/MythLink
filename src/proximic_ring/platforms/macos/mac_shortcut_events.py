@@ -1,4 +1,4 @@
-"""Balanced, preallocated macOS shortcut events, pinned to one target process.
+"""Balanced, preallocated macOS shortcut events for app or system delivery.
 
 Some applications track modifier transitions separately from a key's flags.
 Sending only Return with Command flags can therefore be treated as plain Return.
@@ -52,14 +52,23 @@ def prepare_chord(quartz, shortcut):
     return events, releases, modifiers
 
 
-def post_chord(quartz, pid, events, releases, diagnostic):
+def post_chord(quartz, pid, events, releases, diagnostic, *, system_wide=False):
     """No retries. On a partial failure, release only possibly pressed keys."""
+    # Posting to a PID bypasses the system hotkey dispatcher (screenshots,
+    # app switching, user-registered global hotkeys). Keep application actions
+    # pinned, but deliver explicitly selected system/custom chords at HID.
+    def post(event):
+        if system_wide:
+            quartz.CGEventPost(quartz.kCGHIDEventTap, event)
+        else:
+            quartz.CGEventPostToPid(pid, event)
+
     held = []
     try:
         for code, down, event in events:
             if down:
                 held.append(code)  # A throwing post may still have reached the app.
-            quartz.CGEventPostToPid(pid, event)
+            post(event)
             diagnostic['events_posted'] += 1
             if not down:
                 held.remove(code)
@@ -67,7 +76,7 @@ def post_chord(quartz, pid, events, releases, diagnostic):
         diagnostic.update(cleanup_events_posted=0, cleanup_failures=0)
         for code in reversed(held):
             try:
-                quartz.CGEventPostToPid(pid, releases[code])
+                post(releases[code])
                 diagnostic['cleanup_events_posted'] += 1
             except Exception:
                 diagnostic['cleanup_failures'] += 1

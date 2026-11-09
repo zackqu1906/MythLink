@@ -7,6 +7,63 @@ from .registry import PENDING_TEMPLATES as TEMPLATES
 def _label(value):
     return re.sub(r"\s+", " ", re.sub(r"[&…]", "", str(value))).strip().rstrip(".").casefold()
 
+
+def chat_navigation_action(profile, action, menus):
+    """Resolve chat navigation from actual menu metadata; never guess a key.
+
+    New ChatGPT versions separate sidebar navigation from workspace tabs.
+    Prefer that explicit command; Previous/Next Tab is not a chat fallback.
+    """
+    if profile not in {"codex", "workbuddy"} or action not in {"previous", "next"}:
+        return None
+    direction, zh = ("previous", "上") if action == "previous" else ("next", "下")
+    patterns = []
+    if profile == "codex":
+        patterns.append(rf"{direction} sidebar item|{zh}一个侧边栏(?:项目|项)|{zh}一個側邊欄(?:項目|項)")
+    patterns.append(rf"(?:(?:show|go to) )?{direction} (?:chat|conversation)|(?:显示|顯示)?{zh}一[个個](?:聊天|对话|對話)")
+    for pattern in patterns:
+        matches = [item for item in menus if re.fullmatch(pattern, _label(item.get("label", "")))]
+        if not matches:
+            continue
+        # A duplicate/ambiguous command is not permission to choose a key.
+        if len({(item.get("path"), item.get("shortcut")) for item in matches}) != 1:
+            return None
+        item = matches[0]
+        try:
+            return {**{key: str(item[key]) for key in ("id", "label", "path")},
+                    "shortcut": normalize_shortcut(item["shortcut"])}
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
+
+
+def refresh_menu_bindings(app, menus):
+    """A selected menu command follows its current key after a complete scan.
+
+    Match both path and label: a new key changes the AX reader's ID. Recorded
+    keys and adapter presets retain their explicit configuration.
+    """
+    changed = False
+    for bindings in [app.get("bindings", {}), *app.get("scenes", {}).values()]:
+        for gesture, previous in list(bindings.items()):
+            if ":" in previous["id"]:
+                continue
+            matches = [item for item in menus if item.get("path") == previous["path"]
+                       and item.get("label") == previous["label"]]
+            if not matches or len({item.get("shortcut") for item in matches}) != 1:
+                continue
+            item = matches[0]
+            try:
+                current = {**{key: str(item[key]) for key in ("id", "label", "path")},
+                           "shortcut": normalize_shortcut(item["shortcut"])}
+            except (KeyError, TypeError, ValueError):
+                continue
+            if current != previous:
+                bindings[gesture] = current
+                changed = True
+    return changed
+
+
 def menu_action(scene, action, menus):
     """Conservative semantic matching: never confuse next track/page/tab/slide.
 

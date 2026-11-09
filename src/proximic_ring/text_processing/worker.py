@@ -6,10 +6,10 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from .edit_tool import EDIT_MODE_RACE
 from .llm import OpenAICompatibleTextProcessor
 from .model import (
     INPUT_MODE_EDIT,
+    INPUT_ROUTING_ROUTED_EDIT,
     TEXT_MODE_POLISH,
     InputModeRoutingRequest,
     InputModeRoutingResult,
@@ -49,6 +49,8 @@ class TextProcessingWorker:
         from .screen_context import ScreenContextProvider
         self._intent_router = intent_router or ClefIntentRouter()
         self._context_provider = context_provider or ScreenContextProvider()
+        from .context_preparation import ContextPreparationProvider
+        self._context_preparer = ContextPreparationProvider()
         self._queue: queue.SimpleQueue[
             TextProcessingRequest | InputModeRoutingRequest | _WarmupTask | None
         ] = queue.SimpleQueue()
@@ -86,6 +88,9 @@ class TextProcessingWorker:
         self._queue.put(request)
 
     def capture_context(self, target):
+        if self._closed.is_set():
+            from .screen_context import unavailable
+            return unavailable("截图采集服务已关闭")
         return self._context_provider.prefetch(target)
 
     def warmup_router(self):
@@ -95,6 +100,9 @@ class TextProcessingWorker:
             except Exception:
                 pass  # The actual route reports installation/startup errors.
         threading.Thread(target=work, name="IntentRouterWarmup", daemon=True).start()
+
+    def prepare_context(self, capture, settings):
+        return self._context_preparer.prefetch(capture, settings)
 
     def cancel_request(self, request_id: int) -> None:
         """Suppress a queued/running request's result.
@@ -124,6 +132,7 @@ class TextProcessingWorker:
             return
         self._closed.set()
         self._context_provider.close()
+        self._context_preparer.close()
         for _thread in self._threads:
             self._queue.put(None)
         if wait:
@@ -178,9 +187,12 @@ class TextProcessingWorker:
                 try:
                     if request.router_backend != "clef":
                         raise ValueError("不支持的路由后端，请使用 Clef 自动判断")
-                    from .screen_context import resolve_context
+                    from .context_preparation import resolve_model_context
                     from .task_routing import mode_for_task
-                    screen_context = resolve_context(request.screen_context)
+                    screen_context = resolve_model_context(request.screen_context,
+                        cancelled=lambda: self._closed.is_set() or self._is_cancelled(request.request_id))
+                    if self._closed.is_set() or self._is_cancelled(request.request_id):
+                        raise RuntimeError("自动判断已取消")
                     decision, model_output = self._intent_router.classify(
                         request.raw_text, request.target_text, screen_context,
                         cancelled=lambda: self._closed.is_set() or self._is_cancelled(request.request_id))
@@ -216,95 +228,26 @@ class TextProcessingWorker:
             error = None
             model_output = ""
             model_input = None
+            screen_context = None
             llm_branches = ()
             winner_branch = ""
             used_llm = bool(request.settings.enabled)
+            task_type, edit_plan = request.task_type, request.edit_plan
             try:
-                process_with_collection_trace = getattr(
-                    self._processor, "process_with_collection_trace", None
-                )
-                process_with_trace = getattr(self._processor, "process_with_trace", None)
-                if request.task_type:
-                    # Clef automatic lane: a validated task/plan, one composed generation.
-                    from .screen_context import resolve_context
-                    process_with_input_trace = getattr(self._processor, "process_task_with_input_trace", None)
-                    args = (request.raw_text, request.task_type, request.settings, request.target_text,
-                            resolve_context(request.screen_context))
-                    if callable(process_with_input_trace):
-                        final_text, model_output, model_input = process_with_input_trace(*args, edit_plan=request.edit_plan)
-                    else:
-                        final_text, model_output = self._processor.process_task_with_trace(*args, edit_plan=request.edit_plan)
-                elif request.mode == TEXT_MODE_POLISH:
-                    # Explicit polish action; no automatic intent classification.
-                    final_text, model_output = self._processor.polish_with_trace(
-                        request.raw_text, request.settings)
-                elif callable(process_with_collection_trace):
-                    # Existing user-selected dictation/edit lane and its candidate trace.
-                    trace_request_id = request.request_id
+                from .processing_dispatch import process_text_request
+                trace_request_id = request.request_id
 
-                    def publish_trace(
-                        branches,
-                        winner_branch,
-                        trace_request_id=trace_request_id,
-                    ):
-                        if (
-                            self._on_trace is None
-                            or self._closed.is_set()
-                            or self._is_cancelled(trace_request_id)
-                        ):
-                            return
-                        self._on_trace(
-                            LLMTraceCollection(
-                                request_id=trace_request_id,
-                                branches=tuple(branches),
-                                winner_branch=str(winner_branch),
-                            )
-                        )
+                def publish_trace(branches, winner_branch, trace_request_id=trace_request_id):
+                    if (self._on_trace is not None and not self._closed.is_set()
+                            and not self._is_cancelled(trace_request_id)):
+                        self._on_trace(LLMTraceCollection(trace_request_id, tuple(branches), str(winner_branch)))
 
-                    (
-                        final_text,
-                        model_output,
-                        llm_branches,
-                        winner_branch,
-                    ) = process_with_collection_trace(
-                        request.raw_text,
-                        request.mode,
-                        request.settings,
-                        request.target_text,
-                        (
-                            EDIT_MODE_RACE
-                            if normalize_input_mode(request.mode)
-                            == INPUT_MODE_EDIT
-                            else ""
-                        ),
-                        on_collection_complete=publish_trace,
-                    )
-                elif callable(process_with_trace):
-                    final_text, model_output = process_with_trace(
-                        request.raw_text,
-                        request.mode,
-                        request.settings,
-                        request.target_text,
-                        (
-                            EDIT_MODE_RACE
-                            if normalize_input_mode(request.mode)
-                            == INPUT_MODE_EDIT
-                            else ""
-                        ),
-                    )
-                else:
-                    final_text = self._processor.process(
-                        request.raw_text,
-                        request.mode,
-                        request.settings,
-                        request.target_text,
-                        (
-                            EDIT_MODE_RACE
-                            if normalize_input_mode(request.mode)
-                            == INPUT_MODE_EDIT
-                            else ""
-                        ),
-                    )
+                output = process_text_request(self._processor, request, on_trace=publish_trace,
+                    cancelled=lambda: self._closed.is_set() or self._is_cancelled(request.request_id))
+                final_text, model_output, model_input = output.text, output.raw, output.model_input
+                llm_branches, winner_branch = output.branches, output.winner
+                task_type, edit_plan = output.task_type, output.edit_plan
+                screen_context = output.screen_context
             except BaseException as exc:
                 # The input method must remain usable when a cloud/local LLM is
                 # unavailable.  Preserve the raw final ASR text as a fallback.
@@ -315,18 +258,21 @@ class TextProcessingWorker:
                 final_text = request.target_text or request.raw_text
             result = TextProcessingResult(
                 request_id=request.request_id,
-                task_type=request.task_type,
-                edit_plan=request.edit_plan,
+                task_type=task_type,
+                edit_plan=edit_plan,
+                routing_mode=request.routing_mode,
                 session_id=request.session_id,
                 mode=TEXT_MODE_POLISH if request.mode == TEXT_MODE_POLISH else normalize_input_mode(request.mode),
                 raw_text=request.raw_text,
-                final_text=str(final_text or "").strip(),
+                final_text=(str(final_text or "") if request.routing_mode == INPUT_ROUTING_ROUTED_EDIT
+                            else str(final_text or "").strip()),
                 latency_s=max(0.0, time.perf_counter() - started),
                 used_llm=used_llm,
                 target_text=request.target_text,
                 error=error,
                 model_output=model_output,
                 model_input=model_input,
+                screen_context=screen_context,
                 llm_branches=tuple(llm_branches),
                 winner_branch=winner_branch,
             )

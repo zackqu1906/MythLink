@@ -35,7 +35,12 @@ def test_delete_removes_only_selected_files_links_and_cached_row(tmp_path):
     assert store.delete_entry(first)
     assert not store._interaction_dir(first).exists()
     assert not (store.user_root / ".deleted-history" / first).exists()
-    assert store.load_entries() == [row for row in rows if row["interactionId"] != first]
+    remaining = store.load_entries()
+    # Removing the association changes the second record's full details, so
+    # its revision must refresh an open panel while the visible summary stays.
+    without_revision = lambda values: [{key: value for key, value in row.items() if key != "detailsRevision"} for row in values]
+    assert without_revision(remaining) == without_revision([row for row in rows if row["interactionId"] != first])
+    assert next(row for row in remaining if row["interactionId"] == third) == next(row for row in rows if row["interactionId"] == third)
     assert store._interaction_path(third).read_bytes() == third_before
     assert (store._interaction_dir(second) / "audio.wav").read_bytes() == second_audio
     assert [row["association_id"] for row in store.load_associations()] == [kept_link]

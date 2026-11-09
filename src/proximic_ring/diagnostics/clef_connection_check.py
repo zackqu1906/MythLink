@@ -4,14 +4,14 @@ import json
 from pathlib import Path
 import time
 
-from ..text_processing.clef_connection import ClefSSHSettings, ClefSSHConnection, ConnectedClefRouter
+from ..text_processing.clef_connection import ClefServerSettings, ClefConnection, ConnectedClefRouter
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, help="本机 SSH 设置 JSON；不包含私钥内容")
+    parser.add_argument("--config", required=True, help="公网服务设置 JSON：host 和 port（默认 20031）")
     args = parser.parse_args(argv)
-    connection = ClefSSHConnection(ClefSSHSettings(**json.loads(Path(args.config).read_text())))
+    connection = ClefConnection(ClefServerSettings(**json.loads(Path(args.config).read_text())))
     router = ConnectedClefRouter(connection)
     try:
         router.warmup()

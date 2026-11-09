@@ -9,10 +9,43 @@ from .capabilities import presentation_profile, installed_scene_profiles
 from .adapters.presentation import PROFILES
 from .policy import primary_scene, enabled_profiles
 from .defaults import (default_mappings, DEFAULTS_VERSION, SCENE_DEFAULTS_VERSION,
-                       pending_scene_defaults as scene_defaults)
+                       pending_scene_defaults as scene_defaults, default_profile, pending_chat_defaults)
 from .resolver import resolve_action
+from .menus import chat_navigation_action
 
 SETTINGS_KEY = "gestures/applicationMenusV1"
+
+
+def migrate_chat_bindings(bundle, app):
+    """Retire saved factory key values, preserving gesture choices as intentions."""
+    profile = default_profile(bundle, app.get("label", ""))
+    if profile not in {"codex", "workbuddy"} or app.get("removed"):
+        return False
+    changed = False
+    for gesture, item in list(app.get("bindings", {}).items()):
+        if item["id"] in {f"{profile}:previous", f"{profile}:next"}:
+            app.setdefault("pendingChatBindings", {})[gesture] = item["id"].rsplit(":", 1)[1]
+            del app["bindings"][gesture]
+            changed = True
+    return changed
+
+
+def resolve_pending_chat_bindings(bundle, app, menus):
+    if app.get("removed"):
+        return False
+    profile = default_profile(bundle, app.get("label", ""))
+    pending = app.get("pendingChatBindings", {})
+    changed = False
+    for gesture, meaning in list(pending.items()):
+        if gesture in app["bindings"]:
+            del pending[gesture]
+            changed = True
+        elif (item := chat_navigation_action(profile, meaning, menus)) is not None:
+            app["bindings"][gesture] = item
+            del pending[gesture]
+            changed = True
+    return changed
+
 
 def defaults_for(bundle, app, menus=()):
     profiles = enabled_profiles(bundle, app.get("sceneProfiles", {}), app.get("primaryScene", ""), app.get("enabledScenes"))
@@ -140,6 +173,7 @@ def new_application(candidate):
     app.update(initializedScenes=[scene for scene in TEMPLATES if scene in selected_profiles],
                pendingDefaults=pending, sceneDefaultsVersion=SCENE_DEFAULTS_VERSION, defaultsCleared=False,
                bindings=defaults.get("regular", {}),
+               pendingChatBindings=pending_chat_defaults(bundle, app["label"], defaults.get("regular", {})),
                scenes={scene: items for scene, items in defaults.items() if scene != "regular"},
                defaultsVersion=DEFAULTS_VERSION,
                pendingStart=bool(PRESENTATION in selected_profiles and "snap" not in defaults.get("regular", {})))

@@ -1213,17 +1213,48 @@ def test_automatic_progress_and_finish_preserve_session_guards(inline_ui, monkey
     assert len(bridge.messages) == before
 
 
-def test_clef_settings_surface_is_in_service_settings(inline_ui):
+def test_clef_settings_surface_is_in_service_settings(inline_ui, monkeypatch):
     from PySide6.QtCore import QObject, QMetaObject, Q_ARG
     from PySide6.QtTest import QTest
-    c, _, _, root, _ = inline_ui
-    for name in ('clefSshHost', 'clefSshPort', 'clefSshUser', 'clefSshKey', 'clefServicePort', 'clefConnectButton'):
+    c, _, _, root, event = inline_ui
+    for name in ('clefServerHost', 'clefPublicPort', 'clefConnectButton'):
         assert root.findChild(QObject, name) is not None
-    assert c.clefConnection.config['service_port'] == 30000
+    for name in ('clefSshHost', 'clefSshPort', 'clefSshUser', 'clefSshKey', 'clefServicePort'):
+        assert root.findChild(QObject, name) is None
+    assert c.clefConnection.config == dict(host='', port=20031)
+    assert root.findChild(QObject, 'clefPublicPort').property('text') == '20031'
     root.show()
     QMetaObject.invokeMethod(root, 'showAdvancedSettings', Q_ARG('QVariant', 4))
     QTest.qWait(200)
     root.grabWindow()
     QTest.qWait(250)
-    assert root.findChild(QObject, 'clefSshHost').property('visible')
-    assert root.findChild(QObject, 'clefSshHost').window().grabWindow().save('/private/tmp/mythlink-clef-settings.png')
+    assert root.findChild(QObject, 'clefServerHost').property('visible')
+    assert root.findChild(QObject, 'clefServerHost').window().grabWindow().save('/private/tmp/mythlink-clef-public-settings.png')
+    host = root.findChild(QObject, 'clefServerHost')
+    port = root.findChild(QObject, 'clefPublicPort')
+    button = root.findChild(QObject, 'clefConnectButton')
+    host.setProperty('text', 'public.example')
+    port.setProperty('text', '20032')
+    QMetaObject.invokeMethod(button, 'clicked')
+    assert '先结束当前语音处理' in c.clefConnection.status
+    assert c.clefConnection.config['host'] == ''
+    event(phase='idle', ready=True)
+    # The fixture closes the worker and its router; use a fresh transport for this click.
+    from proximic_ring.text_processing.clef_connection import ClefConnection, ConnectedClefRouter
+    connection = ClefConnection(c.clefConnection.connection.settings,
+                                on_status=c.clefConnection._statusReceived.emit)
+    monkeypatch.setattr(c.clefConnection, 'connection', connection)
+    monkeypatch.setattr(c.clefConnection, 'router', ConnectedClefRouter(connection))
+    checks = []
+    monkeypatch.setattr(c.clefConnection.connection, 'check',
+                        lambda: checks.append(c.clefConnection.connection.endpoint()))
+    monkeypatch.setattr(c.clefConnection.router, 'classify', lambda *a: checks.append(a))
+    QMetaObject.invokeMethod(button, 'clicked')
+    for _ in range(100):
+        if not c.clefConnection.busy:
+            break
+        QTest.qWait(10)
+    assert '连接成功' in c.clefConnection.status
+    assert c.clefConnection.config == dict(host='public.example', port=20032)
+    assert checks == ['http://public.example:20032/v1/systemone', ('连接测试', '', {})]
+    connection.close()

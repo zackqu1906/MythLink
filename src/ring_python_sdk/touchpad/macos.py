@@ -54,6 +54,9 @@ class MacSystemMouse:
         self._scroll_remainder = 0.
         self._scroll_stream = None
         self._click_ids = deque(maxlen=256)
+        self._button_lock = threading.RLock()
+        self._drag_up = None
+        self._drag_count = 1
 
     def permitted(self):
         return bool(self.ax.AXIsProcessTrusted() and self.q.CGPreflightPostEventAccess())
@@ -84,8 +87,27 @@ class MacSystemMouse:
 
     def disable(self):
         self.enabled = False
-        if self._permissions is not None:
-            self._permissions.close()
+        try:
+            self.release_drag()
+        finally:
+            if self._permissions is not None:
+                self._permissions.close()
+
+    def release_drag(self):
+        """Balance our own down even after expiry, permission loss or stop."""
+        with self._button_lock:
+            up = self._drag_up
+            if up is not None:
+                try:
+                    self.q.CGEventPost(self.q.kCGHIDEventTap, up)
+                    self.click_up_posts += 1
+                finally:
+                    self._drag_up = None
+
+    def _drag_event(self, kind, point):
+        event = self._event(kind, point)
+        self.q.CGEventSetIntegerValueField(event, self.q.kCGMouseEventClickState, self._drag_count)
+        return event
 
     def check_health(self):
         """Read the last background check without querying macOS or waiting."""
@@ -122,6 +144,10 @@ class MacSystemMouse:
         return event
 
     def apply(self, events):
+        with self._button_lock:
+            self._apply_events(events)
+
+    def _apply_events(self, events):
         if not self.enabled:
             return
         try:
@@ -138,16 +164,35 @@ class MacSystemMouse:
                 expires = event.get('expires_at')
                 if expires is not None and (not math.isfinite(expires) or time.monotonic() > expires):
                     continue
-                if event['kind'] == 'move':
+                if event['kind'] == 'button_down' and self.clicks_enabled:
+                    if self._drag_up is not None:
+                        continue
+                    count = event.get('count', 1)
+                    if type(count) is not int or count not in (1, 2):
+                        raise ValueError('无效拖动点击次数')
+                    self._drag_count = count
+                    down = self._drag_event(self.q.kCGEventLeftMouseDown, point)
+                    self._drag_up = self._drag_event(self.q.kCGEventLeftMouseUp, point)
+                    self.q.CGEventPost(self.q.kCGHIDEventTap, down)
+                    self.click_down_posts += 1
+                elif event['kind'] in {'move', 'drag'}:
+                    if event['kind'] == 'drag' and self._drag_up is None:
+                        continue  # Its down expired or was cancelled before dispatch.
                     dx, dy = float(event['dx']), float(event['dy'])
                     if not all(math.isfinite(v) for v in (dx, dy, self.gain)):
                         raise ValueError('鼠标位移不是有限数值')
                     if dx == 0 and dy == 0:continue
                     x, y = point
                     point = self._clamp(x + dx*self.gain, y + dy*self.gain*(-1 if self.invert_y else 1))
-                    self.q.CGEventPost(self.q.kCGHIDEventTap, self._event(self.q.kCGEventMouseMoved, point))
+                    if self._drag_up is not None:
+                        movement = self._drag_event(self.q.kCGEventLeftMouseDragged, point)
+                        self._drag_up = self._drag_event(self.q.kCGEventLeftMouseUp, point)
+                    else:
+                        movement = self._event(self.q.kCGEventMouseMoved, point)
+                    self.q.CGEventPost(self.q.kCGHIDEventTap, movement)
                     self.moves += 1
                 elif event['kind'] == 'scroll':
+                    self.release_drag()
                     dy = float(event['dy'])
                     if not math.isfinite(dy):
                         raise ValueError('滚轮位移不是有限数值')
@@ -165,6 +210,7 @@ class MacSystemMouse:
                         self.q.CGEventPost(self.q.kCGHIDEventTap, wheel)
                         self.scrolls += 1
                 elif event['kind'] == 'click' and self.clicks_enabled:
+                    self.release_drag()
                     button, count = event.get('button', 'left'), event.get('count', 1)
                     if button not in {'left', 'right'} or type(count) is not int or count not in {1, 2}:
                         raise ValueError('无效鼠标按键或点击次数')

@@ -53,9 +53,12 @@ class TouchpadController(QObject):
         owner._settings.remove("touchpad/seconds")
         self._clicks = owner._settings.value("touchpad/clicks", True, type=bool)
         self._double_click = owner._settings.value("touchpad/doubleClick", True, type=bool)
+        self._tap_drag = owner._settings.value("touchpad/tapDrag", True, type=bool)
         self._right_click = owner._settings.value("touchpad/rightClick", True, type=bool)
         self._scroll = owner._settings.value("touchpad/scroll", True, type=bool)
         self._scroll_gain = self._number('scrollGain', 1., .25, 3.)
+        self._invert_scroll = owner._settings.value("touchpad/invertScroll", False, type=bool)
+        self._horizontal_swipe = owner._settings.value("touchpad/horizontalSwipe", True, type=bool)
         self._invert_y = owner._settings.value("touchpad/invertY", False, type=bool)
         self._warm = False
         self.stroke_output_factory = TouchpadStrokeOutput
@@ -512,10 +515,8 @@ class TouchpadController(QObject):
 
     @gain.setter
     def gain(self, value):
-        if not self._run and math.isfinite(value) and .25 <= value <= 3.:
-            self._gain = round(value, 2)
-            self.owner._settings.setValue("touchpad/gain", self._gain)
-            self.changed.emit()
+        if math.isfinite(value) and .25 <= value <= 3.:
+            self._set_pointer_feature('_gain', 'gain', round(value, 2))
 
     @Property(bool, notify=changed)
     def clicks(self): return self._clicks
@@ -531,7 +532,9 @@ class TouchpadController(QObject):
             configure = getattr(self._run.output, 'configure', None)
             if configure:
                 configure(clicks=self._clicks, double_click=self._double_click,
-                          right_click=self._right_click, scroll=self._scroll, scroll_gain=self._scroll_gain)
+                          right_click=self._right_click, scroll=self._scroll, scroll_gain=self._scroll_gain,
+                          invert_scroll=self._invert_scroll, horizontal_swipe=self._horizontal_swipe,
+                          gain=self._gain, invert_y=self._invert_y, tap_drag=self._tap_drag)
         self.changed.emit()
 
     @Property(bool, notify=changed)
@@ -539,6 +542,12 @@ class TouchpadController(QObject):
 
     @doubleClick.setter
     def doubleClick(self, value): self._set_pointer_feature('_double_click', 'doubleClick', bool(value))
+
+    @Property(bool, notify=changed)
+    def tapDrag(self): return self._tap_drag
+
+    @tapDrag.setter
+    def tapDrag(self, value): self._set_pointer_feature('_tap_drag', 'tapDrag', bool(value))
 
     @Property(bool, notify=changed)
     def rightClick(self): return self._right_click
@@ -561,14 +570,23 @@ class TouchpadController(QObject):
             self._set_pointer_feature('_scroll_gain', 'scrollGain', round(value, 2))
 
     @Property(bool, notify=changed)
+    def invertScroll(self): return self._invert_scroll
+
+    @invertScroll.setter
+    def invertScroll(self, value): self._set_pointer_feature('_invert_scroll', 'invertScroll', bool(value))
+
+    @Property(bool, notify=changed)
+    def horizontalSwipe(self): return self._horizontal_swipe
+
+    @horizontalSwipe.setter
+    def horizontalSwipe(self, value): self._set_pointer_feature('_horizontal_swipe', 'horizontalSwipe', bool(value))
+
+    @Property(bool, notify=changed)
     def invertY(self): return self._invert_y
 
     @invertY.setter
     def invertY(self, value):
-        if not self._run:
-            self._invert_y = bool(value)
-            self.owner._settings.setValue("touchpad/invertY", self._invert_y)
-            self.changed.emit()
+        self._set_pointer_feature('_invert_y', 'invertY', bool(value))
 
     @Slot(object, object)
     def attach(self, source, connection):
@@ -899,6 +917,8 @@ class TouchpadController(QObject):
                                          invert_y=self._invert_y, on_double_click=double_click,
                                          scroll=self._scroll, double_click=self._double_click,
                                          right_click=self._right_click, scroll_gain=self._scroll_gain,
+                                         invert_scroll=self._invert_scroll, horizontal_swipe=self._horizontal_swipe,
+                                         tap_drag=self._tap_drag,
                                          raw2=run.protocol == 'raw2',
                                          click_context=click_context,
                                          on_capture_click=self._capture_click)
@@ -1026,7 +1046,7 @@ class TouchpadController(QObject):
                 def pointer_moved(event):
                     if run is self._run and run.mode == 'pointer':
                         output = run.output
-                        if event.kind == 'click' or event.step > output.pointer_after_step:
+                        if event.kind in {'click', 'pointer_contact'} or event.step > output.pointer_after_step:
                             run.diagnostics.note('pointer_frame')
                             output.submit(event)
                 def stats(value):

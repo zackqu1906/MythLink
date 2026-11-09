@@ -48,6 +48,7 @@ class Raw2PointerMove(TouchpadMove):
     session_id: str = ''
     generation: int = 0
     sequence: int = 0
+    episode_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,22 @@ class Raw2PointerClick(TouchpadClick):
     generation: int = 0
     sequence: int = 0
     source_timestamp: float | None = None
+    is_preview: bool = False
+
+
+@dataclass(frozen=True)
+class Raw2PointerContact:
+    phase: str
+    mode: str
+    episode_id: int
+    step: int
+    timestamp: float
+    start_timestamp: float
+    end_timestamp: float | None = None
+    session_id: str = ''
+    generation: int = 0
+    sequence: int = 0
+    kind: Literal['pointer_contact'] = 'pointer_contact'
 
 
 @dataclass(frozen=True)

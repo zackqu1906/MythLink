@@ -22,7 +22,7 @@ start_tunnel() {
   if ! "${CLEF_SSH[@]}" -O check "$PROXIMIC_CLEF_SSH_HOST" >/dev/null 2>&1; then
     "${CLEF_SSH[@]}" -M -fNT -o ExitOnForwardFailure=yes \
       -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-      -L "127.0.0.1:${PROXIMIC_CLEF_LOCAL_PORT:-30000}:127.0.0.1:${PROXIMIC_CLEF_REMOTE_PORT:-30000}" \
+      -L "127.0.0.1:${PROXIMIC_CLEF_LOCAL_PORT:-30000}:127.0.0.1:${PROXIMIC_CLEF_REMOTE_PORT:-20031}" \
       "$PROXIMIC_CLEF_SSH_HOST"
   fi
 }

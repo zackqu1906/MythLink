@@ -22,23 +22,30 @@ Item {
     readonly property string highlightedGesture: hoveredGesture || selectedGesture
     readonly property real cardHeight: 76
     readonly property real cardGap: 20
-    readonly property real touchColumn: 148 + cardGap
-    readonly property real touchLeft: 932 - 3 * 148 - 2 * cardGap
+    readonly property real groupPadding: 8
+    readonly property real touchCardWidth: 144
+    readonly property real touchColumnGap: 8
+    readonly property real touchColumn: touchCardWidth + touchColumnGap
+    readonly property real touchLeft: 932 - 3 * touchCardWidth - 2 * touchColumnGap - groupPadding
+    readonly property rect rotateGroup: Qt.rect(0, 0, 312 + 2 * groupPadding, cardHeight + 2 * groupPadding)
+    readonly property rect touchGroup: Qt.rect(touchLeft - groupPadding, 0,
+                                              3 * touchCardWidth + 2 * touchColumnGap + 2 * groupPadding,
+                                              3 * cardHeight + 2 * cardGap + 2 * groupPadding)
     implicitHeight: 494 * Math.min(1, width / 932)
     readonly property var definitions: [
-        {key:"circle-counterclockwise",title:"逆时针",x:0,y:0,width:148,asset:"counterclockwise",iw:15,ih:13.8,dx:0.6,outline:"#0F6D78"},
-        {key:"circle-clockwise",title:"顺时针",x:164,y:0,width:148,asset:"clockwise",iw:15,ih:13.8,outline:"#0F6D78"},
+        {key:"circle-counterclockwise",title:"逆时针",x:groupPadding,y:groupPadding,width:148,asset:"counterclockwise",iw:15,ih:13.8,dx:0.6,outline:"#0F6D78"},
+        {key:"circle-clockwise",title:"顺时针",x:164+groupPadding,y:groupPadding,width:148,asset:"clockwise",iw:15,ih:13.8,outline:"#0F6D78"},
         {key:"index-pinch",doubleKey:"double-index-pinch",title:"食拇捏合",x:0,y:170,width:184,asset:"index-pinch",iw:6.6,ih:11.4,outline:"#AF832C"},
         {key:"middle-pinch",doubleKey:"double-middle-pinch",title:"中拇捏合",x:0,y:306,width:184,asset:"middle-pinch",iw:11.4,ih:10.2,outline:"#02A1BA"},
         {key:"clench",title:"握拳",x:0,y:418,width:148,asset:"fist",iw:13.9804,ih:13.9804,dx:0.09,dy:0.09},
         {key:"snap",title:"响指",x:164,y:418,width:148,asset:"snap",iw:16.4998,ih:16.4998,dx:0.15,dy:0.15},
-        {key:"swipe-up",title:"上滑",x:touchLeft+touchColumn,y:0,width:148,asset:"up",iw:19.2,ih:19.2,touch:true},
-        {key:"swipe-left",title:"左滑",x:touchLeft,y:cardHeight+cardGap,width:148,asset:"left",iw:19.2,ih:19.2,touch:true},
-        {key:"tap",doubleKey:"double-tap",title:"点击",x:touchLeft+touchColumn,y:cardHeight+cardGap,width:148,asset:"tap",iw:16.2,ih:16.2,touch:true},
-        {key:"swipe-right",title:"右滑",x:touchLeft+2*touchColumn,y:cardHeight+cardGap,width:148,asset:"right",iw:19.2,ih:19.2,touch:true},
-        {key:"swipe-down",title:"下滑",x:touchLeft+touchColumn,y:2*(cardHeight+cardGap),width:148,asset:"down",iw:19.2,ih:19.2,touch:true}
+        {key:"swipe-up",title:"上滑",x:touchLeft+touchColumn,y:groupPadding,width:touchCardWidth,asset:"up",iw:19.2,ih:19.2,touch:true},
+        {key:"swipe-left",title:"左滑",x:touchLeft,y:groupPadding+cardHeight+cardGap,width:touchCardWidth,asset:"left",iw:19.2,ih:19.2,touch:true},
+        {key:"tap",doubleKey:"double-tap",title:"点击",x:touchLeft+touchColumn,y:groupPadding+cardHeight+cardGap,width:touchCardWidth,asset:"tap",iw:16.2,ih:16.2,touch:true},
+        {key:"swipe-right",title:"右滑",x:touchLeft+2*touchColumn,y:groupPadding+cardHeight+cardGap,width:touchCardWidth,asset:"right",iw:19.2,ih:19.2,touch:true},
+        {key:"swipe-down",title:"下滑",x:touchLeft+touchColumn,y:groupPadding+2*(cardHeight+cardGap),width:touchCardWidth,asset:"down",iw:19.2,ih:19.2,touch:true}
     ]
-    readonly property var markers: [{x:218,y:77,asset:"touch"},{x:29,y:13,asset:"rotate"},{x:67,y:220,asset:"middle"},{x:60,y:43,asset:"index"},{x:192,y:228,asset:"fist"}]
+    readonly property var markers: [{x:136,y:53,asset:"touch"},{x:29,y:13,asset:"rotate"},{x:67,y:220,asset:"middle"},{x:60,y:43,asset:"index"},{x:192,y:228,asset:"fist"}]
     function markerCenter(name) {
         var point = markers.filter(function(marker) { return marker.asset === name })[0]
         return Qt.point(hand.x + (point.x + 10) * hand.width / 432,
@@ -63,35 +70,23 @@ Item {
         return "M " + from.x + " " + from.y + " C " + bend + " " + from.y
             + " " + bend + " " + to.y + " " + to.x + " " + to.y
     }
-    function connectorPath(connector, activeOnly) {
-        return connector.stem + " " + connector.branches.filter(function(branch) {
-            return !activeOnly || branch.keys.indexOf(map.highlightedGesture) >= 0
-        }).map(function(branch) { return branch.path }).join(" ")
-    }
     readonly property var connectors: {
         var rotate = markerCenter("rotate"), index = markerCenter("index")
         var middle = markerCenter("middle"), fist = markerCenter("fist"), touch = markerCenter("touch")
-        var center = touchLeft + touchColumn, bus = center - cardGap / 2
-        var middleY = cardHeight + cardGap + cardHeight / 2, lowerY = 2 * (cardHeight + cardGap) - cardGap / 2
-        var rightBus = center + touchColumn - cardGap / 2
+        var rotateX = rotateGroup.x + rotateGroup.width / 2
+        var rotateBottom = rotateGroup.y + rotateGroup.height
         return [
             {name:"rotate",keys:["circle-clockwise","circle-counterclockwise"],color:"#0F6D78",
-                stem:"", branches:[
-                    {keys:["circle-counterclockwise"],path:"M " + rotate.x + " " + (rotate.y-10) + " C " + rotate.x + " 88 74 112 74 " + cardHeight},
-                    {keys:["circle-clockwise"],path:"M " + rotate.x + " " + (rotate.y-10) + " C " + rotate.x + " 92 238 92 238 " + cardHeight}]},
+                path:"M " + rotate.x + " " + (rotate.y-10) + " C " + rotate.x + " " + (rotateBottom+20)
+                    + " " + rotateX + " " + (rotateBottom+20) + " " + rotateX + " " + rotateBottom},
             {name:"index",keys:["index-pinch","double-index-pinch"],color:"#AF832C",
-                stem:"", branches:[{keys:["index-pinch","double-index-pinch"],path:sideLink(Qt.point(index.x-10,index.y),Qt.point(184,208))}]},
+                path:sideLink(Qt.point(index.x-10,index.y),Qt.point(184,208))},
             {name:"middle",keys:["middle-pinch","double-middle-pinch"],color:"#02A1BA",
-                stem:"", branches:[{keys:["middle-pinch","double-middle-pinch"],path:sideLink(Qt.point(middle.x-10,middle.y),Qt.point(184,344))}]},
+                path:sideLink(Qt.point(middle.x-10,middle.y),Qt.point(184,344))},
             {name:"fist",keys:["clench"],color:"#949CA9",
-                stem:"", branches:[{keys:["clench"],path:route([[fist.x,fist.y+10],[fist.x,398],[74,398],[74,418]])}]},
+                path:route([[fist.x,fist.y+10],[fist.x,398],[74,398],[74,418]])},
             {name:"touch",keys:["tap","double-tap","swipe-up","swipe-down","swipe-left","swipe-right"],color:"#0225BA",
-                stem:route([[touch.x+10,touch.y],[432,touch.y],[432,lowerY],[bus,lowerY]]), branches:[
-                    {keys:["swipe-up"],path:route([[bus,lowerY],[bus,cardHeight/2],[center,cardHeight/2]])},
-                    {keys:["swipe-left"],path:route([[bus,lowerY],[bus,middleY],[touchLeft+148,middleY]])},
-                    {keys:["tap","double-tap"],path:route([[bus,lowerY],[bus,middleY],[center,middleY]])},
-                    {keys:["swipe-down"],path:route([[bus,lowerY],[bus,2*(cardHeight+cardGap)+cardHeight/2],[center,2*(cardHeight+cardGap)+cardHeight/2]])},
-                    {keys:["swipe-right"],path:route([[bus,lowerY],[rightBus,lowerY],[rightBus,middleY],[center+touchColumn,middleY]])}]}
+                path:sideLink(Qt.point(touch.x+10,touch.y),Qt.point(touchGroup.x,touchGroup.y+touchGroup.height/2))}
         ]
     }
     Item {
@@ -105,6 +100,22 @@ Item {
             x: 196; y: 94; width: 390; height: 390
             source: "../assets/figma/redesign-567-33097-hand.png"
             mirror: true; fillMode: Image.PreserveAspectCrop; smooth: true
+        }
+        // Each family shares one light card and one leader to the hand.
+        Repeater {
+            model: [
+                {name:"rotate",bounds:map.rotateGroup,color:"#F8FBFB",border:"#EAF3F3"},
+                {name:"touch",bounds:map.touchGroup,color:"#F8F9FD",border:"#EDF0F9"}
+            ]
+            Rectangle {
+                required property var modelData
+                objectName: "gestureGroup_" + modelData.name
+                visible: !map.compact
+                z: -1
+                x: modelData.bounds.x; y: modelData.bounds.y
+                width: modelData.bounds.width; height: modelData.bounds.height
+                radius: 18; color: modelData.color; border.color: modelData.border
+            }
         }
         Repeater {
             model: map.connectors
@@ -121,7 +132,7 @@ Item {
                     strokeColor: Qt.rgba(connector.lineColor.r, connector.lineColor.g, connector.lineColor.b, 0.3)
                     strokeWidth: 1.5
                     fillColor: "transparent"; capStyle: ShapePath.RoundCap; joinStyle: ShapePath.RoundJoin
-                    PathSvg { path: map.connectorPath(connector.modelData, false) }
+                    PathSvg { path: connector.modelData.path }
                 }
                 Shape {
                     anchors.fill: parent
@@ -130,7 +141,7 @@ Item {
                     ShapePath {
                         strokeColor: connector.lineColor; strokeWidth: 1.8
                         fillColor: "transparent"; capStyle: ShapePath.RoundCap; joinStyle: ShapePath.RoundJoin
-                        PathSvg { path: map.connectorPath(connector.modelData, true) }
+                        PathSvg { path: connector.modelData.path }
                     }
                     Behavior on opacity { NumberAnimation { duration: 140 } }
                 }
@@ -162,7 +173,7 @@ Item {
             }
         }
         Repeater {
-            // Original v6 markers stay registered to the hand when it moves.
+            // Markers stay registered to the hand when it moves.
             model: map.markers
             Image {
                 required property var modelData

@@ -8,8 +8,15 @@ Rectangle {
     required property var controller
     property bool compact: false
     property bool detailsVisible: false
-    property bool automaticDetailsVisible: false
-    onDetailsVisibleChanged: { if (!detailsVisible) automaticDetailsVisible = false }
+    property var recordDetails: ({})
+    function refreshDetails() {
+        if (detailsVisible)
+            recordDetails = controller.voiceHistoryDetails(String(entry.interactionId || entry.id || ""))
+    }
+    onDetailsVisibleChanged: {
+        if (detailsVisible) refreshDetails()
+        else recordDetails = ({})
+    }
     property bool textExpanded: false
     property string displayedId: ""
     readonly property var applicationInfo: controller.historyApplication(String(entry.application || ""))
@@ -20,8 +27,8 @@ Rectangle {
             displayedId = identity
             textExpanded = false
             detailsVisible = false
-            automaticDetailsVisible = false
         }
+        refreshDetails()
     }
     readonly property bool editEntry: entry.mode === "edit"
     readonly property bool routingWarning: Boolean(entry.automaticDetails && entry.automaticDetails.warningText)
@@ -151,8 +158,8 @@ Rectangle {
                 color: theme.text; font.family: theme.family; font.pixelSize: theme.bodySize
                 lineHeight: theme.bodyLineHeight; lineHeightMode: Text.FixedHeight
                 textFormat: Text.PlainText; wrapMode: Text.Wrap
-                maximumLineCount: row.compact ? 2 : row.textExpanded ? 2147483647 : 3
-                elide: row.textExpanded && !row.compact ? Text.ElideNone : Text.ElideRight
+                maximumLineCount: row.detailsVisible || (row.textExpanded && !row.compact) ? 2147483647 : row.compact ? 2 : 3
+                elide: row.detailsVisible || (row.textExpanded && !row.compact) ? Text.ElideNone : Text.ElideRight
             }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 0
@@ -166,8 +173,8 @@ Rectangle {
                     color: theme.muted; font.family: theme.family; font.pixelSize: theme.detailSize
                     lineHeight: theme.detailLineHeight; lineHeightMode: Text.FixedHeight
                     wrapMode: Text.Wrap; textFormat: Text.PlainText
-                    maximumLineCount: row.textExpanded ? 2147483647 : 2
-                    elide: row.textExpanded ? Text.ElideNone : Text.ElideRight
+                    maximumLineCount: row.detailsVisible || row.textExpanded ? 2147483647 : 2
+                    elide: row.detailsVisible || row.textExpanded ? Text.ElideNone : Text.ElideRight
                 }
                 Label {
                     id: candidateText
@@ -178,8 +185,8 @@ Rectangle {
                     color: theme.muted; font.family: theme.family; font.pixelSize: theme.detailSize
                     lineHeight: theme.detailLineHeight; lineHeightMode: Text.FixedHeight
                     wrapMode: Text.Wrap; textFormat: Text.PlainText
-                    maximumLineCount: row.textExpanded ? 2147483647 : 3
-                    elide: row.textExpanded ? Text.ElideNone : Text.ElideRight
+                    maximumLineCount: row.detailsVisible || row.textExpanded ? 2147483647 : 3
+                    elide: row.detailsVisible || row.textExpanded ? Text.ElideNone : Text.ElideRight
                 }
             }
             Label {
@@ -191,8 +198,8 @@ Rectangle {
                 color: theme.muted; font.family: theme.family; font.pixelSize: theme.detailSize
                 lineHeight: theme.detailLineHeight; lineHeightMode: Text.FixedHeight
                 wrapMode: Text.Wrap; textFormat: Text.PlainText
-                maximumLineCount: row.textExpanded ? 2147483647 : 2
-                elide: row.textExpanded ? Text.ElideNone : Text.ElideRight
+                maximumLineCount: row.detailsVisible || row.textExpanded ? 2147483647 : 2
+                elide: row.detailsVisible || row.textExpanded ? Text.ElideNone : Text.ElideRight
             }
             Label {
                 id: editSummary
@@ -217,7 +224,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignLeft
                 implicitHeight: 26; leftPadding: 6; rightPadding: 6
                 quiet: true; font.family: theme.family; font.pixelSize: theme.detailSize
-                visible: !row.compact && (row.textExpanded || primaryText.truncated
+                visible: !row.detailsVisible && !row.compact && (row.textExpanded || primaryText.truncated
                     || (sourceText.visible && sourceText.truncated)
                     || (originalText.visible && originalText.truncated)
                     || (candidateText.visible && candidateText.truncated))
@@ -232,20 +239,12 @@ Rectangle {
                 lineHeight: theme.detailLineHeight; lineHeightMode: Text.FixedHeight
                 wrapMode: Text.Wrap; textFormat: Text.PlainText
             }
-            FigmaAction {
-                objectName: "automaticVoiceDetailsToggle"
-                visible: row.detailsVisible && Boolean(row.entry.automaticDetails && row.entry.automaticDetails.level1Text)
-                text: row.automaticDetailsVisible ? "关闭自动识别完整记录" : "查看自动识别完整记录"
-                quiet: true
-                onClicked: row.automaticDetailsVisible = !row.automaticDetailsVisible
-            }
             Loader {
                 Layout.fillWidth: true
-                active: row.detailsVisible && row.automaticDetailsVisible && Boolean(row.entry.automaticDetails && row.entry.automaticDetails.level1Text)
+                active: row.detailsVisible
                 visible: active
-                sourceComponent: AutomaticVoiceDetails {
-                    details: row.entry.automaticDetails
-                    onCloseRequested: row.automaticDetailsVisible = false
+                sourceComponent: VoiceHistoryDetails {
+                    details: row.recordDetails
                 }
             }
         }

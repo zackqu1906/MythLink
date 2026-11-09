@@ -15,6 +15,7 @@ UiScrollView {
     signal devicePickerRequested()
     FigmaTheme { id: theme }
     objectName: "homePage"
+    readonly property var connection: page.controller.connectionInfo
     clip: true
     contentWidth: availableWidth
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -63,7 +64,7 @@ UiScrollView {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 418
-                Layout.preferredHeight: 234
+                Layout.preferredHeight: page.connection.state === "failed" ? 274 : 234
                 radius: 16; color: theme.surface; border.color: theme.line
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 20; spacing: 6
@@ -77,16 +78,12 @@ UiScrollView {
                         }
                         FigmaAction {
                             objectName: "homeConnectionButton"
-                            readonly property bool disconnectAction: page.controller.connected || page.controller.statusKind === "stopping"
-                            text: page.controller.statusKind === "stopping" ? "正在断开…"
-                                  : page.controller.connected ? "断开设备"
-                                  : page.controller.busy ? "正在连接…" : page.controller.scanBusy ? "正在搜索…"
-                                  : page.controller.canReconnect ? "重新连接" : "蓝牙连接"
-                            primary: true
-                            primaryColor: disconnectAction ? "#B44852" : theme.primary
-                            primaryHoverColor: disconnectAction ? "#C35A64" : theme.primaryHover
-                            primaryPressedColor: disconnectAction ? "#933843" : theme.primaryPressed
-                            enabled: page.controller.connected ? page.controller.statusKind !== "stopping" : !page.controller.busy && !page.controller.scanBusy
+                            text: page.connection.actionText
+                            primary: page.connection.primary
+                            primaryColor: page.connection.destructive ? "#B44852" : theme.primary
+                            primaryHoverColor: page.connection.destructive ? "#C35A64" : theme.primaryHover
+                            primaryPressedColor: page.connection.destructive ? "#933843" : theme.primaryPressed
+                            enabled: page.connection.enabled
                             onClicked: page.connectionRequested()
                         }
                         FigmaAction {
@@ -102,15 +99,44 @@ UiScrollView {
                     }
                     Image { Layout.alignment: Qt.AlignHCenter; Layout.fillHeight: true; Layout.preferredWidth: 128; Layout.preferredHeight: 143; source: "../assets/figma/redesign-383-9247-ring-product-artwork.png"; fillMode: Image.PreserveAspectFit }
                     RowLayout {
-                        Layout.alignment: Qt.AlignHCenter; spacing: 7
-                        Rectangle { width: 6; height: 6; radius: 3; color: page.controller.connected ? theme.success : "#A0A8BA" }
+                        id: connectionStatusRow
+                        Layout.alignment: Qt.AlignHCenter; Layout.fillWidth: false
+                        Layout.maximumWidth: parent.width; spacing: 7
+                        BusyIndicator {
+                            objectName: "homeConnectionSpinner"
+                            Layout.preferredWidth: 16; Layout.preferredHeight: 16
+                            padding: 0
+                            visible: page.connection.pending
+                            running: visible
+                        }
+                        Rectangle {
+                            visible: !page.connection.pending
+                            width: 6; height: 6; radius: 3
+                            color: page.connection.state === "failed" ? "#B44852"
+                                   : page.controller.connected ? theme.success : "#A0A8BA"
+                        }
                         Label {
-                            text: page.controller.connected
-                                ? "已连接" + (page.controller.batteryAvailable ? " · 电量 " + page.controller.batteryPercentage + "%" : "")
-                                : page.controller.busy ? page.controller.statusTitle
-                                : page.controller.scanBusy ? "正在搜索附近的蓝牙设备"
-                                : "连接 Ring，开始语音与手势交互"
+                            objectName: "homeConnectionStatus"
+                            Layout.maximumWidth: connectionStatusRow.parent.width - 30
+                            text: page.connection.state === "failed" ? page.connection.label
+                                : page.connection.detail + (page.controller.connected && page.controller.batteryAvailable
+                                  ? " · 电量 " + page.controller.batteryPercentage + "%" : "")
                             color: theme.muted; font.pixelSize: 12
+                            horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight
+                        }
+                    }
+                    Rectangle {
+                        objectName: "homeConnectionError"
+                        Layout.fillWidth: true
+                        visible: page.connection.state === "failed"
+                        implicitHeight: connectionError.implicitHeight + 20
+                        radius: 8; color: "#FFF3F1"; border.color: "#F0D9D5"
+                        Label {
+                            id: connectionError
+                            anchors.left: parent.left; anchors.right: parent.right
+                            anchors.top: parent.top; anchors.margins: 10
+                            text: page.connection.detail
+                            color: "#AF4650"; font.pixelSize: 12; wrapMode: Text.Wrap
                         }
                     }
                 }
@@ -119,19 +145,6 @@ UiScrollView {
                 objectName: "homeStatisticsPanel"
                 Layout.fillWidth: true; Layout.preferredWidth: 498
                 statistics: page.controller.homeStatistics
-            }
-        }
-        Rectangle {
-            objectName: "homeConnectionError"
-            Layout.fillWidth: true
-            visible: !page.controller.connected && page.controller.statusKind === "error"
-            implicitHeight: connectionError.implicitHeight + 28
-            radius: 12; color: "#FFF3F1"; border.color: "#F0D9D5"
-            ColumnLayout {
-                id: connectionError
-                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 14; spacing: 5
-                Label { Layout.fillWidth: true; text: page.controller.statusTitle; color: "#AF4650"; font.pixelSize: 14; font.bold: true; wrapMode: Text.Wrap }
-                Label { Layout.fillWidth: true; text: page.controller.statusDetail; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
             }
         }
         ColumnLayout {

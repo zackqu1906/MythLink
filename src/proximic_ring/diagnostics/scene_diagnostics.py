@@ -211,6 +211,7 @@ class SceneDiagnostics:
             root = Path(__file__).resolve().parents[1]
             names = ["diagnostics/scene_diagnostics.py", "diagnostics/diagnostic_log.py", "diagnostics/runtime_diagnostics.py", "desktop/app_shortcuts.py", "platforms/macos/mac_shortcut_events.py", "platforms/macos/native_access.py", "platforms/macos/native_access_worker.py",
                      "ui/gestures/app_gesture_controller.py", "ui/gestures/ring_gesture_controller.py", "ui/controller.py",
+                     "desktop/application_menus.py", "ui/desktop/application_mapping_controller.py",
                      "ui/scenes/scene_notice_controller.py", "ui/scenes/scene_notice_overlay.py", "ui/shared/overlay_stacking.py",
                      "ui/shared/feedback_availability.py", "ui/permissions/permission_setup_controller.py", "ui/main.py"]
             names += [str(path.relative_to(root)) for path in sorted((root / "scenes").rglob("*.py"))]

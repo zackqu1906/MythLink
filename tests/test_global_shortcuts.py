@@ -88,6 +88,38 @@ def test_global_custom_dispatch_app_override_removal_and_gesture_rebinding(route
     assert sent == [(BUNDLE, 'Cmd+Shift+K'), (BUNDLE, 'Ctrl+Tab'), (BUNDLE, 'Cmd+Shift+K')]
 
 
+def test_global_recorded_keys_use_system_delivery_but_app_menus_remain_pinned(route, monkeypatch):
+    c, service, _, backend, sent, _, _ = route
+    outside(backend)
+    destinations = []
+    original = backend.post
+    def post(target, shortcut, **kwargs):
+        destinations.append(kwargs.get('system_wide', False))
+        original(target, shortcut, **kwargs)
+    monkeypatch.setattr(backend, 'post', post)
+    assert c.ringGestures.setGlobalCustomBinding('snap', '截屏与录屏', 'Cmd+Shift+5')
+    request(c, 'snap')
+    catalog = configure(service, monkeypatch)
+    assert catalog.setBinding(BUNDLE, 'snap', ACTION['id'])
+    request(c, 'snap')
+    assert destinations == [True, False]
+    assert sent == [(BUNDLE, 'Cmd+Shift+5'), (BUNDLE, 'Ctrl+Tab')]
+
+
+@pytest.mark.parametrize('item, system_wide', [
+    (dict(id='custom:recorded', path='自定义快捷键'), True),
+    (dict(id='apple-menu', path='Apple › Dock'), True),
+    (dict(id='apple-menu-cn', path='苹果 › 聚焦'), True),
+    (dict(id='app-menu', path='文件 › 新建'), False),
+    (dict(id='presentation:next', path='演示'), False),
+])
+def test_application_and_scene_binding_classifies_keyboard_delivery(item, system_wide):
+    from proximic_ring.ui.desktop.application_mapping_controller import _keyboard_binding
+    binding = _keyboard_binding('snap', dict(item, shortcut='Cmd+Space'))
+    assert binding.system_wide is system_wide
+    assert binding.action_id == item['id']
+
+
 @pytest.mark.parametrize('change', ['settings', 'window', 'connection', 'busy', 'imk_focus'])
 def test_custom_queued_action_drops_after_target_or_ownership_change(route, change):
     c, _, inline, backend, sent, _, _ = route

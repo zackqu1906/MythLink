@@ -4,13 +4,13 @@
 
 ## 当前连接
 
-- 服务器：`root@mythlink.cn:20030`（SSH）。
+- 公网接口：`http://mythlink.cn:20031/v1/systemone`，无需账号登录；健康检查为同地址 `/health`。
+- 2026-11-09 已确认公网 20031 对应服务器内部 20031，并将常驻服务切换到 `0.0.0.0:20031`。用户提供的可用公网端口范围为 20031–20039，客户端可按实际分配修改端口。
 - 模型：`Cloudflare/clef-flash`，revision `41318bf2106d135c7a92da745fec4b255279b4de`。
 - 硬件：Ascend 910B3，64 GiB HBM，逻辑设备 `npu:0`。
 - 环境：Python 3.12.13、torch/torch_npu 2.10.0、Transformers 5.10.2；BF16，eager attention。
-- 远端接口：`127.0.0.1:30000/v1/systemone`；仅监听服务器回环地址。
-- 本机接口：`http://127.0.0.1:30000/v1/systemone`，通过 SSH 本地转发访问。
-- 当前 HTTP 层未配置额外 Bearer token，远程访问使用 SSH 密钥认证。服务也支持可选的 `CLEF_API_KEY`。
+- 当前 HTTP 层不要求 Bearer token；应用直接访问公网接口，不创建 SSH 隧道。服务器代码仍支持可选 `CLEF_API_KEY`，当前无登录客户端不发送此字段。
+- SSH 管理入口仍是 `root@mythlink.cn:20030`，仅用于维护；不是应用推理连接。原 `127.0.0.1:30000` 监听已替换。
 
 模型只加载一次。加载和推理都在同一个专用线程执行，串行使用 NPU，最多容纳 4 个运行中或排队请求。`GET /health` 不等待推理队列。原部署用旧一级和二级请求预热后监听；当前评测另行预热联合请求。
 
@@ -18,28 +18,30 @@
 
 ## 从主项目使用
 
-### 安装包用户
+### 应用设置
 
-0.6.8 起可在设置 → 服务设置 → 自动路由服务器填写自己的 SSH 地址、端口、用户名和私钥路径，点击“保存并测试”。服务器内 Clef 端口默认 30000。应用自行建立独立隧道，不需要复制开发机的 `.runtime`、环境变量或私钥，也不需要公网 HTTP。服务器需要已运行本文件所述 Clef 服务。常见认证失败、主机身份变化、服务未启动会显示在设置中。新安装或更新后还应安装/更新随包提供的输入法组件。
+设置 → 服务设置 → 自动路由服务器：服务器地址填写 `mythlink.cn`，公网端口填写 `20031`，点击“保存并测试”。此界面只保留地址与端口，验证健康接口和一条合成分类，不使用账号、私钥或开发机环境变量。旧 SSH 设置仅沿用地址，端口改为 20031；新设置保存到 `clef/http/*`。网络失败、错误端口和推理失败会显示在设置中。
 
-### 开发脚本
+这是 2026-11-09 的源码变更，旧安装包仍是 SSH 界面，需重新构建安装。新安装或更新后还应安装/更新随包提供的输入法组件。
 
-实际连接参数保存在本机未入库的 `.runtime/clef/connection.env`，脚本自动配置现有 `PROXIMIC_CLEF_*` 环境变量，并让回环请求绕过 HTTP 代理。
+### 开发工具
 
-在项目根目录运行：
+在项目根目录直接访问公网服务，例如：
 
 ```bash
-bash scripts/clef-remote.sh status
-bash scripts/clef-remote.sh check --output .runtime/clef/routing-evaluation.json
-bash scripts/clef-remote.sh pipeline --output .runtime/clef/pipeline-evaluation.json
-bash scripts/clef-remote.sh ui
+export PROXIMIC_CLEF_URL=http://mythlink.cn:20031/v1/systemone
+export NO_PROXY=mythlink.cn,127.0.0.1,localhost
+export no_proxy="$NO_PROXY"
+curl --noproxy '*' --fail http://mythlink.cn:20031/health
+.runtime/venv/bin/python tools/check_clef_router.py --output .runtime/clef/routing-evaluation.json
+bash scripts/start-ui.sh
 ```
 
-`check` 使用现有的 32 条分类样例。`pipeline` 读取本机主项目已有文本模型配置，只发送合成样例，通过真实 `TextProcessingWorker` 运行分类及后续生成；可加 `--case precise-replace` 只测一例。它不会修改桌面设置或写入其他应用。
+`check_clef_router.py` 支持 `--cases` 选择样例文件及 `--case` 指定单条样例。`check_clef_pipeline.py` 读取本机主项目已有文本模型配置，通过真实 `TextProcessingWorker` 运行分类及后续生成，不写入其他应用。
 
-`ui` 确保隧道存在，再带着连接配置启动源码版主项目。实际使用自动语音时，在“输入与控制”选择“自动判断”。本次保留了用户原有的手动模式，没有重启正在运行的应用、修改手势绑定、重新打包或更新已安装输入法。Finder 启动的旧应用不会自动继承此脚本的环境变量。
+源码主项目优先使用界面保存的公网配置；未配置地址时，开发命令仍支持 `PROXIMIC_CLEF_URL`。实际使用自动语音时，在“输入与控制”选择“自动判断”。
 
-隧道控制命令：`bash scripts/clef-remote.sh start` / `stop`。已验证断开重连后服务器 PID 不变，并可继续完成真实分类。
+`scripts/clef-remote.sh` 保留为旧 SSH 开发辅助脚本，不参与应用的公网连接。若继续使用它，需将未入库的 `.runtime/clef/connection.env` 中 `PROXIMIC_CLEF_REMOTE_PORT` 改为 20031 并重建旧隧道；下方历史报告中的 SSH 命令对应当时部署。
 
 ## 服务器管理
 
@@ -55,9 +57,24 @@ tail -f /root/clef-test/service.log
 bash /root/clef-test/clef-service.sh stop
 ```
 
-该容器 PID 1 是 sshd；当前使用 nohup 常驻，可跨 SSH 断线继续运行。它不是开机自启或崩溃自动重启的系统服务：容器重启或服务退出后需要重新执行 start。本机隧道断线后可通过 start/check/ui 重建。
+启动脚本默认 `CLEF_BIND_HOST=0.0.0.0`、`CLEF_PORT=20031`；服务程序新增 `--host` 参数，单独运行时仍默认回环监听。该容器 PID 1 是 sshd；当前使用 nohup 常驻，可跨 SSH 断线继续运行。它不是开机自启或崩溃自动重启的系统服务：容器重启或服务退出后需要重新执行 start。
 
-## 2026-11-04 实测
+## 2026-11-09 公网直连验证
+
+155 项相关测试通过（HTTP 服务、客户端、路由、自动语音及设置页保存/测试交互）。
+使用应用同一 `ClefConnection` / `ConnectedClefRouter`，直接访问公网 20031、未发送认证头：
+
+| 合成口述 | 原文 | 预期／实际 | 单次客户端耗时 |
+|---|---|---|---|
+| 明天见。 | 空 | 听写／听写 | 1.260 秒 |
+| 把三点改为四点。 | 我们三点开会。 | 修改／修改 | 1.274 秒 |
+
+耗时包含网络往返及分类处理，只是两条连接冒烟测试，不代表 P50/P95 或完整准确率评测。
+完整请求、各类概率及耗时保存在本机 `.runtime/clef/public-connection-2026-11-09.jsonl`。
+部署前脚本备份位于服务器 `/root/clef-test/backups/public-20261109T052034Z/`。
+本轮未重新构建安装包，也未测试麦克风或 IMK 实际写回。
+
+## 2026-11-04 实测（历史 SSH 部署）
 
 ### 首次部署基线：v2 的 32 条分类样例
 

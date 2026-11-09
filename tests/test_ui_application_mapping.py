@@ -33,6 +33,33 @@ def wait_for_icons(root):
     assert current and all(item.parent().property("ready") for item in current)
 
 
+def test_application_shortcut_menu_shows_discovered_commands_before_presets(mapping_ui, tmp_path):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+    _, _, root, catalog, _, click, _ = mapping_ui
+    bundle = "com.microsoft.Powerpoint"
+    catalog._candidates = [dict(value=bundle, label="Microsoft PowerPoint", path="/System/Applications/TextEdit.app")]
+    assert catalog.addApplication(bundle)
+    QTest.qWait(60)
+    click("gestureApplication_" + bundle)
+    catalog._menus = catalog._menus + [dict(id="apple-logout", label="Log Out", path="Apple › Log Out", shortcut="Cmd+Shift+Q")]
+    catalog.discoveryChanged.emit()
+    click("gestureCard_swipe-right")
+    click("presentationGestureScene")
+    click("gestureMappingDropdown")
+    click("gestureCategory_application")
+    editor = root.findChild(QObject, "gestureActionEditor")
+    rows = editor.property("menuRows").toVariant()
+    assert [item["id"] for item in rows[:len(ACTIONS)]] == [item["id"] for item in ACTIONS]
+    assert all(item.get("preset") for item in rows[len(ACTIONS):])
+    assert any(item["id"] == "powerpoint:next" for item in rows)
+    assert not any(item["id"] == "apple-logout" for item in rows)
+    shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    shots.mkdir(parents=True, exist_ok=True)
+    QTest.qWait(150)  # Capture after the popup's opacity transition.
+    assert root.grabWindow().save(str(shots / "application-menu-discovery-first.png"))
+
+
 @pytest.mark.parametrize("size", [(1440, 1040), (940, 700)])
 def test_powerpoint_scene_tabs_reserved_gestures_and_separate_bindings(mapping_ui, tmp_path, size):
     from PySide6.QtCore import QObject
@@ -106,7 +133,8 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
     QTest.qWait(60)
     click("gestureApplication_" + bundle)
     bar = root.findChild(QObject, "applicationSceneBar")
-    assert bar.property("visible") and catalog.bindingCount(bundle) == (3 if profile == "generic" else 4)
+    # Presentation defaults include the existing up/down mappings too.
+    assert bar.property("visible") and catalog.bindingCount(bundle) == (5 if profile == "generic" else 6)
     click("gestureCard_swipe-right")
     editor = root.findChild(QObject, "gestureActionEditor")
     assert editor.property("editable")
@@ -124,7 +152,8 @@ def test_added_presenters_automatically_show_scene_without_extra_setup(mapping_u
         assert catalog.bindings[bundle]["swipe-right"]["shortcut"] == "Right"
         assert "PowerPoint" not in root.findChild(QObject, "gestureActionEditor").property("savedStatus")
     else:
-        assert {a["id"] for a in catalog.actions if a.get("preset")} == {"presentation:previous", "presentation:next", "presentation:end"}
+        assert {a["id"] for a in catalog.actions if a.get("preset")} == {
+            "presentation:previous", "presentation:next", "presentation:up", "presentation:down", "presentation:end"}
         assert catalog.defaultMappingNotice
         click("gestureMappingDropdown")
         click("gestureCategory_shortcut")
@@ -162,8 +191,8 @@ def test_wps_start_and_opposite_swipes_save_independently_in_their_scopes(mappin
 
 @pytest.mark.parametrize("bundle,label,gesture,action,size", [
     ("com.kingsoft.wpsoffice.mac", "WPS Office", "snap", "wps:start-current", (1440, 1040)),
-    ("com.openai.codex", "Codex", "circle-clockwise", "codex:next", (1440, 1040)),
-    ("com.tencent.workbuddy.mac", "WorkBuddy", "circle-counterclockwise", "workbuddy:previous", (940, 700)),
+    ("com.openai.codex", "ChatGPT", "circle-clockwise", "next-chat", (1440, 1040)),
+    ("com.tencent.workbuddy.mac", "WorkBuddy", "circle-counterclockwise", "previous-chat", (940, 700)),
 ])
 def test_default_mappings_are_selected_editable_and_restorable(mapping_ui, tmp_path, bundle, label, gesture, action, size):
     from PySide6.QtCore import QObject
@@ -300,6 +329,11 @@ def mapping_ui(inline_ui, monkeypatch):
         result = ([dict(value=BUNDLE, label="文本编辑", path="/System/Applications/TextEdit.app", running=True),
                    dict(value="com.example.Other", label="终端", path="/System/Applications/Utilities/Terminal.app", running=False)]
                   if kind == "apps" else dict(actions=ACTIONS))
+        if kind == 'menu' and bundle in {'com.openai.codex', 'com.tencent.workbuddy.mac'}:
+            result = dict(actions=ACTIONS + [dict(id=direction.lower()+'-chat',
+                label=direction+' Sidebar Item' if bundle == 'com.openai.codex' else direction+' Chat',
+                path='View › '+direction, shortcut='Cmd+Alt+'+key, available=True)
+                for direction, key in [('Next', ']'), ('Previous', '[')]])
         catalog._apply_result(kind, catalog._generation[kind], bundle, result, "")
     monkeypatch.setattr(catalog, "_request", discover)
     root.setProperty("currentPage", 2)

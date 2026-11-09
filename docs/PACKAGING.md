@@ -75,7 +75,7 @@ $env:WINDOWS_TIMESTAMP_URL = "http://timestamp.digicert.com" # 可省略
 
 ## macOS Apple Silicon
 
-当前产物的部署目标为 Apple Silicon（arm64）、macOS 13.0 及以上；实际系统验收状态见
+当前产物的部署目标为 Apple Silicon（arm64）、macOS 13.3 及以上；实际系统验收状态见
 [macOS 兼容性](MACOS_COMPATIBILITY.md)。构建机需要 Xcode Command
 Line Tools；脚本会把固定版本的 Python 3.11 和构建工具安装到项目目录，不要求
 Homebrew，也不会修改系统 Python：
@@ -146,7 +146,7 @@ Developer ID G2 中间证书；不要设置“始终信任”来替代完整证�
 ### 输入法随包安装（2026-09-18）
 
 macOS 构建先编译 Swift 输入法和 `InputMethodAdmin`，再将两者完整放入 app 的
-`Contents/Helpers` 并签名。组件最低版本与主程序统一为 macOS 13.0；默认与主程序使用同一正式身份。
+`Contents/Helpers` 并签名。组件最低版本与主程序统一为 macOS 13.3；默认与主程序使用同一正式身份。
 `--self-check-package` 会核对组件身份、可执行文件及签名，缺失时构建失败。
 
 输入法根据自身 Swift 源码、资源、Info.plist、构建脚本及编译器 / SDK / 目标配置的
@@ -259,7 +259,7 @@ git push origin v0.6.0
 
 ## 发布前硬件验收
 
-在干净的 Windows 10/11 x64 和 Apple Silicon macOS 13.0、13 最新小版本、14、15、26 上分别验证：
+在干净的 Windows 10/11 x64 和 Apple Silicon macOS 13.3、13 最新小版本、14、15、26 上分别验证：
 
 1. 安装/拖入 Applications 后正常启动，蓝牙权限提示文案正确。
 2. 扫描、选择 Ringo、连接、ADPCM 连续音频至少 15 分钟、连续说 20 次，并验证单个 BLE

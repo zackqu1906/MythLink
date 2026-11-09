@@ -71,6 +71,22 @@ def test_project_client_completes_joint_request_with_one_worker(service):
     assert len(json.loads(trace)["stages"]) == 1
 
 
+def test_public_connection_without_login_completes_health_and_classification(service):
+    from proximic_ring.text_processing.clef_connection import (
+        ClefConnection, ClefServerSettings, ConnectedClefRouter,
+    )
+    server, engine, _ = service
+    server.api_key = ""
+    connection = ClefConnection(ClefServerSettings(host="127.0.0.1", port=server.server_port))
+    try:
+        assert connection.check().endswith("/v1/systemone")
+        decision, trace = ConnectedClefRouter(connection).classify("把咖啡改成牛奶", "我想喝咖啡。")
+        assert decision == RoutingDecision("edit", EditPlan(("modify",)))
+        assert len(engine.calls) == 1 and len(json.loads(trace)["stages"]) == 1
+    finally:
+        connection.close()
+
+
 @pytest.mark.parametrize("raw,status", [(b"not-json", 400), (b'{"state":NaN}', 400),
                                         (b"x" * (MAX_BODY + 1), 413), ({}, 400),
                                         ({**body(), "model": "wrong"}, 404),

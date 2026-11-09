@@ -36,9 +36,15 @@ class AutomaticVoiceMixin:
         self._automatic_context = None
         self._automatic_submitted_key = None
         self._automatic_startup_final = None
-        self._inline_input.automatic_mode = self._input_routing_mode == INPUT_ROUTING_AUTO
-        if self._inline_input.automatic_mode:
-            self._text_processing_worker.warmup_router()
+        self._configure_voice_mode()
+
+    def _automatic_inline_edit_options(self, key):
+        pending = self._automatic_inline_edit
+        if pending is None or tuple(key[:3]) != pending.inline_key:
+            raise ValueError("自动编辑计划与输入法会话不匹配")
+        self._inline_input.automatic_progress("generating", pending.edit_plan.tasks)
+        return dict(task_type=pending.task_type, edit_plan=pending.edit_plan,
+                    screen_context=pending.context, force_llm=True, routing_mode=INPUT_ROUTING_AUTO)
 
     def _automatic_key(self):
         inline = self._inline_input
@@ -51,7 +57,11 @@ class AutomaticVoiceMixin:
         if not enabled:
             return
         target = self._inline_input.target_reference() if self._inline_enabled() else self._speech_start_target
-        self._automatic_context = self._text_processing_worker.capture_context(target)
+        capture = getattr(self, "_voice_capture", None)
+        if not capture:
+            self._prefetch_voice_capture(target, inline=self._inline_enabled(), verified=False)
+            capture = self._voice_capture
+        self._automatic_context = capture["model_context"]
         if buffered and buffered[0] == self._automatic_key():
             self._submit_automatic_voice(buffered[1], buffered[2], target, inline=True)
 
@@ -75,8 +85,7 @@ class AutomaticVoiceMixin:
         self._automatic_inline_edit = None
         self._automatic_submitted_key = None
         self._automatic_startup_final = None
-        if hasattr(self._automatic_context, "cancel"):
-            self._automatic_context.cancel()
+        # Raw capture belongs to the history record, even if routing is cancelled.
         self._automatic_context = None
 
     def _submit_automatic_voice(self, text, session_id, target, *, inline=False):
@@ -104,7 +113,9 @@ class AutomaticVoiceMixin:
             except Exception as exc:
                 self._append_log(f"自动判断原文读取不可用：{exc}")
         if self._automatic_context is None:
-            self._automatic_context = self._text_processing_worker.capture_context(target)
+            self._prefetch_voice_capture(target, inline=inline, verified=False)
+            self._bind_voice_capture(session_id)
+            self._automatic_context = self._voice_capture["model_context"]
         self._text_request_id += 1
         request_id = self._text_request_id
         pending = AutomaticUtterance(self._automatic_generation, text, int(session_id), target,
@@ -183,7 +194,7 @@ class AutomaticVoiceMixin:
                 target=pending.target, snapshot=pending.snapshot,
                 target_text=pending.snapshot.text if pending.snapshot is not None else "",
                 task_type=result.task_type, screen_context=result.screen_context,
-                edit_plan=result.edit_plan, force_llm=True)
+                edit_plan=result.edit_plan, force_llm=True, routing_mode=INPUT_ROUTING_AUTO)
             if pending.inline_key:
                 self._automatic_dictations[self._text_request_id] = pending
         return True

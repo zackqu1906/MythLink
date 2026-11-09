@@ -152,3 +152,26 @@ def test_app_pointer_uses_fresh_channel_instead_of_main_process_quartz(monkeypat
     assert ready.wait(1)
     output.stop()
     assert ended.wait(1) and calls == ['enable', 'close']
+
+
+def test_live_pointer_options_cross_ipc_before_next_move(monkeypatch):
+    import proximic_ring.platforms.macos.native_access_worker as worker
+    from test_touchpad_drag import native
+    mouse, posts = native()
+    mouse.enable()
+    dispatcher = worker.Dispatcher()
+    dispatcher.touchpad_mouse = mouse
+    class Channel:
+        def call(self, operation, **options):
+            return dispatcher.handle(dict(operation=operation, **options))['result']
+        def close(self): mouse.disable()
+    parent = NativeTouchpadMouse(channel_factory=lambda **_: Channel())
+    parent.enabled = True
+    try:
+        parent.apply([dict(kind='move', dx=2, dy=3)])
+        parent.gain, parent.invert_y = 2., True
+        parent.apply([dict(kind='move', dx=2, dy=3)])
+        assert [e['point'] for e in posts] == [(2., 3.), (6., -3.)]
+        assert mouse.enabled  # No disable/re-enable or new BLE stream.
+    finally:
+        parent.close()

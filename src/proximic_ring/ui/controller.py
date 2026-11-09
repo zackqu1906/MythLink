@@ -91,6 +91,8 @@ from ..text_processing import (
     INPUT_MODE_EDIT,
     INPUT_ROUTING_AUTO,
     INPUT_ROUTING_MANUAL,
+    INPUT_ROUTING_ROUTED_EDIT,
+    INPUT_ROUTING_LABELS,
     InputModeRoutingRequest,
     InputModeRoutingResult,
     LLM_PROVIDER_LOCAL,
@@ -182,24 +184,6 @@ class _PendingModeRoute:
     session_id: int = 0
 
 
-@dataclass
-class _AutoInteraction:
-    """Legacy/manual switchable candidates; not the Clef automatic pipeline."""
-
-    route_id: int
-    session_id: int
-    raw_text: str
-    target: DesktopTargetRef | None
-    selected_mode: str
-    routed_at: float
-    snapshot: DesktopTextSnapshot | None = None
-    request_ids: dict[str, int] = field(default_factory=dict)
-    results: dict[str, TextProcessingResult] = field(default_factory=dict)
-    candidate_errors: dict[str, str] = field(default_factory=dict)
-    preparing: bool = True
-    classified: bool = False
-    routed_by_model: bool = True
-    prepared_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass
@@ -209,6 +193,7 @@ class _EditReview:
     instruction: str
     proposed_text: str
     snapshot: DesktopTextSnapshot
+    routing_mode: str = INPUT_ROUTING_MANUAL
 
 
 @dataclass
@@ -224,6 +209,7 @@ class _AppliedInteraction:
     summary: str = ""
     mode_switch_error: str = ""
     dataset_interaction_id: str = ""
+    routing_mode: str = INPUT_ROUTING_MANUAL
 
 
 @dataclass(frozen=True)
@@ -252,25 +238,8 @@ class _ModeSwitchApplication:
     error: str = ""
 
 
-_DICTATION_CORRECTION_GRACE_MS = 700
 
 
-def _is_explicit_emptying_edit_response(
-    response: object,
-    expected_original: str,
-) -> bool:
-    """Return whether either validated edit contract clears all text."""
-
-    if not isinstance(response, dict) or response.get("modified_text") != "":
-        return False
-    # The full-text race contract intentionally has no original_text field.
-    if set(response) == {"modified_text"}:
-        return True
-    return (
-        isinstance(response.get("original_text"), str)
-        and response["original_text"] == str(expected_original or "")
-        and bool(response["original_text"])
-    )
 
 
 class _VoiceHistoryListModel(QAbstractListModel):
@@ -340,12 +309,17 @@ class _VoiceHistoryListModel(QAbstractListModel):
 
 
 from .voice.automatic_voice import AutomaticVoiceMixin
-from .voice.manual_voice import ManualVoiceMixin
+from .voice.manual_voice import ManualVoiceMixin, _AutoInteraction, _DICTATION_CORRECTION_GRACE_MS
+from .voice.voice_results import _is_explicit_emptying_edit_response
+from .voice.voice_capture import VoiceCaptureMixin
+from .voice.routed_edit_voice import RoutedEditVoiceMixin
+from .voice.voice_modes import VoiceModesMixin
 
 
-class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
+class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, ManualVoiceMixin, RoutedEditVoiceMixin, QObject):
     runningChanged = Signal()
     connectedChanged = Signal()
+    connectionChanged = Signal()
     ringDisconnectNoticeChanged = Signal()
     batteryChanged = Signal()
     recognitionEnabledChanged = Signal()
@@ -429,6 +403,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._interaction_recognition_suspended = False
         self._busy = False
         self._scan_busy = False
+        self._connection_outcome = "disconnected"
+        self._connection_error = ""
+        self._connection_cancel_requested = False
         self._quitting = False
         self._quit_wait_ticks = 0
         self._tray_available = False
@@ -520,6 +497,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             )
         )
         self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
+        self._ocr_context_enabled = self._bool_setting("input/ocrContextEnabled", True)
         self._mode_correction_shortcut = normalize_mode_switch_shortcut(
             self._settings.value(
                 "input/modeCorrectionShortcut",
@@ -910,7 +888,8 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         from .voice.inline_controller import InlineInputController
         self._inline_input = InlineInputController(self, enabled=inline_input_enabled)
         self._init_automatic_voice()
-        self._inline_input.began.connect(self._begin_automatic_voice)
+        self._init_voice_capture()
+        self._inline_input.began.connect(self._begin_voice_capture)
         from .voice.tutorial_controller import VoiceTutorialController
         self._voice_tutorial = VoiceTutorialController(self._inline_input, self)
         from .permissions.permission_setup_controller import PermissionSetupController
@@ -960,6 +939,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._proximity.changed.connect(self._ring_gestures.lock_state_changed)
         self._proximity.reconnectRequested.connect(self._reconnect_for_proximity)
         self.connectedChanged.connect(self._proximity.syncConnectionState)
+        for signal in (self.connectedChanged, self.busyChanged, self.scanBusyChanged,
+                       self.statusChanged, self.reconnectAvailabilityChanged):
+            signal.connect(self.connectionChanged.emit)
         self._inline_input.settled.connect(self._app_gestures.settled)
         self._inline_input.changed.connect(self._app_gestures.state_changed)
         self._inline_input.interrupted.connect(self._app_gestures.cancel_pending)
@@ -976,6 +958,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             asr_backend=self._asr_backend,
             asr_device=self._asr_device,
             routing=self._input_routing_mode,
+            ocr_context_enabled=self._ocr_context_enabled,
             default_mode=self._input_mode,
             mode_correction_shortcut=self._mode_correction_shortcut,
             llm_provider=self._llm_provider,
@@ -1134,6 +1117,40 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
     @Property(bool, notify=busyChanged)
     def busy(self) -> bool:
         return self._busy
+
+    @Property(str, notify=connectionChanged)
+    def connectionState(self) -> str:
+        if self._busy and self._disconnect_event.is_set() and (
+                self._runtime_active or self._connection_cancel_requested):
+            return "cancelling" if self._connection_cancel_requested else "disconnecting"
+        if self._connected:
+            return "connected"
+        if self._busy:
+            return "connecting"
+        if self._scan_busy:
+            return "scanning"
+        return self._connection_outcome
+
+    @Property("QVariantMap", notify=connectionChanged)
+    def connectionInfo(self):
+        from .shared.device_connection import connection_info
+        return connection_info(self.connectionState, can_reconnect=self.canReconnect,
+                               preparing=self._busy, error=self._connection_error)
+
+    @Slot()
+    def activateConnectionAction(self):
+        action = self.connectionInfo["action"]
+        if action == "cancel":
+            self.cancelConnection()
+        elif action == "disconnect":
+            self.disconnectDevice()
+        elif action == "connect":
+            self.reconnectDevice()
+
+    @Slot()
+    def cancelConnection(self):
+        if self.connectionState == "connecting":
+            self.disconnectDevice()
 
     @Property(bool, notify=scanBusyChanged)
     def scanBusy(self) -> bool:
@@ -1328,21 +1345,15 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
 
     def _submit_inline_edit(self, key, instruction, original, target) -> None:
         self._suspend_recognition_for_interaction()
-        automatic = self._automatic_inline_edit
-        automatic = automatic if automatic is not None and tuple(key[:3]) == automatic.inline_key else None
-        if automatic:
-            self._inline_input.automatic_progress("generating", automatic.edit_plan.tasks)
+        options = self._inline_edit_options(key)
         self._submit_text_processing(
             instruction, self._latest_asr_session_id, INPUT_MODE_EDIT,
             target_text=original, target=target,
             snapshot=DesktopTextSnapshot(target, original), update_interaction=False,
-            task_type=automatic.task_type if automatic else "",
-            edit_plan=automatic.edit_plan if automatic else None,
-            screen_context=automatic.context if automatic else None,
-            force_llm=bool(automatic),
+            **options,
         )
         self._inline_requests[self._text_request_id] = key
-        if self._asr_backend == "volcengine":
+        if self._asr_backend == "volcengine" and options.get("routing_mode") != INPUT_ROUTING_ROUTED_EDIT:
             self._hotwords.prepare(key, instruction, original, self._voice_llm_settings(INPUT_MODE_EDIT))
         self._set_interaction_state("processing")
 
@@ -2493,10 +2504,12 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         that candidate with the user's now-unambiguous intent.
         """
 
-        if self._input_routing_mode == INPUT_ROUTING_AUTO:
+        if self._current_voice_routing_mode() == INPUT_ROUTING_AUTO:
             return False
         if getattr(self, "_inline_input", None) is not None and self._inline_input.enabled:
             return self._inline_input.canRequestConversion
+        if self._current_voice_routing_mode() == INPUT_ROUTING_ROUTED_EDIT:
+            return bool(self._utterance_active)
         operation = self._latest_operation()
         return bool(
             self._applied_target_foreground
@@ -2509,7 +2522,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
 
     @Property(bool, notify=interactionChanged)
     def processingModeCorrectionAvailable(self) -> bool:
-        if self._input_routing_mode == INPUT_ROUTING_AUTO:
+        if self._current_voice_routing_mode() != INPUT_ROUTING_MANUAL:
             return False
         interaction = self._active_auto_interaction
         failed_edit_fallback = self._failed_edit_fallback_interaction()
@@ -2584,9 +2597,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             return
         previous_mode = self._input_routing_mode
         self._input_routing_mode = mode
-        self._inline_input.automatic_mode = mode == INPUT_ROUTING_AUTO
-        if mode == INPUT_ROUTING_AUTO:
-            self._text_processing_worker.warmup_router()
+        self._configure_voice_mode()
         self._settings.setValue("input/routingMode", mode)
         self.inputRoutingModeChanged.emit()
         self._event_log(
@@ -2595,7 +2606,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             previous=previous_mode,
             value=mode,
         )
-        label = "自动判断" if mode == INPUT_ROUTING_AUTO else "手动切换"
+        label = INPUT_ROUTING_LABELS[mode]
         self._append_log(f"听写/指令路由已切换为：{label}")
 
 
@@ -2612,6 +2623,20 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._settings.setValue("input/automaticDictationCleanupEnabled", enabled)
         self.settingsChanged.emit()
         self._event_log("USER_SETTING", setting="automatic_dictation_cleanup", value=enabled)
+
+    @Property(bool, notify=settingsChanged)
+    def ocrContextEnabled(self) -> bool:
+        return self._ocr_context_enabled
+
+    @ocrContextEnabled.setter
+    def ocrContextEnabled(self, value: bool) -> None:
+        enabled = bool(value)
+        if enabled == self._ocr_context_enabled:
+            return
+        self._ocr_context_enabled = enabled
+        self._settings.setValue("input/ocrContextEnabled", enabled)
+        self.settingsChanged.emit()
+        self._event_log("USER_SETTING", setting="ocr_context_enabled", value=enabled)
 
     @Property(str, notify=settingsChanged)
     def modeCorrectionShortcut(self) -> str:
@@ -3642,7 +3667,12 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         if worker is not self._scan_worker:
             return
         self._scan_worker = None
-        if self._pending_device_connection:
+        if self._connection_cancel_requested and self._busy and not self._runtime_active:
+            self._busy = False
+            self._connection_outcome = "cancelled"
+            self.busyChanged.emit()
+            self._set_status("已取消连接", "本次连接已取消，可重新连接或切换设备", "idle")
+        elif self._pending_device_connection:
             self._pending_device_connection = False
             self._busy = False
             self.busyChanged.emit()
@@ -3684,6 +3714,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
 
     def _connect_after_discovery(self) -> None:
         self.stopDeviceDiscovery()
+        self._connection_cancel_requested = False
+        self._connection_outcome = "disconnected"
+        self._connection_error = ""
         if self._scan_worker is not None:
             self._pending_device_connection = True
             self._busy = True
@@ -3704,6 +3737,8 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         try:
             settings = self._runtime_settings()
         except BaseException as exc:
+            self._connection_outcome = "failed"
+            self._connection_error = str(exc)
             self._set_status("配置有误", str(exc), "error")
             self._append_log(f"配置错误：{exc}")
             return
@@ -3722,6 +3757,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._reset_battery_state()
 
         self._disconnect_event = threading.Event()
+        self._connection_cancel_requested = False
+        self._connection_outcome = "disconnected"
+        self._connection_error = ""
         self._proximity_gesture_healthy_at = 0.0
         self._recognition_event = threading.Event()
         self._cancel_utterance_event = threading.Event()
@@ -3875,6 +3913,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         if normalized <= 0:
             return
         self._latest_asr_session_id = normalized
+        self._session_routing_modes.setdefault(normalized, self._current_voice_routing_mode())
+        self._session_input_modes.setdefault(normalized, INPUT_MODE_DICTATION
+            if self._session_routing_modes[normalized] == INPUT_ROUTING_ROUTED_EDIT else self._input_mode)
         if self._inline_enabled() and self._desktop_output:
             if self._ignore_asr_updates_until_next_start:
                 # A synchronous begin failure can precede this queued START ID.
@@ -3899,6 +3940,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         )
         try:
             self._modification_dataset.begin_session(normalized)
+            self._bind_voice_capture(normalized)
             if self._inline_enabled() and self._desktop_output:
                 self._capture_inline_history_target()
             else:
@@ -3907,6 +3949,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
                 self._modification_dataset.record_target(
                     normalized, application=application,
                     target_key=self._association_target_key(target))
+                self._bind_voice_capture(normalized)
         except BaseException as exc:
             self._append_log(f"语音会话记录初始化失败：{exc}")
 
@@ -3921,6 +3964,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             self._modification_dataset.record_target(
                 inline._session_id, application=inline.history_application(),
                 target_key=self._association_target_key(inline.target_reference()))
+            self._bind_voice_capture(inline._session_id)
         except Exception as exc:
             self._append_log(f"语音应用归属记录失败：{exc}")
 
@@ -4109,6 +4153,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
 
     @Slot()
     def disconnectDevice(self) -> None:
+        if self.connectionState in {"cancelling", "disconnecting"}:
+            return
+        cancelling = self.connectionState == "connecting"
         self._voice_practice.cancel()
         self._proximity_reconnect_cancelled = True
         self._input_restore_pending.clear()
@@ -4116,22 +4163,34 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         worker = self._worker
         self._event_log(
             "USER_ACTION",
-            action="disconnect_device",
+            action="cancel_connection" if cancelling else "disconnect_device",
             source="quit_cleanup" if self._quitting else "user",
-            accepted=bool(worker is not None and worker.is_alive()),
+            accepted=bool(self._pending_device_connection or (worker is not None and worker.is_alive())),
             connected=self._connected,
         )
+        if self._pending_device_connection:
+            self._pending_device_connection = False
+            self._connection_cancel_requested = True
+            self._disconnect_requested_by_user = True
+            self._disconnect_event.set()
+            self._set_status("正在取消连接", "正在结束本次连接任务", "stopping")
+            self.connectionChanged.emit()
+            # The scanner is already cancelled. Wait for its cleanup callback
+            # before offering a new attempt; no BLE connection may start later.
+            return
         if worker is None or not worker.is_alive():
             return
         # The runtime also sets the stop event on failures. A click after that
         # point must not retroactively turn an unexpected drop into a user stop.
         if not self._disconnect_event.is_set():
             self._disconnect_requested_by_user = True
-        self._stop_device_interaction()
+        self._connection_cancel_requested = cancelling and self._disconnect_requested_by_user
         self._busy = True
+        self._stop_device_interaction()
         self.busyChanged.emit()
-        self._set_status("正在断开", "正在停止识别并优先断开设备", "stopping")
-        self._append_log("已停止接收新的识别任务，正在优先断开语音设备")
+        self._set_status("正在取消连接" if cancelling else "正在断开",
+                         "正在结束本次连接任务" if cancelling else "正在停止识别并释放设备", "stopping")
+        self._append_log("已请求取消设备连接" if cancelling else "已停止接收新的识别任务，正在优先断开语音设备")
 
     # Compatibility for older callers.  New UI code uses the explicit methods.
     @Slot()
@@ -4179,6 +4238,13 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self.associationChanged.emit()
         self._append_log("逐句语音记录已清空")
         self._event_log("VOICE_HISTORY_CLEAR_RESULT", status="applied")
+
+    @Slot(str, result="QVariantMap")
+    def voiceHistoryDetails(self, interaction_id: str) -> dict:
+        try:
+            return self._voice_history.load_details(interaction_id)
+        except (OSError, ValueError, TypeError) as exc:
+            return {"error": f"读取记录失败：{exc}"}
 
     @Slot(str, result=bool)
     def deleteVoiceHistory(self, interaction_id: str) -> bool:
@@ -4830,8 +4896,8 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             self._latest_asr_session_id = 0
             self._utterance_active = True
             self._speech_start_target = self._capture_desktop_reference()
-            if not self._inline_enabled():
-                self._begin_automatic_voice()
+            if not self._inline_enabled() or not self._desktop_output:
+                self._begin_voice_capture()
             if self._inline_enabled() and self._desktop_output:
                 prepared = (summary.startswith("[ASR] START gesture") and self._inline_audio_prepared
                             and self._inline_audio_prepared == self._inline_input._utterance_id
@@ -5117,7 +5183,8 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._stop_device_interaction()
         self._busy = True
         self.busyChanged.emit()
-        self._set_status("设备连接已停止", "语音和手势交互已停止，正在释放设备资源", "stopping")
+        self._set_status("正在取消连接" if self._connection_cancel_requested else "正在断开",
+                         "正在释放设备资源", "stopping")
 
     @Slot(object)
     def _apply_runtime_disconnected(self, connection=None) -> None:
@@ -5125,7 +5192,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             return
         was_recognizing = self._recognition_enabled
         self._stop_device_interaction()
-        if self._runtime_had_connection:
+        if self._connection_cancel_requested:
+            self._set_status("正在取消连接", "设备资源已释放，正在结束本次连接任务", "stopping")
+        elif self._runtime_had_connection:
             self._set_status(
                 "设备已断开",
                 "蓝牙和麦克风已经释放，正在结束后台模型初始化或识别任务",
@@ -5380,7 +5449,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             mode = self._input_mode
             routing_mode = self._input_routing_mode
         self._transcript_mode = (
-            mode if routing_mode == INPUT_ROUTING_MANUAL else ""
+            mode if routing_mode != INPUT_ROUTING_AUTO else ""
         )
         if routing_mode == INPUT_ROUTING_AUTO:
             self._transcript_text = "正在判断听写或指令"
@@ -5409,17 +5478,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
                 f"ASR 识别完成（{len(text)} 个字符{elapsed_detail}）：{text}",
                 session_id=normalized_session_id,
             )
-            if routing_mode == INPUT_ROUTING_AUTO:
-                self._submit_input_mode_routing(
-                    text,
-                    normalized_session_id,
-                    fallback_mode=mode,
-                    target=target,
-                )
-            else:
-                self._prepare_manual_candidates(
-                    text, normalized_session_id, mode, target
-                )
+            self._submit_voice_text(routing_mode, text, normalized_session_id, mode, target)
 
 
     def _submit_input_mode_routing(
@@ -5474,120 +5533,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             )
         self._start_auto_candidates(result, context.target)
 
-    def _prepare_auto_candidates(
-        self,
-        route_id: int,
-        session_id: int,
-        raw_text: str,
-        target: DesktopTargetRef | None,
-        fallback_mode: str,
-    ) -> None:
-        """Prepare the legacy/manual switchable candidates; Clef never calls this."""
-        interaction = _AutoInteraction(
-            route_id=route_id,
-            session_id=session_id,
-            raw_text=raw_text,
-            target=target,
-            selected_mode=normalize_input_mode(fallback_mode),
-            routed_at=0.0,
-        )
-        self._active_auto_interaction = interaction
-        # The ASR final is always a complete, immediately usable dictation
-        # candidate. Optional LLM cleanup may replace it if it finishes inside
-        # the short correction window, but must never delay injection.
-        interaction.results[INPUT_MODE_DICTATION] = TextProcessingResult(
-            request_id=0,
-            session_id=session_id,
-            mode=INPUT_MODE_DICTATION,
-            raw_text=raw_text,
-            final_text=raw_text,
-            latency_s=0.0,
-            used_llm=False,
-        )
-        if target is None:
-            interaction.candidate_errors[INPUT_MODE_EDIT] = (
-                "没有锁定外部文本框，无法按编辑指令执行"
-            )
-        else:
-            try:
-                adapter = self._desktop_target_adapter()
-                capture = getattr(adapter, "capture_text_allowing_empty", None)
-                if not callable(capture):
-                    capture = adapter.capture_text
-                # Dictation needs a pre-application snapshot even when the
-                # field is empty. Without that empty snapshot the bottom stack
-                # item falls back to the application's unrelated native undo
-                # history and can reinsert a sentence removed moments earlier.
-                interaction.snapshot = capture(target)
-                validate_edit_target_text(interaction.snapshot.text)
-                self._log_edit_target_snapshot(interaction.snapshot)
-            except BaseException as exc:
-                interaction.candidate_errors[INPUT_MODE_EDIT] = str(exc)
 
-        for mode in (INPUT_MODE_DICTATION, INPUT_MODE_EDIT):
-            if mode == INPUT_MODE_DICTATION and not self._llm_enabled:
-                continue
-            if mode == INPUT_MODE_EDIT and (
-                interaction.snapshot is None
-                or INPUT_MODE_EDIT in interaction.candidate_errors
-            ):
-                continue
-            self._submit_text_processing(
-                raw_text,
-                session_id,
-                mode,
-                target_text=(
-                    interaction.snapshot.text
-                    if mode == INPUT_MODE_EDIT and interaction.snapshot is not None
-                    else ""
-                ),
-                target=target,
-                snapshot=(interaction.snapshot if mode == INPUT_MODE_EDIT else None),
-                auto_route_id=route_id,
-                update_interaction=False,
-            )
-
-        interaction.preparing = False
-
-    def _start_auto_candidates(
-        self,
-        route: InputModeRoutingResult,
-        target: DesktopTargetRef | None,
-    ) -> None:
-        """Select one of the two candidates already running for this utterance."""
-        interaction = self._active_auto_interaction
-        if interaction is None or interaction.route_id != route.request_id:
-            # Compatibility for callers that deliver a route result directly.
-            self._prepare_auto_candidates(
-                route.request_id,
-                route.session_id,
-                route.raw_text,
-                target,
-                route.mode,
-            )
-            interaction = self._active_auto_interaction
-        if interaction is None:
-            return
-        selected = normalize_input_mode(route.mode)
-        interaction.selected_mode = selected
-        interaction.classified = True
-        interaction.routed_by_model = not bool(route.error)
-        interaction.routed_at = time.monotonic()
-
-        self._transcript_mode = ""
-        if selected == INPUT_MODE_EDIT or self._llm_enabled:
-            self._transcript_text = self._processing_status_text(
-                selected, interaction.raw_text
-            )
-            self._transcript_final = False
-            self._transcript_active = True
-            self._set_interaction_state("processing")
-            self.transcriptChanged.emit()
-            self.interactionChanged.emit()
-        if selected in interaction.results or selected in interaction.candidate_errors:
-            self._present_auto_selection(target)
-        if not self.textProcessing:
-            self.textProcessingChanged.emit()
 
     def _reject_edit_request(self, message: str) -> None:
         self._transcript_text = message
@@ -5616,6 +5562,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         screen_context=None,
         edit_plan=None,
         force_llm: bool = False,
+        routing_mode: str = INPUT_ROUTING_MANUAL,
     ) -> None:
         normalized_mode = TEXT_MODE_POLISH if mode == TEXT_MODE_POLISH else normalize_input_mode(mode)
         if normalized_mode not in {INPUT_MODE_EDIT, TEXT_MODE_POLISH} and not self._llm_enabled and not force_llm:
@@ -5628,6 +5575,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
                     final_text=text,
                     latency_s=0.0,
                     used_llm=False,
+                    routing_mode=routing_mode,
                 )
             if auto_route_id:
                 self._accept_auto_candidate(auto_route_id, immediate_result, target)
@@ -5646,6 +5594,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             task_type=task_type,
             screen_context=screen_context,
             edit_plan=edit_plan,
+            routing_mode=routing_mode,
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
@@ -5733,6 +5682,8 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             self._refresh_voice_history_entries()
         label = "修改" if result.mode == INPUT_MODE_EDIT else "输入"
         parsed_edit_response: object = None
+        if result.routing_mode == INPUT_ROUTING_ROUTED_EDIT and not result.error:
+            parsed_edit_response = {"modified_text": result.final_text}
         if result.model_output:
             model_output = result.model_output.strip()
             if result.mode == INPUT_MODE_EDIT:
@@ -5833,177 +5784,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             return
         self._commit_input_text(result, context.target)
 
-    def _accept_auto_candidate(
-        self,
-        route_id: int,
-        result: TextProcessingResult,
-        target: DesktopTargetRef | None,
-    ) -> None:
-        expected_switch = (int(route_id), result.mode)
-        pending_switch_keys = [
-            key
-            for key, pending in self._pending_applied_mode_switches.items()
-            if pending == expected_switch
-        ]
-        interaction = self._active_auto_interaction
-        if interaction is None or interaction.route_id != int(route_id):
-            matched = self._find_operation_for_route(route_id)
-            interaction = matched[1].auto_context if matched is not None else None
-        if interaction is None:
-            # A late worker result must never leave the mode control spinning
-            # forever after its operation was replaced or removed.
-            if pending_switch_keys:
-                for key in pending_switch_keys:
-                    self._pending_applied_mode_switches.pop(key, None)
-                self.interactionChanged.emit()
-            return
-        interaction.results[result.mode] = result
-        matched = self._find_operation_for_route(route_id)
-        matched_key = matched[0] if matched is not None else ""
-        if pending_switch_keys:
-            if result.error:
-                # Both edit contracts can fail together. Resolve that terminal
-                # result immediately instead of relying on a later QTimer to
-                # clear the busy marker.
-                for key in pending_switch_keys:
-                    self._pending_applied_mode_switches.pop(key, None)
-                operation = matched[1] if matched is not None else None
-                if operation is not None:
-                    reason = self._short_text(str(result.error), limit=34)
-                    operation.mode_switch_error = reason
-                    operation.summary = f"另一种处理方式不可用：{reason}"
-                feedback_key = matched_key or pending_switch_keys[0]
-                if (
-                    operation is not None
-                    and self._operation_target_is_focused(operation)
-                ):
-                    self._activate_operation_target(feedback_key)
-                else:
-                    self.interactionChanged.emit()
-                return
-            self._schedule_alternate_result(
-                result.mode,
-                target_key=matched_key or pending_switch_keys[0],
-                route_id=route_id,
-            )
-            return
-        if (
-            interaction is self._active_auto_interaction
-            and
-            result.mode == interaction.selected_mode
-            and not interaction.preparing
-            and interaction.classified
-        ):
-            self._present_auto_selection(target)
 
-    def _present_auto_selection(
-        self, target: DesktopTargetRef | None = None
-    ) -> None:
-        interaction = self._active_auto_interaction
-        if interaction is None:
-            return
-        mode = interaction.selected_mode
-        error = interaction.candidate_errors.get(mode, "")
-        if error:
-            self._transcript_mode = ""
-            self._transcript_text = (
-                f"修改失败：{self._short_text(error, limit=48)}"
-                if mode == INPUT_MODE_EDIT
-                else "未能处理文本"
-            )
-            self._transcript_final = True
-            self._transcript_active = True
-            self._set_interaction_state("error")
-            self.transcriptChanged.emit()
-            self.interactionChanged.emit()
-            self._append_log(f"文本处理失败：{error}")
-            if self._recognition_enabled:
-                if self._failed_edit_fallback_interaction() is not None:
-                    self._set_status(
-                        "修改未完成",
-                        "原文本保持不变；按 "
-                        f"{self._mode_correction_shortcut} 可改为听写输入",
-                        "error",
-                    )
-                else:
-                    self._set_status("自动监听中", error, "running")
-            # Processing is terminal. Keep the fallback visible until its
-            # timeout or the next utterance, without blocking recognition.
-            self._resume_recognition_after_interaction()
-            return
-        result = interaction.results.get(mode)
-        if result is None:
-            self._transcript_mode = ""
-            self._transcript_text = self._processing_status_text(
-                mode, interaction.raw_text
-            )
-            self._transcript_final = False
-            self._set_interaction_state("processing")
-            self.transcriptChanged.emit()
-            self.interactionChanged.emit()
-            if self._recognition_enabled:
-                label = "修改" if mode == INPUT_MODE_EDIT else "输入"
-                self._set_status(
-                    "正在处理文本",
-                    f"大模型正在处理{label}内容",
-                    "starting",
-                )
-            return
-        if mode == INPUT_MODE_DICTATION:
-            commit_target = target if target is not None else interaction.target
-            if not self._llm_enabled:
-                # The raw ASR final is already complete.  With dictation LLM
-                # disabled there is no correction candidate to wait for.
-                self._dictation_commit_timer.stop()
-                self._pending_dictation_result = None
-                self._commit_input_text(result, commit_target)
-                return
-            self._pending_dictation_result = (
-                result,
-                commit_target,
-            )
-            self._transcript_mode = ""
-            self._transcript_text = "正在处理文本"
-            self._transcript_final = True
-            self._set_interaction_state("processing")
-            self.transcriptChanged.emit()
-            self.interactionChanged.emit()
-            elapsed_ms = int(
-                max(0.0, time.monotonic() - interaction.routed_at) * 1000
-            )
-            remaining_ms = max(0, _DICTATION_CORRECTION_GRACE_MS - elapsed_ms)
-            if remaining_ms:
-                self._dictation_commit_timer.start(remaining_ms)
-            else:
-                self._commit_pending_dictation()
-            return
-
-        snapshot = interaction.snapshot
-        if snapshot is None:
-            self._reject_edit_request("修改目标快照已经失效")
-            return
-        parsed: object = None
-        if result.model_output:
-            try:
-                parsed = json.loads(result.model_output)
-            except (TypeError, json.JSONDecodeError):
-                pass
-        if result.error or result.final_text == result.target_text:
-            self._begin_failed_edit_review(
-                replace(
-                    result,
-                    error=result.error or "大模型未找到可可靠执行的修改",
-                ),
-                snapshot,
-            )
-            return
-        self._begin_edit_review(
-            result,
-            snapshot,
-            allow_empty=_is_explicit_emptying_edit_response(
-                parsed, result.target_text
-            ),
-        )
 
     @Slot()
     def _commit_pending_dictation(self) -> None:
@@ -6017,10 +5798,13 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
 
     @Slot()
     def switchCurrentInputMode(self) -> None:
-        if self._input_routing_mode == INPUT_ROUTING_AUTO:
+        if self._current_voice_routing_mode() == INPUT_ROUTING_AUTO:
             return
         if self._inline_enabled():
             self._inline_input.convert()
+            return
+        if self._current_voice_routing_mode() == INPUT_ROUTING_ROUTED_EDIT:
+            self._finish_routed_edit_utterance()
             return
         """Switch a processing or applied utterance to its other interpretation."""
         processing = self._active_auto_interaction
@@ -6698,40 +6482,6 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         else:
             adapter.inject(operation.target, operation.applied_text)
 
-    def _finish_auto_interaction(self, used_mode: str, *, retain: bool = False) -> None:
-        interaction = self._active_auto_interaction
-        if interaction is None:
-            return
-        if retain:
-            self._active_auto_interaction = None
-            self.interactionChanged.emit()
-            return
-        for mode, request_id in tuple(interaction.request_ids.items()):
-            if request_id in self._pending_text_requests:
-                self._pending_text_requests.discard(request_id)
-                self._pending_interactions.pop(request_id, None)
-                cancel_request = getattr(
-                    self._text_processing_worker, "cancel_request", None
-                )
-                if callable(cancel_request):
-                    cancel_request(request_id)
-            if mode == INPUT_MODE_EDIT and mode != used_mode:
-                try:
-                    self._modification_dataset.abandon_request(
-                        request_id, "alternate mode was not selected"
-                    )
-                except BaseException:
-                    pass
-        if used_mode != INPUT_MODE_EDIT and interaction.snapshot is not None:
-            try:
-                self._desktop_target_adapter().release_selection(
-                    interaction.snapshot.target
-                )
-            except BaseException:
-                pass
-        self._active_auto_interaction = None
-        self.interactionChanged.emit()
-        self.textProcessingChanged.emit()
 
     @Slot(object)
     def _apply_llm_trace_collected(self, trace: object) -> None:
@@ -6924,14 +6674,16 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         *,
         allow_empty: bool = False,
     ) -> None:
-        proposed = str(result.final_text or "").strip()
+        proposed = str(result.final_text or "")
+        if result.routing_mode != INPUT_ROUTING_ROUTED_EDIT:
+            proposed = proposed.strip()
         if not proposed and not allow_empty:
             self._begin_failed_edit_review(
                 replace(result, error="大模型返回了空修改结果"),
                 snapshot,
             )
             return
-        if proposed == snapshot.text.strip():
+        if proposed == (snapshot.text if result.routing_mode == INPUT_ROUTING_ROUTED_EDIT else snapshot.text.strip()):
             self._begin_failed_edit_review(
                 replace(result, error="大模型未找到可可靠执行的修改"),
                 snapshot,
@@ -6943,6 +6695,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             instruction=result.raw_text,
             proposed_text=proposed,
             snapshot=snapshot,
+            routing_mode=result.routing_mode,
         )
         self._transcript_text = self._processing_status_text(
             INPUT_MODE_EDIT, result.raw_text
@@ -7142,6 +6895,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             original_snapshot=review.snapshot,
             auto_context=auto_context,
             summary=self._edit_result_summary(review.snapshot.text, final_text),
+            routing_mode=review.routing_mode,
         )
         self._finish_auto_interaction(INPUT_MODE_EDIT, retain=True)
         self._register_applied_interaction(
@@ -7317,6 +7071,9 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             if action != ACTION_INPUT:
                 self._finish_utterance_event.set()
             return
+        if self._current_voice_routing_mode() == INPUT_ROUTING_ROUTED_EDIT and action in {ACTION_EDIT, ACTION_SWITCH_MODE}:
+            self._finish_routed_edit_utterance()
+            return
         self._event_log(
             "GLOBAL_ACTION",
             _live_message="" if _from_gesture else None,
@@ -7355,6 +7112,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
 
     def _learn_applied_hotwords(self, interaction):
         if (self._asr_backend != "volcengine" or interaction is None
+                or interaction.routing_mode == INPUT_ROUTING_ROUTED_EDIT
                 or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None):
             return
         key = self._legacy_hotword_key(interaction)
@@ -8333,6 +8091,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         if connection is not None and connection is not self._disconnect_event:
             return
         had_connection = self._runtime_had_connection
+        cancelled = self._connection_cancel_requested
         # Fallback for errors before source creation and failures during close.
         self._stop_device_interaction()
         self._runtime_active = False
@@ -8350,8 +8109,14 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
         self._clear_undo_stack_for_device_boundary()
         self._reset_transcript_for_device_boundary()
         self._worker = None
+        self._connection_outcome = "cancelled" if cancelled else "failed" if error else "disconnected"
+        from .shared.device_connection import connection_error_message
+        self._connection_error = connection_error_message(error) if error and not cancelled else ""
         self.busyChanged.emit()
-        if error:
+        if cancelled:
+            self._set_status("已取消连接", "本次连接已取消，可重新连接或切换设备", "idle")
+            self._append_log("设备连接已取消" + (f"；清理信息：{error}" if error else ""))
+        elif error:
             title = "设备已断开" if had_connection else "连接失败"
             retry = "请点击“重新连接设备”重试。" if self._selector else "请重新选择设备。"
             summary = str(error).splitlines()[0].strip()
@@ -8366,7 +8131,7 @@ class AppController(AutomaticVoiceMixin, ManualVoiceMixin, QObject):
             self._append_log("语音设备已断开；已加载模型保留到应用退出或配置切换")
         self._event_log(
             "RUNTIME_FINISHED",
-            status="error" if error else "clean",
+            status="cancelled" if cancelled else "error" if error else "clean",
             error=error,
             had_connection=had_connection,
             quitting=self._quitting,

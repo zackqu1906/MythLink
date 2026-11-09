@@ -58,6 +58,8 @@ class InlineInputController(QObject):
         self._final_sent = False
         self.automatic_mode = False
         self.session_automatic = False
+        self.routed_edit_mode = False
+        self.session_routed_edit = False
         self._first_text_update_sent = False
         self._last_state_diagnostic = None
         self._requested = set()
@@ -850,6 +852,16 @@ class InlineInputController(QObject):
                     and message.get("has_composition") is False
                     and message.get("awaiting_readback") is False))
 
+    @property
+    def session_routing_mode(self):
+        from ...text_processing.model import INPUT_ROUTING_AUTO, INPUT_ROUTING_MANUAL, INPUT_ROUTING_ROUTED_EDIT
+        return (INPUT_ROUTING_AUTO if self.session_automatic else
+                INPUT_ROUTING_ROUTED_EDIT if self.session_routed_edit else INPUT_ROUTING_MANUAL)
+
+    def _send_begin(self):
+        return self._send("begin", automatic_mode=self.session_automatic,
+                          routed_edit_mode=self.session_routed_edit)
+
     def begin(self, target=None, *, auto_select=False):
         if self._installing or self.stroke_mode or self._input_preparation:
             return False
@@ -865,6 +877,7 @@ class InlineInputController(QObject):
         self._session_id = 0
         origin = self._foreground_identity()
         self.session_automatic = bool(self.automatic_mode)
+        self.session_routed_edit = bool(self.routed_edit_mode and not self.session_automatic)
         pending_focus, self._pending_gesture_focus = self._pending_gesture_focus, None
         if pending_focus is not None:
             focus, created = pending_focus
@@ -919,8 +932,7 @@ class InlineInputController(QObject):
             return True
         self.changed.emit()
         self._startup_clients.add(self._client_id)
-        self.session_automatic = bool(self.automatic_mode)
-        sent = self._send("begin", automatic_mode=self.session_automatic)
+        sent = self._send_begin()
         if not sent:
             self._transport_failed("输入法连接已断开")
             self._diagnose("begin", reason="send_failed")
@@ -1309,8 +1321,7 @@ class InlineInputController(QObject):
                     self._startup_clients.add(client_id)
                     self._client_id = client_id
                     self._view = {**message, "phase": "starting", "raw": "", "error": ""}
-                    self.session_automatic = bool(self.automatic_mode)
-                    if self._send("begin", automatic_mode=self.session_automatic):
+                    if self._send_begin():
                         self._wait_for_reply("begin")
                         self._diagnose("begin", reason="ready_after_activation")
                         self.changed.emit()
@@ -1333,6 +1344,10 @@ class InlineInputController(QObject):
             if (begin_acknowledged and self.session_automatic
                     and (not message.get("automatic_mode") or message.get("automatic_routing_version") != 3)):
                 self._transport_failed("请先在设置中更新输入法组件，再使用自动判断")
+                return
+            if (begin_acknowledged and self.session_routed_edit
+                    and (not message.get("routed_edit_mode") or message.get("routed_edit_version") != 1)):
+                self._transport_failed("请先在设置中更新输入法组件，再使用手动＋编辑路由")
                 return
             previous_active = self.active
             changed_client = client_id != self._client_id

@@ -66,3 +66,5 @@ tools/data/*
 !tools/data/automatic_edit_generalization_cases.json
 !tools/data/clef_fidelity_cases.json
 !tools/data/clef_ocr_context_cases.json
+!tools/data/clef_correction_boundary_cases.json
+!tools/data/llm_edit_routing_natural_cases.json

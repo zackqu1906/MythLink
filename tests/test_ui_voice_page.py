@@ -32,85 +32,124 @@ def seed_history(controller):
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
-def test_automatic_history_details_load_frame_and_keep_live_input_unchanged(inline_ui, tmp_path, size):
-    from PySide6.QtCore import QObject, QMetaObject, QPointF
-    from PySide6.QtGui import QImage, QPainter, QColor, QFont
+@pytest.mark.parametrize("routing", ["manual", "auto"])
+def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypatch, size, routing):
+    from PySide6.QtCore import QCoreApplication, QObject, QMetaObject, QPoint, QPointF, Qt
+    from PySide6.QtGui import QImage, QPainter, QColor, QFont, QWheelEvent
     from PySide6.QtTest import QTest
-    from test_automatic_history import record_example
+    from test_shared_voice_capture import raw_capture, finish_asr
+    from proximic_ring.text_processing.screen_context import filter_context
+    from proximic_ring.text_processing.model import InputModeRoutingResult
     controller, bridge, _, root, _ = inline_ui
-    collector, _, _, _ = record_example(tmp_path / "history")
-    record = collector.load_entries()[0]
-    record.update(text="把伟改成王字旁的玮", recognized=True, mode="edit", outcome="applied",
-                  candidateText="请联系张玮", candidateAvailable=True, editBeforeText="请联系张伟")
-    # A synthetic chat layout makes the thumbnail/ROI geometry visible in this UI test.
+    collector = controller._voice_history
+    collector.record_screen_capture(7, raw_capture(), routing=routing, input_context={
+        "original": "输入框原文",
+        "long_text": "没有空格的长文本" * 120,
+        "long_identifier": "https://example.test/" + "abcdefgh0123456789" * 100,
+    })
+    finish_asr(collector)
+    identifier = collector.interaction_id_for_session(7)
+    if routing == "auto":
+        collector.record_routing_result(InputModeRoutingResult(10, 7, "你好", "dictation", .1,
+            task_type="dictation", screen_context=filter_context(raw_capture())))
+    # A synthetic target frame allows visual QA without capturing the real desktop.
     image = QImage(800, 600, QImage.Format_RGB32)
     image.fill(QColor("#f5f5f5"))
     painter = QPainter(image)
     painter.fillRect(0, 0, 240, 600, QColor("#e0e5ea"))
     painter.fillRect(240, 456, 560, 144, QColor("#ffffff"))
     painter.setPen(QColor("#303743")); painter.setFont(QFont("PingFang SC", 24))
+    painter.drawText(20, 120, "联系人")
     painter.drawText(280, 48, "测试对话 · 合成截图")
     painter.drawText(280, 220, "请联系张伟")
+    painter.drawText(280, 510, "输入框草稿")
     painter.end()
-    image_path = tmp_path / "synthetic-chat.png"
-    assert image.save(str(image_path))
-    record["automaticDetails"]["screenshotUrl"] = image_path.as_uri()
-    record["automaticDetails"]["systemPrompt"] = "测试提示词：只修改指定文字，保留其余原文。\n" * 24
-    record["automaticDetails"]["modelInput"] = '{"utterance":"王字旁的玮","editable_text":"请联系张伟"}'
-    generation_context = {"messages": [{"speaker": "other", "text": "请联系张伟"}]}
-    record["automaticDetails"]["generationOcrText"] = json.dumps(generation_context, ensure_ascii=False, indent=2)
-    record["automaticDetails"]["generationOcrStatus"] = "已保存正文模型请求中的完整 screen_context。处理已完成。"
-    controller._voice_history_entries = [record]
-    controller.voiceHistoryChanged.emit()
+    saved = collector._interaction_data(identifier)
+    assert image.save(str(collector._interaction_dir(identifier) / saved["screen_evidence"]["screenshot_file"]))
+    reads = []
+    load = collector.load_details
+    def tracked(identifier):
+        reads.append(identifier)
+        return load(identifier)
+    monkeypatch.setattr(collector, "load_details", tracked)
+    controller._refresh_voice_history_entries()
     root.resize(*size); root.setProperty("currentPage", 4); root.show(); QTest.qWait(120)
     view = root.findChild(QObject, "voiceHistoryList")
     entry = visual_child(view, "voiceHistoryEntry")
     before = (list(bridge.messages), controller.inlineInput._view.copy())
-    assert visual_child(entry, "automaticVoiceDetails") is None
-    entry.setProperty("detailsVisible", True)
-    QTest.qWait(30)
-    assert visual_child(entry, "automaticVoiceDetails") is None
-    toggle = visual_child(entry, "automaticVoiceDetailsToggle")
-    assert toggle.property("visible")
+    assert not reads and visual_child(entry, "voiceHistoryDetails") is None
+    assert visual_child(entry, "voiceHistoryDetailsToggle") is None
+    QMetaObject.invokeMethod(visual_child(entry, "voiceHistoryMoreButton"), "click")
+    QTest.qWait(100)
+    menu = entry.findChild(QObject, "voiceHistoryRecordMenu")
+    assert menu.property("visible")
+    toggle = entry.findChild(QObject, "voiceHistoryDetailsButton")
     QMetaObject.invokeMethod(toggle, "click")
     QTest.qWait(220)
-    panel = visual_child(entry, "automaticVoiceDetails")
-    assert panel is not None
-    screenshot = visual_child(panel, "automaticVoiceScreenshot")
+    panel = visual_child(entry, "voiceHistoryDetails")
+    assert panel is not None and reads == [identifier]
+    assert visual_child(entry, "automaticVoiceDetailsToggle") is None
+    screenshot = visual_child(panel, "voiceHistoryScreenshot")
     assert screenshot.property("paintedWidth") > 0
     point = screenshot.mapToItem(entry, QPointF())
     assert point.x() >= 0 and point.x() + screenshot.width() <= entry.width()
-    ocr_text = visual_child(panel, "automaticVoiceOcrText").property("text")
-    assert "请联系张伟" in ocr_text and "16:29" not in ocr_text
-    assert visual_child(panel, "automaticVoiceRouterOcr").property("text") == "other: 请联系张伟"
-    generation_ocr = visual_child(panel, "automaticVoiceGenerationOcr")
-    assert json.loads(generation_ocr.property("text")) == generation_context
-    assert generation_ocr.property("readOnly") and generation_ocr.property("selectByMouse")
+    raw_ocr = visual_child(panel, "voiceHistoryDetail_raw_ocr")
+    assert "联系人" in raw_ocr.property("text") and "输入框草稿" in raw_ocr.property("text")
+    assert raw_ocr.property("readOnly") and raw_ocr.property("selectByMouse")
+    for key in ("asr_context", "input_context", "mode", "llm", "outcome", "feedback", "asr_updates", "events", "imu_samples"):
+        assert visual_child(panel, "voiceHistoryDetail_" + key) is not None
+    assert "输入框原文" in visual_child(panel, "voiceHistoryDetail_input_context").property("text")
+    assert (visual_child(panel, "voiceHistoryDetail_ocr_filter") is not None) == (routing == "auto")
     directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     directory.mkdir(parents=True, exist_ok=True)
-    assert root.grabWindow().save(str(directory / f"automatic-history-{size[0]}.png"))
+    assert root.grabWindow().save(str(directory / f"{routing}-history-{size[0]}.png"))
     assert (bridge.messages, controller.inlineInput._view) == before
-    router_ocr = visual_child(panel, "automaticVoiceRouterOcr")
-    ocr_y = router_ocr.mapToItem(view, QPointF()).y()
-    view.setProperty("contentY", max(0, view.property("contentY") + ocr_y - 90))
+    ocr_y = raw_ocr.mapToItem(view, QPointF()).y()
+    view.setProperty("contentY", max(0, view.property("contentY") + ocr_y - 90)); QTest.qWait(80)
+    assert root.grabWindow().save(str(directory / f"{routing}-history-ocr-{size[0]}.png"))
+    # Long Chinese text and unbroken identifiers wrap within the fixed frame.
+    text = visual_child(panel, "voiceHistoryDetail_input_context")
+    scroll = visual_child(panel, "voiceHistoryDetailScroll_input_context")
+    viewport = scroll.property("contentItem")
+    assert text.width() == pytest.approx(scroll.property("availableWidth"))
+    assert text.property("contentWidth") <= text.width() - text.property("leftPadding") - text.property("rightPadding") + 1
+    assert scroll.property("clip") and viewport.property("contentHeight") > viewport.height()
+    assert panel.width() - scroll.mapToItem(panel, QPointF()).x() - scroll.width() >= 40
+    scroll_y = scroll.mapToItem(view, QPointF()).y()
+    view.setProperty("contentY", view.property("contentY") + scroll_y - 80)
     QTest.qWait(80)
-    assert root.grabWindow().save(str(directory / f"automatic-history-ocr-{size[0]}.png"))
-    view.setProperty("contentY", max(0, view.property("contentHeight") - view.height()))
-    QTest.qWait(80)
-    assert root.grabWindow().save(str(directory / f"automatic-history-bottom-{size[0]}.png"))
-    QMetaObject.invokeMethod(visual_child(panel, "automaticVoiceDetailsClose"), "click")
-    QTest.qWait(250)
-    assert visual_child(entry, "automaticVoiceDetails") is None
-    assert entry.property("detailsVisible")
+    def scroll_at(point):
+        QTest.mouseMove(root, point)
+        if size[0] == 940:
+            # macOS trackpad gestures carry pixel deltas and scroll phases.
+            # QTest.wheelEvent rejects the zero-delta begin/end events.
+            for phase, delta in ((Qt.ScrollBegin, 0), (Qt.ScrollUpdate, -36),
+                                 (Qt.ScrollUpdate, -36), (Qt.ScrollEnd, 0)):
+                event = QWheelEvent(QPointF(point), QPointF(root.mapToGlobal(point)),
+                    QPoint(0, delta), QPoint(0, delta), Qt.NoButton, Qt.NoModifier, phase, False)
+                QCoreApplication.sendEvent(root, event)
+                QTest.qWait(20)
+        else:
+            QTest.wheelEvent(root, point, QPoint(0, -120))
+        QTest.qWait(350)
+    outer_y = view.property("contentY")
+    inner_point = scroll.mapToScene(QPointF(scroll.width() / 2, 90)).toPoint()
+    scroll_at(inner_point)
+    assert viewport.property("contentY") > 0
+    assert view.property("contentY") == pytest.approx(outer_y)
+    inner_y = viewport.property("contentY")
+    assert root.grabWindow().save(str(directory / f"{routing}-history-wrap-{size[0]}.png"))
+    # The 40 px blank lane bypasses the inner scroll box for outer scrolling.
+    outer_point = scroll.mapToScene(QPointF(scroll.width() + 20, 90)).toPoint()
+    scroll_at(outer_point)
+    assert view.property("contentY") > outer_y
+    assert viewport.property("contentY") == pytest.approx(inner_y)
+    # The same menu action also collapses the details.
+    QMetaObject.invokeMethod(visual_child(entry, "voiceHistoryMoreButton"), "click")
+    QTest.qWait(100)
+    QMetaObject.invokeMethod(toggle, "click"); QTest.qWait(150)
+    assert visual_child(entry, "voiceHistoryDetails") is None and not entry.property("detailsVisible")
     assert view.property("contentY") <= max(0, view.property("contentHeight") - view.height()) + 1
-    assert root.grabWindow().save(str(directory / f"automatic-history-collapsed-{size[0]}.png"))
-    QMetaObject.invokeMethod(toggle, "click")
-    QTest.qWait(30)
-    assert visual_child(entry, "automaticVoiceDetails") is not None
-    entry.setProperty("detailsVisible", False)
-    QTest.qWait(30)
-    assert visual_child(entry, "automaticVoiceDetails") is None
-    assert not entry.property("automaticDetailsVisible")
 
 
 def test_dictation_priority_history_is_yellow_without_changing_live_input(inline_ui, tmp_path):
@@ -120,6 +159,7 @@ def test_dictation_priority_history_is_yellow_without_changing_live_input(inline
     from test_automatic_history import record_example
     controller, bridge, _, root, _ = inline_ui
     collector, _, _, _ = record_example(tmp_path / 'history', task='dictation', conflict=True)
+    controller._voice_history = collector
     record = collector.load_entries()[0]
     record.update(recognized=True, mode='dictation', outcome='applied', candidateText='他说改一下', candidateAvailable=True)
     controller._voice_history_entries = [record]
@@ -132,8 +172,7 @@ def test_dictation_priority_history_is_yellow_without_changing_live_input(inline
     assert visual_child(entry, 'voiceHistoryRoutingWarning').property('visible')
     assert '听写' in visual_child(entry, 'voiceHistoryModeLabel').property('text')
     entry.setProperty('detailsVisible', True); QTest.qWait(30)
-    QMetaObject.invokeMethod(visual_child(entry, 'automaticVoiceDetailsToggle'), 'click'); QTest.qWait(80)
-    assert visual_child(entry, 'automaticVoiceRoutingWarning').property('visible')
+    assert visual_child(entry, 'voiceHistoryDetailsWarning').property('visible')
     directory = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
     directory.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(directory / 'automatic-history-warning.png'))

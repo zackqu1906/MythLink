@@ -173,14 +173,16 @@ ColumnLayout {
             title: "语音处理模式"
             description: pane.controller.inputRoutingMode === "auto"
                 ? "开始后说话，再结束即可自动判断听写或编辑。请先在服务设置中配置自动路由服务器。"
-                : "先听写，通过转换操作将本句作为编辑指令。"
+                : pane.controller.inputRoutingMode === "manual_routed_edit"
+                  ? "手势明确选择听写或编辑；编辑由火山 DeepSeek 一次返回六类任务和完整正文。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
+                  : "先听写，通过转换操作将本句作为编辑指令。"
             FigmaSelect {
                 objectName: "inputRoutingModeCombo"
                 Layout.fillWidth: true
                 Accessible.name: "语音处理模式"
-                model: ["自动判断", "手动转换"]
-                currentIndex: pane.controller.inputRoutingMode === "auto" ? 0 : 1
-                onActivated: pane.controller.inputRoutingMode = currentIndex === 0 ? "auto" : "manual"
+                model: ["自动判断", "手动转换", "手动＋编辑路由"]
+                currentIndex: pane.controller.inputRoutingMode === "auto" ? 0 : pane.controller.inputRoutingMode === "manual_routed_edit" ? 2 : 1
+                onActivated: pane.controller.inputRoutingMode = ["auto", "manual", "manual_routed_edit"][currentIndex]
             }
         }
         FigmaFormRow {
@@ -194,6 +196,18 @@ ColumnLayout {
                 Accessible.name: "自动模式听写整理"
                 checked: pane.controller.automaticDictationCleanupEnabled
                 onClicked: pane.controller.automaticDictationCleanupEnabled = checked
+            }
+        }
+        FigmaFormRow {
+            preferenceStyle: true
+            title: "OCR 截图上文传入"
+            description: "开启后等待上文整理完成，供自动判断和编辑路由使用；关闭后不传入、不等待。截图与原始 OCR 始终保存到记录。下次录音生效。"
+            PreferenceSwitch {
+                objectName: "ocrContextSwitch"
+                Layout.alignment: Qt.AlignRight
+                Accessible.name: "OCR 截图上文传入"
+                checked: pane.controller.ocrContextEnabled
+                onClicked: pane.controller.ocrContextEnabled = checked
             }
         }
         FigmaFormRow {

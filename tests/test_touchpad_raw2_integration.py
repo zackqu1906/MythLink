@@ -1,7 +1,6 @@
 """Raw2 -> shared BLE -> product output -> native events, without real input."""
 import asyncio
 from dataclasses import replace
-from dataclasses import replace
 import struct
 import threading
 import time
@@ -37,55 +36,42 @@ async def shared_session(monkeypatch, tmp_path):
     return session, client
 
 
-def enable_dev9_gestures(session, tmp_path, on_trigger=None):
+def enable_gestures(session, tmp_path, on_trigger=None, firmware='2.1.6-dev.touchpad.15'):
     from ring_python_sdk.swipe.processor import SwipeProcessor
     session._sdk_transport.device_info = replace(
-        session._sdk_transport.device_info, firmware_version='2.1.6-dev.touchpad.9.debug')
+        session._sdk_transport.device_info, firmware_version=firmware)
     session.swipe = SwipeProcessor(tmp_path/'gestures.csv', on_trigger=on_trigger)
     session.swipe_active = True
     return session.swipe
 
 
-def test_dev9_starts_raw2_before_resuming_existing_gestures_and_keeps_mic(monkeypatch, tmp_path):
+@pytest.mark.parametrize('firmware', ['2.1.6-dev.touchpad.15', '2.1.6-dev.touchpad.9.debug'])
+def test_raw2_repeated_start_stop_keeps_existing_gestures_and_mic_untouched(monkeypatch, tmp_path, firmware):
     from test_public_sdk_integration import audio_packet, compact
 
     async def run():
         session, client = await shared_session(monkeypatch, tmp_path)
         gestures, pcm, frames = [], [], []
-        processor = enable_dev9_gestures(session, tmp_path, gestures.append)
+        processor = enable_gestures(session, tmp_path, gestures.append, firmware)
         session.mic = AudioProcessor(tmp_path/'audio.wav', on_pcm=lambda *args: pcm.append(args))
         session.mic_active = True
-        original = client.write_gatt_char
-        swipe_running = True
-
-        async def write(uuid, command, **kw):
-            nonlocal swipe_running
-            if command == b'\x26\x01':
-                swipe_running = False
-                client.callback(None, audio_packet())
-            elif command == b'\x26\x00':
-                # This firmware can coexist only after Raw2's first token.
-                assert session.touchpad.receiver.ordinal > 0
-                swipe_running = True
-                client.callback(None, compact())
-            if command == p.START and swipe_running:
-                client.commands.append(command)
-                client.callback(None, status())  # Real dev9 failure: ACK, no data.
-                return
-            await original(uuid, command, **kw)
-        client.write_gatt_char = write
         try:
-            await session.touchpad_on(protocol='raw2', on_event=frames.append, duration_s=None)
-            assert client.commands == [b'\x26\x01', p.STOP, p.START, b'\x26\x00']
-            assert session.touchpad.receiver.status.stage == 'RUNNING'
-            assert gestures and pcm and frames and swipe_running
-            assert session.swipe is processor and session.swipe_active and session.mic_active
-            assert session.touchpad.paused_swipe is None
-            client.callback(None, token(1, reset=False))
-            await until(lambda: session.touchpad.receiver.ordinal == 2)
-            await session.touchpad_off()
-            assert not any(command[:1] == b'\x20' for command in client.commands)
-            assert session.swipe is processor and session.swipe_active and session.mic_active
+            for cycle in range(2):
+                await session.touchpad_on(protocol='raw2', on_event=frames.append, duration_s=None)
+                assert session.touchpad.receiver.status.stage == 'RUNNING'
+                client.callback(None, compact(seq=cycle*2+1))
+                client.callback(None, audio_packet(seq=cycle*2+1))
+                client.callback(None, token(1, reset=False))
+                await until(lambda: session.touchpad.receiver.ordinal == 2)
+                await session.touchpad_off()
+                # Both streams still deliver after Raw2 stops, with the same
+                # processors and without a host Swipe STOP/START workaround.
+                client.callback(None, compact(seq=cycle*2+2))
+                client.callback(None, audio_packet(seq=cycle*2+2))
+                assert session.swipe is processor and session.swipe_active and session.mic_active
+                assert len(gestures) == (cycle+1)*2
+                assert len(pcm) == (cycle+1)*2 and frames
+            assert client.commands == [p.STOP, p.START, p.STOP]*2
         finally:
             processor.close()
             session.mic.close()
@@ -93,35 +79,49 @@ def test_dev9_starts_raw2_before_resuming_existing_gestures_and_keeps_mic(monkey
 
 
 @pytest.mark.parametrize('failure', ['model', 'cancel', 'user_stop'])
-def test_dev9_restores_paused_gestures_if_start_ends_before_raw2_command(monkeypatch, tmp_path, failure):
+def test_start_failure_keeps_gestures_running_without_sending_recovery_commands(monkeypatch, tmp_path, failure):
     from ring_python_sdk.touchpad import raw2
+    from test_public_sdk_integration import compact
     stream_class = raw2.Raw2Stream
 
     async def run():
         session, client = await shared_session(monkeypatch, tmp_path)
-        processor = enable_dev9_gestures(session, tmp_path)
+        gestures = []
+        processor = enable_gestures(session, tmp_path, gestures.append)
         session.mic_active = True
         if failure == 'model':
             def unavailable():
                 raise RuntimeError('model unavailable')
             monkeypatch.setattr(raw2, 'Raw2Stream', lambda *a, **kw: stream_class(*a, **kw, model_factory=unavailable))
+        started = asyncio.Event()
+        original = client.write_gatt_char
+        async def write(uuid, command, **kw):
+            if command == p.START:
+                client.commands.append(command)
+                client.callback(None, status())
+                started.set()  # Keep startup pending without a first token.
+            else:
+                await original(uuid, command, **kw)
+        client.write_gatt_char = write
         start = asyncio.create_task(session.touchpad_on(protocol='raw2', on_event=lambda _: None))
         try:
-            await until(lambda: b'\x26\x01' in client.commands)
+            if failure != 'model':
+                await asyncio.wait_for(started.wait(), 1)
             if failure == 'cancel':
                 start.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await start
             elif failure == 'user_stop':
                 await session.touchpad_off()
-                with pytest.raises(RuntimeError, match='cancelled'):
+                with pytest.raises(Exception):
                     await start
             else:
                 with pytest.raises(Exception, match='model unavailable'):
                     await start
-            assert p.START not in client.commands and p.STOP not in client.commands
-            assert client.commands[-1] == b'\x26\x00'
-            assert session.swipe is processor and session.swipe_active and session.mic_active
+                assert not client.commands
+            assert not any(command[:1] in (b'\x26', b'\x20') for command in client.commands)
+            client.callback(None, compact())
+            assert gestures and session.swipe is processor and session.swipe_active and session.mic_active
             assert session.touchpad is None and not session.touchpad_active
         finally:
             processor.close()
@@ -240,7 +240,7 @@ def test_repeated_stop_does_not_cancel_delayed_cleanup_ack(monkeypatch, tmp_path
 
 
 @pytest.mark.parametrize('stop_confirmed', [False, True])
-def test_missing_first_token_reports_input_timeout_and_recovers_existing_gestures(monkeypatch, tmp_path, stop_confirmed, caplog):
+def test_missing_first_token_reports_input_timeout_without_restarting_existing_gestures(monkeypatch, tmp_path, stop_confirmed, caplog):
     from ring_python_sdk.swipe.processor import SwipeProcessor
     from proximic_ring.audio.ring import RingAudioSource
     from proximic_ring.voice.app_runtime import _gesture_health_status
@@ -282,17 +282,12 @@ def test_missing_first_token_reports_input_timeout_and_recovers_existing_gesture
             assert session.swipe is processor and session.swipe_active and session.mic_active
             assert client.is_connected
             diagnostics = source.gesture_diagnostics()
-            if stop_confirmed:
-                assert client.commands == [p.STOP, p.START, p.STOP, b'\x26\x01', b'\x26\x00']
-                assert diagnostics['recovery_state'] == 'awaiting_packets'
-                assert _gesture_health_status(dict(diagnostics, stream_ready=True)) == 'recovering'
-                client.callback(None, compact(seq=2))
-                assert len(observed) == 2
-                assert source.gesture_diagnostics()['recovery_state'] == 'confirmed'
-            else:
-                assert client.commands == [p.STOP, p.START, p.STOP]
-                assert diagnostics['recovery_state'] == 'failed'
-                assert _gesture_health_status(dict(diagnostics, stream_ready=True)) == 'recovery_failed'
+            assert client.commands == [p.STOP, p.START, p.STOP]
+            assert 'recovery_state' not in diagnostics
+            assert _gesture_health_status(dict(diagnostics, stream_ready=True)) == 'running'
+            client.callback(None, compact(seq=2))
+            assert len(observed) == 2
+            assert source.gesture_diagnostics()['device_packet_count'] == 2
         finally:
             processor.close()
     with caplog.at_level('INFO'):

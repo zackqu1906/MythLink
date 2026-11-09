@@ -2,7 +2,7 @@ Mythlink · macOS
 
 融合语音输入、鼠标控制、手势识别与场景联动的戒指交互平台。
 
-支持 Apple Silicon（M 系列）Mac，最低系统版本为 macOS 13.0；不支持 Intel Mac。
+支持 Apple Silicon（M 系列）Mac，最低系统版本为 macOS 13.3；不支持 Intel Mac。
 内置主程序、语音输入法和安装工具，无需 Python、Xcode 或终端。
 
 首次安装

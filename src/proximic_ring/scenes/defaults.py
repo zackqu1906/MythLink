@@ -1,12 +1,12 @@
 """Default mappings built from the common scene registry and action resolver."""
-from ..gestures.app_gestures import APP_LABELS, default_profiles, profile_for_application
+from ..gestures.app_gestures import profile_for_application
 from .models import PRESENTATION
 from .registry import SCENES, PENDING_TEMPLATES, PRESENTATION_GESTURES
 from .capabilities import BROWSERS, application_scene_profiles, presentation_profile
 from .adapters.presentation import scene_actions
 from .adapters.browser import NAVIGATION, shared_navigation
 from .resolver import resolve_action
-from .menus import start_action
+from .menus import start_action, chat_navigation_action
 
 DEFAULTS_VERSION = 3
 
@@ -80,15 +80,20 @@ def default_profile(bundle: str, label: str = "", *, presentation: str = "") -> 
     return profile if profile in DEFAULT_MAPPINGS else ""
 
 
-def chat_actions(bundle: str, label: str, scene: str) -> list[dict]:
+def chat_actions(bundle: str, label: str, scene: str, menus=()) -> list[dict]:
     profile = default_profile(bundle, label)
     if scene != "regular" or profile not in {"codex", "workbuddy"}:
         return []
-    # Reuse the shortcuts already supported by the legacy app adapter.
-    shortcuts = default_profiles()[profile]
-    return [dict(id=f"{profile}:{key}", label=title, shortcut=shortcuts[key].shortcut,
-                 path=APP_LABELS[profile] + " 默认快捷键", available=None, preset=True)
-            for key, title in CHAT_ACTIONS.items()]
+    return [item for key in CHAT_ACTIONS
+            if (item := chat_navigation_action(profile, key, menus)) is not None]
+
+
+def pending_chat_defaults(bundle, label, bindings):
+    """Keep a gesture intention without inventing an application's shortcut."""
+    profile = default_profile(bundle, label)
+    return {gesture: action.rsplit(":", 1)[1]
+            for gesture, action in DEFAULT_MAPPINGS.get(profile, {}).get("regular", {}).items()
+            if gesture not in bindings}
 
 
 def default_mappings(bundle: str, label: str = "", *, presentation: str = "", scene_profiles=None, menus=()) -> dict[str, dict]:
@@ -114,8 +119,6 @@ def _base_mappings(bundle: str, label: str = "", *, presentation: str = "", menu
         return {"regular": entry_defaults(bundle, PRESENTATION, presenter, menus),
                 **scene_defaults(bundle, {PRESENTATION: presenter}, menus)[0]}
     for scene, gestures in DEFAULT_MAPPINGS.get(profile, {}).items():
-        actions = {item["id"]: item for item in
-                   scene_actions(bundle, scene) + chat_actions(bundle, label, scene)}
-        result[scene] = {gesture: {key: actions[action][key] for key in ("id", "label", "path", "shortcut")}
-                         for gesture, action in gestures.items()}
+        result[scene] = {gesture: item for gesture, action in gestures.items()
+                         if (item := chat_navigation_action(profile, action.rsplit(":", 1)[1], menus)) is not None}
     return result

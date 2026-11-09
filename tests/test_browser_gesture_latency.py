@@ -29,12 +29,14 @@ def test_browser_action_leaves_gui_and_recognition_feedback_responsive(route, mo
     c, service, _, backend, _, _, _ = route
     target = replace(backend.target, bundle='com.google.Chrome', profile='com.google.Chrome',
                      scene='video', input_context='nontext', browser_target={'media': 'video1'})
-    binding = SimpleNamespace(action_id='custom:Cmd+K' if custom else 'web-video:play', shortcut='Cmd+K' if custom else 'Space')
+    binding = SimpleNamespace(action_id='custom:Cmd+K' if custom else 'web-video:play', shortcut='Cmd+K' if custom else 'Space', system_wide=custom)
     entered, release = threading.Event(), threading.Event()
     calls, done, ticks, shown = [], [], [], []
     main_thread = threading.get_ident()
 
     def blocked(target, action, **kwargs):
+        if custom:
+            assert kwargs['system_wide'] is True
         calls.append((action, threading.get_ident()))
         entered.set()
         assert release.wait(2)

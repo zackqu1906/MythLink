@@ -22,13 +22,14 @@ def desktop(monkeypatch):
     quartz = SimpleNamespace(
         kCGEventFlagMaskCommand=256, kCGEventFlagMaskShift=128,
         kCGEventFlagMaskControl=64, kCGEventFlagMaskAlternate=32, kCGEventFlagMaskSecondaryFn=512,
-        kCGEventFlagMaskNumericPad=1024, kCGEventSourceUserData=99,
+        kCGEventFlagMaskNumericPad=1024, kCGEventSourceUserData=99, kCGHIDEventTap=0,
         CGPreflightPostEventAccess=lambda: state.permission,
         CGEventCreateKeyboardEvent=lambda source, code, down: {"code": code, "down": down},
         CGEventGetFlags=lambda event: event.get("flags", 0),
         CGEventSetFlags=lambda event, flags: event.update(flags=flags),
         CGEventSetIntegerValueField=lambda event, field, value: event.update(tag=value),
         CGEventPostToPid=lambda pid, event: state.sent.append((pid, event)),
+        CGEventPost=lambda tap, event: state.sent.append(('hid', event)),
     )
     monkeypatch.setitem(sys.modules, "Quartz", quartz)
     return backend, state, quartz

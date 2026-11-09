@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import CancelledError as WorkerCancelledError
 import threading
+
+from proximic_ring.ble_runtime import run_ble
 
 
 class DeviceScanWorker(threading.Thread):
@@ -47,9 +50,9 @@ class DeviceScanWorker(threading.Thread):
             rows = [
                 {"name": item.name or "未命名设备", "identifier": item.identifier,
                  "rssi": item.rssi if item.rssi is not None else "", "_device": item.device}
-                for item in asyncio.run(self._scan())
+                for item in run_ble(self._scan())
             ]
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, WorkerCancelledError):
             pass
         except Exception as exc:
             error = str(exc)

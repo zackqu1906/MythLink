@@ -16,8 +16,8 @@ import wave
 import numpy as np
 
 
-SCHEMA_VERSION = 4
-PROMPT_VERSION = "edit-race-v1"
+SCHEMA_VERSION = 5
+PROMPT_VERSION = "edit-race-v2-clarification-anchor"
 _MAX_PENDING_SESSIONS = 8
 _FEEDBACK_ACTIONS = {"cancel", "apply_failed", "abandoned"}
 _CURRENT_INTERACTION_ID = re.compile(
@@ -113,6 +113,7 @@ class ModificationDatasetCollector:
         self._routing_interactions: dict[int, str] = {}
         self._published_interactions: set[str] = set()
         self._deleted_interactions: set[str] = set()
+        self._screen_generation = 0
         self._history_entries: dict[str, dict] | None = None
         self._history_rows: list[dict] = []
         self._history_dirty_ids: set[str] = set()
@@ -129,6 +130,7 @@ class ModificationDatasetCollector:
     def reset_runtime(self) -> None:
         """Drop in-memory request/session bindings from an interrupted run."""
         with self._lock:
+            self._screen_generation += 1
             self._pending_audio.clear()
             self._pending_asr.clear()
             self._pending_runtime_events.clear()
@@ -314,6 +316,110 @@ class ModificationDatasetCollector:
             if normalized["reason"]:
                 event["reason"] = normalized["reason"]
             self._append_event_locked(interaction_id, event)
+
+    def record_screen_capture(self, session_id: int, capture, *, routing: str,
+                              requested_mode: str = "", input_context: dict | None = None) -> str:
+        """Bind shared OCR to an immutable record, including cancelled utterances.
+
+        Recording finishes independently of classification/ASR. A delayed frame
+        cannot recreate deleted records or attach to a reused ASR session ID.
+        """
+        with self._lock:
+            interaction_id = self._ensure_interaction_locked(int(session_id))
+            if interaction_id in self._deleted_interactions:
+                return ""
+            generation = self._screen_generation
+            record = self._interaction_data(interaction_id)
+            record["mode"].update(routing=routing, requested_mode=requested_mode)
+            record["screen_capture"] = {"status": "pending", "requested_at": _utc_now()}
+            if input_context is not None:
+                record["input_context"] = input_context
+            self._write_json(self._interaction_path(interaction_id), record)
+
+        def completed(future):
+            from ..text_processing.screen_context import unavailable
+            try:
+                context = future.result() if hasattr(future, "result") else future
+                if not isinstance(context, dict):
+                    context = unavailable("截图未返回有效数据")
+            except Exception as exc:
+                context = unavailable(str(exc))
+            with self._lock:
+                if (generation != self._screen_generation or interaction_id in self._deleted_interactions
+                        or not self._interaction_path(interaction_id).is_file()):
+                    return
+                record = self._interaction_data(interaction_id)
+                record["screen_capture"] = {**record.get("screen_capture", {}), **dict(context),
+                                            "completed_at": _utc_now()}
+                self._save_screen_evidence_locked(interaction_id, record, context)
+                record["updated_at"] = _utc_now()
+                self._write_json(self._interaction_path(interaction_id), record)
+                self._append_event_locked(interaction_id, {
+                    "type": "screen_captured", "occurred_at": _utc_now(),
+                    "status": context.get("status"), "capture_id": context.get("capture_id"),
+                    "ocr_line_count": len(record.get("screen_evidence", {}).get("ocr_lines", [])),
+                    "reason": context.get("reason", ""),
+                })
+                self._publish_history_locked(interaction_id, force=True)
+
+        if hasattr(capture, "add_done_callback"):
+            capture.add_done_callback(completed)
+        else:
+            completed(capture)
+        return interaction_id
+
+    def record_context_preparation(self, interaction_id: str, context, *, enabled: bool) -> None:
+        """Save OCR-input policy and its independent LLM result to this record only."""
+        with self._lock:
+            if (not interaction_id or interaction_id in self._deleted_interactions
+                    or not self._interaction_path(interaction_id).is_file()):
+                return
+            generation = self._screen_generation
+            record = self._interaction_data(interaction_id)
+            record["context_preparation"] = {"enabled": bool(enabled),
+                "status": "pending" if enabled else "disabled", "requested_at": _utc_now()}
+            self._write_json(self._interaction_path(interaction_id), record)
+        if not enabled:
+            return
+
+        def completed(future):
+            from ..text_processing.screen_context import unavailable
+            try:
+                value = future.result() if hasattr(future, "result") else future
+            except Exception as exc:
+                value = unavailable(str(exc))
+            with self._lock:
+                if (generation != self._screen_generation or interaction_id in self._deleted_interactions
+                        or not self._interaction_path(interaction_id).is_file()):
+                    return
+                record = self._interaction_data(interaction_id)
+                trace = getattr(value, "evidence", {}).get("context_preparation", {})
+                record["context_preparation"].update(trace, context=dict(value),
+                    status=value.get("status", "unavailable"), completed_at=_utc_now())
+                record["updated_at"] = _utc_now()
+                self._write_json(self._interaction_path(interaction_id), record)
+                self._append_event_locked(interaction_id, {
+                    "type": "context_prepared", "occurred_at": _utc_now(),
+                    "status": value.get("status"), "latency_ms": trace.get("latency_ms"),
+                    "capture_id": value.get("capture_id"), "reason": value.get("reason", "")})
+                self._publish_history_locked(interaction_id, force=True)
+
+        if hasattr(context, "add_done_callback"):
+            context.add_done_callback(completed)
+        else:
+            completed(context)
+
+    def record_input_context(self, interaction_id: str, context: dict) -> None:
+        """Attach a late verified BEGIN snapshot to its already bound record."""
+        with self._lock:
+            if (interaction_id in self._deleted_interactions
+                    or not self._interaction_path(interaction_id).is_file()):
+                return
+            record = self._interaction_data(interaction_id)
+            record["input_context"] = context
+            record["updated_at"] = _utc_now()
+            self._write_json(self._interaction_path(interaction_id), record)
+            self._publish_history_locked(interaction_id, force=True)
 
     def record_mode_acceptance(self, session_id: int, *, mode: str) -> None:
         """Record the routed mode as an implicit positive after application."""
@@ -594,7 +700,7 @@ class ModificationDatasetCollector:
                 saved["screenshot_file"] = filename
             except OSError as exc:
                 saved["screenshot_error"] = str(exc)
-        record["screen_evidence"] = saved
+        record["screen_evidence"] = {**record.get("screen_evidence", {}), **saved}
 
     def record_inline_edit_intent(self, session_id: int) -> None:
         """Record native-confirmed conversion, including failures before an LLM call."""
@@ -642,6 +748,9 @@ class ModificationDatasetCollector:
         """Bind every dictation/edit LLM call to the utterance record."""
         from ..text_processing.automatic_prompts import AUTOMATIC_PROMPT_VERSION, automatic_system_prompt
         from ..text_processing.automatic_inputs import dictation_model_input, edit_model_input
+        from ..text_processing.model import INPUT_ROUTING_ROUTED_EDIT
+        from ..text_processing.routed_edit_prompts import ROUTED_EDIT_PROMPT_VERSION, single_pass_prompt
+        from ..text_processing.routed_edit_processing import routed_edit_model_input
         request_id = int(getattr(request, "request_id", 0))
         session_id = int(getattr(request, "session_id", 0))
         if request_id <= 0:
@@ -657,7 +766,11 @@ class ModificationDatasetCollector:
             # Do not wait for OCR here or retain mutable objects in the history cache.
             context = json.loads(json.dumps(dict(context), ensure_ascii=False)) if isinstance(context, dict) else None
             task_type = str(getattr(request, "task_type", ""))
-            if task_type == "dictation":
+            routing = getattr(request, "routing_mode", "manual")
+            routed_edit = routing == INPUT_ROUTING_ROUTED_EDIT and mode == "edit"
+            if routed_edit:
+                model_input = routed_edit_model_input(raw_text, target_text, context)
+            elif task_type == "dictation":
                 model_input = dictation_model_input(raw_text, context)
             elif task_type == "edit":
                 model_input = edit_model_input(raw_text, target_text, context, edit_plan=getattr(request, "edit_plan", None))
@@ -666,20 +779,23 @@ class ModificationDatasetCollector:
             llm_request = {
                 "request_id": request_id,
                 "mode": mode,
+                "routing_mode": routing,
                 "provider": str(getattr(settings, "provider", "")),
                 "model": str(getattr(settings, "model", "")),
                 "base_url": str(getattr(settings, "base_url", "")),
-                "prompt_version": AUTOMATIC_PROMPT_VERSION if getattr(request, "task_type", "") else PROMPT_VERSION,
+                "prompt_version": ROUTED_EDIT_PROMPT_VERSION if routed_edit else AUTOMATIC_PROMPT_VERSION if task_type else PROMPT_VERSION,
                 "task_type": str(getattr(request, "task_type", "")),
                 "edit_plan": request.edit_plan.as_dict() if getattr(request, "edit_plan", None) else None,
-                "system_prompt": (automatic_system_prompt(request.task_type, getattr(request, "edit_plan", None))
-                                  if getattr(request, "task_type", "") else ""),
+                "system_prompt": (single_pass_prompt(target_text) if routed_edit else
+                                  automatic_system_prompt(task_type, getattr(request, "edit_plan", None)) if task_type else ""),
                 "screen_context": context,
                 "input": model_input,
                 "started_at": _utc_now(),
                 "status": "processing",
             }
             record = self._interaction_data(interaction_id)
+            if routing == INPUT_ROUTING_ROUTED_EDIT:
+                record["mode"].update(routing=routing, selected=mode, user_intent=mode)
             self._save_screen_evidence_locked(interaction_id, record, getattr(request, "screen_context", None))
             requests = record["llm"].setdefault("requests", [])
             requests[:] = [
@@ -729,7 +845,8 @@ class ModificationDatasetCollector:
                 ),
                 "branches": branches,
             }
-            if getattr(result, "task_type", ""):
+            routed_edit = getattr(result, "routing_mode", "") == "manual_routed_edit" and result.mode == "edit"
+            if getattr(result, "task_type", "") or routed_edit:
                 # Recorded from the serialized generation input, after OCR resolution
                 # and validation. None distinguishes a failure before request creation.
                 model_input = getattr(result, "model_input", None)
@@ -737,6 +854,16 @@ class ModificationDatasetCollector:
                 if isinstance(model_input, dict):
                     updates["input"] = model_input
                     updates["screen_context"] = model_input.get("screen_context")
+            if routed_edit:
+                plan = result.edit_plan.as_dict() if result.edit_plan else None
+                updates.update(edit_plan=plan, classification_type="llm_single_pass", task_type="edit")
+                record["mode"].update(routing="manual_routed_edit", task_type="edit", edit_plan=plan,
+                    edit_routing_output=updates["raw_output"], edit_routing_error=updates["error"],
+                    edit_routing_latency_ms=updates["latency_ms"], edit_routing_type="llm_single_pass")
+                self._save_screen_evidence_locked(interaction_id, record, getattr(result, "screen_context", None))
+                # _update_llm_request_locked reloads the record; save the mode
+                # and filtered OCR evidence first instead of losing that update.
+                self._write_json(self._interaction_path(interaction_id), record)
             self._update_llm_request_locked(interaction_id, int(request_id), updates)
             self._append_event_locked(
                 interaction_id,
@@ -1430,6 +1557,19 @@ class ModificationDatasetCollector:
             rows = self._history_rows if limit is None else self._history_rows[: max(0, int(limit))]
             return [dict(row) for row in rows]
 
+    def load_details(self, interaction_id: str) -> dict:
+        """Read large evidence only when one row is expanded, within this store."""
+        from .history_details import history_details
+        if _CURRENT_INTERACTION_ID.fullmatch(str(interaction_id)) is None:
+            return {"error": "没有可读取的记录"}
+        with self._lock:
+            directory = self._interaction_dir(interaction_id)
+            path = directory / "record.json"
+            if (interaction_id in self._deleted_interactions or self.interactions_root.is_symlink()
+                    or directory.is_symlink() or path.is_symlink() or not path.is_file()):
+                return {"error": "记录已删除或不可用"}
+            return history_details(directory, self._read_json(path))
+
     def delete_entry(self, interaction_id: str) -> bool:
         """Delete one record and its links, without resetting live session bindings.
 
@@ -1523,6 +1663,8 @@ class ModificationDatasetCollector:
 
     def close(self, *, wait: bool = False) -> None:
         del wait
+        with self._lock:
+            self._screen_generation += 1
 
     def _interaction_dir(self, interaction_id: str) -> Path:
         return self.interactions_root / str(interaction_id)
@@ -1781,12 +1923,19 @@ class ModificationDatasetCollector:
                 record, display_mode
             )
         )
+        # Multiple writes may share the millisecond updated_at timestamp.
+        # Refresh an already-open manual detail panel when late OCR arrives.
+        try:
+            details_revision = str((interaction_dir / "record.json").stat().st_mtime_ns)
+        except OSError:
+            details_revision = str(record.get("updated_at", ""))
         return {
             "id": str(record.get("interaction_id", interaction_dir.name)),
             "interactionId": str(
                 record.get("interaction_id", interaction_dir.name)
             ),
             "createdAt": recorded_at,
+            "detailsRevision": details_revision,
             "displayTime": display_time,
             "text": text or "（未识别出文字）",
             "recognized": bool(text),

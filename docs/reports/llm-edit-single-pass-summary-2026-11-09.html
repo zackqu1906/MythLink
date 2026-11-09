@@ -1,0 +1,103 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>单次分类＋编辑：测试结论与流程代码</title><style>
+:root{--ink:#192738;--muted:#59687a;--line:#dce4ec;--bg:#f2f5f9;--teal:#087c75;--red:#a43d31}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.75 -apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif}
+main{max-width:1240px;margin:auto;padding:36px 30px 80px}header{background:#132d42;color:#fff;padding:32px;border-radius:18px;margin-bottom:24px}
+h1{font-size:29px;line-height:1.4;margin:8px 0 12px}h2{font-size:23px;margin:36px 0 16px}h3{font-size:18px;margin:8px 0 14px}p{margin:9px 0 16px}
+a{color:#08766e;text-underline-offset:3px}header a{color:#b9eee7}.eyebrow{letter-spacing:.1em;font-size:12px;color:#b9d5e8}.muted{color:var(--muted)}
+nav{display:flex;gap:20px;flex-wrap:wrap}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.kpi{background:white;border:1px solid var(--line);padding:18px;border-radius:12px}.kpi b{display:block;font-size:28px;color:var(--teal)}
+.panel,.case{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px;margin-bottom:18px}.case{scroll-margin-top:150px}.case.bad{border-left:5px solid #c27143}
+.case-head{display:flex;align-items:start;justify-content:space-between;gap:20px}.case-head h3{overflow-wrap:anywhere}.badge{display:inline-block;border-radius:7px;padding:2px 10px;background:#e3f3ef;color:#116b5c;white-space:nowrap;font-size:13px}.badge.bad{background:#fff0e7;color:#9a4c22}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.field{background:#f6f8fb;border:1px solid #e4eaf0;padding:14px;border-radius:8px;min-width:0}.label{font-size:12px;color:var(--muted);margin-bottom:6px;letter-spacing:.03em}.mono,code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+pre{font-size:13px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 0}.text{white-space:pre-wrap;overflow-wrap:anywhere}code{font-size:.9em}pre code{font-size:13px}
+.callout{background:#fff7e8;border-left:4px solid #ce9650;padding:16px 20px;border-radius:5px;margin:20px 0}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border-bottom:1px solid var(--line);padding:12px;text-align:left;vertical-align:top}th{background:#edf2f6;white-space:nowrap}td{overflow-wrap:anywhere}
+details{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}summary{cursor:pointer;color:#08766e;font-weight:600}.raw pre{max-height:650px;overflow:auto;background:#f6f8fb;padding:16px}
+.filters{position:sticky;top:0;z-index:5;background:#eaf0f6f5;padding:14px;border:1px solid var(--line);border-radius:10px;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;backdrop-filter:blur(10px)}
+input,select,button{font:inherit;padding:9px 12px;border:1px solid #bdcad6;border-radius:7px;background:white;color:var(--ink)}input{flex:1;min-width:220px}button{cursor:pointer}#shown{align-self:center;font-size:13px}[hidden]{display:none!important}.gen{margin-top:16px;border-left:3px solid #9cc8c0;padding-left:16px}.gen.bad{border-left-color:#c98563}.flowdoc pre{background:#eaf0f6;padding:18px;border-radius:8px}.flowdoc h2{border-top:1px solid var(--line);padding-top:24px}
+@media(max-width:760px){main{padding:16px 12px 40px}header{padding:22px}h1{font-size:23px}.kpis{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.case{padding:16px}.case-head{display:block}.filters{position:static}}
+@media print{body{background:white;font-size:11px}main{padding:0;max-width:none}header{background:white;color:#192738;border-bottom:2px solid #192738;padding:0}.eyebrow{color:#192738}.filters,nav,.raw{display:none}.case,.panel{break-inside:avoid;box-shadow:none}.case[hidden]{display:none!important}.kpi b{font-size:22px}h2{break-after:avoid}}
+</style><main><header><div class="eyebrow">MYTHLINK · DEEPSEEK · 2026-11-09</div><h1>一次请求完成分类与编辑</h1><p>本轮同组样例耗时约减半；正文质量通过数没有提升。</p></header><div class="panel"><div class="tablewrap"><table><thead><tr><th>指标</th><th>之前：先路由，再编辑</th><th>现在：一次返回分类与正文</th></tr></thead><tbody><tr><td>分类匹配（150 条）</td><td>145/150 · 96.7%</td><td>147/150 · 98.0%（兼容换行）</td></tr><tr><td>分类匹配（24 条同组）</td><td>24/24</td><td>24/24</td></tr><tr><td>正文语义复核（24 条同组）</td><td>20 通过 / 4 失败</td><td>20 通过 / 4 失败</td></tr><tr><td>完整回复 P50（24 条同组）</td><td>1.883 秒</td><td>0.871 秒 · 降低 53.7%</td></tr><tr><td>完整回复 P95（24 条同组）</td><td>2.425 秒</td><td>1.376 秒 · 降低 43.3%</td></tr><tr><td>平均完整回复（24 条同组）</td><td>1.935 秒</td><td>0.907 秒</td></tr></tbody></table></div></div><p>模型：deepseek-v4-1-flash-260910。类别规则 voice-intent-joint-v20-general-modify，正文规则 automatic-composed-v11-modular-rules。150 条有效编辑和 6 条边界样例，每条一次请求，无重试。</p><div class="callout">同日保存基线对照，非随机交错 A/B；新方案 156/156 请求均命中部分输入缓存。同组 24 条：旧方案 31/48 次请求命中缓存，新方案 24/24 次命中，不能将全部提速归因于请求合并。耗时从请求处理开始到完整回复收到并解析，非首字延迟，不含 ASR、实时截图 OCR、输入法写回。不能把分类和生成分别计时。</div><h2>全部 150 条的结果</h2><div class="panel"><p>正文逐条复核：124 通过、22 失败、3 条待确认边界、1 条因未知类别未接受。分类与正文同时通过：122/150（81.3%）。6 条额外边界样例在兼容换行后全部通过。</p><p>原严格解析分类匹配 146/150；兼容“正文：”后直接接正文的写法后为 147/150。全 156 条共恢复 3 条同一行正文，原始文字和类别均未改动。另 1 条输出“修改、释字拼写”，多出了第七类，仍计为失败。</p><p>冻结标签与模型存在两处边界分歧：用户明确放宽交付条件，预期“润色”，模型“修改、润色”；OCR 多候选无法唯一确定，预期“修改”，模型“无可执行编辑”。两条均保留分类扣分，正文复核通过。</p><p>语义结果由 Codex 对照输入输出复核，非独立人工盲评。3 条待确认分别为葡语截止日期边界、口述词形与字母拼写冲突、约一百字的长度容差。机械约束检查另计，不能等同于语义通过。</p></div><p><a href="llm-edit-single-pass-reviewed-2026-11-09.html">打开全部逐条输入、OCR、分类、正文、耗时及完整请求响应</a> · <a href="llm-edit-single-pass-reviewed-2026-11-09.json">下载完整 JSON 证据</a></p><h2>一次请求实际返回示例</h2><div class="panel"><p>把周六改为周日，末尾加原话：请准时。然后把全文整理成编号列表</p><p>原文：周六见面。带好证件。</p><pre>分类：修改、插入、格式整理
+正文：
+1. 周日见面。
+2. 带好证件。
+3. 请准时。</pre></div><h2>当前流程与 OCR 范围</h2><div class="panel"><ol><li>测试入口直接视作已由手动手势选择编辑，跳过听写／编辑分类。</li><li>输入本次口述、唯一可修改原文，以及只读 screen_context；预期标签只留在评分端。</li><li>把六类判定规则、共用编辑要求、组合规则和所有可用任务模块放入同一个系统提示词。空原文不提供“修改”。</li><li>向火山 DeepSeek 发一次请求，要求先输出中文类别，再输出完整正文；非流式，关闭 thinking，不用 JSON 或工具调用输出。</li><li>本地校验类别及分隔格式，比较冻结分类标签，并逐条检查正文。实验不写回应用。</li></ol><p>旧方式先拿到计划，再由代码只拼接选中模块。合并后需同次发送所有可用模块，让模型按自身分类选择执行，无法从外部证明它在内部严格分成两个阶段。</p><p>已把模拟 OCR 的文字接入模型 screen_context。此次没有启动实时截图／OCR；第三模式的设置项、tap／右滑接线和输入法写回也尚未接入。当前是可复现的测试原型。</p></div><h2>六类沿用关系</h2><div class="panel"><div class="tablewrap"><table><thead><tr><th>代码类别</th><th>中文输出</th></tr></thead><tbody><tr><td>modify</td><td>修改</td></tr><tr><td>insert</td><td>插入</td></tr><tr><td>polish</td><td>润色</td></tr><tr><td>format</td><td>格式整理</td></tr><tr><td>translate</td><td>翻译</td></tr><tr><td>compose</td><td>按目标创作</td></tr></tbody></table></div></div><h2>A · 同次拼接类别规则和编辑模块</h2><div class="panel"><p>/Users/admin/Downloads/ProximicVoice-main/tools/check_llm_single_pass_edit.py · 49–78</p><pre>049  def single_pass_prompt(target):
+050      # Keep all category semantics; adapt only upstream-plan and delivery contracts.
+051      route_rules = routing_prompt(target).rsplit(&#x27;\n\n&#x27;, 1)[0]
+052      base = replace_once(EDIT_BASE_PROMPT,
+053          &#x27;edit_plan 是上游路由选定的任务集合，具体边界和执行方式见随附的任务模块。&#x27;,
+054          &#x27;编辑任务由你在本次请求内先行确定，具体边界和执行方式见下面的任务模块。&#x27;)
+055      base = replace_once(base,
+056          &#x27;仅调用 submit_text_edit，modified_text 为最终完整正文；&#x27;,
+057          &#x27;按本提示末尾规定的纯文本格式交付类别和最终完整正文；&#x27;)
+058      combination = replace_once(EDIT_COMBINATION_RULES,
+059          &#x27;只提交最终完整正文，不输出操作计划或中间稿。&#x27;,
+060          &#x27;正文部分只提交最终完整正文，不输出操作计划或中间稿。&#x27;)
+061      modules = &#x27;\n\n&#x27;.join(EDIT_PROMPT_MODULES[k] for k in available_edit_tasks(target))
+062      return &#x27;\n\n&#x27;.join([
+063          &#x27;在一次回复中完成编辑任务分类和正文编辑。用户已经手动选择编辑，不做听写／编辑二分类。&#x27;
+064          &#x27;先确定最终有效的任务类别，再按这些类别的规则完成编辑；回复先给类别，再给结果，&#x27;
+065          &#x27;不展示推理过程或解释。类别名称和最终正文必须相互一致。&#x27;,
+066          &#x27;【类别判断规则】\n&#x27; + route_rules,
+067          &#x27;【分类后执行规则】\n&#x27; + base,
+068          combination,
+069          &#x27;下面列出所有本次可用任务的执行规则，供你按分类选择。只执行用户实际要求且你选中的任务；&#x27;
+070          &#x27;没有选中的模块不构成编辑授权，不要为了用上某模块而增加类别或扩大修改。\n&#x27; + modules,
+071          SCREEN_CONTEXT_RULES,
+072          &#x27;【最终返回格式】\n第一行：分类：中文类别名称\n第二行：正文：\n&#x27;
+073          &#x27;第三行起：修改后的完整正文，可包含多行。多个类别用顿号连接。&#x27;
+074          &#x27;不要 JSON，不要 Markdown 代码围栏，不要额外说明；正文自身要求的列表、表格等格式应保留。&#x27;
+075          &#x27;没有有效任务时第一行写“分类：无可执行编辑”，正文逐字返回 editable_text，不擅自录入口述。&#x27;
+076          &#x27;明确要求清空原文时允许正文为空，此时仍保留“正文：”标题。&#x27;
+077          &#x27;分类只有类别名称，不能夹带操作内容；正文中不要包含这两个用于分隔的外层标题。&#x27;,
+078      ])</pre></div><h2>B · 只发一次请求，读取分类及正文</h2><div class="panel"><p>/Users/admin/Downloads/ProximicVoice-main/tools/check_llm_single_pass_edit.py · 107–141</p><pre>107  def run_case(case, settings):
+108      record = {**case, &#x27;generate&#x27;: True, &#x27;calls&#x27;: []}
+109      target = validate_edit_target_text(case[&#x27;target&#x27;], allow_empty=True)
+110      model_input = {&#x27;utterance&#x27;: case[&#x27;utterance&#x27;], &#x27;editable_text&#x27;: target, &#x27;screen_context&#x27;: case[&#x27;context&#x27;]}
+111      record[&#x27;model_input&#x27;] = model_input
+112      record[&#x27;generation_expected&#x27;] = generation_expectations(case)
+113  
+114      def capture(request, **kwargs):
+115          if record[&#x27;calls&#x27;]:
+116              raise RuntimeError(&#x27;Single-pass evaluation forbids a second HTTP request&#x27;)
+117          call = {&#x27;endpoint&#x27;: request.full_url, &#x27;request&#x27;: json.loads(request.data.decode(&#x27;utf-8&#x27;))}
+118          record[&#x27;calls&#x27;].append(call)
+119          started = time.perf_counter()
+120          try:
+121              response = urlopen(request, **kwargs)
+122              call[&#x27;http_status&#x27;] = response.status
+123              return RecordedResponse(response, call, started)
+124          except Exception as exc:
+125              call.update(http_latency_s=time.perf_counter()-started, error_type=type(exc).__name__)
+126              raise
+127  
+128      processor = OpenAICompatibleTextProcessor(urlopen=capture)
+129      started = time.perf_counter()
+130      try:
+131          raw = processor._request_chat(
+132              settings, system_prompt=single_pass_prompt(target),
+133              user_content=json.dumps(model_input, ensure_ascii=False),
+134              temperature=0.0, max_tokens=_text_output_budget(settings), edit_tool=None)
+135          record[&#x27;raw_response&#x27;] = raw
+136          payload = record[&#x27;calls&#x27;][0].get(&#x27;response&#x27;, {})
+137          if payload.get(&#x27;status&#x27;) != &#x27;completed&#x27;:
+138              raise ValueError(&#x27;Ark response was not completed: &#x27; + str(payload.get(&#x27;status&#x27;)))
+139          raw_labels, plan, final = parse_response(raw, target)
+140          record.update(raw_labels=raw_labels, actual_tasks=plan.as_dict()[&#x27;tasks&#x27;] if plan else [], final_text=final)
+141          record[&#x27;route_exact&#x27;] = set(record[&#x27;actual_tasks&#x27;]) == set(case[&#x27;expected_tasks&#x27;])</pre></div><h2>C · 离线兼容正文换行，拒绝未知类别</h2><div class="panel"><p>/Users/admin/Downloads/ProximicVoice-main/tools/review_llm_single_pass_edit.py · 22–40</p><pre>022  def split_response(raw):
+023      &quot;&quot;&quot;Accept body on the header line or next line, preserving body contents.&quot;&quot;&quot;
+024      match = re.fullmatch(r&#x27;分类：([^\r\n]+)\r?\n正文：([\s\S]*)&#x27;, raw)
+025      if not match:
+026          raise ValueError(&#x27;Missing classification line or body header&#x27;)
+027      body = match.group(2)
+028      if body.startswith(&#x27;\r\n&#x27;):
+029          body = body[2:]
+030      elif body.startswith(&#x27;\n&#x27;):
+031          body = body[1:]
+032      return match.group(1), body
+033  
+034  
+035  def parse_compatible_response(raw, target):
+036      labels, body = split_response(raw)
+037      plan = parse_labels(labels, target)
+038      if plan is None and body != target:
+039          raise ValueError(&#x27;No-task classification changed the source&#x27;)
+040      return labels, plan, body</pre></div><h2>正文失败样例清单</h2><div class="panel"><div class="tablewrap"><table><thead><tr><th>样例</th><th>逐条复核原因</th></tr></thead><tbody><tr><td>expand</td><td>补造部分项目未达到预期标准、还需验证调整、短期无法结束等具体测试状态和原因，原文只说测试未完成。</td></tr><tr><td>compose-empty</td><td>补造具体时间地点将另行通知这一后续承诺，违反创作模块对会议延期例子的明确限制。</td></tr><tr><td>compose-style-not-extra-task</td><td>加入 [Name] 与 [Your Name] 占位姓名，违反可直接使用且不附占位姓名的交付要求。</td></tr><tr><td>mixed-precise-polish</td><td>类别选择正确，但最终正文删除了张伟／张玮这一具体收件人，未落实姓名纠正要求。</td></tr><tr><td>v-edit-compose</td><td>额外写入请假一天、在家休息及工作可随时联系等安排，用户仅说明今天身体不舒服；存在未经授权补充。</td></tr><tr><td>v-edit-polish</td><td>把必须今天完成弱化成希望今天能完成，改变了原请求的强制性。</td></tr><tr><td>joint-holdout-ordinary-answer</td><td>将用于纠错的确认词没问题加入正文；当前修改模块明确要求只更新数量，不把确认词当新增正文。</td></tr><tr><td>joint-holdout-expand</td><td>补造工具自动完成核对这一实现功能，并强化为显著节省；原文仅给出节省人工检查时间的好处。</td></tr><tr><td>joint-holdout-polish</td><td>把必须今天答复改成今天方便答复吗，改变原本明确的责任。</td></tr><tr><td>joint-holdout-compose-context</td><td>用户仅允许借一天，额外要求当天用完就还，将借用一天收紧为当天归还。</td></tr><tr><td>organize-polish-only</td><td>在原文没有交付对象信息时补成这份材料，增加了未提供的具体内容。</td></tr><tr><td>organize-compose-list</td><td>新增系统、服务可能受影响及各项服务重新开放等具体对象与状态，用户仅给出周二检修、周三恢复。</td></tr><tr><td>six-polish-tone</td><td>省略现在这一时间要求，并把必须归还改成方便的话再还。</td></tr><tr><td>six-modify-polish</td><td>冻结生成预期要求保留河边和公园，输出压缩时丢掉两项路线信息；未修改预期。口述自身未逐项点名保留，评测标签存在解释空间。</td></tr><tr><td>ocr-reply-boss-thanks</td><td>增加老板支持指导这一未给定事实，以及继续完善细节、确保落地效果的个人承诺。</td></tr><tr><td>ocr-reply-boss-no-commitment</td><td>没有答应出差，但新增尽快确认、第一时间答复的后续承诺，超出用户给出的信息。</td></tr><tr><td>ocr-reply-select-boss</td><td>用户仅要求感谢建议，模型额外承诺按意见修改标题。</td></tr><tr><td>ocr-modify-polish-product</td><td>专有名词改对，但把今天必须交改为今天方便的话交，改变原义。</td></tr><tr><td>fresh-polish-tone</td><td>增加方便的话，使原本的限时请求变为有条件才执行。</td></tr><tr><td>fresh-compose-constraints</td><td>添加 [Your Name] 占位姓名，违反当前创作模块直接交付、不附占位姓名的要求。</td></tr><tr><td>fresh-compose-reference</td><td>在可折叠、三档亮度、USB充电之外断言轻巧和无需更换电池，补充了未给出的产品事实。</td></tr><tr><td>fresh-modify-polish</td><td>日期已改对，但把必须来改为方便来吗，弱化原责任。</td></tr></tbody></table></div></div><h2>复现与数据边界</h2><div class="panel"><p>原始严格输出保存在 llm-edit-single-pass-full-2026-11-09.json/jsonl；reviewed 文件仅增加兼容解析和评语。没有用本轮结果修改模型提示词后重跑。所有样例均为合成短文本，不能代表长文、真实 ASR 或真实截图使用准确率。</p><p>本轮 Ark 实际请求未包含 temperature 字段；虽然通用调用传入 0.0，传输层未发送它，不能宣称温度为零。token 总量：输入 553315，输出 3329，reasoning 0。</p></div></main></html>

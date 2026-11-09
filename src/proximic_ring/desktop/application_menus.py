@@ -1,4 +1,4 @@
-"""Read application/menu metadata only, on explicit configuration requests."""
+"""Read application/menu metadata for configured applications."""
 from __future__ import annotations
 
 from collections import deque
@@ -138,6 +138,11 @@ def read_application_menu(bundle, *, host_pid=0):
             return None
         AX.AXUIElementSetMessagingTimeout(node, min(timeout, max(.001, deadline-time.monotonic())))
         error, value = AX.AXUIElementCopyAttributeValue(node, name, None)
+        # A background menu provider can briefly time out while materializing
+        # children. Retry once, within the same total traversal budget.
+        if error == -25204 and time.monotonic() < deadline:
+            AX.AXUIElementSetMessagingTimeout(node, min(.2, max(.001, deadline-time.monotonic())))
+            error, value = AX.AXUIElementCopyAttributeValue(node, name, None)
         # Unsupported attributes / absent values are normal for shortcutless
         # rows. Timeouts, invalidated elements and other failures are incomplete.
         if error not in (0, -25205, -25212):

@@ -228,26 +228,13 @@ def main(argv: list[str] | None = None) -> int:
             main_activation.show()
 
         def toggle_connection() -> None:
-            if controller.connected:
-                controller.disconnectDevice()
-            else:
+            if controller.connectionInfo["action"] == "connect":
                 show_window()
-                if controller.canReconnect:
-                    controller.reconnectDevice()
-                else:
-                    controller.requestDevicePicker()
+            controller.activateConnectionAction()
 
         def refresh_tray() -> None:
-            connection_action.setText(
-                "断开设备"
-                if controller.connected
-                else ("重新连接设备" if controller.canReconnect else "选择并连接设备")
-            )
-            connection_action.setEnabled(
-                controller.statusKind != "stopping"
-                if controller.connected
-                else not controller.busy and not controller.scanBusy
-            )
+            connection_action.setText(controller.connectionInfo["actionText"])
+            connection_action.setEnabled(controller.connectionInfo["enabled"])
             recognition_action.setText(
                 "暂停语音识别" if controller.recognitionEnabled else "开启语音识别"
             )
@@ -262,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
                 touchpad.supported
                 and (touchpad.active or (touchpad.available and not touchpad.busy))
             )
-            tray.setToolTip(f"Mythlink · {controller.statusTitle}")
+            tray.setToolTip(f"Mythlink · {controller.connectionInfo['detail']}")
             if hasattr(tray, "setConnectionStatus"):
                 tray.setConnectionStatus(
                     controller.connected, controller.batteryAvailable,
@@ -277,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
         gesture_menu_action.triggered.connect(controller.ringGestures.showMenu)
         quit_action.triggered.connect(controller.requestQuit)
         controller.connectedChanged.connect(refresh_tray)
+        controller.connectionChanged.connect(refresh_tray)
         controller.ringGestures.changed.connect(refresh_tray)
         controller.touchpad.changed.connect(refresh_tray)
         controller.recognitionEnabledChanged.connect(refresh_tray)

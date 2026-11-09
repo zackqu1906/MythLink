@@ -8,7 +8,7 @@ import pytest
 
 
 SCRIPT = r'''
-import json, os, tempfile, threading, time
+import ctypes, json, os, tempfile, threading, time
 from pathlib import Path
 from types import SimpleNamespace
 import AppKit
@@ -25,6 +25,34 @@ app = QApplication([])
 original = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
 configure_app_activation(background=False)
 received, traces, timings = [], [], []
+
+# A registered Carbon hotkey is dispatched by macOS before the application
+# event queue. Receiving a Qt key alone cannot prove system shortcuts work.
+carbon = ctypes.CDLL('/System/Library/Frameworks/Carbon.framework/Carbon')
+class EventType(ctypes.Structure):
+    _fields_ = [('event_class', ctypes.c_uint32), ('kind', ctypes.c_uint32)]
+class HotKeyID(ctypes.Structure):
+    _fields_ = [('signature', ctypes.c_uint32), ('id', ctypes.c_uint32)]
+Callback = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+hotkeys = []
+@Callback
+def hotkey_received(handler, event, context):
+    hotkeys.append('system_hotkey')
+    return 0
+carbon.GetApplicationEventTarget.restype = ctypes.c_void_p
+carbon.InstallEventHandler.argtypes = [ctypes.c_void_p, Callback, ctypes.c_uint32,
+    ctypes.POINTER(EventType), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+carbon.RegisterEventHotKey.argtypes = [ctypes.c_uint32, ctypes.c_uint32, HotKeyID,
+    ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p)]
+carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
+carbon.RemoveEventHandler.argtypes = [ctypes.c_void_p]
+event_type = EventType(int.from_bytes(b'keyb', 'big'), 6)
+handler, hotkey = ctypes.c_void_p(), ctypes.c_void_p()
+event_target = carbon.GetApplicationEventTarget()
+assert carbon.InstallEventHandler(event_target, hotkey_received, 1, ctypes.byref(event_type),
+    None, ctypes.byref(handler)) == 0
+assert carbon.RegisterEventHotKey(79, 0x100 | 0x800 | 0x1000,
+    HotKeyID(int.from_bytes(b'MYTH', 'big'), 1), event_target, 0, ctypes.byref(hotkey)) == 0
 
 class Receiver(QQuickWindow):
     def keyPressEvent(self, event):
@@ -83,10 +111,26 @@ with tempfile.TemporaryDirectory() as tmp, pytest.MonkeyPatch.context() as patch
         assert received[-1]['key'] == Qt.Key_J
         assert ring.setGlobalGestureAction('circle-clockwise', '')
         trigger('circle-clockwise', False)
+
+        assert ring.setGlobalCustomBinding('snap', '系统热键验证', 'Cmd+Ctrl+Alt+F18')
+        # Negative control: the old PID route reaches Qt but not the registered
+        # system hotkey, reproducing the reported silent failure.
+        original_post = service.backend.post
+        def app_only(target, shortcut, **kwargs):
+            return original_post(target, shortcut, **dict(kwargs, system_wide=False))
+        patch.setattr(service.backend, 'post', app_only)
+        trigger('snap')
+        assert not hotkeys
+        QTest.qWait(400)
+        patch.setattr(service.backend, 'post', original_post)
+        trigger('snap', False)
+        until(lambda: len(hotkeys) == 1)
         report = dict(received=received, delivery_ms=timings,
-                      old_gesture_released=True, unbinding_stops_delivery=True)
+                      old_gesture_released=True, unbinding_stops_delivery=True,
+                      system_hotkeys=hotkeys, pid_route_bypasses_system_hotkeys=True)
         print(json.dumps(report), flush=True)
     finally:
+        carbon.UnregisterEventHotKey(hotkey); carbon.RemoveEventHandler(handler)
         _close(owner); native_access().close(); window.close()
         if original: original.activateWithOptions_(0)
 '''

@@ -163,7 +163,7 @@ def automatic_history_details(directory: Path, record: dict) -> dict:
                     "header": "过滤：顶部", "conversation_title": "保留为会话标题",
                     "outside_history": "过滤：聊天记录区域外", "timestamp": "过滤：时间格式"}
     raw_text = "\n".join(f"[{dispositions.get(line.get('disposition'), '未知')}] {line.get('text', '')}"
-                         for line in evidence.get("ocr_lines", []))
+                         for line in evidence.get("ocr_filter_lines", evidence.get("ocr_lines", [])))
     model_name = trace.get("model") or mode.get("router_model", "")
     return {"level1Text": level1, "level2Text": level2, "hintText": hint_text,
             **_model_ocr_details(mode, trace, last_request),

@@ -118,6 +118,31 @@ def test_native_menu_element_invalidated_during_read_is_reported_as_partial(monk
     assert read_application_menu(BUNDLE)["partial"]
 
 
+@pytest.mark.parametrize("recovers", [True, False])
+def test_native_menu_retries_transient_timeout_once_and_keeps_partial_on_failure(monkeypatch, recovers):
+    import sys
+    from proximic_ring.desktop.application_menus import read_application_menu
+    import proximic_ring.platforms.macos.mac_workspace as workspace
+    app = SimpleNamespace(bundleIdentifier=lambda: BUNDLE, processIdentifier=lambda: 42)
+    monkeypatch.setattr(workspace, "running_applications", lambda: [app])
+    child_reads = []
+    def read(node, name, _):
+        if (node, name) == ("application", "AXMenuBar"):
+            return 0, "root"
+        if (node, name) == ("root", "AXRole"):
+            return 0, "AXMenuBar"
+        if (node, name) == ("root", "AXChildren"):
+            child_reads.append(name)
+            return (0, []) if recovers and len(child_reads) > 1 else (-25204, None)
+        return -25212, None
+    monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(
+        AXUIElementCreateApplication=lambda pid: "application",
+        AXUIElementSetMessagingTimeout=lambda *args: None,
+        AXUIElementCopyAttributeValue=read))
+    assert read_application_menu(BUNDLE)["partial"] is not recovers
+    assert len(child_reads) == 2
+
+
 def test_new_install_has_no_implicit_applications_or_navigation(tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
     import proximic_ring.ui.controller as module
@@ -146,7 +171,7 @@ def test_explicit_add_and_binding_validation_preserve_voice_and_persist(route, m
         assert catalog.setBinding(BUNDLE, gesture, "")
     assert not catalog.setBinding(BUNDLE, "circle-clockwise", "invented")
     assert catalog.setBinding(BUNDLE, "circle-clockwise", ACTION["id"])
-    assert catalog.for_target(BUNDLE) == {"menu:circle-clockwise": AppBinding("circle-clockwise", "Ctrl+Tab")}
+    assert catalog.for_target(BUNDLE) == {"menu:circle-clockwise": AppBinding("circle-clockwise", "Ctrl+Tab", action_id=ACTION["id"])}
     saved = json.loads(c._settings.value(SETTINGS_KEY))
     assert saved[BUNDLE]["bindings"]["circle-clockwise"]["path"] == ACTION["path"]
     from proximic_ring.ui.desktop.application_mapping_controller import ApplicationMappingController
@@ -167,7 +192,7 @@ def test_custom_shortcut_survives_discovery_failure_restart_and_uses_guarded_dis
     catalog._apply_result("menu", catalog._generation["menu"], BUNDLE, None, "权限未开启")
     assert catalog.setCustomBinding(BUNDLE, "circle-counterclockwise", "上一个任务", "Cmd+Shift+[")
     assert catalog.actions[0]["id"] == action["id"] and catalog.menuState == "error"
-    assert catalog.for_target(BUNDLE) == {"menu:circle-counterclockwise": AppBinding("circle-counterclockwise", "Cmd+Shift+[")}
+    assert catalog.for_target(BUNDLE) == {"menu:circle-counterclockwise": AppBinding("circle-counterclockwise", "Cmd+Shift+[", action_id=action["id"], system_wide=True)}
     restored = ApplicationMappingController(service)
     try:
         assert restored.bindings == catalog.bindings
@@ -280,10 +305,10 @@ def test_remove_and_readd_use_fresh_defaults_not_legacy_shortcuts_or_old_menu_re
     assert catalog.addApplication(bundle)
     catalog._apply_result("menu", generation, bundle, dict(actions=[ACTION]), "")
     assert catalog.busy and all(item.get("preset") for item in catalog.actions)
-    assert catalog.bindings[bundle]["circle-clockwise"]["shortcut"] == "Cmd+Shift+]"
+    assert catalog.bindings[bundle] == {} and catalog.pendingDefaultCount == 2
     service._last_dispatch = None  # Simulate a later gesture after remove/re-add.
     emit("circle-clockwise")
-    assert sent == [("codex", "Cmd+Shift+]")]
+    assert not sent  # Re-adding must await real menu shortcuts, never old defaults.
     sent.clear()
     catalog._apply_result("menu", catalog._generation["menu"], bundle, dict(actions=[ACTION]), "")
     assert catalog.setBinding(bundle, "circle-clockwise", ACTION["id"])
@@ -303,7 +328,8 @@ def test_menu_read_state_never_erases_saved_bindings(route, monkeypatch):
                                   (None, "请先打开这个应用，再刷新快捷键", "error"),
                                   (dict(actions=[]), "", "ready")]:
         catalog.refreshMenu()
-        assert catalog.menuState == "loading" and not catalog.menuReadAt
+        assert catalog.menuState == "loading"
+        assert catalog.menuReadAt == catalog._menu_cache[BUNDLE]['read_at']
         catalog._apply_result("menu", catalog._generation["menu"], BUNDLE, result, error)
         assert catalog.menuState == state
         assert bool(catalog.menuReadAt) == (state != "error")

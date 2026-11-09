@@ -22,10 +22,13 @@ if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$INPUT_HASH" && -x "$APP/Contents/Mac
   print -r -- "距离锁屏组件未变化，复用现有签名和授权身份：$APP"
   exit 0
 fi
-# Rebuild the bundle from scratch: a stale _CodeSignature sealing a removed
-# .cstemp makes codesign --verify --strict fail forever after an interrupted sign.
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$BUILD_ROOT/module-cache"
+# Build and sign away from the live helper path. The source app can restart its
+# monitor during a build; signing an executable that it has opened can fail.
+# A fresh staging bundle also avoids stale resources from an interrupted sign.
+STAGING_ROOT="$(mktemp -d "$BUILD_ROOT/.build-XXXXXX")"
+trap 'rm -rf "$STAGING_ROOT"' EXIT
+STAGED_APP="$STAGING_ROOT/ProxiMicPresence.app"
+mkdir -p "$STAGED_APP/Contents/MacOS" "$BUILD_ROOT/module-cache"
 xcrun swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx$DEPLOYMENT_TARGET" \
   -module-cache-path "${PROXIMIC_MODULE_CACHE:-$BUILD_ROOT/module-cache}" \
   -framework AppKit -framework CoreBluetooth -framework Security -framework OpenDirectory -framework IOKit \
@@ -33,10 +36,12 @@ xcrun swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx$DEPLOYMENT_TA
   "$TASK_ROOT/native/ProxiMicPresence/UnlockSecret.swift" \
   "$TASK_ROOT/native/ProxiMicPresence/ReturnWakePolicy.swift" \
   "$TASK_ROOT/native/ProxiMicPresence/main.swift" \
-  -o "$APP/Contents/MacOS/ProxiMicPresence"
-cp "$TASK_ROOT/native/ProxiMicPresence/Info.plist" "$APP/Contents/Info.plist"
-plutil -replace LSMinimumSystemVersion -string "$DEPLOYMENT_TARGET" "$APP/Contents/Info.plist"
-codesign "${MYTHLINK_CODESIGN_FLAGS[@]}" "$APP"
-codesign --verify --strict "$APP"
+  -o "$STAGED_APP/Contents/MacOS/ProxiMicPresence"
+cp "$TASK_ROOT/native/ProxiMicPresence/Info.plist" "$STAGED_APP/Contents/Info.plist"
+plutil -replace LSMinimumSystemVersion -string "$DEPLOYMENT_TARGET" "$STAGED_APP/Contents/Info.plist"
+codesign "${MYTHLINK_CODESIGN_FLAGS[@]}" "$STAGED_APP"
+codesign --verify --strict "$STAGED_APP"
+rm -rf "$APP"
+mv "$STAGED_APP" "$APP"
 print -r -- "$INPUT_HASH" > "$STAMP"
 print -r -- "已构建距离锁屏组件；尚未启用或锁屏：$APP"

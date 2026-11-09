@@ -1445,4 +1445,52 @@ test("Automatic insertion into empty text can be undone") {
     check(client.body == "加一句谢谢", "undo did not restore dictated instruction")
 }
 
+test("Manual routed mode keeps tap as dictation") {
+    let client = FakeClient("前文")
+    let session = try begin(client)
+    session.routedEditMode = true
+    var requests = 0
+    session.onEdit = { _, _, _ in requests += 1 }
+    session.update("把前文改掉", final: false)
+    check(session.canEdit, "routed manual controls hidden")
+    session.finish()
+    session.update("把前文改掉", final: true)
+    check(requests == 0 && client.body == "前文把前文改掉", "tap inferred an edit")
+}
+
+test("Manual routed creation in empty source uses explicit conversion and supports undo") {
+    let client = FakeClient()
+    let session = try begin(client)
+    session.routedEditMode = true
+    var requests = 0
+    session.onEdit = { source, instruction, _ in
+        requests += 1
+        check(source.isEmpty && instruction == "写个通知", "creation source replaced by instruction")
+    }
+    session.update("写个通知", final: false)
+    session.convert()
+    session.update("写个通知", final: true)
+    check(requests == 1 && session.phase == .editing, "empty creation blocked")
+    session.applyEdit(text: "明天开会。", revision: session.revision, error: nil)
+    check(client.body == "明天开会。", "creation was not applied")
+    session.cancel()
+    check(client.body == "写个通知", "creation undo did not restore instruction")
+}
+
+test("Manual routed edit preserves suffix and rejects late results after cancel") {
+    let client = FakeClient("旧文尾巴", selection: NSRange(location: 2, length: 0))
+    let session = try begin(client)
+    session.routedEditMode = true
+    session.update("改成新文", final: false)
+    session.convert()
+    session.update("改成新文", final: true)
+    let revision = session.revision
+    session.applyEdit(text: "新文", revision: revision, error: nil)
+    check(client.body == "新文尾巴", "routed edit changed untouched suffix")
+    session.cancel()
+    let restored = client.body
+    session.applyEdit(text: "迟到结果", revision: revision, error: nil)
+    check(client.body == restored, "late routed result overwrote undo")
+}
+
 print("\(passed) native composition tests passed")

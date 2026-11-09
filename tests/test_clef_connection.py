@@ -1,130 +1,168 @@
 from dataclasses import replace
 import io
 import json
-from pathlib import Path
+import time
+from urllib import error, request
 
 import pytest
 
-from proximic_ring.text_processing.clef_connection import ClefSSHSettings, ClefSSHConnection, ConnectedClefRouter
+from proximic_ring.text_processing.clef_connection import (
+    ClefServerSettings, ClefConnection, ConnectedClefRouter,
+)
 
 
-@pytest.mark.parametrize("values", [dict(host=""), dict(host="-oProxyCommand=bad"),
-    dict(host="ssh root@example.com"), dict(host="host;command"), dict(host="host", user="-x"),
-    dict(host="host", port=0), dict(host="host", service_port=65536)])
-def test_invalid_ssh_configuration_never_spawns(values, monkeypatch):
-    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: pytest.fail("invalid settings must not execute"))
+@pytest.mark.parametrize('host,port,expected', [
+    ('mythlink.cn', 20031, 'http://mythlink.cn:20031/v1/systemone'),
+    (' https://example.com/ ', 20032, 'https://example.com:20032/v1/systemone'),
+    ('127.0.0.1', 30000, 'http://127.0.0.1:30000/v1/systemone'),
+    ('::1', 20031, 'http://[::1]:20031/v1/systemone'),
+    ('http://[::1]', 20031, 'http://[::1]:20031/v1/systemone'),
+])
+def test_public_endpoint_without_ssh(host, port, expected, monkeypatch):
+    monkeypatch.setattr('subprocess.Popen', lambda *a, **k: pytest.fail('must not start SSH'))
+    assert ClefConnection(ClefServerSettings(host=host, port=port)).endpoint() == expected
+
+
+@pytest.mark.parametrize('values', [
+    dict(host=''), dict(host='ssh root@example.com'), dict(host='host;command'),
+    dict(host='ssh://example.com'), dict(host='http://user:secret@example.com'),
+    dict(host='example.com/path'), dict(host='example.com?x=1'),
+    dict(host='example.com#fragment'), dict(host='example.com:20031'),
+    dict(host='example.com:'), dict(host='http://[broken'),
+    dict(host='host', port=0), dict(host='host', port=65536), dict(host='host', port=True),
+])
+def test_invalid_public_configuration_rejected(values):
     with pytest.raises(ValueError):
-        ClefSSHConnection(ClefSSHSettings(**values)).endpoint()
+        ClefConnection(ClefServerSettings(**values)).endpoint()
 
 
-def test_key_selection_and_no_secrets_in_command(tmp_path):
-    key = tmp_path / "my key"
-    key.write_text("PRIVATE TEST CONTENT")
-    connection = ClefSSHConnection(ClefSSHSettings(host="example.com", key_file=str(key)), directory=tmp_path)
-    connection.settings.validate()
-    command = connection._command(41235)
-    assert command[0] == "/usr/bin/ssh" and command[-1] == "example.com"
-    assert command[command.index("-i") + 1] == str(key)
-    assert command[command.index("-L") + 1] == "127.0.0.1:41235:127.0.0.1:30000"
-    assert "StrictHostKeyChecking=accept-new" in command
-    assert "ForwardAgent=no" in command and "BatchMode=yes" in command
-    assert "PRIVATE TEST CONTENT" not in repr(command)
-    public = tmp_path / "key.pub"
-    public.write_text("public")
-    with pytest.raises(ValueError, match="不是 .pub"):
-        replace(connection.settings, key_file=str(public)).validate()
-
-
-def test_tunnel_reused_reconnected_and_closed(tmp_path, monkeypatch):
-    class Socket:
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
-        def bind(self, addr): assert addr == ("127.0.0.1", 0)
-        def getsockname(self): return ("127.0.0.1", 42345)
-    class Process:
-        dead = False
-        def poll(self): return 0 if self.dead else None
-        def terminate(self): self.dead = True
-        def wait(self, **kwargs): return 0
-    processes = []
-    def spawn(command, **kwargs):
-        assert kwargs["stdin"] == -3 and kwargs["start_new_session"]
-        process = Process(); processes.append(process); return process
-    monkeypatch.setattr("socket.socket", Socket)
-    monkeypatch.setattr("socket.create_connection", lambda *a, **k: Socket())
-    monkeypatch.setattr("subprocess.Popen", spawn)
-    conn = ClefSSHConnection(ClefSSHSettings(host="example.com"), directory=tmp_path)
-    first = conn.endpoint()
-    assert conn.endpoint() == first and len(processes) == 1
-    processes[0].dead = True
-    assert conn.endpoint() == first and len(processes) == 2
-    conn.configure(replace(conn.settings, port=20030))
-    assert processes[-1].dead
-    conn.endpoint()
+def test_reconfigure_and_shutdown():
+    conn = ClefConnection(ClefServerSettings(host='one.example'))
+    conn.configure(replace(conn.settings, host='two.example', port=20032))
+    assert conn.endpoint() == 'http://two.example:20032/v1/systemone'
     conn.shutdown()
-    assert processes[-1].dead
-    with pytest.raises(RuntimeError, match="已关闭"): conn.endpoint()
+    with pytest.raises(RuntimeError, match='已关闭'):
+        conn.endpoint()
+    with pytest.raises(RuntimeError, match='已关闭'):
+        conn.configure(ClefServerSettings(host='other.example'))
     conn.close()
-    assert conn._process is None and conn._stderr is None
 
 
-def test_host_key_change_is_not_silently_accepted(tmp_path):
-    conn = ClefSSHConnection(directory=tmp_path)
-    conn._stderr = io.BytesIO(b"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! secret-output")
-    assert "身份" in conn._ssh_error() and "secret-output" not in conn._ssh_error()
+@pytest.mark.parametrize('raw', [b'', b'not json', b'[]', b'x' * 16385,
+    b'{"status":"ready","model":"other"}', b'{"status":"loading","model":"clef-flash"}'])
+def test_health_requires_real_clef_ready(raw, monkeypatch):
+    conn = ClefConnection(ClefServerSettings(host='host'))
+    monkeypatch.setattr(conn.opener, 'open', lambda *a, **k: io.BytesIO(raw))
+    with pytest.raises(RuntimeError, match='未返回已就绪'):
+        conn.check()
 
 
-def test_health_requires_real_clef_ready_not_just_ssh(monkeypatch):
-    conn = ClefSSHConnection(ClefSSHSettings(host="host"))
-    monkeypatch.setattr(conn, "endpoint", lambda: "http://127.0.0.1:4242/v1/systemone")
-    monkeypatch.setattr(conn.opener, "open", lambda *a, **k: io.BytesIO(b'{"status":"ready","model":"other"}'))
-    with pytest.raises(RuntimeError, match="Clef 服务未就绪"): conn.check()
-    monkeypatch.setattr(conn.opener, "open", lambda *a, **k: io.BytesIO(b'{"status":"ready","model":"clef-flash"}'))
-    assert conn.check().endswith("/v1/systemone")
+@pytest.mark.parametrize('failure', [error.URLError('private details'),
+    OSError('private details'), error.HTTPError('http://host', 502, 'private details', {}, io.BytesIO())])
+def test_network_error_is_useful_without_response_secrets(failure, monkeypatch):
+    conn = ClefConnection(ClefServerSettings(host='host'))
+    def fail(*a, **kw):
+        raise failure
+    monkeypatch.setattr(conn.opener, 'open', fail)
+    with pytest.raises(RuntimeError, match='公网') as caught:
+        conn.check()
+    assert 'private details' not in str(caught.value)
 
 
-def test_saved_ssh_ignores_developer_url_key_and_proxy(monkeypatch):
-    monkeypatch.setenv("PROXIMIC_CLEF_URL", "https://wrong.example/v1/systemone")
-    monkeypatch.setenv("PROXIMIC_CLEF_API_KEY", "developer-secret")
-    monkeypatch.setenv("https_proxy", "http://wrong.example:1234")
-    conn = ClefSSHConnection(ClefSSHSettings(host="example.com"))
-    monkeypatch.setattr(conn, "endpoint", lambda: "http://127.0.0.1:4242/v1/systemone")
+def classification_response(req):
+    questions = json.loads(req.data)['questions']
+    return io.BytesIO(json.dumps({'model': 'clef-flash', 'answers': {
+        name: {'type': 'choice', 'choice': 'dictation' if name == 'voice_intent' else 'skip',
+               'probabilities': {k: float(k in {'dictation', 'skip'}) for k in value['criteria']}}
+        for name, value in questions.items()}}).encode())
+
+
+def test_saved_public_address_ignores_developer_url_key_and_proxy(monkeypatch):
+    monkeypatch.setenv('PROXIMIC_CLEF_URL', 'https://wrong.example/v1/systemone')
+    monkeypatch.setenv('PROXIMIC_CLEF_API_KEY', 'developer-secret')
+    monkeypatch.setenv('http_proxy', 'http://wrong.example:1234')
+    monkeypatch.setenv('https_proxy', 'http://wrong.example:1234')
+    conn = ClefConnection(ClefServerSettings(host='example.com'))
+    assert not any(isinstance(h, request.ProxyHandler) and h.proxies for h in conn.opener.handlers)
     calls = []
     def respond(req, **kw):
         calls.append(req)
-        questions = json.loads(req.data)["questions"]
-        return io.BytesIO(json.dumps({"model":"clef-flash", "answers":{
-            name: {"type":"choice", "choice": "dictation" if name == "voice_intent" else "skip",
-                   "probabilities": {k: float(k in {"dictation", "skip"}) for k in value["criteria"]}}
-            for name, value in questions.items()}}).encode())
-    monkeypatch.setattr(conn.opener, "open", respond)
-    decision, trace = ConnectedClefRouter(conn).classify("普通听写")
-    assert decision.task == "dictation" and len(calls) == 1
-    assert calls[0].full_url.startswith("http://127.0.0.1:4242/")
-    assert calls[0].get_header("Authorization") is None
-    assert "developer-secret" not in trace
+        # A new setting affects the next request, not the one being sent.
+        conn.configure(ClefServerSettings(host='new.example', port=20032))
+        return classification_response(req)
+    monkeypatch.setattr(conn.opener, 'open', respond)
+    router = ConnectedClefRouter(conn)
+    decision, trace = router.classify('普通听写')
+    assert decision.task == 'dictation' and len(calls) == 1
+    assert calls[0].full_url == 'http://example.com:20031/v1/systemone'
+    assert calls[0].get_header('Authorization') is None
+    assert 'developer-secret' not in trace
+    router.classify('下一句')
+    assert calls[1].full_url == 'http://new.example:20032/v1/systemone'
 
 
-def test_settings_persist_without_reading_or_copying_private_key(tmp_path, monkeypatch):
-    import threading
-    from PySide6.QtCore import QCoreApplication, QSettings
+def settings_controller(tmp_path):
+    from PySide6.QtCore import QSettings
     from proximic_ring.ui.voice.clef_settings_controller import ClefSettingsController
-    app = QCoreApplication.instance() or QCoreApplication([])
-    settings_path = tmp_path / 'settings.ini'
-    saved = QSettings(str(settings_path), QSettings.IniFormat)
-    ui = ClefSettingsController(saved)
+    settings = QSettings(str(tmp_path / 'settings.ini'), QSettings.IniFormat)
+    return settings, ClefSettingsController
+
+
+def wait_for_connection(ui):
+    from PySide6.QtCore import QCoreApplication
+    app = QCoreApplication.instance()
+    deadline = time.monotonic() + 3
+    while ui.busy and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(.005)
+    assert not ui.busy
+
+
+def test_migration_reuses_only_ssh_host(tmp_path):
+    settings, Controller = settings_controller(tmp_path)
+    for key, value in dict(host='mythlink.cn', port=20030, user='root',
+                           key_file='/never/read/key', service_port=30000).items():
+        settings.setValue('clef/ssh/' + key, value)
+    ui = Controller(settings)
+    assert ui.config == dict(host='mythlink.cn', port=20031)
+    settings.setValue('clef/http/host', 'new.example')
+    settings.setValue('clef/http/port', 20032)
+    restored = Controller(settings)
+    assert restored.config == dict(host='new.example', port=20032)
+    ui.connection.close()
+    restored.connection.close()
+
+
+def test_public_settings_persist_and_test_real_inference(tmp_path, monkeypatch):
+    settings, Controller = settings_controller(tmp_path)
+    ui = Controller(settings)
+    calls = []
+    def respond(req, **kw):
+        calls.append(req)
+        if isinstance(req, str):
+            return io.BytesIO(b'{"status":"ready","model":"clef-flash"}')
+        return classification_response(req)
+    monkeypatch.setattr(ui.connection.opener, 'open', respond)
+    ui.connectServer(dict(host='example.com', port='20032'))
+    wait_for_connection(ui)
+    assert '连接成功' in ui.status
+    assert calls[0] == 'http://example.com:20032/health'
+    assert calls[1].full_url == 'http://example.com:20032/v1/systemone'
+    assert set(settings.allKeys()) == {'clef/http/host', 'clef/http/port'}
+    restored = Controller(settings)
+    assert restored.config == dict(host='example.com', port=20032)
+    ui.connection.close()
+    restored.connection.close()
+
+
+def test_health_success_but_inference_failure_does_not_report_connected(tmp_path, monkeypatch):
+    settings, Controller = settings_controller(tmp_path)
+    ui = Controller(settings)
     monkeypatch.setattr(ui.connection, 'check', lambda: None)
-    monkeypatch.setattr(ui.router, 'classify', lambda *a: None)
-    finished = threading.Event()
-    ui._finished.connect(lambda _: finished.set())
-    key = tmp_path / 'identity'; key.write_text('PRIVATE_CONTENT_NOT_A_SETTING')
-    ui.connectServer(dict(host='example.com',port='20030',user='alice',key_file=str(key),service_port='30000'))
-    import time
-    deadline = time.monotonic()+2
-    while not finished.is_set() and time.monotonic()<deadline:
-        app.processEvents(); time.sleep(.005)
-    assert not ui.busy and '连接成功' in ui.status
-    restored = ClefSettingsController(QSettings(str(settings_path), QSettings.IniFormat))
-    assert restored.config == dict(host='example.com',port=20030,user='alice',key_file=str(key),service_port=30000)
-    assert 'PRIVATE_CONTENT_NOT_A_SETTING' not in settings_path.read_text()
-    ui.connection.close(); restored.connection.close()
+    def fail(*args):
+        raise RuntimeError('分类接口不可用')
+    monkeypatch.setattr(ui.router, 'classify', fail)
+    ui.connectServer(dict(host='example.com', port='20031'))
+    wait_for_connection(ui)
+    assert ui.status == '分类接口不可用'
+    ui.connection.close()

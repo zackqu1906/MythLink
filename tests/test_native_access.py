@@ -156,7 +156,8 @@ def test_worker_event_permission_denial_prevents_writes(monkeypatch):
     assert dispatcher.handle({"operation": "status"})["permissions"]["post_events"] is False
 
 
-def test_focus_independent_policy_survives_capture_and_native_worker_dispatch(monkeypatch):
+@pytest.mark.parametrize('system_wide', [False, True])
+def test_focus_independent_policy_survives_capture_and_native_worker_dispatch(monkeypatch, system_wide):
     import proximic_ring.platforms.macos.native_access as access
     import proximic_ring.platforms.macos.native_access_worker as worker
     from proximic_ring.desktop.app_shortcuts import MacAppShortcuts, ShortcutTarget
@@ -169,7 +170,7 @@ def test_focus_independent_policy_survives_capture_and_native_worker_dispatch(mo
                               focus_sensitive=kwargs.get('focus_sensitive', True))
     dispatcher.shortcuts = SimpleNamespace(capture=capture,
         same_target=lambda target, **kwargs: not target.focus_sensitive,
-        post=lambda target, shortcut, **kwargs: posted.append((target.focus_sensitive, shortcut)))
+        post=lambda target, shortcut, **kwargs: posted.append((target.focus_sensitive, shortcut, kwargs['system_wide'])))
     monkeypatch.setattr(access, 'native_access', lambda: SimpleNamespace(
         call=lambda operation, **kwargs: dispatcher.handle(dict(operation=operation, **kwargs))['result'],
         last_diagnostic={}))
@@ -177,8 +178,8 @@ def test_focus_independent_policy_survives_capture_and_native_worker_dispatch(mo
     target = backend.capture(menu_action=True, focus_sensitive=False)
     assert options == [dict(plain_enter=False, menu_action=True, focus_sensitive=False)]
     assert not target.focus_sensitive and backend.same_target(target)
-    backend.post(target, 'Cmd+N')
-    assert posted == [(False, 'Cmd+N')]
+    backend.post(target, 'Cmd+N', system_wide=system_wide)
+    assert posted == [(False, 'Cmd+N', system_wide)]
 
 
 @pytest.mark.parametrize('post_events', [False, None])

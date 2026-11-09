@@ -117,7 +117,7 @@ def write_routing_html(report, path):
 <p>分类总耗时中位数 {seconds(m['latency_median_s'])} 秒，P95 {seconds(m['latency_p95_s'])} 秒。
 各阶段耗时都包含 HTTP/SSH 网络及服务端处理，不含 ASR、OCR 采集、文本生成和写回。</p>
 <p>各版本的问题字段以本次实际请求及响应为准；当前为总体意图和最多 {len(EDIT_TASK_LABELS)} 个任务。空原文时修改不参与分类，标记为不可用，不记为模型 skip 或 0%/100%。原始完整分类统计可用任务的原始选择；规则排除带来的改善不代表模型学会了该边界。旧报告保留原分类及辅助标签。每题 apply/skip 互斥，不同题可以组合，概率不能跨题相加。
-所有概率按服务端返回值展示，尚未校准为真实正确率。这是合成样例评测，不代表真实用户准确率。</p>
+所有概率按服务端返回值展示，尚未校准为真实正确率。样例来源见本报告说明；这些评测结果不代表真实使用准确率。</p>
 {table(['#', '编号', '口述', '预期', '最终处理', '最终匹配', '听写概率', '编辑概率', '联合或一级/秒', '任务响应/秒', '总计/秒'], summary)}
 {''.join(details)}
 <details><summary>本次完整提示词与问题 schema</summary><pre>{text(json.dumps(report.get('prompts', {}), ensure_ascii=False, indent=2))}</pre></details></html>'''

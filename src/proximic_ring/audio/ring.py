@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from .pcm import decode_pcm16le
+from ..ble_runtime import run_ble
 from ..platforms.macos.mac_activity import MacActivity
 from .base import AudioSource
 
@@ -85,6 +86,7 @@ class RingAudioSource(AudioSource):
         | None = None,
         imu_hz: int = _DEFAULT_IMU_HZ,
         audio_enabled: bool = True,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         encoding = encoding.lower()
         if encoding not in {"pcm", "adpcm", "opus"}:
@@ -123,6 +125,7 @@ class RingAudioSource(AudioSource):
         self.battery_observer = battery_observer
         self.imu_hz = int(imu_hz)
         self.audio_enabled = bool(audio_enabled)
+        self._cancel_event = cancel_event
 
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_blocks)
         self._pending = np.empty(0, dtype=np.float32)
@@ -165,6 +168,8 @@ class RingAudioSource(AudioSource):
 
     def connect(self) -> None:
         """Connect and validate BLE/NUS without starting microphone audio."""
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            return
         if self._thread is not None:
             raise RuntimeError("RingAudioSource is already open")
 
@@ -359,7 +364,8 @@ class RingAudioSource(AudioSource):
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=max(5.0, self.timeout_s + 2.0))
-        self._thread = None
+        if thread is None or not thread.is_alive():
+            self._thread = None
 
     def read(self, frames: int) -> np.ndarray | None:
         return self.read_interruptible(frames)
@@ -587,7 +593,7 @@ class RingAudioSource(AudioSource):
                 if result not in {0, 1}:  # S_OK / S_FALSE
                     raise OSError(result, "CoInitializeEx(COINIT_MULTITHREADED) failed")
                 com_initialized = True
-            asyncio.run(self._run_async())
+            run_ble(self._run_async())
         except BaseException as exc:
             if self._error is None:
                 self._signal_error(exc)
@@ -802,6 +808,38 @@ class RingAudioSource(AudioSource):
             )
             print(f"Ring cleanup: {label}: {exc}")
 
+    async def _connect_until_stopped(self, session):
+        """Cancel discovery/connect on its BLE loop and await SDK cleanup."""
+        def stopped():
+            return self._stop.is_set() or (
+                self._cancel_event is not None and self._cancel_event.is_set())
+
+        if stopped():
+            return None
+        if self.device is not None:
+            operation = session.connect_device(self.device)
+        elif self.selector:
+            print(f"Resolving selected Ring inside the BLE runtime loop: {self.selector}")
+            operation = session.connect_target(self.selector)
+        else:
+            operation = session.connect()
+        task = asyncio.create_task(operation)
+        try:
+            while not task.done() and not stopped():
+                await asyncio.wait({task}, timeout=.02)
+            if stopped():
+                if not task.done():
+                    task.cancel()
+                # Do not cancel twice: the provider may be releasing a client
+                # in its CancelledError handler. Keep that cleanup intact.
+                await asyncio.gather(task, return_exceptions=True)
+                return None
+            return await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
     async def _run_async(self) -> None:
         try:
             from ring_python_sdk import RingSession
@@ -840,16 +878,9 @@ class RingAudioSource(AudioSource):
         battery_refresh_task: asyncio.Task[None] | None = None
 
         try:
-            if self.device is not None:
-                connected = await session.connect_device(self.device)
-            elif self.selector:
-                print(
-                    "Resolving selected Ring inside the BLE runtime loop: "
-                    f"{self.selector}"
-                )
-                connected = await session.connect_target(self.selector)
-            else:
-                connected = await session.connect()
+            connected = await self._connect_until_stopped(session)
+            if connected is None:
+                return
             if not connected:
                 target = self.selector or self.name_keyword
                 raise RuntimeError(f"Ringo device {target!r} not found or connection failed")
@@ -1153,14 +1184,6 @@ class RingAudioSource(AudioSource):
             "startup_evidence": ("device_packets" if packets else
                                  "start_sent" if self.gestures_active else "not_started"),
         }
-        recovery = getattr(endpoint[1], '_raw2_gesture_recovery', None) if endpoint else None
-        if recovery:
-            state = recovery['state']
-            if state == 'awaiting_packets' and packets > recovery['packet_baseline']:
-                state = 'confirmed'
-            result['recovery_state'] = state
-            if recovery.get('error'):
-                result['recovery_error'] = recovery['error']
         return result
 
     def _submit_touchpad(self, enabled, options):

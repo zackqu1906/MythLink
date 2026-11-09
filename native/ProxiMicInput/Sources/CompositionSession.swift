@@ -150,6 +150,9 @@ final class CompositionSession {
     private(set) var revision = 0
     private(set) var editRequested = false
     var automaticMode = false
+    // Manual gesture intent with one-call LLM routing. Keeps manual controls,
+    // but permits creation in a verified empty editor (never unavailable context).
+    var routedEditMode = false
     private(set) var automaticTask = ""
     private(set) var automaticStage = ""
     private(set) var automaticTasks: [String] = []
@@ -841,9 +844,9 @@ final class CompositionSession {
     }
 
     private func startEditing() {
-        // Automatic routing already chose its available tasks. Do not reject
-        // that decision because the source is empty; retain the manual guard.
-        guard let source = editRequestText, (automaticMode || !source.isEmpty),
+        // Routed paths may create in a confirmed empty field. A missing source
+        // remains unavailable for every mode; write-range checks are shared.
+        guard let source = editRequestText, (automaticMode || routedEditMode || !source.isEmpty),
               !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             editRequested = false
             restoreDictation(error: editRequestText == nil ? "当前输入框未提供光标前的完整原文，已保留听写" :
