@@ -1,6 +1,6 @@
 import Foundation
 
-/// Bounded history for one continuously owned editor activation. No polling,
+/// Undo history for one continuously owned editor activation. No polling,
 /// I/O or document reads are added to BEGIN or partial updates.
 final class CompositionUndoHistory {
     struct Snapshot {
@@ -11,15 +11,9 @@ final class CompositionUndoHistory {
     private(set) var enabled = false
     private var entries: [CompositionUndoRecord] = []
     private var current: CompositionUndoRecord?
-    private(set) var retainedUnits = 0
-    let capacity: Int
-    let unitBudget: Int
     var count: Int { entries.count }
-    var totalRetainedUnits: Int { retainedUnits + (current?.retainedUnits ?? 0) }
-
-    init(capacity: Int = 100, unitBudget: Int = 4 * 1024 * 1024) {
-        self.capacity = max(0, capacity)
-        self.unitBudget = max(0, unitBudget)
+    var totalRetainedUnits: Int {
+        entries.reduce(current?.retainedUnits ?? 0) { $0 + $1.retainedUnits }
     }
 
     func configure(enabled: Bool) {
@@ -30,7 +24,6 @@ final class CompositionUndoHistory {
     func clear() {
         entries.removeAll(keepingCapacity: false)
         current = nil
-        retainedUnits = 0
     }
 
     func snapshot() -> Snapshot { Snapshot(enabled: enabled, entries: entries, current: current) }
@@ -40,8 +33,6 @@ final class CompositionUndoHistory {
         guard enabled, snapshot.enabled else { return }
         entries = snapshot.entries
         current = snapshot.current
-        retainedUnits = entries.reduce(0) { $0 + $1.retainedUnits }
-        trim()
     }
 
     func settled(_ session: CompositionSession, sourceUtteranceID: String? = nil) {
@@ -50,7 +41,6 @@ final class CompositionUndoHistory {
         // An unrecordable changed operation is a barrier, not a gap that older
         // undo records may jump across. Empty/undone sentences are transparent.
         if current == nil, session.phase != .undone, session.hasModifiedText { clear() }
-        trim()
     }
 
     func begin(_ snapshot: EditorSnapshot) {
@@ -68,9 +58,7 @@ final class CompositionUndoHistory {
                       (text as NSString).substring(with: range) == (record.editedText ?? record.raw) else { clear(); return }
             }
             entries.append(record)
-            retainedUnits += record.retainedUnits
             current = nil
-            trim()
         } else if let top = entries.last, snapshot.selection != top.selection {
             clear()
         }
@@ -78,18 +66,7 @@ final class CompositionUndoHistory {
 
     func pop() -> CompositionUndoRecord? {
         guard enabled, let record = entries.popLast() else { return nil }
-        retainedUnits -= record.retainedUnits
         current = nil
         return record
-    }
-
-    private func trim() {
-        // Include the most recent record in the memory budget. Clearing on an
-        // oversized edit prevents undoing older text across a missing operation.
-        if (current?.retainedUnits ?? 0) > unitBudget { clear(); return }
-        while entries.count > capacity || retainedUnits + (current?.retainedUnits ?? 0) > unitBudget {
-            guard !entries.isEmpty else { break }
-            retainedUnits -= entries.removeFirst().retainedUnits
-        }
     }
 }

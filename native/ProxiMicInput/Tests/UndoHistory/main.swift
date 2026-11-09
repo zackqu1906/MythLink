@@ -42,9 +42,9 @@ final class Fixture {
     let history: CompositionUndoHistory
     var session: CompositionSession!
     var source: String?
-    init(_ text: String = "", enabled: Bool = true, capacity: Int = 100, budget: Int = 4 * 1024 * 1024) {
+    init(_ text: String = "", enabled: Bool = true) {
         editor = Editor(text)
-        history = CompositionUndoHistory(capacity: capacity, unitBudget: budget)
+        history = CompositionUndoHistory()
         history.configure(enabled: enabled)
     }
     func begin() throws {
@@ -245,15 +245,26 @@ try test("Moved caret invalidates the stack at the next BEGIN") {
     try f.say("丙"); f.undo(); f.undo()
     check(f.editor.body == "甲乙" && f.history.count == 0, "history survived caret takeover")
 }
-try test("Capacity and memory budgets evict oldest entries without gaps") {
-    let f = Fixture(capacity: 2, budget: 10)
-    for _ in 0..<6 { try f.say("甲") }
-    check(f.history.count == 2 && f.history.retainedUnits == 2, "capacity unbounded")
-    for _ in 0..<5 { f.undo() }
-    check(f.editor.body == "甲甲甲", "evicted entries were still undoable")
-    let large = Fixture("原文", budget: 5)
-    try large.say("甲"); try large.edit("编辑", to: "很长的结果")
-    check(large.history.count == 0, "oversize record left a history gap")
+try test("Undo reaches every sentence after more than 100 entries and an input-source switch") {
+    let f = Fixture("原文")
+    let sentences = (1...258).map { "第\($0)句 " }
+    for sentence in sentences { try f.say(sentence) }
+    try f.roundTrip()
+    check(f.history.count == sentences.count - 1, "older sentences disappeared")
+    for sentence in sentences.reversed() {
+        check(f.editor.body.hasSuffix(sentence), "undo order changed")
+        f.undo()
+    }
+    check(f.editor.body == "原文", "could not reach the oldest sentence")
+}
+try test("A record larger than the former UTF-16 budget keeps its preceding sentence undoable") {
+    let f = Fixture("原文")
+    let large = String(repeating: "x", count: 4 * 1024 * 1024 + 1)
+    try f.say("前"); try f.say(large); try f.say("后")
+    try f.roundTrip()
+    f.undo(); check(f.editor.body == "原文前" + large, "newest sentence was not undone")
+    f.undo(); check(f.editor.body == "原文前", "large record was evicted")
+    f.undo(); check(f.editor.body == "原文", "large record lost earlier history")
 }
 try test("History capture/restore performs no additional client reads and stores compact dictation") {
     let f = Fixture(String(repeating: "长", count: 100_000))
@@ -309,7 +320,7 @@ if CommandLine.arguments.contains("--benchmark") {
             let units = f.history.totalRetainedUnits
             measure("undo_current") { f.undo() }
             if enabled {
-                for _ in 0..<100 { measure("undo_history") { f.undo() } }
+                for _ in 0..<f.history.count { measure("undo_history") { f.undo() } }
             }
             for index in 0..<10 {
                 try f.begin(); f.session.update("改写", final: false); f.session.convert()

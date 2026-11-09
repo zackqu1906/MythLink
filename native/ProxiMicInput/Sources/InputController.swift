@@ -9,7 +9,7 @@ final class IMEService {
         // IMK's uniqueClientIdentifierString can generate a fresh string on each call.
         weak var client: IMKTextInput?
         let session: CompositionSession.Suspension
-        let history: CompositionUndoHistory.Snapshot
+        var history: CompositionUndoHistory.Snapshot?
         let undoSourceUtteranceID: String?
     }
     static let shared = IMEService()
@@ -100,6 +100,7 @@ final class IMEService {
             if let value = message["cancel_shortcut"] as? String { cancelShortcut = value }
             if let value = message["multi_undo_enabled"] as? Bool {
                 multiUndoEnabled = value
+                if !value { suspendedInput?.history = nil }
                 activeController?.configureUndoHistory(value)
             }
             return
@@ -151,6 +152,7 @@ final class ProxiMicInputController: IMKInputController {
     private var lastContext: EditorSnapshot?
     private var lastLifecycleEvent = "created"
     private var rejectedBeginID: String?
+    private var pendingBeginID: String?
     private var compatibilityKeyReply: (id: String, callback: (String?) -> Void)?
     private let undoHistory = CompositionUndoHistory()
     private var undoSourceUtteranceID: String?
@@ -409,7 +411,7 @@ final class ProxiMicInputController: IMKInputController {
         resumedInputToken = nil
         preservingHistory = preservingUndo
         defer { preservingHistory = false }
-        if !preservingUndo { undoHistory.clear(); adapter?.discardContextHint() }
+        if !preservingUndo { pendingBeginID = nil; undoHistory.clear(); adapter?.discardContextHint() }
         compatibilityKeyReply = nil
         adapter?.cancelClientOperation()
         guard let session, session.active || session.phase == .error else {
@@ -425,6 +427,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostDisconnected() {
+        pendingBeginID = nil
         IMEService.shared.suspendedInput = nil
         resumedInputToken = nil
         clearStroke()
@@ -441,6 +444,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func hostConnected() {
+        pendingBeginID = nil
         IMEService.shared.suspendedInput = nil
         resumedInputToken = nil
         clearStroke()
@@ -501,9 +505,20 @@ final class ProxiMicInputController: IMKInputController {
         }
         if type == "begin" {
             if strokeActive { return }
-            IMEService.shared.suspendedInput = nil
             let requestedClientID = currentClientID
-            if session?.utteranceID == utteranceID { return }
+            if session?.utteranceID == utteranceID || pendingBeginID == utteranceID { return }
+            let service = IMEService.shared
+            let token = message["undo_history_token"] as? String
+            if service.suspendedInput?.token != token { service.suspendedInput = nil }
+            pendingBeginID = utteranceID
+            defer {
+                if pendingBeginID == utteranceID { pendingBeginID = nil }
+                if service.suspendedInput?.token == token { service.suspendedInput = nil }
+            }
+            func ownsBegin() -> Bool {
+                pendingBeginID == utteranceID && activated && ownsActivation
+                    && currentClientID == requestedClientID && self.adapter === adapter
+            }
             if let session, session.phase == .error, session.hasComposition || session.awaitingReadback {
                 // A queued tap may predate ready=false. Keep the old ownership
                 // proof until recovery completes, but retire the new request.
@@ -516,14 +531,26 @@ final class ProxiMicInputController: IMKInputController {
             }
             rejectedBeginID = nil
             invalidate("开始了新一句", preservingUndo: true)
-            guard activated, ownsActivation, currentClientID == requestedClientID, self.adapter === adapter else { return }
+            guard ownsBegin() else { return }
             lastLifecycleEvent = "begin"
             traceLifecycle("begin_snapshot")
             do {
                 let next = try CompositionSession(client: adapter, utteranceID: utteranceID, sequence: sequence)
                 next.automaticMode = message["automatic_mode"] as? Bool ?? false
                 next.routedEditMode = !next.automaticMode && (message["routed_edit_mode"] as? Bool ?? false)
-                guard activated, ownsActivation, currentClientID == requestedClientID, self.adapter === adapter else { return }
+                guard ownsBegin() else { return }
+                if session == nil, undoHistory.enabled, let saved = service.suspendedInput,
+                   saved.token == token, saved.history != nil, saved.application == activationApplication,
+                   saved.client === adapter.client, saved.session.utteranceID != utteranceID {
+                    // A new sentence owns its own BEGIN snapshot. Only the undo stack crosses the handoff.
+                    let verified = (try? saved.session.verify(next.original, with: adapter)) != nil
+                    guard ownsBegin() else { return }
+                    if verified, service.suspendedInput?.token == token, let history = service.suspendedInput?.history {
+                        undoHistory.restore(history)
+                    }
+                }
+                // Release the snapshot's shared array before BEGIN appends to potentially long history.
+                if service.suspendedInput?.token == token { service.suspendedInput = nil }
                 undoHistory.begin(next.original)
                 undoSourceUtteranceID = nil
                 session = next
@@ -533,7 +560,7 @@ final class ProxiMicInputController: IMKInputController {
                 traceLifecycle("begin_ready")
                 changed(includeSnapshot: true)
             } catch {
-                guard activated, ownsActivation, currentClientID == requestedClientID, self.adapter === adapter else { return }
+                guard ownsBegin() else { return }
                 session = nil
                 undoHistory.clear()
                 lastError = error.localizedDescription
@@ -736,10 +763,11 @@ final class ProxiMicInputController: IMKInputController {
             }
             let next = try CompositionSession(client: adapter, resuming: saved.session, sequence: sequence)
             guard owns() else { throw CompositionError.interrupted("输入会话已变化，未恢复语音操作") }
+            // A settings change during the IMK reads may have revoked the suspended history.
+            if let history = service.suspendedInput?.history { undoHistory.restore(history) }
             service.suspendedInput = nil
             session = next
             resumedInputToken = token
-            undoHistory.restore(saved.history)
             undoSourceUtteranceID = saved.undoSourceUtteranceID
             lastContext = next.original
             rejectedBeginID = nil

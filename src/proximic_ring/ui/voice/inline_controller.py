@@ -886,8 +886,10 @@ class InlineInputController(QObject):
                 INPUT_ROUTING_ROUTED_EDIT if self.session_routed_edit else INPUT_ROUTING_MANUAL)
 
     def _send_begin(self):
+        history = self._source_return.begin_history
         return self._send("begin", automatic_mode=self.session_automatic,
-                          routed_edit_mode=self.session_routed_edit)
+                          routed_edit_mode=self.session_routed_edit,
+                          **({"undo_history_token": history["token"]} if history else {}))
 
     def begin(self, target=None, *, auto_select=False):
         if self._installing or self.stroke_mode or self._input_preparation:
@@ -917,6 +919,7 @@ class InlineInputController(QObject):
         self._sentence_origin = origin
         needs_activation = auto_select or not self.ready or bool(origin and self._view.get("application") != origin[0])
         if needs_activation and (origin is None or self._transport_error or self._bridge is None):
+            self._source_return.discard()
             reason = "暂时无法确认输入目标，请重新点入文本框" if origin is None else self._transport_error or self.connectionStatus
             self._utterance_id = ""
             self._view = {**self._view, "phase": "error", "error": reason}
@@ -1042,8 +1045,6 @@ class InlineInputController(QObject):
             self._utterance_sessions[self._utterance_id] = self._session_id
             if self._utterance_id in self._edit_intents:
                 self._confirm_edit_intent()
-            while len(self._utterance_sessions) > 256:
-                self._utterance_sessions.pop(next(iter(self._utterance_sessions)))
 
     def update(self, text, final, session_id, error="", *, automatic_task=""):
         if (self._closed or not self.active or self._final_sent or
@@ -1383,6 +1384,8 @@ class InlineInputController(QObject):
                     and (not message.get("routed_edit_mode") or message.get("routed_edit_version") != 1)):
                 self._transport_failed("请先在设置中更新输入法组件，再使用手动＋编辑路由")
                 return
+            if begin_acknowledged:
+                self._source_return.begin_acknowledged(message)
             previous_active = self.active
             changed_client = client_id != self._client_id
             if changed_client:

@@ -31,6 +31,7 @@ class InputSourceReturn(QObject):
         self.original = ""
         self.origin = None
         self.saved = None
+        self.begin_history = None
         self.stage = ""
         self.helper = None
         self.request = None
@@ -66,17 +67,38 @@ class InputSourceReturn(QObject):
 
     def begin(self, origin, target):
         probe, self.probe = self.probe, None
+        history = None
+        borrowed = self.original if self.stage in {"suspending", "returning"} and origin == self.origin else ""
+        if (self.enabled and self.inline._multi_undo_enabled and origin and origin == self.origin
+                and self.stage in {"suspending", "returning", "suspended"}
+                and self.saved and self.saved["epoch"] == self.inline._epoch):
+            # BEGIN consumes the native token only after checking the live editor again.
+            history, self.saved = self.saved, None
+            self.inline._utterance_sessions = {}
         self.discard()
         if not self.enabled:
             return
+        self.begin_history = history
         self.origin = origin
+        self.original = borrowed
         if probe and target and tuple(target) == probe[0] and time.monotonic() - probe[2] < 1:
             self.original = probe[1]
 
     def selected(self, message):
         previous = message.get("previous_source")
-        if self.enabled and not self.original and self._external(previous):
+        if self.enabled and self._external(previous):
             self.original = previous
+
+    def begin_acknowledged(self, state):
+        c = self.inline
+        history, self.begin_history = self.begin_history, None
+        if history and state.get("undo_history_depth", 0) > 0:
+            # Keep the new audio session, which may already have been bound during startup.
+            history["sessions"].update(c._utterance_sessions)
+            c._utterance_sessions = history["sessions"]
+        elif state.get("undo_history_depth") == 0:
+            c._utterance_sessions.clear()
+            c._remember_session()
 
     def schedule(self):
         if not self.enabled or not self.original or self.saved is not None:
@@ -103,7 +125,7 @@ class InputSourceReturn(QObject):
         self.saved = dict(token=uuid.uuid4().hex, epoch=c._epoch,
                           utterance_id=c._utterance_id, client_id=c._client_id,
                           view=dict(c._view), session_id=c._session_id,
-                          sessions=dict(c._utterance_sessions))
+                          sessions=c._utterance_sessions)
         self.stage = "suspending"
         self._timer.start(1500)
         if not c._send("suspend_input", token=self.saved["token"], revision=identity[2]):
@@ -187,6 +209,7 @@ class InputSourceReturn(QObject):
 
     def _idle(self):
         c = self.inline
+        c._utterance_sessions = {}
         c._utterance_id = c._client_id = ""
         c._session_id = 0
         c._view = {"phase": "idle", "ready": False,
@@ -352,7 +375,8 @@ class InputSourceReturn(QObject):
     def discard(self, failure="input_method_resume_session_lost"):
         self._gesture_timer.stop()
         self._gesture_waiting = False
-        saved, self.saved = self.saved, None
+        saved = self.saved or self.begin_history
+        self.saved = self.begin_history = None
         self.stage = ""
         self.original = ""
         self.origin = None

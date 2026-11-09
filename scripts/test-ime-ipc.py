@@ -14,6 +14,88 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from proximic_ring.voice.ime.ime_bridge import IMEBridge
 
 
+def verify_single_undo(bridge, expect, change):
+    client = expect("state", ready=True)["client_id"]
+    sentence = dict(client_id=client, utterance_id="return-test")
+    bridge.send(dict(type="begin", seq=1, **sentence))
+    expect("state", phase="listening", **sentence)
+    bridge.send(dict(type="update", seq=2, text="本句听写", final=True, **sentence))
+    revision = expect("settled", phase="dictated", **sentence)["revision"]
+    bridge.send(dict(type="suspend_input", seq=3, token="return", revision=revision, **sentence))
+    expect("input_suspended", success=True, restorable=True, **sentence)
+    bridge.send(dict(type="test_reactivate", change=change))
+    expect("state", ready=False)
+    sentence["client_id"] = expect("state", ready=True)["client_id"]
+    assert sentence["client_id"] != client
+    bridge.send(dict(type="resume_input", token="return", seq=4, **sentence))
+    expect("input_resumed", success=change == "none", **sentence)
+    # A stale command after a rejected resume must not delete anything.
+    bridge.send(dict(type="cancel", seq=5, **sentence))
+    if change == "none":
+        for seq, command in enumerate(("select_previous", "delete"), start=6):
+            event = expect("wechat_key", command=command, **sentence)
+            bridge.send(dict(type="test_local_key", command=command, count=event["count"]))
+            bridge.send(dict(type="wechat_key_result", request_id=event["request_id"],
+                             seq=seq, error="", **sentence))
+        expect("settled", phase="undone", **sentence)
+    return {"none": "", "text": "不是原句"}.get(change, "本句听写")
+
+
+def verify_history(bridge, expect, scenario):
+    client = expect("state", ready=True)["client_id"]
+    sequence = 0
+
+    def command(kind, **fields):
+        nonlocal sequence
+        sequence += 1
+        assert bridge.send(dict(type=kind, seq=sequence, client_id=client, utterance_id=utterance, **fields))
+
+    def suspend_and_reactivate(token, revision, change="none"):
+        nonlocal client
+        command("suspend_input", token=token, revision=revision)
+        expect("input_suspended", token=token, success=True, restorable=True)
+        assert bridge.send(dict(type="test_reactivate", change=change))
+        expect("state", ready=False)
+        previous = client
+        client = expect("state", ready=True)["client_id"]
+        assert client != previous
+
+    for index, text in enumerate(("甲", "乙", "丙")):
+        utterance = f"sentence-{index}"
+        previous = f"return-{index - 1}"
+        if index == 2 and scenario == "history-wrong-token":
+            previous = "unrelated-token"
+        command("begin", **({"undo_history_token": previous} if index else {}))
+        state = expect("state", client_id=client, utterance_id=utterance, phase="listening")
+        expected_depth = index if index < 2 or scenario == "history-same" else 0
+        assert state["undo_history_depth"] == expected_depth, (scenario, index, state["undo_history_depth"])
+        command("update", text=text, final=True)
+        settled = expect("settled", phase="dictated", utterance_id=utterance)
+        token = f"return-{index}"
+        change = "text" if index == 1 and scenario == "history-edited" else "none"
+        suspend_and_reactivate(token, settled["revision"], change)
+
+    # Check actual editor contents after each undo, including a fresh source return
+    # between left swipes. Invalid inheritance still permits undoing the new sentence.
+    expected_docs = {"history-same": ["甲乙", "甲", ""], "history-wrong-token": ["甲乙"],
+                     "history-edited": ["不是原句"]}[scenario]
+    for index in range(len(expected_docs)):
+        command("resume_input", token=token)
+        expect("input_resumed", token=token, success=True)
+        command("cancel")
+        for key in ("select_previous", "delete"):
+            request = expect("wechat_key", utterance_id=utterance, command=key)
+            assert bridge.send(dict(type="test_local_key", command=key, count=request["count"]))
+            command("wechat_key_result", request_id=request["request_id"], error="")
+        settled = expect("settled", phase="undone", utterance_id=utterance)
+        if index + 1 < len(expected_docs):
+            token = f"after-undo-{index}"
+            suspend_and_reactivate(token, settled["revision"])
+    command("suspend_input", token="done", revision=settled["revision"])
+    expect("input_suspended", token="done", success=True, restorable=False)
+    return expected_docs
+
+
 def verify_return_undo(binary, change):
     with tempfile.TemporaryDirectory(prefix="ime-return-", dir="/private/tmp") as directory:
         replies = Queue()
@@ -35,32 +117,17 @@ def verify_return_undo(binary, change):
             with subprocess.Popen([binary, "--return-ipc"], stdout=subprocess.PIPE, text=True,
                                   env={**os.environ, "PROXIMIC_IME_SOCKET": str(bridge.path)}) as process:
                 try:
-                    client = expect("state", ready=True)["client_id"]
-                    sentence = dict(client_id=client, utterance_id="return-test")
-                    bridge.send(dict(type="begin", seq=1, **sentence))
-                    expect("state", phase="listening", **sentence)
-                    bridge.send(dict(type="update", seq=2, text="本句听写", final=True, **sentence))
-                    revision = expect("settled", phase="dictated", **sentence)["revision"]
-                    bridge.send(dict(type="suspend_input", seq=3, token="return", revision=revision, **sentence))
-                    expect("input_suspended", success=True, restorable=True, **sentence)
-                    bridge.send(dict(type="test_reactivate", change=change))
-                    expect("state", ready=False)
-                    sentence["client_id"] = expect("state", ready=True)["client_id"]
-                    assert sentence["client_id"] != client
-                    bridge.send(dict(type="resume_input", token="return", seq=4, **sentence))
-                    expect("input_resumed", success=change == "none", **sentence)
-                    # A stale command after a rejected resume must not delete anything.
-                    bridge.send(dict(type="cancel", seq=5, **sentence))
-                    if change == "none":
-                        for seq, command in enumerate(("select_previous", "delete"), start=6):
-                            event = expect("wechat_key", command=command, **sentence)
-                            bridge.send(dict(type="test_local_key", command=command, count=event["count"]))
-                            bridge.send(dict(type="wechat_key_result", request_id=event["request_id"],
-                                             seq=seq, error="", **sentence))
-                        expect("settled", phase="undone", **sentence)
+                    if change.startswith("history-"):
+                        expected_docs = verify_history(bridge, expect, change)
+                        expected = expected_docs[-1]
+                    else:
+                        expected_docs = None
+                        expected = verify_single_undo(bridge, expect, change)
                     bridge.send(dict(type="test_exit"))
                     stdout, _ = process.communicate(timeout=3)
-                    expected = {"none": "", "text": "不是原句"}.get(change, "本句听写")
+                    if expected_docs is not None:
+                        assert [line.removeprefix("AFTER_UNDO=") for line in stdout.splitlines()
+                                if line.startswith("AFTER_UNDO=")] == expected_docs, stdout
                     assert process.returncode == 0 and f"FINAL_TEXT={expected}" in stdout.splitlines(), stdout
                 finally:
                     if process.poll() is None:
@@ -132,7 +199,7 @@ def main() -> int:
                 process.terminate()
                 process.communicate(timeout=3)
     if len(sys.argv) > 2:
-        for change in ("none", "client", "text", "caret"):
+        for change in ("none", "client", "text", "caret", "history-same", "history-wrong-token", "history-edited"):
             verify_return_undo(sys.argv[2], change)
     return 0
 

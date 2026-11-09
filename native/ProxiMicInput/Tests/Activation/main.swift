@@ -72,16 +72,20 @@ final class LocalClient: NSObject, IMKTextInput {
     }
     func insertText(_ string: Any!, replacementRange range: NSRange) {
         writes += 1
-        text = string as! String
-        selection = NSRange(location: (text as NSString).length, length: 0)
+        let target = isValidRange(range) ? range : (isValidRange(marked) ? marked : selection)
+        let value = string as! String
+        text = (text as NSString).replacingCharacters(in: target, with: value)
+        selection = NSRange(location: target.location + (value as NSString).length, length: 0)
         marked = unspecifiedRange
         let f = onInsert; onInsert = nil; f?()
     }
     func setMarkedText(_ string: Any!, selectionRange: NSRange, replacementRange: NSRange) {
         writes += 1
-        text = (string as? NSAttributedString)?.string ?? (string as! String)
-        marked = text.isEmpty ? unspecifiedRange : NSRange(location: 0, length: (text as NSString).length)
-        selection = NSRange(location: (text as NSString).length, length: 0)
+        let target = isValidRange(replacementRange) ? replacementRange : (isValidRange(marked) ? marked : selection)
+        let value = (string as? NSAttributedString)?.string ?? (string as! String)
+        text = (text as NSString).replacingCharacters(in: target, with: value)
+        marked = value.isEmpty ? unspecifiedRange : NSRange(location: target.location, length: (value as NSString).length)
+        selection = NSRange(location: target.location + selectionRange.location, length: selectionRange.length)
     }
     func attributedSubstring(from range: NSRange) -> NSAttributedString! { nil }
     func characterIndex(for point: NSPoint, tracking mode: IMKLocationToOffsetMappingMode, inMarkedRange: UnsafeMutablePointer<ObjCBool>!) -> Int { NSNotFound }
@@ -147,6 +151,7 @@ if CommandLine.arguments.contains("--return-ipc") {
             } else {
                 check(message["command"] as? String == "delete" && editor.selection.length > 0, "unexpected local key")
                 editor.insertText("", replacementRange: editor.selection)
+                print("AFTER_UNDO=" + editor.text)
             }
         case "test_exit":
             print("FINAL_TEXT=" + editor.text)
@@ -214,6 +219,60 @@ for scenario in ["new_sentence", "disconnect", "reset"] {
     check(IMEService.shared.suspendedInput == nil, "\(scenario) did not discard suspended input")
     controller.deactivateServer(client)
     print("PASS \(scenario) discards suspended input")
+}
+
+// A new BEGIN can inherit history, but must never revive the old sentence or write text.
+let historyService = IMEService.shared
+historyService.transport.onMessage?(["type": "welcome", "protocol": 1, "epoch": "history-test"])
+for scenario in ["same", "client", "text", "caret", "mark", "wrong_token", "toggle", "discard", "newer_begin"] {
+    let old = ProxiMicInputController(), editor = LocalClient()
+    old.activateServer(editor); drainActivation(); firstSentence(old, editor); suspendSentence(old)
+    old.deactivateServer(editor)
+    if scenario == "toggle" {
+        for enabled in [false, true] {
+            historyService.transport.onMessage?(["type": "configure", "epoch": "history-test", "multi_undo_enabled": enabled])
+        }
+    }
+    let next = ProxiMicInputController(), target = scenario == "client" ? LocalClient() : editor
+    target.text = scenario == "text" ? "外部替换句" : editor.text
+    target.selection = scenario == "caret" ? NSRange(location: 0, length: 0) : editor.selection
+    if scenario == "mark" { target.marked = NSRange(location: 0, length: 1) }
+    next.activateServer(target); drainActivation()
+    let id = currentClientID(next), writes = target.writes
+    if scenario == "discard" {
+        target.onRead = { historyService.transport.onMessage?(["type": "discard_suspended_input", "epoch": "history-test", "token": "return-source"]) }
+    } else if scenario == "newer_begin" {
+        target.onRead = { next.receive(["type": "begin", "client_id": id, "utterance_id": "newer", "seq": 1]) }
+    }
+    next.receive(["type": "begin", "client_id": id, "utterance_id": "second", "seq": 1,
+                  "undo_history_token": scenario == "wrong_token" ? "wrong" : "return-source"])
+    let history = Mirror(reflecting: next).children.first { $0.label == "undoHistory" }!.value as! CompositionUndoHistory
+    check(currentSession(next)?.utteranceID == (scenario == "newer_begin" ? "newer" : "second")
+          && currentSession(next)?.phase == .listening, "history verification prevented a fresh BEGIN: \(scenario)")
+    check(history.count == (scenario == "same" ? 1 : 0) && historyService.suspendedInput == nil,
+          "wrong history or replayable token after BEGIN: \(scenario)")
+    check(target.writes == writes, "history transfer wrote old text: \(scenario)")
+    next.deactivateServer(target)
+    print("PASS cross-sentence input-source history: \(scenario)")
+}
+
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client); suspendSentence(controller)
+    let id = currentClientID(controller)
+    client.onRead = {
+        for enabled in [false, true] {
+            historyService.transport.onMessage?(["type": "configure", "epoch": "history-test", "multi_undo_enabled": enabled])
+        }
+    }
+    controller.receive(["type": "resume_input", "client_id": id, "utterance_id": "first",
+                        "seq": 5, "token": "return-source"])
+    check(currentSession(controller)?.phase == .dictated, "disabling earlier history also lost current sentence")
+    controller.receive(["type": "begin", "client_id": id, "utterance_id": "after-toggle", "seq": 1])
+    let history = Mirror(reflecting: controller).children.first { $0.label == "undoHistory" }!.value as! CompositionUndoHistory
+    check(history.count == 0, "resume revived history cleared during the editor read")
+    controller.deactivateServer(client)
+    print("PASS a settings change during resume revokes earlier history")
 }
 
 do {
@@ -586,7 +645,7 @@ do {
     check(client.writes == 0, "a character outside the displayed predictions was committed")
     let commit: [String: Any] = ["type": "stroke_commit", "client_id": id, "stroke_session": "predict", "request_id": "pred1", "text": "吗"]
     controller.receive(commit)
-    check(client.writes == 1 && client.text == "吗" && StrokeCandidatePanel.visible,
+    check(client.writes == 1 && client.text == "你好吗" && StrokeCandidatePanel.visible,
           "a prediction without ink could not be confirmed")
     controller.receive(commit)
     check(client.writes == 1, "a prediction confirmation was replayed")
@@ -596,7 +655,7 @@ do {
                               isARepeat: false, keyCode: 7)!
     _ = controller.handle(key, client: client)
     controller.receive(commit)
-    check(client.writes == 1 && client.text == "吗", "keyboard takeover left stale prediction candidates")
+    check(client.writes == 1 && client.text == "你好吗", "keyboard takeover left stale prediction candidates")
     controller.receive(update)
     controller.receive(["type": "stroke_end", "client_id": id, "stroke_session": "predict"])
     controller.receive(update); controller.receive(commit)

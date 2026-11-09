@@ -123,6 +123,53 @@ def test_round_trip_restores_sentence_for_polish_and_two_undos(component, monkey
     suspend(c)
 
 
+@pytest.mark.parametrize("handoff", ["returned", "returning", "awaiting_suspend_ack", "other_pid", "multi_off", "text_changed"])
+def test_new_sentence_inherits_only_verified_native_history(component, monkeypatch, handoff):
+    c, _ = component
+    start(c, monkeypatch)
+    old = c._utterance_id
+    settle(c)
+    token = c._source_return.saved["token"]
+    if handoff == "returning":
+        receive(c, "input_suspended", token=token, success=True)
+    elif handoff != "awaiting_suspend_ack":
+        suspend(c)
+    if handoff == "other_pid":
+        monkeypatch.setattr(c, "_foreground_identity", lambda: ("test.editor", 124))
+    if handoff == "multi_off":
+        c.configure("F8", multi_undo_enabled=False)
+    assert c.begin(auto_select=True)
+    current = c._utterance_id
+    assert old != current
+    if handoff == "awaiting_suspend_ack":
+        receive(c, "input_suspended", token=token, success=True)
+        assert c._source_return.helper is None
+    c._source_activation.event.emit(dict(event="selected", previous_source=ORIGINAL))
+    receive(c, client_id="reactivated", ready=True, phase="idle", utterance_id="", application="test.editor")
+    begin = c._bridge.messages[-1]
+    assert begin["type"] == "begin" and begin["utterance_id"] == current
+    eligible = handoff not in {"other_pid", "multi_off"}
+    assert begin.get("undo_history_token") == (token if eligible else None)
+    assert any(m["type"] == "discard_suspended_input" and m["token"] == token
+               for m in c._bridge.messages) == (not eligible)
+    inherited = eligible and handoff != "text_changed"
+    c.bind_session(8)  # The audio callback may arrive before the native BEGIN reply.
+    receive(c, ready=True, phase="listening", undo_history_depth=int(inherited), application="test.editor")
+    assert c._utterance_sessions == ({old: 7, current: 8} if inherited else {current: 8})
+    assert c._source_return.begin_history is None
+
+
+def test_cancelled_new_sentence_retires_its_history_token(component, monkeypatch):
+    c, _ = component
+    start(c, monkeypatch)
+    settle(c)
+    saved = suspend(c)
+    assert c.begin(auto_select=True)
+    c.cancel()
+    assert {"type": "discard_suspended_input", "token": saved["token"]} in c._bridge.messages
+    assert c._source_return.begin_history is None
+
+
 def test_pending_polish_runs_before_auto_return(component, monkeypatch):
     c, _ = component
     start(c, monkeypatch)

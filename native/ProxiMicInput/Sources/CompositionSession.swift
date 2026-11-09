@@ -42,7 +42,10 @@ struct CompositionUndoRecord {
     let raw: String
     let selection: NSRange
     let editedText: String?
-    let retainedUnits: Int
+    var retainedUnits: Int {
+        let texts = [raw, original.selectedText, editedText, polishOriginal]
+        return texts.reduce(original.readableContext?.range.length ?? 0) { $0 + ($1?.utf16.count ?? 0) }
+    }
     var committedRange: NSRange? = nil
     var polishOriginal: String? = nil
     var polished = false
@@ -173,6 +176,20 @@ final class CompositionSession {
         fileprivate let selection: NSRange
         fileprivate let proof: EditorTextRange
         fileprivate let wholeDocument: Bool
+
+        func verify(_ snapshot: EditorSnapshot, with client: CompositionClient) throws {
+            guard snapshot.selection == selection,
+                  !isValidRange(snapshot.markedRange) || snapshot.markedRange.length == 0,
+                  wholeDocument ? snapshot.complete && snapshot.text == proof.text
+                      : client.readText(in: proof.range) == proof.text else {
+                throw CompositionError.interrupted("本句文字或光标已变化，未恢复语音操作")
+            }
+            let latest = client.probe()
+            guard latest.selection == selection,
+                  !isValidRange(latest.markedRange) || latest.markedRange.length == 0 else {
+                throw CompositionError.interrupted("输入位置已变化，未恢复语音操作")
+            }
+        }
     }
     let utteranceID: String
     private(set) var original: EditorSnapshot
@@ -354,18 +371,7 @@ final class CompositionSession {
         guard sequence > saved.lastSequence else {
             throw CompositionError.interrupted("输入恢复请求已过期")
         }
-        let now = try client.snapshot()
-        guard now.selection == saved.selection,
-              !isValidRange(now.markedRange) || now.markedRange.length == 0,
-              saved.wholeDocument ? now.complete && now.text == saved.proof.text
-                  : client.readText(in: saved.proof.range) == saved.proof.text else {
-            throw CompositionError.interrupted("本句文字或光标已变化，未恢复语音操作")
-        }
-        let probe = client.probe()
-        guard probe.selection == saved.selection,
-              !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else {
-            throw CompositionError.interrupted("输入位置已变化，未恢复语音操作")
-        }
+        try saved.verify(client.snapshot(), with: client)
         self.client = client
         utteranceID = saved.utteranceID
         revision = saved.revision
@@ -409,12 +415,9 @@ final class CompositionSession {
         let compact = EditorSnapshot(text: nil, selection: original.selection,
                                      markedRange: unspecifiedRange, selectedText: original.selectedText,
                                      documentAccess: true, readableContext: context)
-        let units = (raw as NSString).length + ((original.selectedText ?? "") as NSString).length +
-            ((edited ?? "") as NSString).length + (context?.range.length ?? 0) +
-            ((polishOriginal ?? "") as NSString).length
         return CompositionUndoRecord(sourceUtteranceID: sourceUtteranceID ?? utteranceID,
                                      original: compact, raw: raw, selection: expectedSelection,
-                                     editedText: edited, retainedUnits: units, committedRange: edited == nil ? committedRange : nil,
+                                     editedText: edited, committedRange: edited == nil ? committedRange : nil,
                                      polishOriginal: polishOriginal, polished: polished)
     }
 
