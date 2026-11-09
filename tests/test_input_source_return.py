@@ -50,7 +50,7 @@ def suspend(c):
 
 def request_resume(c):
     result = []
-    worker = threading.Thread(target=lambda: result.append(c.resume_for_gesture()))
+    worker = threading.Thread(target=lambda: result.append(c.resume_gesture_failure()))
     worker.start()
     wait_until(lambda: c._source_return.stage == "selecting")
     helper = c._source_return.helper
@@ -64,10 +64,10 @@ def request_resume(c):
     return worker, result
 
 
-def resumed(c, saved, *, success=True):
+def resumed(c, saved, *, success=True, error=""):
     state = {**saved["view"], "epoch": c._epoch, "client_id": "client-new",
              "utterance_id": saved["utterance_id"], "ready": True}
-    receive(c, "input_resumed", token=saved["token"], success=success,
+    receive(c, "input_resumed", token=saved["token"], success=success, error=error,
             client_id="client-new", utterance_id=saved["utterance_id"], state=state)
 
 
@@ -108,7 +108,7 @@ def test_round_trip_restores_sentence_for_polish_and_two_undos(component, monkey
         assert not result
         resumed(c, saved)
         worker.join(1)
-        assert result == [True]
+        assert result == [None]
         assert c._utterance_id == utterance and c._client_id == "client-new" and c._session_id == 7
         if action == "polish":
             c._view["can_polish"] = True
@@ -156,15 +156,23 @@ def test_native_cannot_verify_snapshot_keeps_original_live_session(component, mo
     assert c.ready and c.canUndo and c._source_return.helper is None
 
 
-def test_changed_text_rejects_resume_without_dispatching_polish_or_undo(component, monkeypatch):
+@pytest.mark.parametrize("native_error, reason", [
+    ("已切换输入框，未恢复语音操作", "input_method_resume_field_changed"),
+    ("本句文字或光标已变化，未恢复语音操作", "input_method_resume_text_changed"),
+    ("输入恢复请求已过期", "input_method_resume_expired"),
+    ("arbitrary editor contents", "input_method_resume_unverified"),
+])
+def test_rejected_resume_reports_only_this_requests_safe_reason(component, monkeypatch, native_error, reason):
     c, _ = component
     start(c, monkeypatch)
     settle(c)
     saved = suspend(c)
     worker, result = request_resume(c)
-    resumed(c, saved, success=False)
+    receive(c, "input_resumed", token="other-token", success=False, error="输入恢复请求已过期")
+    assert not result and c._source_return.stage == "resuming"
+    resumed(c, saved, success=False, error=native_error)
     worker.join(1)
-    assert result == [False]
+    assert result == [reason]
     assert not any(m["type"] in {"polish", "cancel"} for m in c._bridge.messages)
     assert c._source_return.saved is None
     assert c._source_return.helper.calls[0][0] == "restore"
@@ -197,7 +205,7 @@ def test_timeout_and_late_resume_never_restore_old_sentence(component, monkeypat
     c._source_return._timer.timeout.emit()
     resumed(c, saved)
     worker.join(1)
-    assert result == [False] and not c._utterance_id
+    assert result == ["input_method_resume_timeout"] and not c._utterance_id
     assert c._source_return.helper.calls[0][0] == "restore"
 
 
@@ -210,7 +218,7 @@ def test_noop_or_dropped_resumed_gesture_returns_again(component, monkeypatch, d
     worker, result = request_resume(c)
     resumed(c, saved)
     worker.join(1)
-    assert result == [True]
+    assert result == [None]
     assert c._source_return.saved is None
     if dropped:
         c._source_return._gesture_timer.timeout.emit()

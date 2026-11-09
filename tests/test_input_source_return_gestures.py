@@ -21,9 +21,9 @@ def test_external_gesture_captures_resumed_sentence(route, monkeypatch, gesture,
         inline._client_id, inline._utterance_id = "resumed-client", "resumed-sentence"
         inline._view.update(phase="dictated", ready=True)
         finished.append(time.monotonic())
-        return True
+        return None
 
-    monkeypatch.setattr(inline, "resume_for_gesture", resume)
+    monkeypatch.setattr(inline, "resume_gesture_failure", resume)
     event = emit(gesture)
     assert event.route == "input" and event.sentence == service.sentence()
     assert event.sentence[1:] == ("resumed-client", "resumed-sentence")
@@ -33,21 +33,24 @@ def test_external_gesture_captures_resumed_sentence(route, monkeypatch, gesture,
 
 @pytest.mark.parametrize("gesture", ["swipe-left", "swipe-down"])
 def test_failed_resume_blocks_input_and_external_fallback(route, monkeypatch, gesture):
-    _, _, inline, backend, sent, messages, emit = route
+    _, service, inline, backend, sent, messages, emit = route
     inline._view.update(phase="idle", ready=False)
     backend.target = replace(backend.target, input_context="nontext")
-    monkeypatch.setattr(inline, "resume_for_gesture", lambda: False)
+    monkeypatch.setattr(inline, "resume_gesture_failure", lambda: "input_method_resume_field_changed")
     monkeypatch.setattr(inline, "capture_start_focus", lambda **_: pytest.fail("failed resume must stop capture"))
     monkeypatch.setattr(backend, "capture", lambda **_: pytest.fail("failed resume must not become an outside action"))
     event = emit(gesture)
-    assert event.route == "blocked" and event.capture_reason == "input_method_not_ready"
+    assert event.route == "blocked" and event.capture_reason == "input_method_resume_field_changed"
+    assert "已切换输入框" in service.notice
+    assert any(e["reason"] == event.capture_reason and e["trace"] == event.trace_id
+               and e["stage"] == "outcome" for e in service._diagnostics.recent())
     assert not sent and not messages
 
 
 @pytest.mark.parametrize("gesture,audio_busy", [("swipe-left", True), ("swipe-down", True), ("swipe-up", False)])
 def test_busy_and_unrelated_gestures_do_not_resume(route, monkeypatch, gesture, audio_busy):
     _, service, inline, _, _, _, _ = route
-    monkeypatch.setattr(inline, "resume_for_gesture", lambda: pytest.fail("must not resume this gesture"))
+    monkeypatch.setattr(inline, "resume_gesture_failure", lambda: pytest.fail("must not resume this gesture"))
     service.envelope(SimpleNamespace(name=gesture), audio_busy=audio_busy)
 
 

@@ -59,7 +59,6 @@ final class LocalClient: NSObject, IMKTextInput {
     var selection = NSRange(location: 0, length: 0)
     var marked = unspecifiedRange
     var bundle = "test.activation"
-    var identifier = UUID().uuidString
     func bundleIdentifier() -> String! { let f = onBundle; onBundle = nil; f?(); return bundle }
     func selectedRange() -> NSRange { reads += 1; let f = onRead; onRead = nil; f?(); return selection }
     func markedRange() -> NSRange { markedReads += 1; return marked }
@@ -93,7 +92,7 @@ final class LocalClient: NSObject, IMKTextInput {
     func supportsUnicode() -> Bool { true }
     func windowLevel() -> Int32 { 0 }
     func supportsProperty(_ property: TSMDocumentPropertyTag) -> Bool { true }
-    func uniqueClientIdentifierString() -> String! { identifier }
+    func uniqueClientIdentifierString() -> String! { UUID().uuidString }
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
 }
 func check(_ condition: @autoclosure () -> Bool, _ message: String) { if !condition() { fputs("FAIL: \(message)\n", stderr); exit(1) } }
@@ -118,6 +117,48 @@ func currentSession(_ controller: ProxiMicInputController) -> CompositionSession
 func suspendSentence(_ controller: ProxiMicInputController, token: String = "return-source") {
     controller.receive(["type": "suspend_input", "client_id": currentClientID(controller),
         "utterance_id": "first", "seq": 4, "token": token, "revision": currentSession(controller)!.revision])
+}
+
+// The IPC regression uses the production service and a process-local editor.
+if CommandLine.arguments.contains("--return-ipc") {
+    var editor = LocalClient()
+    let controller = ProxiMicInputController(), service = IMEService.shared
+    let receive = service.transport.onMessage
+    service.transport.onMessage = { message in
+        switch message["type"] as? String {
+        case "test_reactivate":
+            controller.deactivateServer(editor)
+            switch message["change"] as? String {
+            case "client":
+                let other = LocalClient()
+                other.text = editor.text
+                other.selection = editor.selection
+                editor = other
+            case "text": editor.text = "不是原句"
+            case "caret": editor.selection = NSRange(location: 0, length: 0)
+            default: break
+            }
+            controller.activateServer(editor)
+        case "test_local_key":
+            if message["command"] as? String == "select_previous", let count = message["count"] as? Int {
+                let end = editor.selection.location
+                check(count <= end, "unexpected local selection")
+                editor.selection = NSRange(location: end - count, length: count)
+            } else {
+                check(message["command"] as? String == "delete" && editor.selection.length > 0, "unexpected local key")
+                editor.insertText("", replacementRange: editor.selection)
+            }
+        case "test_exit":
+            print("FINAL_TEXT=" + editor.text)
+            service.transport.stop()
+            exit(0)
+        default: receive?(message)
+        }
+    }
+    controller.activateServer(editor)
+    service.start()
+    RunLoop.main.run(until: Date().addingTimeInterval(10))
+    fatalError("input source return IPC test timed out")
 }
 
 do {
@@ -145,19 +186,18 @@ for scenario in ["application", "client", "text", "selection", "mark"] {
     let old = ProxiMicInputController(), client = LocalClient()
     old.activateServer(client); drainActivation(); firstSentence(old, client); suspendSentence(old)
     old.deactivateServer(client)
-    let other = LocalClient()
-    other.identifier = client.identifier
+    let other = scenario == "client" ? LocalClient() : client
     other.text = client.text
     other.selection = client.selection
     if scenario == "application" { other.bundle = "other.application" }
-    if scenario == "client" { other.identifier = "other.editor" }
     if scenario == "text" { other.text = "外部替换句" }
     if scenario == "selection" { other.selection = NSRange(location: 0, length: 0) }
     if scenario == "mark" { other.marked = NSRange(location: 0, length: 1) }
+    let writes = other.writes
     let next = ProxiMicInputController()
     next.activateServer(other); drainActivation()
     next.receive(["type": "resume_input", "client_id": currentClientID(next), "utterance_id": "first", "seq": 5, "token": "return-source"])
-    check(currentSession(next) == nil && other.writes == 0, "resumed over changed \(scenario)")
+    check(currentSession(next) == nil && other.writes == writes, "resumed over changed \(scenario)")
     check(IMEService.shared.suspendedInput == nil, "failed restoration retained an invalid snapshot")
     next.deactivateServer(other)
     print("PASS input-source resume rejects changed \(scenario) without writing")

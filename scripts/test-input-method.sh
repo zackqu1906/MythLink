@@ -77,4 +77,4 @@ xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
 xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/IPCClient.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Tests/IPC/main.swift" -o "$BUILD_ROOT/ipc-harness"
-"$TASK_ROOT/.runtime/venv/bin/python" -B "$TASK_ROOT/scripts/test-ime-ipc.py" "$BUILD_ROOT/ipc-harness"
+"$TASK_ROOT/.runtime/venv/bin/python" -B "$TASK_ROOT/scripts/test-ime-ipc.py" "$BUILD_ROOT/ipc-harness" "$BUILD_ROOT/activation-tests"

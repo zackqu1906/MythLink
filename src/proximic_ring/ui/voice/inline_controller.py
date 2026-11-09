@@ -429,7 +429,10 @@ class InlineInputController(QObject):
         self._source_return.configure(enabled)
 
     def resume_for_gesture(self):
-        return self._source_return.resume_for_gesture()
+        return self.resume_gesture_failure() is None
+
+    def resume_gesture_failure(self):
+        return self._source_return.resume_gesture_failure()
 
     def finish_resumed_gesture(self):
         self._source_return.gesture_finished()

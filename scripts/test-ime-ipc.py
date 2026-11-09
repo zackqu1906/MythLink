@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from queue import Empty, Queue
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,62 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from proximic_ring.voice.ime.ime_bridge import IMEBridge
+
+
+def verify_return_undo(binary, change):
+    with tempfile.TemporaryDirectory(prefix="ime-return-", dir="/private/tmp") as directory:
+        replies = Queue()
+
+        def expect(kind, **fields):
+            deadline = time.monotonic() + 3
+            try:
+                while time.monotonic() < deadline:
+                    event = replies.get(timeout=max(0, deadline - time.monotonic()))
+                    if event["type"] == kind and all(event.get(k) == v for k, v in fields.items()):
+                        return event
+            except Empty:
+                pass
+            raise AssertionError(f"{change}: timed out waiting for {kind} {fields}")
+
+        bridge = IMEBridge(replies.put, path=Path(directory) / "bridge.sock")
+        bridge.start()
+        try:
+            with subprocess.Popen([binary, "--return-ipc"], stdout=subprocess.PIPE, text=True,
+                                  env={**os.environ, "PROXIMIC_IME_SOCKET": str(bridge.path)}) as process:
+                try:
+                    client = expect("state", ready=True)["client_id"]
+                    sentence = dict(client_id=client, utterance_id="return-test")
+                    bridge.send(dict(type="begin", seq=1, **sentence))
+                    expect("state", phase="listening", **sentence)
+                    bridge.send(dict(type="update", seq=2, text="本句听写", final=True, **sentence))
+                    revision = expect("settled", phase="dictated", **sentence)["revision"]
+                    bridge.send(dict(type="suspend_input", seq=3, token="return", revision=revision, **sentence))
+                    expect("input_suspended", success=True, restorable=True, **sentence)
+                    bridge.send(dict(type="test_reactivate", change=change))
+                    expect("state", ready=False)
+                    sentence["client_id"] = expect("state", ready=True)["client_id"]
+                    assert sentence["client_id"] != client
+                    bridge.send(dict(type="resume_input", token="return", seq=4, **sentence))
+                    expect("input_resumed", success=change == "none", **sentence)
+                    # A stale command after a rejected resume must not delete anything.
+                    bridge.send(dict(type="cancel", seq=5, **sentence))
+                    if change == "none":
+                        for seq, command in enumerate(("select_previous", "delete"), start=6):
+                            event = expect("wechat_key", command=command, **sentence)
+                            bridge.send(dict(type="test_local_key", command=command, count=event["count"]))
+                            bridge.send(dict(type="wechat_key_result", request_id=event["request_id"],
+                                             seq=seq, error="", **sentence))
+                        expect("settled", phase="undone", **sentence)
+                    bridge.send(dict(type="test_exit"))
+                    stdout, _ = process.communicate(timeout=3)
+                    expected = {"none": "", "text": "不是原句"}.get(change, "本句听写")
+                    assert process.returncode == 0 and f"FINAL_TEXT={expected}" in stdout.splitlines(), stdout
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+        finally:
+            bridge.close()
+    print(f"PASS Swift input source return and undo over IPC: {change}")
 
 
 def main() -> int:
@@ -74,6 +131,9 @@ def main() -> int:
             if process is not None and process.poll() is None:
                 process.terminate()
                 process.communicate(timeout=3)
+    if len(sys.argv) > 2:
+        for change in ("none", "client", "text", "caret"):
+            verify_return_undo(sys.argv[2], change)
     return 0
 
 

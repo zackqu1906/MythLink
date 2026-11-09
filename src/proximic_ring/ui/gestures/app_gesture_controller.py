@@ -606,9 +606,9 @@ class AppGestureController(QObject):
                 pid, error = 0, str(exc)
             return InputSourceGestureEvent(event, generation, created, pid, error)
         busy = bool(audio_busy or self.owner._ring_gestures.speech_busy())
-        resume_failed = False
+        resume_failure = None
         if input_priority and not busy and name in bindings.undo + bindings.polish:
-            resume_failed = not self.owner._inline_input.resume_for_gesture()
+            resume_failure = self.owner._inline_input.resume_gesture_failure()
             created = time.monotonic()
         state, sentence = self.phase_state(), self.sentence()
         busy = bool(audio_busy or self.owner._ring_gestures.speech_busy())
@@ -617,8 +617,8 @@ class AppGestureController(QObject):
         target, error, capture_error = None, None, ""
         input_method_target = None
         try:
-            if resume_failed:
-                raise SceneActionError("input_method_not_ready")
+            if resume_failure:
+                raise SceneActionError(resume_failure)
             inline = self.owner._inline_input
             # WeChat can retain a valid IMK text client while AX returns
             # NoValue permanently. Ask that client live; a retained sentence

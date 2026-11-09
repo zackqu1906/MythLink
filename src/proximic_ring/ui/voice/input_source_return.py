@@ -7,6 +7,7 @@ import uuid
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 
 from ...voice.ime.input_method_install import BUNDLE_ID
+from ...diagnostics.scene_diagnostics import native_resume_reason
 
 
 @dataclass(eq=False)
@@ -15,7 +16,7 @@ class _ResumeRequest:
     deadline: float
     done: threading.Event = field(default_factory=threading.Event)
     cancelled: threading.Event = field(default_factory=threading.Event)
-    success: bool = False
+    failure: str | None = "input_method_resume_session_lost"
 
 
 class InputSourceReturn(QObject):
@@ -111,7 +112,7 @@ class InputSourceReturn(QObject):
     def handle(self, message):
         kind = message.get("type")
         if kind in {"connected", "disconnected"}:
-            self.discard()
+            self.discard("foreground_or_connection_changed")
             return False
         saved = self.saved
         if saved is None or message.get("epoch") != saved["epoch"]:
@@ -144,11 +145,18 @@ class InputSourceReturn(QObject):
                     or self.request is None):
                 return True
             state = message.get("state")
-            if (not message.get("success") or not isinstance(state, dict)
-                    or not state.get("ready") or state.get("utterance_id") != saved["utterance_id"]
-                    or self.inline._foreground_identity() != self.origin
-                    or self.request.cancelled.is_set() or time.monotonic() >= self.request.deadline):
-                self.finish()
+            if self.request.cancelled.is_set() or time.monotonic() >= self.request.deadline:
+                self.finish("input_method_resume_timeout")
+                return True
+            if self.inline._foreground_identity() != self.origin:
+                self.finish("foreground_or_connection_changed")
+                return True
+            if message.get("success") is not True:
+                self.finish(native_resume_reason(message.get("reason") or message.get("error")))
+                return True
+            if (not isinstance(state, dict) or not state.get("ready") or not state.get("client_id")
+                    or state.get("utterance_id") != saved["utterance_id"]):
+                self.finish("input_method_resume_unverified")
                 return True
             c = self.inline
             c._client_id = str(state["client_id"])
@@ -162,7 +170,7 @@ class InputSourceReturn(QObject):
             self._gesture_waiting = True
             # Expired/dropped gestures must also release the borrowed source.
             self._gesture_timer.start(1100)
-            self._finish_request(True)
+            self._finish_request(None)
             c.changed.emit()
             return True
         if kind == "state" and self.stage in {"suspending", "returning", "selecting", "resuming"}:
@@ -198,10 +206,10 @@ class InputSourceReturn(QObject):
             self.origin = None
         self.inline._diagnose("input_source_return", reason=str(message.get("reason") or message.get("event")))
 
-    def finish(self):
+    def finish(self, failure="input_method_resume_session_lost"):
         """A sent/replaced sentence no longer needs a resumable snapshot."""
         original, origin = self.original, self.origin
-        self.discard()
+        self.discard(failure)
         if not self.enabled or not original or not origin or self.inline._foreground_identity() != origin:
             return
         self.original, self.origin = original, origin
@@ -215,25 +223,32 @@ class InputSourceReturn(QObject):
         except Exception:
             self._returned(helper, {"event": "error"})
 
-    def resume_for_gesture(self):
+    def resume_gesture_failure(self):
         saved = self.saved
         if not self.enabled or saved is None:
-            return True
+            return None
         # Ring/Agent gesture workers wait; the GUI services selection and IPC.
         if QThread.currentThread() == self.thread():
-            return False
+            return "input_method_not_ready"
         request = _ResumeRequest(saved["token"], time.monotonic() + 1.5)
         self._resumeRequested.emit(request)
         if not request.done.wait(max(0, request.deadline - time.monotonic())):
             request.cancelled.set()
             self._resumeCancelled.emit(request)
-            return False
-        return request.success
+            return "input_method_resume_timeout"
+        return request.failure
 
     def _resume(self, request):
-        if (request.cancelled.is_set() or time.monotonic() >= request.deadline
-                or not self.enabled or not self.saved or request.token != self.saved["token"]
-                or self.inline._foreground_identity() != self.origin or self.request is not None):
+        if request.cancelled.is_set() or time.monotonic() >= request.deadline:
+            request.failure = "input_method_resume_timeout"
+            request.done.set()
+            return
+        if (not self.enabled or not self.saved or request.token != self.saved["token"]
+                or self.request is not None):
+            request.done.set()
+            return
+        if self.inline._foreground_identity() != self.origin:
+            request.failure = "foreground_or_connection_changed"
             request.done.set()
             return
         if self.stage in {"suspending", "returning"}:
@@ -252,16 +267,22 @@ class InputSourceReturn(QObject):
         try:
             (helper.recover if self._recovering else helper.start)(self.origin)
         except Exception:
-            self.finish()
+            self.finish("input_method_activation_failed")
 
     def _selected(self, helper, message):
         if self.helper is not helper or self.stage != "selecting":
             return
         self.helper = None
         helper.cancel()
-        if (message.get("event") != "selected" or self.request is None
-                or self.request.cancelled.is_set() or self.inline._foreground_identity() != self.origin):
-            self.finish()
+        if self.request is None or self.request.cancelled.is_set() or time.monotonic() >= self.request.deadline:
+            self.finish("input_method_resume_timeout")
+            return
+        if message.get("event") != "selected":
+            self.finish("input_method_resume_timeout" if message.get("error") == "输入法切换超时，请稍后重试"
+                        else "input_method_activation_failed")
+            return
+        if self.inline._foreground_identity() != self.origin:
+            self.finish("foreground_or_connection_changed")
             return
         previous = message.get("previous_source")
         if self._external(previous):
@@ -277,7 +298,7 @@ class InputSourceReturn(QObject):
         if self.stage != "selecting" or not self.saved or self.helper is not None:
             return
         if self.inline._foreground_identity() != self.origin:
-            self.discard()
+            self.discard("foreground_or_connection_changed")
             return
         self.inline._bridge.send({"type": "ping", "request_id": "resume:" + self.saved["token"],
                                   "capture_context": False})
@@ -295,7 +316,7 @@ class InputSourceReturn(QObject):
         if not c._bridge.send({"type": "resume_input", "client_id": state["client_id"],
                                "utterance_id": saved["utterance_id"], "seq": c._seq,
                                "token": saved["token"]}):
-            self.finish()
+            self.finish("foreground_or_connection_changed")
 
     def gesture_finished(self):
         if self._gesture_waiting:
@@ -307,7 +328,7 @@ class InputSourceReturn(QObject):
             self._gesture_timer.stop()
             self.schedule()
 
-    def _finish_request(self, success):
+    def _finish_request(self, failure):
         self._timer.stop()
         self._poll.stop()
         if self.helper is not None:
@@ -315,27 +336,27 @@ class InputSourceReturn(QObject):
             helper.cancel()
         request, self.request = self.request, None
         if request is not None:
-            request.success = success
+            request.failure = failure
             request.done.set()
 
     def _cancel_resume(self, request):
         if self.request is request:
-            self.finish()
+            self.finish("input_method_resume_timeout")
 
     def _timed_out(self):
         if self.stage in {"selecting", "resuming"}:
-            self.finish()
+            self.finish("input_method_resume_timeout")
         else:
             self.discard()
 
-    def discard(self):
+    def discard(self, failure="input_method_resume_session_lost"):
         self._gesture_timer.stop()
         self._gesture_waiting = False
         saved, self.saved = self.saved, None
         self.stage = ""
         self.original = ""
         self.origin = None
-        self._finish_request(False)
+        self._finish_request(failure)
         c = self.inline
         if saved and c._bridge and c._epoch == saved["epoch"]:
             c._bridge.send({"type": "discard_suspended_input", "token": saved["token"]})

@@ -6,7 +6,8 @@ final class IMEService {
     struct SuspendedInput {
         let token: String
         let application: String
-        let clientIdentifier: String
+        // IMK's uniqueClientIdentifierString can generate a fresh string on each call.
+        weak var client: IMKTextInput?
         let session: CompositionSession.Suspension
         let history: CompositionUndoHistory.Snapshot
         let undoSourceUtteranceID: String?
@@ -682,14 +683,10 @@ final class ProxiMicInputController: IMKInputController {
             defer { isWriting = false }
             let restorable = current.phase != .undone || undoHistory.count > 0
             if restorable {
-                let identifier = adapter.client.uniqueClientIdentifierString() ?? ""
-                guard owns(), !identifier.isEmpty else {
-                    throw CompositionError.unsupported("当前输入框无法确认身份，未切回输入法")
-                }
                 let saved = try current.suspension()
                 guard owns() else { throw CompositionError.interrupted("输入会话已变化，未切回输入法") }
                 IMEService.shared.suspendedInput = IMEService.SuspendedInput(token: token,
-                    application: activationApplication, clientIdentifier: identifier, session: saved,
+                    application: activationApplication, client: adapter.client, session: saved,
                     history: undoHistory.snapshot(), undoSourceUtteranceID: undoSourceUtteranceID)
             } else {
                 guard !current.hasComposition, !current.awaitingReadback, !adapter.clientOperationPending else {
@@ -734,8 +731,7 @@ final class ProxiMicInputController: IMKInputController {
             }
             isWriting = true
             defer { isWriting = false }
-            let identifier = adapter.client.uniqueClientIdentifierString() ?? ""
-            guard owns(), !identifier.isEmpty, identifier == saved.clientIdentifier else {
+            guard owns(), saved.client === adapter.client else {
                 throw CompositionError.interrupted("已切换输入框，未恢复语音操作")
             }
             let next = try CompositionSession(client: adapter, resuming: saved.session, sequence: sequence)
