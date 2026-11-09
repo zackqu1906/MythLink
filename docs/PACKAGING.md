@@ -170,7 +170,7 @@ macOS 构建先编译 Swift 输入法和 `InputMethodAdmin`，再将两者完整
 仅当新 app 携带的输入法版本更高时，才需要从此入口更新系统中的输入法。
 DMG 内附 `安装说明.txt`，说明连接戒指、服务配置、授权和手动切换步骤。
 
-已有依赖环境且没有修改依赖时，可离线快速重建：
+已有基于项目 Python 的 `.build/packaging-venv-macos13` 打包环境且依赖未改动时，可离线快速重建：
 
 ```bash
 PROXIMIC_SKIP_DEPENDENCY_INSTALL=1 bash scripts/build-macos.sh
