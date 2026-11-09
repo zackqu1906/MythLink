@@ -94,7 +94,8 @@ def test_existing_shortcut_backend_recovers_after_grant_and_stops_after_revocati
     assert len(state.sent) == 2
 
 
-def test_capture_is_bounded_metadata_only_no_text_or_clipboard(monkeypatch):
+@pytest.fixture
+def shortcut_capture(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     reads = []
     values = {("app", "AXFocusedWindow"): "window", ("app", "AXFocusedUIElement"): "focus",
@@ -112,10 +113,25 @@ def test_capture_is_bounded_metadata_only_no_text_or_clipboard(monkeypatch):
                           localizedName=lambda: "Codex")
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWorkspace=SimpleNamespace(
         sharedWorkspace=lambda: SimpleNamespace(frontmostApplication=lambda: app))))
-    target = MacAppShortcuts().capture()
+    return MacAppShortcuts(), values, reads
+
+
+def test_capture_is_bounded_metadata_only_no_text_or_clipboard(shortcut_capture):
+    backend, _, reads = shortcut_capture
+    target = backend.capture()
     assert target.profile == "codex" and target.focus is None and not target.blocked
     assert len(reads) == 5
     assert set(reads) == {"AXFocusedWindow", "AXSubrole", "AXModal", "AXSheets", "AXMinimized"}
+
+
+def test_passive_undo_shortcut_rechecks_native_control_before_dispatch(shortcut_capture):
+    backend, values, _ = shortcut_capture
+    values.update({("focus", "AXRole"): "AXButton", ("focus", "AXWindow"): "window",
+                   ("focus", "AXFocused"): True, ("focus", "AXEnabled"): True})
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target.input_context == "nontext" and backend.same_target(target)
+    values[("focus", "AXRole")] = "AXTextArea"
+    assert not backend.same_target(target)
 
 
 @pytest.mark.parametrize("bundle,role,description", [

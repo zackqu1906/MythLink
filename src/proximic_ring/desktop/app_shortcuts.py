@@ -56,6 +56,7 @@ class ShortcutTarget:
     web_area: object = field(default=None, repr=False)
     player: object = field(default=None, repr=False)
     focus_sensitive: bool = True
+    passive_undo: bool = False
     trace_id: str = field(default="", compare=False)
     diagnostic: dict = field(default_factory=dict, compare=False, repr=False)
     browser_target: dict = field(default_factory=dict, repr=False)
@@ -67,7 +68,7 @@ class LocalMacAppShortcuts:
 
     def capture(self, *, plain_enter: bool = False, menu_action: bool = False,
                 scene: bool = False, scene_observation: bool = False,
-                focus_sensitive: bool = True) -> ShortcutTarget | None:
+                focus_sensitive: bool = True, passive_undo: bool = False) -> ShortcutTarget | None:
         started = time.perf_counter()
         info = {"trace_id": new_trace_id(), "reason": "capture_started", "ax_errors": {},
                 "focus_sensitive": focus_sensitive}
@@ -142,10 +143,9 @@ class LocalMacAppShortcuts:
             return cache[key][1]
         window = attr(element, "AXFocusedWindow")
         reported_window = window
-        # Gestures use IMK for input ownership and the extension for browser
-        # state. Only the explicit stroke/Enter target API requests an AX node
-        # for its hit-test; application and scene captures never inspect it.
-        focus_sensitive = bool(plain_enter and focus_sensitive)
+        # Ordinary application shortcuts need only the window. An empty undo
+        # sharing a shortcut may also need to prove focus without selecting an IME.
+        focus_sensitive = passive_undo or bool(plain_enter and focus_sensitive)
         info["focus_sensitive"] = focus_sensitive
         focus = attr(element, "AXFocusedUIElement") if focus_sensitive else None
         role = str(attr(focus, "AXRole") or "")
@@ -173,9 +173,19 @@ class LocalMacAppShortcuts:
             application_category=application_category, observation=scene_observation)
             if scene else SceneResult())
         active_scene, input_context = recognized.scene, recognized.input_context
+        native_nontext = False
+        if passive_undo and focus is not None:
+            from .text_focus import TEXT_ROLES
+            if role in TEXT_ROLES or attr(focus, "AXIsEditable") or attr(focus, "AXEditable"):
+                input_context = "text"
+            elif (role in {"AXButton", "AXCheckBox", "AXRadioButton", "AXSlider", "AXPopUpButton"}
+                  and window is not None and attr(focus, "AXWindow") == window
+                  and attr(focus, "AXFocused") is not False and attr(focus, "AXEnabled") is not False
+                  and not attr(focus, "AXHidden") and input_context != "text"):
+                input_context, native_nontext = "nontext", True
         info.update(recognition=recognized.diagnostic, scene=active_scene, input_context=input_context,
                     window_subrole=subrole,
-                    focus_source="extension" if browser_scene else "unqueried")
+                    focus_source="native_control" if native_nontext else "extension" if browser_scene else "unqueried")
         # Application commands (e.g. New/Open) can create their first window.
         # A window is optional for explicit mappings, not for legacy chat keys.
         # Window state is independent of any focused control or AX parent chain.
@@ -195,6 +205,8 @@ class LocalMacAppShortcuts:
                 return finish("foreground_changed")
             if native_attr(element, "AXFocusedWindow") != reported_window:
                 return finish("window_changed")
+            if passive_undo and native_attr(element, "AXFocusedUIElement") != focus:
+                return finish("focus_changed")
             if menu_action and window is None and context_read_failed:
                 return finish("target_unavailable")  # A failed AX read is not an absent window.
             if scene and not browser_scene and native_attr(window, "AXDocument") != document:
@@ -223,6 +235,7 @@ class LocalMacAppShortcuts:
                               input_context=input_context, document_key=document_key, page_key=recognized.page_key,
                               web_area=recognized.web_area, player=recognized.player,
                               browser_target=recognized.browser_target, focus_sensitive=focus_sensitive,
+                              passive_undo=passive_undo,
                               trace_id=info["trace_id"], diagnostic=safe_data(info))
 
     def browser_action(self, target, action):
@@ -242,6 +255,8 @@ class LocalMacAppShortcuts:
         options = dict(plain_enter=target.plain_enter, menu_action=target.menu_action)
         if target.scene_checked:
             options["scene"] = True
+        if target.passive_undo:
+            options["passive_undo"] = True
         if not target.focus_sensitive:
             options["focus_sensitive"] = False
         current = self.capture(**options)
@@ -260,6 +275,8 @@ class LocalMacAppShortcuts:
             return outcome(current.diagnostic.get("reason", "blocked_window"))
         if (target.window is not None or target.menu_action) and current.window != target.window:
             return outcome("window_changed")
+        if target.passive_undo and (current.focus != target.focus or current.input_context != target.input_context):
+            return outcome("focus_changed")
         if target.page_key or current.page_key:
             if (current.page_key != target.page_key
                     or current.web_area != target.web_area or current.player != target.player):
@@ -304,13 +321,15 @@ class MacAppShortcuts:
         from ..platforms.macos.native_access import native_access
         return native_access().last_diagnostic
 
-    def capture(self, *, plain_enter=False, menu_action=False, scene=False, focus_sensitive=True):
+    def capture(self, *, plain_enter=False, menu_action=False, scene=False, focus_sensitive=True, passive_undo=False):
         if sys.platform != "darwin":
             return None
         from ..platforms.macos.native_access import native_access
         options = dict(plain_enter=plain_enter, menu_action=menu_action)
         if scene:
             options["scene"] = True
+        if passive_undo:
+            options["passive_undo"] = True
         if not focus_sensitive:
             options["focus_sensitive"] = False
         value = native_access().call("capture", **options)

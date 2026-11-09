@@ -395,7 +395,7 @@ class InlineInputController(QObject):
         target = (*expected, front[1])
         return target if self.same_gesture_target(target) else None
 
-    def capture_start_focus(self, *, native_fallback=None):
+    def capture_start_focus(self, *, native_fallback=None, allow_activation=True):
         """Prefer live IMK text; confirmed shows may tolerate unavailable focus."""
         from ...voice.ime.focus_probe import probe_input_focus, InputFocus
         from ...voice.ime.system_input_source import activate_voice_input_source
@@ -406,7 +406,8 @@ class InlineInputController(QObject):
                 target = native_fallback(front) if front and front[1] > 0 else None
                 if target is not None and self._foreground_identity() == front:
                     return InputFocus("outside", ("", "", "", *front, ()),
-                                      "presentation_focus_fallback", native_target=target)
+                                      "presentation_focus_fallback" if allow_activation else "passive_nontext_focus",
+                                      native_target=target)
             return InputFocus("unavailable", reason="input_method_not_ready")
         def native_activate(origin, **options):
             self.diagnostic.emit({"type": "gesture_source_activation",
@@ -419,11 +420,14 @@ class InlineInputController(QObject):
             if self._source_return.enabled:
                 options["remember_source"] = True
             previous_source = activate_voice_input_source(pid, native_activate=native_activate, **options)
-        proof = probe_input_focus(self._bridge, self._foreground_identity, select_source,
-                                  native_fallback=native_fallback)
+        proof = probe_input_focus(self._bridge, self._foreground_identity,
+                                  select_source if allow_activation else None, native_fallback=native_fallback)
         if proof and proof.status == "text":
             self._source_return.remember_probe(proof.target, previous_source)
         return proof
+
+    def empty_undo_after_return(self):
+        return self.enabled and self._source_return.enabled and self._source_return.saved is None and not self.canUndo
 
     def set_auto_return_input_source(self, enabled):
         self._source_return.configure(enabled)

@@ -9,6 +9,92 @@ from proximic_ring.gestures.gesture_settings import GestureBindings
 from test_app_gestures import route
 from test_inline_ui import inline_ui
 from test_agent_ui import finish_fixture_voice
+from test_application_menus import ACTION, BUNDLE, configure
+from test_gesture_scenes import POWERPOINT, presentation
+from test_inline_state import receive
+from test_input_source_return import ORIGINAL, Source, settle
+from test_ring_gestures import request as send_gesture
+
+
+def finish_last_undo(inline, service, monkeypatch):
+    # The second undo deleted the restored dictation; native explicitly reports an empty history.
+    monkeypatch.setattr(inline, "_foreground_identity", service.foreground_identity)
+    inline.set_auto_return_input_source(True)
+    inline._source_switch_factory = Source
+    borrowing = inline._source_return
+    borrowing.begin(service.foreground_identity(), None)
+    borrowing.selected({"previous_source": ORIGINAL})
+    settle(inline, phase="undone", revision=3, can_cancel=False, undo_history_depth=0)
+    receive(inline, "input_suspended", token=borrowing.saved["token"], success=True, restorable=False)
+    borrowing.helper.event.emit({"event": "restored", "restored": True})
+    receive(inline, ready=False, client_id="", utterance_id="", phase="idle")
+    assert not inline.canUndo and borrowing.saved is None
+
+
+def inactive_source_probe(inline, backend, monkeypatch):
+    # An inactive IMK client represents the original keyboard still being selected.
+    activation, reads = [], []
+
+    def inactive(**kwargs):
+        reads.append(True)
+        return {"ready": False}
+
+    def select(*args, **kwargs):
+        activation.append(True)
+        raise TimeoutError("the source activation would have changed the keyboard")
+
+    monkeypatch.setattr("proximic_ring.voice.ime.system_input_source.activate_voice_input_source", select)
+    monkeypatch.setattr(inline, "capture_start_focus", type(inline).capture_start_focus.__get__(inline))
+    monkeypatch.setattr(inline, "same_input_focus", type(inline).same_input_focus.__get__(inline))
+    capture = backend.capture
+    monkeypatch.setattr(backend, "capture", lambda *, passive_undo=False, **kw: capture(**kw))
+    monkeypatch.setattr(inline, "_bridge", SimpleNamespace(
+        connected=True, epoch=inline._epoch, focus_state=inactive, close=lambda: None))
+    return activation, reads
+
+
+@pytest.mark.parametrize("enabled,shared_action", [(True, False), (True, True), (False, False)])
+def test_spare_left_swipes_after_last_undo_preserve_source_and_shortcuts(route, monkeypatch, enabled, shared_action):
+    c, service, inline, backend, sent, messages, _ = route
+    if shared_action:
+        backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE, input_context="unknown")
+        assert configure(service, monkeypatch).setBinding(BUNDLE, "swipe-left", ACTION["id"])
+    finish_last_undo(inline, service, monkeypatch)
+    if not enabled:
+        inline.set_auto_return_input_source(False)
+    activation, reads = inactive_source_probe(inline, backend, monkeypatch)
+    monkeypatch.setattr(c, "undoLastApplied", lambda: pytest.fail("unexpected application undo"))
+    messages.clear()
+    for _ in range(2):
+        send_gesture(c, "swipe-left")
+    assert len(activation) == (0 if enabled else 2)
+    if enabled:
+        # Only a competing binding needs a passive focus check; unknown never authorizes a shortcut.
+        assert bool(reads) == shared_action
+    assert not sent and not messages
+
+
+@pytest.mark.parametrize("scope", ["application", "global", "scene"])
+def test_nontext_binding_still_runs_after_last_undo(scope, request: pytest.FixtureRequest, monkeypatch):
+    if scope == "scene":
+        c, service, inline, backend, _, sent, messages = request.getfixturevalue("presentation")
+    else:
+        c, service, inline, backend, sent, messages, _ = request.getfixturevalue("route")
+        backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE,
+                                 focus="page", role="AXGroup", input_context="nontext")
+        if scope == "application":
+            assert configure(service, monkeypatch).setBinding(BUNDLE, "swipe-left", ACTION["id"])
+        else:
+            assert c.ringGestures.setGlobalBinding("window_selector", "swipe-left")
+    finish_last_undo(inline, service, monkeypatch)
+    messages.clear()
+    activation, _ = inactive_source_probe(inline, backend, monkeypatch)
+    starts = []
+    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *_: starts.append(True))
+    send_gesture(c, "swipe-left")
+    assert sent == {"application": [(BUNDLE, "Ctrl+Tab")], "global": [], "scene": [(POWERPOINT, "Left")]}[scope]
+    assert bool(starts) == (scope == "global")
+    assert not messages and not activation
 
 
 @pytest.mark.parametrize("gesture,command", [("swipe-left", "cancel"), ("swipe-down", "polish")])

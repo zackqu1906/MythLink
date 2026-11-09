@@ -63,7 +63,8 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
         if foreground() != origin:
             return result("unavailable", "foreground_or_connection_changed")
         if native_target is not None:
-            return result("outside", "presentation_focus_fallback", native_target=native_target)
+            return result("outside", "passive_nontext_focus" if select_source is None else "presentation_focus_fallback",
+                          native_target=native_target)
         return None
 
     def unavailable(reason):
@@ -88,6 +89,8 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
                 if state.get("ready") and valid_selection(state.get("selection")):
                     return result("text", state=state)
                 if absent_selection(state.get("selection")):
+                    if select_source is None:
+                        return result("nontext", "input_method_no_focus", state=state)
                     return native_focus() or result("nontext", "input_method_no_focus", state=state)
                 if valid_selection(state.get("selection")):
                     # A known editor that is not ready still owns this gesture.
@@ -103,6 +106,8 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
                     return unavailable("foreground_or_connection_changed")
                 if time.monotonic() >= deadline:
                     break
+                if select_source is None:
+                    return result("unavailable", "unknown_focus")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break

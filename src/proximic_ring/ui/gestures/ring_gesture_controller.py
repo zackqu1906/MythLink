@@ -289,6 +289,8 @@ class RingGestureController(QObject):
         if isinstance(routed, InputSourceGestureEvent):
             self._sceneRequested.emit(ModeGestureEvent(routed, generation), connection)
             return False
+        if routed.route == "ignored":
+            return False
         if routed.route == "input" and endpoint:
             if not busy and name in bindings.confirm:
                 # Carry the live proof across the audio/UI queue. BEGIN must
@@ -323,6 +325,8 @@ class RingGestureController(QObject):
     def handle_outside(self, event, connection):
         """App/scene binding wins; only an absent binding may use a global default."""
         service = self.owner._app_gestures
+        if event.route == "ignored":
+            return
         if event.capture_error and not service._override_stop_reason(event):
             reason = event.capture_reason or "capture_failed"
             service._stop_trace(event, reason)
