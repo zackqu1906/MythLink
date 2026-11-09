@@ -153,8 +153,10 @@ final class CompositionSession {
         fileprivate let raw: String
         fileprivate let editRequested: Bool
         fileprivate let automaticMode: Bool
+        fileprivate let routedEditMode: Bool
         fileprivate let automaticTask: String
-        fileprivate let automaticAllowsEmptySource: Bool
+        fileprivate let automaticStage: String
+        fileprivate let automaticTasks: [String]
         fileprivate let error: String
         fileprivate let hasModifiedText: Bool
         fileprivate let replacementVerified: Bool
@@ -337,7 +339,8 @@ final class CompositionSession {
         }
         return Suspension(utteranceID: utteranceID, revision: revision, lastSequence: lastSequence,
             original: original, phase: phase, raw: raw, editRequested: editRequested, automaticMode: automaticMode,
-            automaticTask: automaticTask, automaticAllowsEmptySource: automaticAllowsEmptySource,
+            routedEditMode: routedEditMode, automaticTask: automaticTask,
+            automaticStage: automaticStage, automaticTasks: automaticTasks,
             error: error, hasModifiedText: hasModifiedText, replacementVerified: replacementVerified,
             documentVerified: documentVerified, committedRangeVerified: committedRangeVerified,
             committedRange: committedRange, instructionRemoved: instructionRemoved,
@@ -373,8 +376,10 @@ final class CompositionSession {
         raw = saved.raw
         editRequested = saved.editRequested
         automaticMode = saved.automaticMode
+        routedEditMode = saved.routedEditMode
         automaticTask = saved.automaticTask
-        automaticAllowsEmptySource = saved.automaticAllowsEmptySource
+        automaticStage = saved.automaticStage
+        automaticTasks = saved.automaticTasks
         error = saved.error
         hasModifiedText = saved.hasModifiedText
         replacementVerified = saved.replacementVerified

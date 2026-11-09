@@ -126,6 +126,26 @@ try test("Edited input resumes with two-stage restore then undo semantics") {
     f.undo()
     check(f.editor.body == "原文", "restored dictation could not be undone")
 }
+try test("Input-source round trips retain automatic routing status and manual routed-edit mode") {
+    let f = Fixture()
+    try f.begin()
+    f.session.automaticMode = true
+    f.session.setAutomaticProgress("generating", tasks: ["compose"])
+    f.session.setAutomaticTask("edit")
+    f.session.update("写个问候", final: true)
+    f.session.applyEdit(text: "你好", revision: f.session.revision, error: nil)
+    try f.roundTrip()
+    check(f.session.phase == .edited && f.session.automaticMode && !f.session.routedEditMode &&
+          f.session.automaticTask == "edit" && f.session.automaticStage == "generating" &&
+          f.session.automaticTasks == ["compose"], "resume lost automatic routing state")
+
+    try f.begin()
+    f.session.routedEditMode = true
+    f.session.update("下午好", final: true)
+    try f.roundTrip()
+    check(f.session.routedEditMode && !f.session.automaticMode && f.session.canPolish,
+          "resume lost manual routed-edit controls")
+}
 try test("Suspended snapshots reject changed text, caret, composition and replay without writes") {
     for scenario in ["text", "caret", "mark", "sequence"] {
         let f = Fixture("原文")
