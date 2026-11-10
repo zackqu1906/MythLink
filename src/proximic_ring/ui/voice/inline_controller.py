@@ -399,6 +399,7 @@ class InlineInputController(QObject):
         """Prefer live IMK text; confirmed shows may tolerate unavailable focus."""
         from ...voice.ime.focus_probe import probe_input_focus, InputFocus
         from ...voice.ime.system_input_source import activate_voice_input_source
+        from ...desktop.app_shortcuts import MacAppShortcuts
         if (not self.enabled or self._closed or self._installing or self.stroke_mode
                 or not callable(getattr(self._bridge, "focus_state", None))):
             if native_fallback is not None and not self._closed:
@@ -410,15 +411,15 @@ class InlineInputController(QObject):
                                       native_target=target)
             return InputFocus("unavailable", reason="input_method_not_ready")
         borrowed_origin = None
+        backend = MacAppShortcuts()
         def activation_focus(origin):
             nonlocal borrowed_origin
-            from ...desktop.app_shortcuts import MacAppShortcuts
             borrowed_origin = origin
-            backend = MacAppShortcuts()
             target = backend.passive_focus(origin)
             diagnostic = target.diagnostic if target is not None else backend.last_diagnostic or {}
             self.diagnostic.emit({"type": "dictation_focus_probe", "application": origin[0], "pid": origin[1],
                                   "input_context": target.input_context if target else "unknown",
+                                  "wechat_ime_probe": bool(target and target.wechat_ime_probe),
                                   "role": target.role if target else "", "focus_source": diagnostic.get("focus_source", ""),
                                   "reason": diagnostic.get("reason", ""), "ax_errors": diagnostic.get("ax_errors", {})})
             return target
@@ -427,22 +428,39 @@ class InlineInputController(QObject):
         ticket = gate.invalidate_restore() if allow_activation else None
         def native_activate(origin, **options):
             self.diagnostic.emit({"type": "gesture_source_activation",
-                                  "reason": "system_shortcut_unavailable",
+                                  "reason": "wechat_guarded_selection" if options.get("expected_source") else "system_shortcut_unavailable",
                                   "application": origin[0], "pid": origin[1]})
             return self._gesture_source_activation.activate(origin, **options)
         previous_source = ""
-        def select_source(pid, **options):
+        wechat_probe = False
+        def remember_borrow(source):
             nonlocal previous_source
+            if source is not None and not gate.owns_restore(ticket):
+                raise RuntimeError("输入目标已变化")
+            previous_source = source
+        def select_source(pid, **options):
+            nonlocal previous_source, wechat_probe
+            wechat_probe = options.pop("wechat_probe", False)
+            if wechat_probe:
+                options["on_borrow"] = remember_borrow
             if self._source_return.enabled or require_editable:
                 options["remember_source"] = True
-            previous_source = activate_voice_input_source(pid, native_activate=native_activate, **options)
+            reported = activate_voice_input_source(pid, native_activate=native_activate, **options)
+            if reported or not wechat_probe:
+                previous_source = reported
         proof = probe_input_focus(self._bridge, self._foreground_identity,
                                   select_source if allow_activation else None, native_fallback=native_fallback,
-                                  activation_focus=activation_focus if require_editable else None)
+                                  activation_focus=activation_focus if require_editable else None,
+                                  verify_activation_target=backend.same_target)
+        restored = None
         if proof and proof.status == "text":
             self._source_return.remember_probe(proof.target, previous_source)
         elif require_editable and borrowed_origin and self._source_return._external(previous_source):
-            gate.restore_if_unused(borrowed_origin, previous_source, ticket)
+            restored = gate.restore_if_unused(borrowed_origin, previous_source, ticket)
+        if wechat_probe:
+            self.diagnostic.emit({"type": "wechat_input_method_probe", "success": bool(proof and proof.status == "text"),
+                                  "borrowed": self._source_return._external(previous_source),
+                                  "restore_attempted": restored is not None, "restored": bool(restored)})
         return proof
 
     def empty_undo_after_return(self):

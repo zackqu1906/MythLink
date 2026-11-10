@@ -138,16 +138,19 @@ struct InputMethodAdmin {
             FileHandle.standardOutput.write(try JSONEncoder().encode(result))
             FileHandle.standardOutput.write(Data("\n".utf8))
             return
-        case "ensure-selected", "refresh-selected":
+        case "ensure-selected", "refresh-selected", "borrow-source":
             let args = CommandLine.arguments
+            let borrow = command == "borrow-source"
             let hostRestoresFocus = args.count == 5 && args[4] == "--host-restores-focus"
-            guard (args.count == 4 || hostRestoresFocus), let pid = Int32(args[2]), pid > 0 else {
+            guard (borrow ? args.count == 5 && !args[4].isEmpty : args.count == 4 || hostRestoresFocus),
+                  let pid = Int32(args[2]), pid > 0 else {
                 fail("ensure-selected requires a foreground PID and bundle ID")
             }
             let modeID = productID + ".dictation"
             selectSourceSession(pid: pid, bundle: CommandLine.arguments[3], modeID: modeID,
                 refreshOnly: command == "refresh-selected",
                 hostRestoresFocus: hostRestoresFocus,
+                expectedSource: borrow ? args[4] : nil,
                 currentSource: {
                     guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return "" }
                     return property(source, kTISPropertyInputSourceID) as? String ?? ""

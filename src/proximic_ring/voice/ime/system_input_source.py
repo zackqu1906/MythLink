@@ -59,7 +59,8 @@ def _read_on_main_queue(read, *, timeout):
     return result
 
 
-def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, remember_source=False):
+def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, remember_source=False,
+                    on_borrow=None):
     """At most one source cycle, sharing the caller's activation deadline."""
     deadline = time.monotonic() + timeout
 
@@ -69,26 +70,47 @@ def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, r
     allowed = read(backend.sources)
     if target not in allowed:
         raise RuntimeError('Mythlink 输入法尚未启用')
-    try:
-        shortcut = backend.shortcut()
-    except InputSourceUnavailable as exc:
+    if on_borrow is not None:
+        original = read(backend.current)
+        if not original or original not in allowed or backend.foreground() != origin:
+            raise RuntimeError('无法确认原输入法或前台应用')
+        if original in {BUNDLE_ID, target}:
+            return None  # A temporary probe can ping this source without cycling it.
+    shortcut = None
+    # For a temporary loan, avoid cycling through an intermediate keyboard:
+    # a failed probe cannot distinguish that source from a manual user choice.
+    if on_borrow is None or len(allowed) <= 2:
+        try:
+            shortcut = backend.shortcut()
+        except InputSourceUnavailable as exc:
+            if exc.reason != 'input_method_source_shortcut_unavailable' or native_activate is None:
+                raise
+    if shortcut is None:
         # A disabled/missing shortcut is a machine preference, not a voice
         # prerequisite. Use the existing native activation transaction before
         # posting any keys; its caller still requires a fresh IMK focus proof.
-        if exc.reason != 'input_method_source_shortcut_unavailable' or native_activate is None:
-            raise
+        if native_activate is None:
+            raise InputSourceUnavailable('input_method_source_shortcut_unavailable')
         if backend.foreground() != origin:
             raise RuntimeError('前台应用已变化')
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('输入法切换超时')
-        previous = native_activate(origin, timeout=remaining)
+        if on_borrow is None:
+            previous = native_activate(origin, timeout=remaining)
+        else:
+            if read(backend.current) != original or backend.foreground() != origin:
+                raise RuntimeError('前台应用或输入法已变化')
+            previous = native_activate(origin, timeout=deadline - time.monotonic(),
+                                       expected_source=original, on_borrow=on_borrow)
         if backend.foreground() != origin or read(backend.current) != target:
             raise RuntimeError('前台应用或输入法已变化')
         return previous if remember_source else None
     current = read(backend.current)
     if not current or current not in allowed:
         raise RuntimeError('无法确认当前输入法')
+    if on_borrow is not None and current != original:
+        raise RuntimeError('输入法已变化')
     visited = {current}
     previous = current
     # An already selected but inactive IMK client also needs a real native
@@ -100,7 +122,14 @@ def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, r
             raise RuntimeError('前台应用或输入法已变化')
         if time.monotonic() >= deadline:
             raise TimeoutError('输入法切换超时')
-        backend.advance(shortcut, origin)
+        if on_borrow is None:
+            backend.advance(shortcut, origin)
+        else:
+            def before_key_down():
+                if read(backend.current) != original or backend.foreground() != origin:
+                    raise RuntimeError('前台应用或输入法已变化')
+                on_borrow(original)
+            backend.advance(shortcut, origin, before_key_down=before_key_down)
         step_deadline = min(deadline, time.monotonic() + .2)
         while time.monotonic() < step_deadline:
             if backend.foreground() != origin:
@@ -212,7 +241,7 @@ class SystemInputSources:
             raise InputSourceUnavailable('input_method_source_shortcut_unavailable')
         return code, flags
 
-    def advance(self, shortcut, origin):
+    def advance(self, shortcut, origin, *, before_key_down=None):
         q = self.quartz
         if self.shortcut() != shortcut:
             raise InputSourceUnavailable('input_method_source_shortcut_unavailable')
@@ -247,6 +276,8 @@ class SystemInputSources:
             time.sleep(.015)
             if self.foreground() != origin:
                 raise RuntimeError('前台应用已变化')
+            if before_key_down is not None:
+                before_key_down()
             key_down = True
             post(code, True, flags)
             time.sleep(.015)
@@ -260,7 +291,8 @@ class SystemInputSources:
                     post(modifier, False, current_flags)
 
 
-def activate_voice_input_source(pid, *, timeout=.8, native_activate=None, remember_source=False):
+def activate_voice_input_source(pid, *, timeout=.8, native_activate=None, remember_source=False,
+                                on_borrow=None):
     deadline = time.monotonic() + timeout
     backend = SystemInputSources()
     origin = backend.foreground()
@@ -268,4 +300,4 @@ def activate_voice_input_source(pid, *, timeout=.8, native_activate=None, rememb
         raise RuntimeError('前台应用已变化')
     return cycle_to_source(backend, origin, BUNDLE_ID + '.dictation',
                            timeout=max(0, deadline - time.monotonic()), native_activate=native_activate,
-                           remember_source=remember_source)
+                           remember_source=remember_source, on_borrow=on_borrow)

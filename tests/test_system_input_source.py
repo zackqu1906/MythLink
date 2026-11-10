@@ -58,6 +58,54 @@ def test_borrow_uses_native_helpers_actual_previous_source():
                            native_activate=activate, remember_source=True) == 'pinyin'
 
 
+@pytest.mark.parametrize('shortcut', [False, True])
+def test_temporary_probe_records_original_before_a_switch_that_times_out(shortcut):
+    sources = Sources(['abc'])
+    recorded = []
+    def fail_after_selection(*_, **options):
+        if shortcut:
+            options['before_key_down']()
+        else:
+            assert options['expected_source'] == sources.selected == 'abc'
+            options['on_borrow'](sources.selected)
+        assert recorded == ['abc']
+        sources.selected = 'voice'
+        raise TimeoutError('selection reply lost')
+    if shortcut:
+        sources.sources = lambda **_: {'abc', 'voice'}
+        sources.advance = fail_after_selection
+    else:
+        # No cycle through an intermediate keyboard in this mode.
+        sources.advance = lambda *_: pytest.fail('unexpected cycle')
+    with pytest.raises(TimeoutError):
+        cycle_to_source(sources, ORIGIN, 'voice', timeout=.2, native_activate=fail_after_selection,
+                        on_borrow=recorded.append)
+    assert recorded == ['abc'] and sources.selected == 'voice'
+
+
+@pytest.mark.parametrize('original', ['', 'unknown', 'voice'])
+def test_temporary_probe_with_no_external_original_does_not_switch(original):
+    sources = Sources([original])
+    options = dict(timeout=.2, native_activate=lambda *_, **__: pytest.fail('unexpected helper'),
+                   on_borrow=lambda _: pytest.fail('unexpected borrow'))
+    if original == 'voice':
+        assert cycle_to_source(sources, ORIGIN, 'voice', **options) is None
+    else:
+        with pytest.raises(RuntimeError):
+            cycle_to_source(sources, ORIGIN, 'voice', **options)
+    assert not sources.advances
+
+
+def test_temporary_probe_rechecks_original_before_launching_helper():
+    sources = Sources(['abc'])
+    reads = iter(['abc', 'pinyin'])
+    sources.current = lambda **_: next(reads)
+    with pytest.raises(RuntimeError, match='已变化'):
+        cycle_to_source(sources, ORIGIN, 'voice', timeout=.2,
+                        native_activate=lambda *_, **__: pytest.fail('unexpected helper'),
+                        on_borrow=lambda _: pytest.fail('unexpected borrow'))
+
+
 def test_disabled_target_cannot_emit_a_shortcut():
     sources = Sources(['abc'])
     with pytest.raises(RuntimeError, match='尚未启用'):

@@ -84,9 +84,15 @@ class InputSourceActivation(QObject):
         self._released = False
         self._local_window = None
         self._expected_event = "selected"
+        self._probe_borrow = None
+        self._withdraw_probe = None
 
     def start(self, origin):
         self._start(origin, "ensure-selected")
+
+    def start_probe(self, origin, expected_source, on_borrow):
+        self._probe_borrow = expected_source, on_borrow
+        self._start(origin, "borrow-source", [expected_source])
 
     def recover(self, origin):
         self._start(origin, "refresh-selected")
@@ -167,8 +173,24 @@ class InputSourceActivation(QObject):
                 self._fail("输入法切换工具返回异常数据")
                 return
             if kind == "error":
+                if data.get("borrow_skipped") is True and self._withdraw_probe is not None:
+                    self._withdraw_probe(None)
                 self._fail(str(data.get("error") or "无法切换输入法"))
                 return
+            if kind == "will_borrow" and self._stage == "probing" and self._probe_borrow is not None:
+                expected, on_borrow = self._probe_borrow
+                self._probe_borrow = None
+                if data.get("previous_source") != expected:
+                    self._fail("输入法已变化")
+                    return
+                try:
+                    on_borrow(expected)
+                except RuntimeError as exc:
+                    self._fail(str(exc))
+                    return
+                self._withdraw_probe = on_borrow
+                self._process.write(b"borrow\n")
+                continue
             if kind == "restore_focus" and self._stage == "probing":
                 try:
                     restored = (self._local_window is not None and

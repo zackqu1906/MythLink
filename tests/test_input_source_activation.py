@@ -23,6 +23,22 @@ def helper(tmp_path, body):
     return [sys.executable, '-u', str(path)]
 
 
+@pytest.mark.parametrize('skipped', [True, False])
+def test_temporary_probe_acknowledges_original_before_helper_can_select(tmp_path, skipped):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    command = helper(tmp_path, '''assert sys.argv[1:] == ['borrow-source', '123', 'test.editor', 'original']
+print(json.dumps({'event': 'will_borrow', 'previous_source': 'original'}), flush=True)
+assert sys.stdin.readline().strip() == 'borrow'
+''' + f'print(json.dumps(dict(event="error", error="failed", borrow_skipped={skipped!r})), flush=True)')
+    source = InputSourceActivation(command=command)
+    events = []
+    source.event.connect(events.append)
+    source.start_probe(('test.editor', 123), 'original', events.append)
+    wait_until(lambda: events and isinstance(events[-1], dict))
+    assert events == ['original', *([None] if skipped else []), {'event': 'error', 'error': 'failed'}]
+    app.processEvents()
+
+
 @pytest.mark.parametrize('already_selected', [True, False])
 def test_source_result_requires_no_focus_or_stdin_handshake(tmp_path, already_selected):
     app = QCoreApplication.instance() or QCoreApplication([])

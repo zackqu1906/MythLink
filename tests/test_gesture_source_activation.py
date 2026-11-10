@@ -8,6 +8,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
 
 from proximic_ring.ui.voice.gesture_source_activation import GestureSourceActivation
+from proximic_ring.ui.voice.input_source_activation import InputSourceActivation
 from proximic_ring.voice.ime import system_input_source as system
 from test_inline_state import component
 
@@ -112,6 +113,44 @@ def test_native_selection_returns_previous_source_for_opt_in_borrowing(activatio
                                  'previous_source': 'com.apple.keylayout.ABC'})
     thread.join(1)
     assert result == {'value': 'com.apple.keylayout.ABC'}
+
+
+def test_helper_timeout_after_a_probe_switch_can_return_the_recorded_keyboard(tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    selected = tmp_path / 'selected'
+    selected.write_text('original')
+    helper = tmp_path / 'helper.py'
+    helper.write_text('''import json, sys, time
+from pathlib import Path
+state = Path(sys.argv[1])
+if sys.argv[2] == "borrow-source":
+    print(json.dumps(dict(event="will_borrow", previous_source=state.read_text())), flush=True)
+    assert sys.stdin.readline().strip() == "borrow"
+    state.write_text("voice")
+    time.sleep(5)  # No terminal selection receipt.
+else:
+    assert sys.argv[2] == "restore-source" and sys.argv[5] == "original"
+    assert state.read_text() == "voice"
+    state.write_text("original")
+    print(json.dumps(dict(event="restored", restored=True)), flush=True)
+''')
+    command = [sys.executable, '-u', str(helper), str(selected)]
+    gate = GestureSourceActivation(foreground=lambda: ORIGIN,
+        factory=lambda parent, **options: InputSourceActivation(parent, command=command, **options))
+    ticket = gate.invalidate_restore()
+    original = []
+    def probe():
+        with pytest.raises((TimeoutError, RuntimeError)):
+            gate.activate(ORIGIN, expected_source='original', on_borrow=original.append, timeout=.3)
+        return gate.restore_if_unused(ORIGIN, original[0], ticket)
+    try:
+        thread, result = worker(probe)
+        until(lambda: not thread.is_alive(), timeout=2)
+        assert original == ['original'] and result == {'value': True}
+        assert selected.read_text() == 'original'
+    finally:
+        gate.close()
+        app.processEvents()
 
 
 @pytest.mark.parametrize('restored', [True, False])

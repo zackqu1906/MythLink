@@ -141,12 +141,17 @@ func restoreVoiceSource(previousSource: String, expectedSource: String, voiceIDs
 
 /// A source-only operation: never queries AX, a text field or its contents.
 /// An already-selected source is left untouched, including its composition.
-func ensureVoiceSource(modeID: String, currentSource: () -> String,
+func ensureVoiceSource(modeID: String, expectedSource: String? = nil,
+                       beforeBorrow: ((String) throws -> Void)? = nil, currentSource: () -> String,
                        sameApplication: () -> Bool, select: () throws -> Void) throws -> VoiceSourceSelection {
     guard sameApplication() else { throw SourceSelectionFailure("前台应用已变化，请重新 tap") }
     let current = currentSource()
     guard !current.isEmpty else { throw SourceSelectionFailure("系统未返回当前输入法，请重试") }
+    guard expectedSource == nil || current == expectedSource else {
+        throw SourceSelectionFailure("输入法已变化，请重新 tap")
+    }
     if current == modeID { return VoiceSourceSelection(alreadySelected: true, previousSource: current) }
+    try beforeBorrow?(current)
     guard sameApplication() else { throw SourceSelectionFailure("前台应用已变化，请重新 tap") }
     guard currentSource() == current else { throw SourceSelectionFailure("输入法已变化，请重新 tap") }
     try select()
@@ -276,6 +281,7 @@ func restoreInputFocus(pid: Int32, bundle: String, currentSource: @escaping () -
 func selectSourceSession(pid: Int32, bundle: String, modeID: String,
                          refreshOnly: Bool = false,
                          hostRestoresFocus: Bool = false,
+                         expectedSource: String? = nil,
                          currentSource: @escaping () -> String, select: () throws -> Void) -> Never {
     func emit(_ fields: [String: Any]) {
         if let data = try? JSONSerialization.data(withJSONObject: fields) {
@@ -285,6 +291,7 @@ func selectSourceSession(pid: Int32, bundle: String, modeID: String,
     }
     alarm(5)
     let start = ProcessInfo.processInfo.systemUptime
+    var selectionAttempted = false
     do {
         guard !hostRestoresFocus || pid == getppid() else {
             throw SourceSelectionFailure("窗口焦点只能由原宿主恢复")
@@ -294,12 +301,22 @@ func selectSourceSession(pid: Int32, bundle: String, modeID: String,
         if refreshOnly && currentSource() != modeID {
             throw SourceSelectionFailure("输入法已变化，请重新 tap")
         }
-        let selection = try ensureVoiceSource(modeID: modeID, currentSource: currentSource,
+        // A killed/timed-out helper must not switch before the host knows the
+        // original source and can conditionally return it.
+        let beforeBorrow: ((String) throws -> Void)? = expectedSource == nil ? nil : { original in
+            emit(["event": "will_borrow", "previous_source": original])
+            guard readLine() == "borrow" else { throw SourceSelectionFailure("输入法激活已取消") }
+        }
+        let selection = try ensureVoiceSource(modeID: modeID, expectedSource: expectedSource,
+            beforeBorrow: beforeBorrow, currentSource: currentSource,
             sameApplication: {
                 let current = NSWorkspace.shared.frontmostApplication
                 return matchesSourceApplication(pid: current?.processIdentifier, bundle: current?.bundleIdentifier,
                                                 expectedPID: pid, expectedBundle: bundle)
-            }, select: select)
+            }, select: {
+                selectionAttempted = true
+                try select()
+            })
         let restore = !selection.alreadySelected || refreshOnly
         if restore {
             let hostFocus: (() -> Void)? = hostRestoresFocus
@@ -313,7 +330,9 @@ func selectSourceSession(pid: Int32, bundle: String, modeID: String,
               "elapsed_ms": (ProcessInfo.processInfo.systemUptime - start) * 1000])
         exit(0)
     } catch {
-        emit(["event": "error", "error": error.localizedDescription])
+        var fields: [String: Any] = ["event": "error", "error": error.localizedDescription]
+        if expectedSource != nil { fields["borrow_skipped"] = !selectionAttempted }
+        emit(fields)
         exit(1)
     }
 }

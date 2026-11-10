@@ -21,6 +21,8 @@ class _Request:
     previous_source: str | None = None
     restore_source: str = ""
     restored: bool = False
+    expected_source: str = ""
+    on_borrow: object = None
 
 
 class GestureSourceActivation(QObject):
@@ -39,8 +41,9 @@ class GestureSourceActivation(QObject):
         self._requested.connect(self._start, Qt.QueuedConnection)
         self._cancelled.connect(self._cancel, Qt.QueuedConnection)
 
-    def activate(self, origin, *, timeout):
-        request = _Request(origin, time.monotonic() + timeout)
+    def activate(self, origin, *, timeout, expected_source="", on_borrow=None):
+        request = _Request(origin, time.monotonic() + timeout,
+                           expected_source=expected_source, on_borrow=on_borrow)
         self._wait(request)
         return request.previous_source
 
@@ -58,6 +61,10 @@ class GestureSourceActivation(QObject):
             else:
                 self._cancelled.emit(request)
         return ticket
+
+    def owns_restore(self, ticket):
+        with self._restore_lock:
+            return not self._closed and ticket is not None and ticket is self._restore_ticket
 
     def restore_if_unused(self, origin, previous, ticket, *, timeout=.5):
         """Return a failed probe's loan only while its original request owns it."""
@@ -115,6 +122,13 @@ class GestureSourceActivation(QObject):
             source.event.connect(lambda message: self._event(request, source, message))
             if request.restore_source:
                 source.restore(request.origin, request.restore_source, BUNDLE_ID + '.dictation')
+            elif request.expected_source:
+                def borrow(previous):
+                    if previous is not None and (request.cancelled.is_set() or time.monotonic() >= request.deadline
+                                                 or self._foreground() != request.origin):
+                        raise RuntimeError('输入法激活已取消')
+                    request.on_borrow(previous)
+                source.start_probe(request.origin, request.expected_source, borrow)
             else:
                 (source.recover if request.recovering else source.start)(request.origin)
         except Exception as exc:

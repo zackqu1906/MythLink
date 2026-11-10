@@ -28,6 +28,19 @@ current = ""
 rejects { try run() }
 precondition(selections == 1)
 current = "system.abc"
+rejects {
+    try ensureVoiceSource(modeID: voice, expectedSource: "system.pinyin",
+        beforeBorrow: { _ in fatalError("stale source must not be borrowed") },
+        currentSource: { current }, sameApplication: { true }, select: { fatalError("unexpected selection") })
+}
+rejects {
+    try ensureVoiceSource(modeID: voice, expectedSource: current,
+        beforeBorrow: { original in
+            precondition(original == "system.abc")
+            current = "system.other"
+        }, currentSource: { current }, sameApplication: { true }, select: { fatalError("unexpected selection") })
+}
+current = "system.abc"
 rejects { try run({ false }) }
 var identityReads = 0
 rejects { try run({ identityReads += 1; return identityReads == 1 }) }
