@@ -1,5 +1,9 @@
 import Foundation
 
+enum HistoryActionMode: String {
+    case undo, next, retry
+}
+
 let unspecifiedRange = NSRange(location: NSNotFound, length: NSNotFound)
 
 func isValidRange(_ range: NSRange, length: Int? = nil) -> Bool {
@@ -9,7 +13,7 @@ func isValidRange(_ range: NSRange, length: Int? = nil) -> Bool {
     return length.map { NSMaxRange(range) <= $0 } ?? true
 }
 
-struct EditorTextRange {
+struct EditorTextRange: Equatable {
     let text: String
     let range: NSRange
 }
@@ -20,7 +24,7 @@ struct PreparedEditContext {
     let caret: NSRange
 }
 
-struct EditorSnapshot {
+struct EditorSnapshot: Equatable {
     let text: String?
     let selection: NSRange
     let markedRange: NSRange
@@ -36,7 +40,7 @@ struct EditorSnapshot {
 
 /// Immutable undo data only: no client, callbacks, timers or pending ASR work.
 /// Dictation retains its inserted/replaced span, never a full document copy.
-struct CompositionUndoRecord {
+struct CompositionUndoRecord: Equatable {
     let sourceUtteranceID: String
     let original: EditorSnapshot
     let raw: String
@@ -49,6 +53,21 @@ struct CompositionUndoRecord {
     var committedRange: NSRange? = nil
     var polishOriginal: String? = nil
     var polished = false
+    var automaticMode = false
+    var routedEditMode = false
+    var automaticTask = ""
+    var automaticStage = ""
+    var automaticTasks: [String] = []
+    var restoredEditInstruction = false
+}
+
+/// One successful undo, with the exact span and caret it left behind.
+/// Replaying this restores the saved result, never ASR or model work.
+struct CompositionRedoRecord {
+    let result: CompositionUndoRecord
+    let before: EditorTextRange
+    let selection: NSRange
+    let text: String
 }
 
 /// A new ASR host never inherits an old host's transaction identifier or work.
@@ -160,6 +179,7 @@ final class CompositionSession {
         fileprivate let automaticTask: String
         fileprivate let automaticStage: String
         fileprivate let automaticTasks: [String]
+        fileprivate let restoredEditInstruction: Bool
         fileprivate let error: String
         fileprivate let hasModifiedText: Bool
         fileprivate let replacementVerified: Bool
@@ -225,6 +245,8 @@ final class CompositionSession {
     private(set) var expectedText: String?
     private(set) var expectedMarked: NSRange = unspecifiedRange
     private(set) var lastAppliedText: String?
+    private(set) var restoredEditInstruction = false
+    private(set) var retryingEdit = false
     private struct PendingReadback {
         let deadline: TimeInterval
         let stage: String
@@ -243,6 +265,7 @@ final class CompositionSession {
     private var cancelPending = false
     private var workGeneration = 0
     private var sendingNativeWrite = false
+    private var restoringHistory = false
     private enum CompositionSelectionStyle { case unknown, standard, anchor }
     private var compositionSelectionStyle: CompositionSelectionStyle = .unknown
     // Keep sent ownership separate from readback-confirmed expectedMarked: the
@@ -256,6 +279,10 @@ final class CompositionSession {
     var awaitingReadback: Bool { pendingReadback != nil }
     var readbackStage: String { pendingReadback?.stage ?? "" }
     private(set) var readbackDiagnostics: [String: Any] = [:]
+    // Captured at the request boundary, before a verified replacement rebases
+    // `original`. Diagnostic metadata only; never used as write authority.
+    private(set) var editDiagnostics: [String: Any] = [:]
+    private var editRequestStartedAt: TimeInterval = 0
     var onFinishAudio: (() -> Void)?
     var onEdit: ((_ original: String, _ instruction: String, _ revision: Int) -> Void)?
     var onPolish: ((_ text: String, _ revision: Int) -> Void)?
@@ -303,16 +330,21 @@ final class CompositionSession {
         nativeUndoEligible = false
         polished = record.polished
         polishOriginal = record.polishOriginal
+        automaticMode = record.automaticMode
+        routedEditMode = record.routedEditMode
+        automaticTask = record.automaticTask
+        automaticStage = record.automaticStage
+        automaticTasks = record.automaticTasks
+        restoredEditInstruction = record.restoredEditInstruction
+        if restoredEditInstruction { expectedEditText = dictatedEditText }
     }
 
     func suspension() throws -> Suspension {
-        guard [.dictated, .edited, .undone].contains(phase), !hasComposition,
-              !awaitingReadback, !client.clientOperationPending, !sendingNativeWrite,
-              !cancelPending, deferredCommands.isEmpty else {
+        guard historyReady else {
             throw CompositionError.unsupported("本句尚未完成，暂不能切回输入法")
         }
         let now = try client.snapshot()
-        guard isValidRange(now.selection), phase == .undone || now.selection == expectedSelection,
+        guard isValidRange(now.selection), now.selection == expectedSelection,
               !isValidRange(now.markedRange) || now.markedRange.length == 0 else {
             throw CompositionError.interrupted("本句文字或光标已变化，未切回输入法")
         }
@@ -342,6 +374,12 @@ final class CompositionSession {
             proof = EditorTextRange(text: text, range: NSRange(location: context.range.location, length: (text as NSString).length))
         } else if let readable = now.readableContext, !readable.text.isEmpty {
             proof = readable
+        } else if phase == .undone, let selected = original.selectedText {
+            // A verified undo can leave an empty editor whose IMK full-text
+            // API returns nil. Retain only the restored span and exact caret;
+            // this is not a claim that unavailable context is an empty document.
+            proof = EditorTextRange(text: selected, range: NSRange(
+                location: committedRange?.location ?? original.selection.location, length: selected.utf16.count))
         } else {
             throw CompositionError.unsupported("当前输入框无法复核本句，未切回输入法")
         }
@@ -358,6 +396,7 @@ final class CompositionSession {
             original: original, phase: phase, raw: raw, editRequested: editRequested, automaticMode: automaticMode,
             routedEditMode: routedEditMode, automaticTask: automaticTask,
             automaticStage: automaticStage, automaticTasks: automaticTasks,
+            restoredEditInstruction: restoredEditInstruction,
             error: error, hasModifiedText: hasModifiedText, replacementVerified: replacementVerified,
             documentVerified: documentVerified, committedRangeVerified: committedRangeVerified,
             committedRange: committedRange, instructionRemoved: instructionRemoved,
@@ -386,6 +425,7 @@ final class CompositionSession {
         automaticTask = saved.automaticTask
         automaticStage = saved.automaticStage
         automaticTasks = saved.automaticTasks
+        restoredEditInstruction = saved.restoredEditInstruction
         error = saved.error
         hasModifiedText = saved.hasModifiedText
         replacementVerified = saved.replacementVerified
@@ -410,7 +450,7 @@ final class CompositionSession {
               (phase == .dictated && hasModifiedText && (committedRangeVerified || canReplace)) ||
               (phase == .edited && replacementVerified) else { return nil }
         let edited = phase == .edited ? lastAppliedText : nil
-        let context = edited == nil ? nil : editOriginal
+        let context = edited != nil || restoredEditInstruction ? editOriginal : nil
         if phase == .edited && (edited == nil || context == nil) { return nil }
         let compact = EditorSnapshot(text: nil, selection: original.selection,
                                      markedRange: unspecifiedRange, selectedText: original.selectedText,
@@ -418,7 +458,90 @@ final class CompositionSession {
         return CompositionUndoRecord(sourceUtteranceID: sourceUtteranceID ?? utteranceID,
                                      original: compact, raw: raw, selection: expectedSelection,
                                      editedText: edited, committedRange: edited == nil ? committedRange : nil,
-                                     polishOriginal: polishOriginal, polished: polished)
+                                     polishOriginal: polishOriginal, polished: polished,
+                                     automaticMode: automaticMode, routedEditMode: routedEditMode,
+                                     automaticTask: automaticTask, automaticStage: automaticStage, automaticTasks: automaticTasks,
+                                     restoredEditInstruction: restoredEditInstruction)
+    }
+
+    var historyReady: Bool {
+        [.dictated, .edited, .undone].contains(phase) && !hasComposition &&
+            !awaitingReadback && !client.clientOperationPending && !sendingNativeWrite &&
+            !restoringHistory && !cancelPending && deferredCommands.isEmpty
+    }
+
+    func redoRecord(afterUndoing record: CompositionUndoRecord) -> CompositionRedoRecord? {
+        guard historyReady else { return nil }
+        let generation = workGeneration
+        let location: Int
+        let before: String
+        let result: String
+        if let edited = record.editedText, let context = record.original.readableContext {
+            guard phase == .dictated else { return nil }
+            let relative = NSRange(location: record.original.selection.location - context.range.location,
+                                   length: record.original.selection.length)
+            guard isValidRange(relative, length: context.text.utf16.count) else { return nil }
+            location = context.range.location
+            before = (context.text as NSString).replacingCharacters(in: relative, with: record.raw)
+            result = edited
+        } else {
+            location = record.committedRange?.location ?? record.original.selection.location
+            if let unpolished = record.polishOriginal {
+                guard phase == .dictated else { return nil }
+                before = unpolished
+            } else {
+                guard phase == .undone, let selected = record.original.selectedText else { return nil }
+                before = selected
+            }
+            result = record.raw
+        }
+        let range = NSRange(location: location, length: before.utf16.count)
+        let probe = client.probe()
+        guard isValidRange(probe.selection), probe.selection == expectedSelection, record.selection.length == 0,
+              !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
+              client.readText(in: range) == before,
+              generation == workGeneration, historyReady else { return nil }
+        return CompositionRedoRecord(result: record, before: EditorTextRange(text: before, range: range),
+                                     selection: probe.selection, text: result)
+    }
+
+    /// Called on a fresh transaction restored from record.result. All writes
+    /// remain guarded by the current input-controller activation and revision.
+    func restoreRedo(_ record: CompositionRedoRecord) {
+        guard historyReady else { return }
+        restoringHistory = true
+        revision += 1
+        error = ""
+        awaitReadback("redo_ownership", check: { [unowned self] in
+            let probe = client.probe()
+            guard probe.selection == record.selection,
+                  !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
+                  client.readText(in: record.before.range) == record.before.text else {
+                throw CompositionError.interrupted("文字或光标已变化，未执行重做")
+            }
+        }, then: { [unowned self] in
+            let generation = workGeneration
+            sendNativeWrite {
+                client.replaceEditing(record.before.range, with: record.text,
+                    restoringCaret: record.result.selection.location, expected: record.before.text)
+            }
+            guard active, workGeneration == generation else { return }
+            let range = NSRange(location: record.before.range.location, length: record.text.utf16.count)
+            awaitReadback("replace", check: { [unowned self] in
+                let probe = client.probe()
+                let receipt = client.verifiedReplacement
+                guard probe.selection == record.result.selection,
+                      !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
+                      (receipt?.range == range && receipt?.text == record.text) || client.readText(in: range) == record.text else {
+                    throw CompositionError.unconfirmed("输入框尚未确认重做结果")
+                }
+            }, then: { [unowned self] in
+                restoringHistory = false
+                expectedSelection = record.result.selection
+                onSettled?(phase.rawValue, lastAppliedText ?? raw)
+                onChanged?()
+            })
+        })
     }
 
     var active: Bool { ![.undone, .interrupted, .error].contains(phase) }
@@ -448,6 +571,16 @@ final class CompositionSession {
     }
     var editScope: String { editRequestText == nil ? "unavailable" : "before_caret" }
     var editContextAvailable: Bool { original.documentAccess && editRequestText != nil }
+
+    private func recordEditRequest(_ source: String) {
+        func numbers(_ range: NSRange) -> [Int] { isValidRange(range) ? [range.location, range.length] : [-1, -1] }
+        editRequestStartedAt = clock()
+        editDiagnostics = ["schema": 1, "source_complete": original.complete,
+            "document_access": original.documentAccess, "source_range": editOriginal.map { numbers($0.range) } ?? [-1, -1],
+            "original_selection": numbers(original.selection), "original_marked": numbers(original.markedRange),
+            "model_source_characters": source.utf16.count, "instruction_characters": raw.utf16.count,
+            "native_selection_path": client.preparesEditContext, "retry": retryingEdit]
+    }
     private var dictatedEditText: String? {
         guard let context = editOriginal else { return nil }
         let relative = NSRange(location: original.selection.location - context.range.location, length: original.selection.length)
@@ -464,7 +597,7 @@ final class CompositionSession {
     }
 
     var canCancel: Bool {
-        guard active else { return false }
+        guard active, !restoringHistory else { return false }
         if [.finishing, .editing, .edited, .polishing].contains(phase), editRequested || phase != .finishing { return true }
         return !hasComposition ? (!hasModifiedText || canReplace || committedRangeVerified) : original.selectedText != nil
     }
@@ -691,6 +824,11 @@ final class CompositionSession {
         let checked = { [unowned self] in
             if clientOperation {
                 if !client.clientOperationDiagnostics.isEmpty { readbackDiagnostics = client.clientOperationDiagnostics }
+                if stage == "edit_context" {
+                    // Keep the verification evidence when recovery later
+                    // replaces the general readback diagnostics.
+                    editDiagnostics["verification"] = client.clientOperationDiagnostics
+                }
                 if let failure = client.clientOperationFailure { throw CompositionError.unconfirmed(failure) }
                 if client.clientOperationPending { throw CompositionError.unconfirmed("正在等待输入框完成操作") }
             }
@@ -988,6 +1126,41 @@ final class CompositionSession {
         convert()
     }
 
+    var canRetryEdit: Bool {
+        restoredEditInstruction && historyReady && phase == .dictated && !polished &&
+            !raw.isEmpty && editRequestText != nil && dictatedEditText != nil
+    }
+
+    func retryEdit() {
+        guard canRetryEdit, let source = editRequestText, let context = editOriginal,
+              let before = dictatedEditText else { return }
+        revision += 1
+        let requestedRevision = revision
+        retryingEdit = true
+        editRequested = true
+        phase = .editing
+        error = ""
+        // A historical instruction is committed text, never a new preedit.
+        // Prove the complete saved scope before issuing another model request.
+        awaitReadback("retry_ownership", check: { [unowned self] in
+            let probe = client.probe()
+            let range = NSRange(location: context.range.location, length: before.utf16.count)
+            guard probe.selection == expectedSelection,
+                  !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
+                  client.readText(in: range) == before else {
+                throw CompositionError.interrupted("原文、指令或光标已变化，未重做编辑")
+            }
+            if original.complete { try assertOwnership() }
+        }, then: { [unowned self] in
+            guard retryingEdit, editRequested, !cancelPending, revision == requestedRevision else { return }
+            expectedEditText = before
+            lastAppliedText = nil
+            recordEditRequest(source)
+            onEdit?(source, raw, revision)
+            onChanged?()
+        })
+    }
+
     private func startEditing() {
         // Routed paths may create in a confirmed empty field. A missing source
         // remains unavailable for every mode; write-range checks are shared.
@@ -1008,6 +1181,7 @@ final class CompositionSession {
             // Reading the initial IMK context is invisible. Treat it as a model
             // proposal only: native selection verifies the source after the
             // result arrives, before any candidate can replace the document.
+            recordEditRequest(source)
             onEdit?(source, raw, revision)
             onChanged?()
         }
@@ -1016,6 +1190,8 @@ final class CompositionSession {
     private func prepareFreshEditContext(candidate: String, revision requestedRevision: Int) {
         // This runs only after a model result. Keep the spoken instruction
         // visible until the verified selection is replaced in one native write.
+        editDiagnostics["candidate_characters"] = candidate.utf16.count
+        editDiagnostics["model_wait_ms"] = (clock() - editRequestStartedAt) * 1000
         let generation = workGeneration
         if hasComposition {
             if var sent = sentComposition { sent.commitSent = true; sentComposition = sent }
@@ -1068,6 +1244,8 @@ final class CompositionSession {
     }
 
     private func completeEdit(_ text: String) {
+        retryingEdit = false
+        restoredEditInstruction = false
         lastAppliedText = text
         instructionRemoved = true
         phase = .edited
@@ -1160,6 +1338,18 @@ final class CompositionSession {
     }
 
     private func restoreDictation(error message: String = "") {
+        if retryingEdit {
+            // Model failure/cancel has not changed the restored instruction.
+            // Keep it retryable without issuing another document write.
+            retryingEdit = false
+            editRequested = false
+            phase = .dictated
+            error = message
+            if !cancelPending { onSettled?(phase.rawValue, raw) }
+            onChanged?()
+            drainDeferredCommands()
+            return
+        }
         if freshEditContext, !instructionRemoved, lastAppliedText == nil {
             phase = .dictated
             editRequested = false
@@ -1220,7 +1410,7 @@ final class CompositionSession {
     }
 
     var canPolish: Bool {
-        !automaticMode && phase == .dictated && !polished && !editRequested && !hasComposition &&
+        !automaticMode && !restoringHistory && phase == .dictated && !polished && !editRequested && !hasComposition &&
             !awaitingReadback && !client.clientOperationPending && !raw.isEmpty &&
             (committedRangeVerified || canReplace)
     }
@@ -1269,6 +1459,7 @@ final class CompositionSession {
         guard !text.isEmpty else { finishPolish(error: "润色未返回正文，已保留听写"); return }
         let before = raw
         let complete = { [unowned self] in
+            restoredEditInstruction = false
             polishOriginal = polishRestoresRaw ? before : nil
             polished = true
             finishPolish()
@@ -1346,6 +1537,7 @@ final class CompositionSession {
                 completeEdit(result)
             }
         }
+        if retryingEdit { apply(); return }
         if client.preparesEditContext {
             if hasComposition {
                 withCompositionOwnership { [unowned self] in
@@ -1380,7 +1572,7 @@ final class CompositionSession {
     }
 
     func cancel() {
-        guard active else { return }
+        guard active, !restoringHistory else { return }
         if phase == .polishing, pendingReadback == nil || readbackStage == "polish_ownership" {
             clearDeferredWork()
             finishPolish()
@@ -1397,7 +1589,7 @@ final class CompositionSession {
             onChanged?()
             return
         }
-        if phase == .editing, pendingReadback == nil || readbackStage == "ownership" {
+        if phase == .editing, pendingReadback == nil || ["ownership", "retry_ownership"].contains(readbackStage) {
             // No edit has written yet. Drop both the model revision and any
             // read-only preflight immediately, then restore the dictated text.
             clearDeferredWork()
@@ -1434,6 +1626,7 @@ final class CompositionSession {
             return
         }
         if phase == .editing || phase == .edited {
+            if phase == .edited { restoredEditInstruction = true }
             revision += 1
             editRequested = false
             restoreDictation()
@@ -1479,6 +1672,7 @@ final class CompositionSession {
                       observed == selected else {
                     throw CompositionError.unconfirmed("输入框尚未确认本句撤销")
                 }
+                expectedSelection = probe.selection
             }, then: { [unowned self] in
                 replacementVerified = true
                 committedRangeVerified = false

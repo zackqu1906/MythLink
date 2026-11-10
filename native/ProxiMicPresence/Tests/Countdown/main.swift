@@ -75,4 +75,31 @@ p.sample(-62, now: 6.1)
 check(!p.lockPending && !p.hasFreshDeparture(now: 6.1), "return racing the final acknowledgement cancels")
 p.reset()
 check(p.lockCountdownDuration == 5, "reset preserves production warning duration")
+
+func chartState(_ p: PresencePolicy, _ now: Double, locked: Bool = false,
+                connected: Bool = true, active: Bool = false) -> String {
+    p.signalState(now: now, locked: locked, connected: connected, permitted: true,
+                  awake: true, locallyActive: active)
+}
+p = PresencePolicy()
+p.sample(-62, now: 0); _ = step(&p, 0)
+check(chartState(p, 0) == "normal", "near callback plots normal state")
+p.sample(-100, now: 0.5); _ = step(&p, 0.5)
+p.sample(-100, now: 1); _ = step(&p, 1)
+check(chartState(p, 1) == "away" && p.lockDepartureSamples == 1,
+      "chart uses actual smoothed lock evidence, not raw RSSI or return counts")
+p.sample(-100, now: 1.5); _ = step(&p, 1.5)
+check(chartState(p, 1.5) == "countdown" && p.lockCountdownRemaining(now: 1.5) == 5,
+      "chart turns red at the same callback that starts the countdown")
+_ = step(&p, 2, locallyActive: true)
+check(chartState(p, 2, active: true) == "protected" && p.lockDepartureSamples == 0,
+      "activity protection cannot appear as departure despite weak RSSI")
+check(chartState(p, 5) == "stale", "expired samples cannot show live departure")
+_ = step(&p, 5, connected: false)
+check(chartState(p, 5, connected: false) == "disconnected", "disconnection pauses the chart")
+p = countdown()
+for t in 2...6 { p.sample(-90, now: Double(t)); _ = step(&p, Double(t)) }
+check(chartState(p, 6) == "locking", "host handshake is distinct from confirmed system lock")
+_ = step(&p, 6.1, locked: true)
+check(chartState(p, 6.1, locked: true) == "locked", "only confirmed locked session plots locked state")
 print("Pre-lock countdown: \(count) assertions passed; no Bluetooth or system actions")

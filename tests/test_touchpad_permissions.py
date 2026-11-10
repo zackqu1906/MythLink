@@ -20,6 +20,7 @@ def pointer(monkeypatch):
     posted = []
     quartz = SimpleNamespace(CGPreflightPostEventAccess=lambda: True, kCGHIDEventTap=0,
         kCGEventMouseMoved=1, kCGEventLeftMouseDown=2, kCGEventLeftMouseUp=3,
+        kCGMouseEventDeltaX=4, kCGMouseEventDeltaY=5,
         kCGMouseEventClickState=1, CGEventSetIntegerValueField=lambda *args: None,
         CGEventPost=lambda tap, event: posted.append(event))
     read_fd, write_fd = os.pipe()

@@ -6,6 +6,10 @@ import pytest
 
 from test_inline_ui import inline_ui
 from test_proximity import Process, calibrate
+from proximic_ring.ui.proximity.proximity_controller import ProximityController
+
+
+_launch_presence = ProximityController._launch
 
 
 @pytest.fixture
@@ -25,6 +29,11 @@ def proximity_ui(inline_ui, tmp_path, monkeypatch):
 
     proximity = controller.proximity
     proximity._factory = FakeProcess
+    # inline_ui suppresses all native launches; restore dispatch only after
+    # installing our fake process so this suite can exercise the real protocol.
+    monkeypatch.setattr(proximity, "_launch", _launch_presence.__get__(proximity))
+    controller._connected = True
+    controller.connectedChanged.emit()
     yield controller, proximity, bridge, root, calls
     proximity.close()
 
@@ -43,7 +52,7 @@ def item(root, name):
                 if found is not None:
                     return found
             return None
-        result = visual_child(root.contentItem())
+        result = visual_child(root.contentItem() if hasattr(root, "contentItem") else root)
     assert result is not None, name
     return result
 
@@ -54,12 +63,14 @@ def click(root, name):
 
 
 def open_details(root):
-    from PySide6.QtCore import QMetaObject
+    from PySide6.QtCore import QMetaObject, Q_ARG
     from PySide6.QtTest import QTest
     root.setProperty("currentPage", 0)
     root.show()
     QMetaObject.invokeMethod(item(root, "runtimeSettingsDialog"), "open")
-    click(root, "settingsCategory9")
+    # The overview now routes to LockPage; exercise the retained settings pane
+    # directly, with the main-page route covered by the live-signal test.
+    QMetaObject.invokeMethod(item(root, "runtimeSettingsDialog"), "navigate", Q_ARG("QVariant", 9))
     QTest.qWait(150)
     dialog = item(root, "runtimeSettingsDialog")
     for _ in range(30):
@@ -86,6 +97,226 @@ def scroll_bottom(root):
     flick = item(root, "runtimeSettingsScroll").property("contentItem")
     flick.setProperty("contentY", max(0, flick.property("contentHeight") - flick.height()))
     QTest.qWait(40)
+
+
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+def test_live_signal_and_recalibration_on_lock_page(proximity_ui, tmp_path, size):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtTest import QTest
+
+    _, proximity, _, root, _ = proximity_ui
+    root.resize(*size)
+    proximity.useDevice("a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3", "Ringo test")
+    root.setProperty("currentPage", 5); root.show(); QTest.qWait(40)
+    finish_status(proximity); calibrate(proximity)
+    proximity.setBaselineOption("enabled", True)
+    proximity.enabled = True
+    proc = proximity._process
+    proc.send(dict(event="monitor", connected=True, permission=True, rssi=-73, raw_rssi=-80,
+                   rssi_age_seconds=0, baseline=-64, lock=-72, unlock=-68,
+                   activity_calibration_active=True, activity_calibration_samples=3,
+                   activity_calibration_sources=["keyboardMouse"]))
+    proc.send(dict(event="calibration_sample", raw_rssi=-80, decision_rssi=-73.2))
+    QTest.qWait(30)
+    assert item(root, "lockLiveRaw").property("text") == "-80.0 dBm"
+    assert item(root, "lockLiveSmoothed").property("text") == "-73.2 dBm"
+    assert item(root, "lockLiveBaseline").property("text") == "-64.0 dBm"
+    assert item(root, "lockLiveThreshold").property("text") == "-72.0 dBm"
+    assert "正在自动采样：3 / 5" in item(root, "lockLiveLearning").property("text")
+    for name in ("Raw", "Smoothed", "Baseline", "Threshold", "Decision", "Learning"):
+        control = item(root, "lockLive" + name)
+        position = control.mapToScene(QPointF())
+        assert 0 <= position.x() <= root.width() - control.width()
+        assert 0 <= position.y() <= root.height() - control.height()
+    screenshot(root, tmp_path, f"lock-live-signal-{size[0]}.png")
+    proc.send(dict(event="baseline_updated", device=proximity._target,
+                   revision=proximity._baseline_revision, baseline=-80, samples=[-80] * 5,
+                   duration_seconds=2, sources=["keyboardMouse"]))
+    QTest.qWait(30)
+    assert item(root, "lockLiveBaseline").property("text") == "-80.0 dBm"
+    assert item(root, "lockLiveThreshold").property("text") == "-88.0 dBm"
+    open_details(root)
+    assert item(root, "proximityLiveRaw").property("text") == "-80.0 dBm"
+    assert item(root, "proximityLiveBaseline").property("text") == "-80.0 dBm"
+    assert item(root, "proximityLiveThreshold").property("text") == "-88.0 dBm"
+    proc.send(dict(event="monitor", connected=False))
+    QTest.qWait(30)
+    assert item(root, "proximityLiveRaw").property("text") == "—"
+    assert item(root, "proximityLiveSmoothed").property("text") == "—"
+    assert item(root, "proximityLiveBaseline").property("text") == "-80.0 dBm"
+
+
+@pytest.mark.parametrize("mode", ["manual_enabled", "manual_disabled", "automatic"])
+def test_calibration_updates_live_display_and_monitor_baseline(proximity_ui, mode):
+    import json
+    from PySide6.QtTest import QTest
+
+    controller, proximity, _, root, calls = proximity_ui
+    proximity.useDevice("a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3", "Ringo test")
+    root.setProperty("currentPage", 5); root.show(); QTest.qWait(40)
+    finish_status(proximity); calibrate(proximity)
+    proximity.setBaselineOption("enabled", True)
+    proximity.enabled = mode != "manual_disabled"
+    previous_monitor = proximity._process
+
+    if mode.startswith("manual"):
+        click(root, "lockCalibrateButton")
+        click(root, "lockStartCalibrationButton")
+        if previous_monitor:
+            assert not previous_monitor.killed and proximity._process is previous_monitor
+        else:
+            assert calls[-1] == ["calibrate", proximity._target]
+    proc = proximity._process
+    token = proximity._live_calibration_id
+    proc.send(dict(event="calibration_sample", raw_rssi=-79, decision_rssi=-77.2))
+    QTest.qWait(20)
+    assert item(root, "lockLiveRaw").property("text") == "-79.0 dBm"
+    assert item(root, "lockLiveSmoothed").property("text") == "-77.2 dBm"
+    assert item(root, "lockLiveBaseline").property("text") == "-64.0 dBm"
+    assert item(root, "lockLiveThreshold").property("text") == "-72.0 dBm"
+
+    if mode.startswith("manual"):
+        proc.send(dict(event="calibration_complete", device=proximity._target, baseline=-80,
+                       samples=[-80] * 20, duration_seconds=10, capture_id=token))
+    else:
+        proc.send(dict(event="baseline_updated", device=proximity._target,
+                       revision=proximity._baseline_revision, baseline=-80, samples=[-80] * 5,
+                       duration_seconds=2, sources=["keyboardMouse"]))
+    QTest.qWait(20)
+    # Both routes notify QML immediately, without waiting for a monitor report.
+    assert item(root, "lockLiveBaseline").property("text") == "-80.0 dBm"
+    assert item(root, "lockLiveThreshold").property("text") == "-88.0 dBm"
+    # Calibration changes boundaries, not the last real Bluetooth measurement.
+    assert item(root, "lockLiveRaw").property("text") == "-79.0 dBm"
+    saved = json.loads(controller._settings.value("proximity/calibrations/" + proximity._target))
+    assert saved["baseline"] == -80
+
+    if mode.startswith("manual"):
+        if mode == "manual_disabled":
+            proc.finished.emit(0, 0)
+            assert proximity._process is None and not proximity.enabled
+        else:
+            proc.send(dict(event="calibration_finished", capture_id=token, result="saved"))
+            assert proximity._process is previous_monitor and not proc.killed
+    else:
+        assert proximity._process is proc and not proc.killed
+        assert proximity.learnedThresholds["lock"] == -88
+        assert proximity.learnedThresholds["unlock"] == -84
+    if proximity._process is not None:
+        proximity._process.send(dict(event="calibration_sample", raw_rssi=-82, decision_rssi=-81.3))
+        QTest.qWait(20)
+        assert item(root, "lockLiveRaw").property("text") == "-82.0 dBm"
+        assert item(root, "lockLiveSmoothed").property("text") == "-81.3 dBm"
+    assert item(root, "lockLiveBaseline").property("text") == "-80.0 dBm"
+    assert item(root, "lockLiveThreshold").property("text") == "-88.0 dBm"
+
+
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+def test_signal_chart_scrolls_and_marks_actual_departure_states(proximity_ui, tmp_path, size):
+    import math
+    import time
+    from PySide6.QtCore import QObject, QPointF
+    from PySide6.QtTest import QTest, QSignalSpy
+
+    _, proximity, _, root, _ = proximity_ui
+    root.resize(*size)
+    proximity.useDevice("a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3", "Ringo test")
+    root.setProperty("currentPage", 5); root.show(); QTest.qWait(30)
+    finish_status(proximity); calibrate(proximity, -68); proximity.enabled = True
+    timeline = proximity.signalTimeline
+    timeline.reset()
+    now = time.monotonic()
+    for i in range(116):
+        elapsed = i * 0.5
+        timeline._clock = lambda t=now - 58 + elapsed: t
+        baseline = -64 if elapsed < 25 else -68
+        raw = -62 + math.sin(i * 1.3) * 3 if elapsed < 42 else -64 - (elapsed - 42) * 1.4 + math.sin(i) * 2
+        smoothed = raw if i == 0 else smoothed * 0.6 + raw * 0.4
+        state = ("calibrating" if 8 <= elapsed < 18 else "protected" if 23 <= elapsed < 31
+                 else "away" if elapsed >= 51 else "normal")
+        timeline.record(dict(raw=raw, smoothed=smoothed, baseline=baseline, threshold=baseline - 8,
+                             state=state, weak_samples=1 if state == "away" else 0), sample=True)
+    timeline._clock = time.monotonic
+    trace = dict(event="signal_trace", sample_id=112, raw_rssi=-84, decision_rssi=-81.2,
+                 baseline=-68, lock=-76, signal_state="countdown", lock_departure_samples=2,
+                 required_departure_samples=2, lock_countdown_seconds=5)
+    chart = item(root, "lockLiveChart")
+    canvas = chart.findChild(QObject, "proximitySignalCanvas")
+    state_label = chart.findChild(QObject, "proximityChartState")
+    painted = QSignalSpy(canvas.painted)
+    proximity._process.send(dict(event="calibration_sample", sample_id=112, raw_rssi=-84, decision_rssi=-81.2))
+    proximity._process.send(trace)
+    # No one-second monitor packet or UI polling is needed to update the graph.
+    assert chart.property("points")[-1]["smoothed"] == -81.2
+    assert "5 秒后锁屏" in state_label.property("text")
+    assert state_label.property("color").name() == "#d95536"
+    before = chart.property("viewNow")
+    QTest.qWait(80)
+    assert chart.property("animating") and chart.property("viewNow") > before
+    assert painted.count() > 0
+    position = canvas.mapToScene(QPointF())
+    assert position.x() >= 0 and position.x() + canvas.width() <= root.width()
+    assert position.y() >= 0 and position.y() + canvas.height() <= root.height()
+    screenshot(root, tmp_path, f"lock-chart-countdown-{size[0]}.png")
+    preview = chart.grabToImage()
+    QTest.qWait(40)
+    shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
+    assert preview.image().save(str(shots / f"lock-chart-preview-{size[0]}.png"))
+    proximity._process.send(trace | dict(signal_state="locked", lock_reason="weak_signal", lock_countdown_seconds=0))
+    assert "远离触发" in state_label.property("text")
+    assert state_label.property("color").name() == "#bc354c"
+    QTest.qWait(30)
+    screenshot(root, tmp_path, f"lock-chart-locked-{size[0]}.png")
+
+    # Inspect historical values with actual pointer events. The card occupies
+    # its own space, and updates on delivery of the move, without a hover timer.
+    area = item(chart, "proximityChartInspectionArea")
+    card = item(chart, "proximityChartReadout")
+    card_position = card.mapToScene(QPointF())
+    card_height = card.height()
+    assert card_position.y() >= position.y() + canvas.height()
+    assert card_position.x() >= 0 and card_position.x() + card.width() <= root.width()
+    assert card_position.y() + card.height() <= root.height()
+    fixed_now = time.monotonic()
+    timeline._clock = lambda: fixed_now
+    QTest.qWait(30)
+    samples = [point for point in timeline.points if point["sample"]]
+    for index in (5, 52, 90, 110, 30, 75):
+        expected = samples[index]
+        x = (expected["time"] - chart.property("viewNow") + 60000) / 60000 * area.width()
+        target = area.mapToScene(QPointF(x, area.height() / 2)).toPoint()
+        QTest.mouseMove(root, target, 0)
+        selected = chart.property("inspected")
+        if hasattr(selected, "toVariant"):
+            selected = selected.toVariant()
+        assert selected["time"] == expected["time"]
+        for key in ("raw", "smoothed", "baseline", "threshold"):
+            assert item(chart, "proximityChartInspection_" + key).property("text") == f"{expected[key]:.1f}"
+        assert card.mapToScene(QPointF()) == card_position and card.height() == card_height
+        if index == 52:
+            assert item(chart, "proximityChartInspectionState").property("text") == "操作保护中"
+            QTest.qWait(20)
+            screenshot(root, tmp_path, f"lock-chart-inspection-{size[0]}.png")
+        if index == 30:
+            QTest.qWait(20)
+            screenshot(root, tmp_path, f"lock-chart-calibration-band-{size[0]}.png")
+    QTest.mouseMove(root, card_position.toPoint(), 0)
+    assert item(chart, "proximityChartInspectionTime").property("text") == "移动到曲线查看读数"
+    assert item(chart, "proximityChartInspection_raw").property("text") == "—"
+    assert card.mapToScene(QPointF()) == card_position and card.height() == card_height
+
+    # Empty history and missing intervals must not show an unrelated sample.
+    timeline.reset()
+    center = area.mapToScene(QPointF(area.width() / 2, area.height() / 2)).toPoint()
+    QTest.mouseMove(root, center, 0)
+    assert item(chart, "proximityChartInspectionTime").property("text") == "此处无有效采样"
+    for age in (50, 10):
+        timeline.record(dict(raw=-65, smoothed=-65, baseline=-64, threshold=-72, state="normal"),
+                        sample=True, at=(fixed_now - age) * 1000)
+    assert item(chart, "proximityChartInspection_raw").property("text") == "—"
+    timeline._clock = time.monotonic
+    root.setProperty("currentPage", 0); QTest.qWait(20)
+    assert not chart.property("animating")
 
 
 def test_baseline_evidence_switches_and_updated_thresholds(proximity_ui, tmp_path):
@@ -187,9 +418,10 @@ def test_calibration_progress_and_cancel_preserve_existing_baseline_and_switch(p
     assert item(root, "proximityOverviewStatus").property("text") == ("已开启" if enabled else "未开启")
     before = controller._settings.value("proximity/calibrations/" + proximity._target)
     click(root, "proximityCalibrate")
-    assert calls[-1][0] == "calibrate"
+    assert calls[-1][0] == ("monitor" if enabled else "calibrate")
     process = proximity._process
-    process.send(dict(event="calibration_progress", elapsed=4.0, samples=8))
+    token = proximity._live_calibration_id
+    process.send(dict(event="calibration_progress", elapsed=4.0, samples=8, capture_id=token))
     QTest.qWait(40)
     assert item(root, "proximityCalibrationProgress").property("value") == 4.0
     assert not item(root, "proximityEnabled").property("enabled")
@@ -197,8 +429,10 @@ def test_calibration_progress_and_cancel_preserve_existing_baseline_and_switch(p
     assert item(root, "proximityCancelCalibration").property("visible")
     screenshot(root, tmp_path, f"proximity-calibrating-{enabled}.png")
     click(root, "proximityCancelCalibration")
+    if enabled:
+        process.send(dict(event="calibration_finished", capture_id=token, result="cancelled"))
     QTest.qWait(30)
-    assert process.killed
+    assert process.killed == (not enabled)
     assert proximity.enabled == enabled
     assert item(root, "proximityEnabled").property("checked") == enabled
     assert not item(root, "proximityCancelCalibration").property("visible")

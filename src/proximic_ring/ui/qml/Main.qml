@@ -508,7 +508,7 @@ ApplicationWindow {
 
             Label {
                 Layout.fillWidth: true
-                text: "diagnostic.log · 窗口显示最近 1000 行；导出包含已保留的全部历史"
+                text: "窗口显示最近 1000 行；诊断包按所选时间导出完整记录和相关附件。"
                 color: root.textMuted
                 font.pixelSize: 11
                 wrapMode: Text.Wrap
@@ -516,10 +516,19 @@ ApplicationWindow {
 
             RowLayout {
                 Layout.fillWidth: true
+                FigmaSelect {
+                    id: runtimeLogPeriod
+                    objectName: "runtimeDiagnosticLogRangeSelect"
+                    Layout.preferredWidth: 110
+                    Accessible.name: "诊断日志时间范围"
+                    model: ["今天", "近一周", "全部"]
+                    enabled: !appController.diagnosticExport.busy
+                }
                 FigmaAction {
                     objectName: "exportDiagnosticLogButton"
-                    text: "导出完整日志"
-                    onClicked: appController.exportDiagnosticLog()
+                    text: appController.diagnosticExport.busy ? "正在导出…" : "导出诊断包"
+                    enabled: !appController.diagnosticExport.busy
+                    onClicked: appController.exportDiagnosticLog(["today", "week", "all"][runtimeLogPeriod.currentIndex])
                 }
                 FigmaAction {
                     objectName: "openDiagnosticLogDirectoryButton"
@@ -534,6 +543,13 @@ ApplicationWindow {
                 }
                 FigmaAction { text: "清空窗口"; onClicked: appController.clearLog() }
                 FigmaAction { text: "关闭"; onClicked: runtimeLogDialog.close() }
+            }
+            UiNotice {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: appController.diagnosticExport.message
+                warning: appController.diagnosticExport.error
+                wrapMode: Text.Wrap
             }
         }
     }

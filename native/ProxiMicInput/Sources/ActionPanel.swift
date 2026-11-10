@@ -31,6 +31,8 @@ final class ActionPanel: NSObject {
     private var gestureHints = VoiceHudBindings()
     private var cancelAvailable = false
     private var editAvailable = false
+    private var historyMode = false
+    private var retryMode = false
     private var polishAvailable = false
     private var polishDetail = "润色本句"
     private var cancelDetail = "取消本句"
@@ -213,14 +215,14 @@ final class ActionPanel: NSObject {
     private func refreshHints() {
         cancelButton.configure(gestures: gestureHints.actions["undo"] ?? [], caption: cancelDetail.hasPrefix("取消") ? "取消" : "撤销",
                                available: cancelAvailable, detail: cancelDetail)
-        convertButton.configure(gestures: gestureHints.actions["switch_mode"] ?? [], caption: "修改",
-                                available: editAvailable, detail: "转换为编辑")
+        convertButton.configure(gestures: gestureHints.actions["switch_mode"] ?? [], caption: historyMode ? (retryMode ? "重做" : "下一步") : "修改",
+                                available: editAvailable, detail: historyMode ? (retryMode ? "重新请求模型" : "恢复下一步") : "转换为编辑")
         polishHint.configure(gestures: gestureHints.actions["polish"] ?? [], caption: "润色",
                              available: polishAvailable, detail: polishDetail)
         finishButton.configure(gestures: gestureHints.actions["end"] ?? [], caption: "结束",
                                available: finishAvailable, detail: "结束语音并自动判断")
         finishButton.isHidden = !automatic || !finishAvailable
-        if automatic { convertButton.isHidden = true; polishHint.isHidden = true }
+        if automatic { convertButton.isHidden = !historyMode || !editAvailable; polishHint.isHidden = true }
     }
 
     func applyPresentation(_ presentation: ActionPanelPresentation) {
@@ -233,7 +235,8 @@ final class ActionPanel: NSObject {
         statusSymbol.setAccessibilityLabel(presentation.isError ? "操作失败" : "")
     }
 
-    func update(_ session: CompositionSession, historyDepth: Int = 0) {
+    func update(_ session: CompositionSession, historyDepth: Int = 0, redoAvailable: Bool = false, redoEnabled: Bool = true,
+                retryAvailable: Bool = false, historyActionMode: String = "next") {
         anchor.update(utteranceID: session.utteranceID,
                       editing: session.phase == .editing || session.phase == .polishing ||
                           (session.automaticMode && (session.phase == .finishing ||
@@ -253,7 +256,9 @@ final class ActionPanel: NSObject {
         let pendingDictation = [.listening, .finishing].contains(session.phase) && !session.editRequested
         polishAvailable = !automatic && (pendingDictation || session.canPolish)
         polishDetail = pendingDictation ? "结束听写并润色本句" : "润色本句"
-        let nextVisualState = "\(session.phase)|\(presentation.title)|\(presentation.isError)|\(session.canCancel)|\(session.canEdit)|\(polishAvailable)|\(historyDepth > 0)"
+        retryMode = historyActionMode == "retry"
+        historyMode = (retryMode || redoEnabled) && session.historyReady
+        let nextVisualState = "\(session.phase)|\(presentation.title)|\(presentation.isError)|\(session.canCancel)|\(session.canEdit)|\(polishAvailable)|\(historyDepth > 0)|\(redoAvailable)"
         let animateState = panel.isVisible && visualState != nextVisualState
         visualState = nextVisualState
         applyPresentation(presentation)
@@ -275,7 +280,7 @@ final class ActionPanel: NSObject {
         }
         cancelDetail = session.cancelLabel
         cancelAvailable = session.canCancel || (session.phase == .undone && historyDepth > 0)
-        editAvailable = session.canEdit
+        editAvailable = session.canEdit || (retryMode ? retryAvailable : redoAvailable)
         refreshHints()
         shouldShow = true
         fitVisibleActions()

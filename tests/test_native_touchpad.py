@@ -76,6 +76,7 @@ def test_stop_gate_reaches_child_during_an_inflight_batch():
         posted.append(event)
         os.write(write_fd, b'\0')
     q = SimpleNamespace(CGPreflightPostEventAccess=lambda: True, kCGHIDEventTap=0,
+        kCGMouseEventDeltaX=4, kCGMouseEventDeltaY=5, CGEventSetIntegerValueField=lambda *args: None,
         kCGEventMouseMoved=1, CGEventPost=post)
     mouse = WorkerTouchpadMouse(read_fd, quartz=q, accessibility=SimpleNamespace(AXIsProcessTrusted=lambda: True))
     mouse._position = lambda: (0, 0)
@@ -100,6 +101,7 @@ def test_worker_discards_stale_batches_and_rechecks_revocation(monkeypatch):
         checks.append(threading.get_ident())
         return allowed[0]
     q = SimpleNamespace(CGPreflightPostEventAccess=permitted, kCGHIDEventTap=0,
+        kCGMouseEventDeltaX=4, kCGMouseEventDeltaY=5, CGEventSetIntegerValueField=lambda *args: None,
         kCGEventMouseMoved=1, CGEventPost=lambda tap, event: posted.append(event))
     read_fd, write_fd = os.pipe()
     mouse = WorkerTouchpadMouse(read_fd, quartz=q,

@@ -53,7 +53,12 @@ class TouchpadController(QObject):
         owner._settings.remove("touchpad/seconds")
         self._clicks = owner._settings.value("touchpad/clicks", True, type=bool)
         self._double_click = owner._settings.value("touchpad/doubleClick", True, type=bool)
-        self._tap_drag = owner._settings.value("touchpad/tapDrag", True, type=bool)
+        self._dwell_drag = owner._settings.value("touchpad/dwellDrag",
+            owner._settings.value("touchpad/tapDrag", True, type=bool), type=bool)
+        if owner._settings.contains("touchpad/tapDrag"):
+            owner._settings.setValue("touchpad/dwellDrag", self._dwell_drag)
+            owner._settings.remove("touchpad/tapDrag")
+        self._dwell_ms = round(self._number('dwellMs', 400, 300, 600))
         self._right_click = owner._settings.value("touchpad/rightClick", True, type=bool)
         self._scroll = owner._settings.value("touchpad/scroll", True, type=bool)
         self._scroll_gain = self._number('scrollGain', 1., .25, 3.)
@@ -534,7 +539,8 @@ class TouchpadController(QObject):
                 configure(clicks=self._clicks, double_click=self._double_click,
                           right_click=self._right_click, scroll=self._scroll, scroll_gain=self._scroll_gain,
                           invert_scroll=self._invert_scroll, horizontal_swipe=self._horizontal_swipe,
-                          gain=self._gain, invert_y=self._invert_y, tap_drag=self._tap_drag)
+                          gain=self._gain, invert_y=self._invert_y,
+                          dwell_drag=self._dwell_drag, dwell_ms=self._dwell_ms)
         self.changed.emit()
 
     @Property(bool, notify=changed)
@@ -544,10 +550,18 @@ class TouchpadController(QObject):
     def doubleClick(self, value): self._set_pointer_feature('_double_click', 'doubleClick', bool(value))
 
     @Property(bool, notify=changed)
-    def tapDrag(self): return self._tap_drag
+    def dwellDrag(self): return self._dwell_drag
 
-    @tapDrag.setter
-    def tapDrag(self, value): self._set_pointer_feature('_tap_drag', 'tapDrag', bool(value))
+    @dwellDrag.setter
+    def dwellDrag(self, value): self._set_pointer_feature('_dwell_drag', 'dwellDrag', bool(value))
+
+    @Property(int, notify=changed)
+    def dwellMs(self): return self._dwell_ms
+
+    @dwellMs.setter
+    def dwellMs(self, value):
+        if math.isfinite(value) and 300 <= value <= 600:
+            self._set_pointer_feature('_dwell_ms', 'dwellMs', round(value))
 
     @Property(bool, notify=changed)
     def rightClick(self): return self._right_click
@@ -918,7 +932,7 @@ class TouchpadController(QObject):
                                          scroll=self._scroll, double_click=self._double_click,
                                          right_click=self._right_click, scroll_gain=self._scroll_gain,
                                          invert_scroll=self._invert_scroll, horizontal_swipe=self._horizontal_swipe,
-                                         tap_drag=self._tap_drag,
+                                         dwell_drag=self._dwell_drag, dwell_ms=self._dwell_ms,
                                          raw2=run.protocol == 'raw2',
                                          click_context=click_context,
                                          on_capture_click=self._capture_click)

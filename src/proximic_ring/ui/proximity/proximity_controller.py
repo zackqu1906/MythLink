@@ -10,12 +10,13 @@ from pathlib import Path
 import sys
 import time
 import threading
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from PySide6.QtCore import QObject, Property, Qt, QProcess, QTimer, QCoreApplication, QSettings, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from ...gestures.gesture_settings import GESTURE_LABELS
+from .proximity_timeline import ProximityTimeline
 
 
 def helper_path() -> Path:
@@ -70,6 +71,16 @@ class ProximityController(QObject):
         self._error = ""
         self._lock_screen_message_status = ""
         self._rssi = "—"
+        self._raw_rssi = "—"
+        self._signal_from_samples = False
+        self._signal_timer = QTimer(self)
+        self._signal_timer.setSingleShot(True)
+        self._signal_timer.setTimerType(Qt.PreciseTimer)
+        self._signal_timer.timeout.connect(self._expire_signal)
+        self._timeline = ProximityTimeline(self)
+        self._trace_protocol = False
+        self._trace_sample_id = None
+        self._trace_clock_offset = None
         self._closed = False
         self._manually_disconnected = False
         self._last_monitor_state = None
@@ -87,6 +98,8 @@ class ProximityController(QObject):
         self._calibration_elapsed = 0.0
         self._calibration_samples = 0
         self._calibration_complete = False
+        self._live_calibration_id = ""
+        self._live_calibration_cancelling = False
         self._calibration_status = ""
         self._reconnect_target = ""
         self._monitor_received_at = 0.0
@@ -132,7 +145,7 @@ class ProximityController(QObject):
         self.changed.emit()
 
     @Property(bool, notify=changed)
-    def busy(self): return self._process is not None and self._command != "monitor"
+    def busy(self): return self.calibrating or (self._process is not None and self._command != "monitor")
     @Property(str, notify=lockNoticeChanged)
     def lockNoticeState(self): return self._lock_notice_state
     @Property(int, notify=lockNoticeChanged)
@@ -153,6 +166,28 @@ class ProximityController(QObject):
     def error(self): return self._error
     @Property(str, notify=changed)
     def rssi(self): return self._rssi
+    @Property(str, notify=changed)
+    def rawRssi(self): return self._raw_rssi
+    @Property(QObject, constant=True)
+    def signalTimeline(self): return self._timeline
+    @Property(str, notify=changed)
+    def baselineLearningStatus(self):
+        if self.calibrating:
+            return "正在采集 10 秒桌前校准，完成后更新基线。"
+        if not self._enabled:
+            return "开启离开锁屏后显示实时信号；已保存的校准仍会保留。"
+        if self._command != "monitor" or self._process is None:
+            return "距离监测已暂停。"
+        if self._raw_rssi == "—":
+            return "等待新的 RSSI 读数；超过 3 秒未更新的信号不再显示。"
+        if not self._baseline_options["enabled"]:
+            return "自动适应已关闭，保留当前基线。"
+        if not any(self._baseline_options[k] for k in ("keyboardMouse", "gestures", "voice")):
+            return "请在高级设置中至少开启一种自动采样来源。"
+        if self._thresholds.get("activity_calibration_active"):
+            samples = self._thresholds.get("activity_calibration_samples") or 0
+            return f"正在自动采样：{samples} / 5 个有效读数，跨度至少 2 秒后更新。"
+        return "等待所选操作后的信号；仅采集操作后 3 秒内的读数。"
     @Property("QVariantMap", notify=changed)
     def options(self): return dict(self._values)
     @Property("QVariantMap", notify=changed)
@@ -162,7 +197,7 @@ class ProximityController(QObject):
     @Property("QVariantMap", notify=changed)
     def savedCalibration(self): return dict(self._calibration)
     @Property(bool, notify=changed)
-    def calibrating(self): return self._command == "calibrate"
+    def calibrating(self): return self._command == "calibrate" or bool(self._live_calibration_id)
     @Property(float, notify=changed)
     def calibrationElapsed(self): return self._calibration_elapsed
     @Property(int, notify=changed)
@@ -171,6 +206,26 @@ class ProximityController(QObject):
     def calibrationStatus(self): return self._calibration_status
     @Property(str, constant=True)
     def componentPath(self): return str(helper_path().parents[2])
+
+    def _clear_signal(self):
+        self._signal_timer.stop()
+        self._raw_rssi = self._rssi = "—"
+
+    def _expire_signal(self):
+        self._clear_signal()
+        if self._timeline.state != "locked":
+            self._timeline.record(dict(state="stale"))
+        self.changed.emit()
+
+    def _update_signal(self, raw, smoothed, age=0):
+        # Display the native decision value; never apply a second UI-side filter.
+        if (any(type(v) not in (int, float) or not math.isfinite(v) for v in (raw, smoothed, age))
+                or not -100 <= raw <= -20 or not -110 <= smoothed < 0 or not 0 <= age < 3):
+            self._clear_signal()
+            return
+        self._raw_rssi = f"{raw:.1f}"
+        self._rssi = f"{smoothed:.1f}"
+        self._signal_timer.start(math.ceil((3 - age) * 1000))
 
     @Property("QVariantList", constant=True)
     def unlockGestureOptions(self):
@@ -316,13 +371,13 @@ class ProximityController(QObject):
         self._sync_baseline_options()
         self.changed.emit()
 
-    def _sync_baseline_options(self):
-        if self._command != "monitor" or self._process is None or not self._calibration:
+    def _sync_baseline_options(self, *, force=False):
+        if self.calibrating or self._command != "monitor" or self._process is None or not self._calibration:
             return
         mask = (sum(bit for key, bit in (("keyboardMouse", 1), ("gestures", 2), ("voice", 4))
                     if self._baseline_options[key]) if self._baseline_options["enabled"] else 0)
         state = (self._baseline_revision, mask)
-        if state == self._sent_baseline_options or (mask == 0 and self._sent_baseline_options is None):
+        if not force and (state == self._sent_baseline_options or (mask == 0 and self._sent_baseline_options is None)):
             return
         baseline = self._calibration["baseline"]
         result = self._process.write(f"baseline-options {state[0]} {mask} {baseline}\n".encode("ascii"))
@@ -375,6 +430,7 @@ class ProximityController(QObject):
         self._manually_disconnected = False
         if changed:
             self._stop()
+            self._timeline.reset()
         self._target = identifier; self._name = name or "当前戒指"
         if changed:
             self._load_calibration()
@@ -423,6 +479,8 @@ class ProximityController(QObject):
             self._stop_failed_operation()
             return False
         self._calibration = record
+        baseline = record["baseline"]
+        self._timeline.record(dict(baseline=baseline, threshold=baseline - 8))
         return True
 
     def _load_calibration(self):
@@ -431,6 +489,8 @@ class ProximityController(QObject):
         except (ValueError, TypeError):
             record = {}
         self._calibration = record if self._valid_calibration(record) else {}
+        baseline = self._calibration.get("baseline")
+        self._timeline.record(dict(baseline=baseline, threshold=baseline - 8 if baseline is not None else None))
 
     @Slot()
     def startCalibration(self):
@@ -446,13 +506,54 @@ class ProximityController(QObject):
         self._calibration_samples = 0
         self._calibration_complete = False
         self._calibration_status = ""
+        if self._enabled and self._command == "monitor" and self._process is not None:
+            self._live_calibration_id = str(uuid4())
+            self._live_calibration_cancelling = False
+            self._error = ""
+            self._clear_lock_notice()
+            self._timeline.record(dict(state="calibrating", countdown=0, weak_samples=0, reason=""))
+            self._status = "等待下一次 RSSI，开始采集 10 秒…"
+            result = self._process.write(f"calibration-start {self._live_calibration_id}\n".encode("ascii"))
+            if result is not None and result < 0:
+                self._finish_live_calibration("校准请求发送失败，原校准数据已保留")
+                return
+            self._watchdog.start(15000)
+            self.changed.emit()
+            return
         self._launch("calibrate", [self._target])
 
     @Slot()
     def cancelCalibration(self):
+        if self._live_calibration_id:
+            # A result already saved to settings has an acceptance queued. Let
+            # that acknowledgement finish instead of racing it with cancellation.
+            if not self._calibration_complete and not self._live_calibration_cancelling:
+                self._live_calibration_cancelling = True
+                self._process.write(f"calibration-cancel {self._live_calibration_id}\n".encode("ascii"))
+                self._watchdog.start(5000)
+            return
         if self.calibrating:
             self._finish_calibration("校准已保存，重连和重启后沿用" if self._calibration_complete
                                      else "校准已取消，原校准数据已保留")
+
+    def _finish_live_calibration(self, message):
+        self._live_calibration_id = ""
+        self._live_calibration_cancelling = False
+        self._calibration_status = message
+        self._status = message
+        if self._timeline.state == "calibrating":
+            self._timeline.record(dict(state="unknown", countdown=0, weak_samples=0, reason=""))
+        self._watchdog.start(10000)
+        self._sync_baseline_options(force=True)
+        self.changed.emit()
+
+    def _restart_after_calibration_failure(self, message):
+        """Only a broken helper/transport needs replacement, never a capture boundary."""
+        self._stop()
+        self._calibration_status = message
+        if self._enabled and not self._closed:
+            self._start_monitor()
+        self.changed.emit()
 
     def _finish_calibration(self, message):
         """End the exclusive capture and restore the user's current monitoring setting."""
@@ -464,7 +565,11 @@ class ProximityController(QObject):
         self.changed.emit()
 
     def _stop_failed_operation(self):
-        if self.calibrating:
+        if self._live_calibration_id:
+            self.cancelCalibration()
+            self._calibration_status = self._error
+            self.changed.emit()
+        elif self.calibrating:
             self._finish_calibration(self._error)
         else:
             self._stop(); self.changed.emit()
@@ -540,6 +645,8 @@ class ProximityController(QObject):
         self._last_monitor_state = None
         self._monitor_logged_at = 0.0
         self._error = ""; self._command = command
+        self._timeline.record(dict(state="calibrating" if command == "calibrate" else "unknown" if command == "monitor" else "paused",
+                                   required=self._values["awaySamples"], countdown=0, weak_samples=0, reason=""))
         self._status = ("正在启动距离监测…" if command == "monitor" else
                         "正在连接戒指，连接后开始采集 10 秒…" if command == "calibrate" else "正在检查或设置…")
         proc = self._factory(self); self._process = proc
@@ -557,7 +664,12 @@ class ProximityController(QObject):
         if proc is not self._process: return
         self._buffer.extend(bytes(proc.readAllStandardOutput()))
         if len(self._buffer) > 32768:
-            self._error = "距离监测通信异常"; self._stop_failed_operation(); return
+            self._error = "距离监测通信异常"
+            if self._live_calibration_id:
+                self._restart_after_calibration_failure(self._error)
+            else:
+                self._stop_failed_operation()
+            return
         while b"\n" in self._buffer:
             raw, _, self._buffer = self._buffer.partition(b"\n")
             try:
@@ -569,7 +681,40 @@ class ProximityController(QObject):
     def _accept(self, message, proc):
         if proc is not self._process: return
         kind = message.get("event")
-        if kind == "baseline_updated" and self._command == "monitor" and self._enabled:
+        if kind in {"calibration_progress", "calibration_complete", "calibration_finished"} and self._command == "monitor":
+            if not self._live_calibration_id or message.get("capture_id") != self._live_calibration_id:
+                return
+            if kind == "calibration_finished":
+                result = message.get("result")
+                if result == "failed":
+                    self._error = str(message.get("error", "校准未完成，原校准数据已保留"))[:250]
+                status = ("校准已保存，重连和重启后沿用" if result == "saved" and self._calibration_complete
+                          else self._error or "校准已取消，原校准数据已保留")
+                self._finish_live_calibration(status)
+                return
+            if self._live_calibration_cancelling or self._calibration_complete:
+                return
+        if kind == "signal_trace" and self._command == "monitor":
+            self._trace_protocol = True
+            sample_id = message.get("sample_id")
+            new_sample = type(sample_id) is int and sample_id != self._trace_sample_id
+            if new_sample:
+                self._trace_sample_id = sample_id
+            elif type(sample_id) is not int:
+                self._trace_sample_id = None  # A reconnect restarts the helper's sample counter.
+            trace_at = None
+            native_time = message.get("trace_uptime")
+            if self._timeline.valid_number(native_time):
+                if self._trace_clock_offset is None:
+                    self._trace_clock_offset = self._timeline.clockNow() - native_time * 1000
+                trace_at = native_time * 1000 + self._trace_clock_offset
+            self._timeline.record(dict(
+                state=message.get("signal_state"), baseline=message.get("baseline"), threshold=message.get("lock"),
+                raw=message.get("raw_rssi"), smoothed=message.get("decision_rssi"),
+                weak_samples=message.get("lock_departure_samples"), required=message.get("required_departure_samples"),
+                countdown=message.get("lock_countdown_seconds"), reason=message.get("lock_reason", "")), sample=new_sample, at=trace_at)
+            return
+        if kind == "baseline_updated" and self._command == "monitor" and self._enabled and not self.calibrating:
             if (message.get("revision") != self._baseline_revision
                     or not self._baseline_options["enabled"]):
                 return
@@ -604,6 +749,12 @@ class ProximityController(QObject):
             self._status = (f"正在校准：{self._calibration_elapsed:.1f} / 10 秒，请保持正常坐姿"
                             if self._calibration_elapsed else "正在连接戒指，连接后开始采集 10 秒…")
             self._watchdog.start(10000)
+            if self._live_calibration_id:
+                self._monitor_received_at = time.monotonic()
+                # Progress replaces periodic monitor reports during capture.
+                # Keep the real host connection lease alive so its expiry cannot
+                # toggle native locking availability and reset the ongoing EMA.
+                self.syncConnectionState()
             self.changed.emit(); return
         if kind == "calibration_complete" and self.calibrating and not self._calibration_complete:
             record = {key: message.get(key) for key in ("baseline", "samples", "duration_seconds")}
@@ -616,7 +767,14 @@ class ProximityController(QObject):
             self._calibration_complete = True
             self._calibration_elapsed = 10.0
             self._calibration_samples = len(record["samples"])
+            self._thresholds.update(baseline=record["baseline"], lock=record["baseline"] - 8,
+                                    unlock=record["baseline"] - 4)
             self._status = "校准已保存，重连和重启后沿用"
+            if self._live_calibration_id:
+                sent = proc.write(f"calibration-accept {self._live_calibration_id}\n".encode("ascii"))
+                if sent is not None and sent < 0:
+                    self._error = "校准已保存，但监测通信中断；请重新开启距离监测"
+                    self._stop()
             self.changed.emit(); return
         if kind in {"prepare_lock", "locked", "unlocked", "unlock_attempt", "error"}:
             self.diagnostic.emit({"action": kind, "error": str(message.get("error", ""))[:250],
@@ -642,7 +800,8 @@ class ProximityController(QObject):
             self._thresholds = {k: message.get(k) for k in
                                 ("thresholds_ready", "baseline", "lock", "unlock", "calibration_samples", "calibration_window",
                                  "calibration_active", "rssi_samples", "raw_rssi", "disconnect_evidence")}
-            for key in ("activity_calibration_samples", "activity_calibration_active", "activity_lock_protected"):
+            for key in ("activity_calibration_samples", "activity_calibration_active", "activity_calibration_sources",
+                        "activity_lock_protected"):
                 self._thresholds[key] = message.get(key)
             self._sync_baseline_options()
         if kind == "calibration_reset":
@@ -651,6 +810,16 @@ class ProximityController(QObject):
         if kind == "calibration_sample":
             self.diagnostic.emit({"action": kind, **{k: message.get(k) for k in
                                   ("raw_rssi", "decision_rssi", "collecting", "lock", "unlock", "sample_interval_seconds")}})
+            if self._command in ("monitor", "calibrate"):
+                self._signal_from_samples = True
+                self._update_signal(message.get("raw_rssi"), message.get("decision_rssi"))
+                if self._command == "calibrate" or ("sample_id" not in message and not self._trace_protocol):
+                    # New helpers send post-decision trace immediately after this
+                    # callback. Older helpers can still plot measurements, without
+                    # inventing a departure count from the return-wake counter.
+                    self._timeline.record(dict(raw=message.get("raw_rssi"), smoothed=message.get("decision_rssi"),
+                                               state="calibrating" if self.calibrating else self._timeline.state), sample=True)
+                self.changed.emit()
             return
         if kind in ("status", "monitor"):
             if kind == "status": self._password_status_checked = True
@@ -677,9 +846,23 @@ class ProximityController(QObject):
                                               "gesture_eligible", "gesture_ready", "unlock_ready", "return_wake_pending")},
                                           "error": self._error})
                 self._status = str(message.get("state", "正在监测距离"))[:100]
+                if not self._trace_protocol:
+                    state = ("locked" if message.get("locked") else "disconnected" if message.get("connected") is False
+                             else "paused" if message.get("error") else "protected" if message.get("activity_lock_protected")
+                             else "locking" if message.get("lock_pending") else "countdown" if message.get("lock_countdown_seconds", 0)
+                             else "unknown")
+                    self._timeline.record(dict(state=state, countdown=message.get("lock_countdown_seconds", 0)))
                 if message.get("locked") and message.get("unlock_ready") and not self._error:
                     self._status = f"手势已连接，请{self.unlockGestureLabel}解锁"
-                self._rssi = str(message.get("rssi", "—"))
+                age = message.get("rssi_age_seconds")
+                if (message.get("connected") is not True or type(age) not in (int, float)
+                        or not math.isfinite(age) or not 0 <= age < 3
+                        or message.get("rssi") is None):
+                    self._clear_signal()
+                elif not self._signal_from_samples:
+                    # Older helpers may only report once per second. Do not
+                    # overwrite callback precision with their rounded summary.
+                    self._update_signal(message.get("raw_rssi"), message.get("rssi"), age)
                 self.syncConnectionState()
                 self.syncGestureReadiness()
                 if self.reconnect_target:
@@ -690,6 +873,9 @@ class ProximityController(QObject):
                                 and self._permission and self._calibration else "请连接戒指并完成校准及下方设置")
         elif kind == "prepare_lock" and self._enabled and self._command == "monitor":
             self._clear_lock_notice()
+            if self.calibrating:
+                proc.write(b"lock-cancel\n")
+                return
             if not self.lock_connection_ready:
                 self.syncConnectionState()
                 proc.write(b"lock-cancel\n")
@@ -697,6 +883,7 @@ class ProximityController(QObject):
             self._input_resume_allowed = False
             self._lock_preparing = True
             self._gesture_state = (True, "")
+            self._timeline.record(dict(state="locking", reason=message.get("reason", "")))
             self.lockPreparing.emit()  # Synchronous UI-thread pause before acknowledging the helper.
             if self._process is proc and self._enabled:
                 proc.write(b"lock-ready\n" if self.lock_connection_ready else b"lock-cancel\n")
@@ -705,6 +892,7 @@ class ProximityController(QObject):
             self._input_resume_allowed = False
             self._lock_preparing = False
             self._gesture_state = (True, "")
+            self._timeline.record(dict(state="locked"))
             self.locked.emit()
         elif kind == "unlocked" and self._enabled:
             self._clear_lock_notice()
@@ -712,15 +900,17 @@ class ProximityController(QObject):
             self._lock_preparing = False
             self._monitor_received_at = time.monotonic()
             self._gesture_state = (False, "")
+            self._timeline.record(dict(state="unknown", countdown=0, weak_samples=0, reason=""))
             self.unlocked.emit()
         elif kind == "error":
             self._clear_lock_notice()
+            self._timeline.record(dict(state="paused"))
             self._error = str(message.get("error", "距离监测异常"))[:250]
         self.changed.emit()
 
     def _update_lock_notice(self, message):
         # Display the helper's authoritative clock; the HUD never initiates a lock.
-        if (not self._enabled or self._command != "monitor" or message.get("locked") is not False
+        if (self.calibrating or not self._enabled or self._command != "monitor" or message.get("locked") is not False
                 or not message.get("permission") or not message.get("connected")
                 or not message.get("locking_enabled") or message.get("error")):
             self._clear_lock_notice()
@@ -754,6 +944,12 @@ class ProximityController(QObject):
         self._read(proc)
         if proc is not self._process: return  # Reading can finish calibration and launch a new monitor.
         command = self._command
+        if self._live_calibration_id:
+            self._process = None
+            proc.deleteLater()
+            self._restart_after_calibration_failure(
+                "校准已保存，监测组件已重启" if self._calibration_complete else self._error or "校准组件已退出，原校准数据已保留")
+            return
         if command == "calibrate":
             if not self._calibration_complete:
                 self._error = self._error or "校准未完成，原校准数据已保留"
@@ -763,6 +959,8 @@ class ProximityController(QObject):
         self._process = None; self._command = ""; self._watchdog.stop(); proc.deleteLater()
         if command == "monitor":
             self._clear_lock_notice()
+            self._clear_signal()
+            self._timeline.record(dict(state="paused"))
             self._status = "距离监测已停止"
             self._error = self._error or "监测组件已退出，请关闭后重新开启此功能"
         elif code != 0:
@@ -774,16 +972,28 @@ class ProximityController(QObject):
     def _process_error(self, proc):
         if proc is not self._process: return
         self._error = "距离锁屏组件无法运行，请重新构建或安装"
+        if self._live_calibration_id:
+            self._restart_after_calibration_failure(self._error); return
         self._stop_failed_operation()
 
     def _timeout(self):
         self._error = ("校准组件未响应，原校准数据已保留" if self.calibrating
                        else "距离锁屏组件未响应，已停止自动操作")
         self.diagnostic.emit({"action": "timeout", "error": self._error})
+        if self._live_calibration_cancelling or (self._live_calibration_id and self._calibration_complete):
+            self._restart_after_calibration_failure(self._error); return
         self._stop_failed_operation()
 
     def _stop(self):
+        self._live_calibration_id = ""
+        self._live_calibration_cancelling = False
         self._clear_lock_notice()
+        self._clear_signal()
+        self._signal_from_samples = False
+        self._trace_protocol = False
+        self._trace_sample_id = None
+        self._trace_clock_offset = None
+        self._timeline.record(dict(state="paused", countdown=0, weak_samples=0, reason=""))
         self._input_resume_allowed = False
         self._lock_preparing = False
         self._gesture_state = (False, "")

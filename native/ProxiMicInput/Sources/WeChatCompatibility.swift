@@ -16,6 +16,38 @@ enum EditSourceComparison: String {
         return surplus.unicodeScalars.allSatisfy { $0 == "\n" || $0 == "\r" || $0 == "\u{2029}" }
             ? .terminalParagraphs : .different
     }
+
+    /// Explain a disagreement without logging text, hashes, or changing the
+    /// comparison used to authorize a write. Offsets are UTF-16, like IMK.
+    static func diagnostics(_ cached: EditorTextRange?, with selected: String) -> [String: Any] {
+        guard let cached else { return ["source_relation": "unavailable"] }
+        let expected = Array(cached.text.utf16), observed = Array(selected.utf16)
+        var prefix = 0, suffix = 0
+        while prefix < min(expected.count, observed.count), expected[prefix] == observed[prefix] { prefix += 1 }
+        while suffix < min(expected.count, observed.count) - prefix,
+              expected[expected.count - suffix - 1] == observed[observed.count - suffix - 1] { suffix += 1 }
+        func kind(_ value: UInt16?) -> String {
+            guard let value else { return "end" }
+            switch value {
+            case 9: return "tab"
+            case 10: return "lf"
+            case 13: return "cr"
+            case 32: return "space"
+            case 0xA0: return "nbsp"
+            case 0x2028: return "line_separator"
+            case 0x2029: return "paragraph_separator"
+            case 0xFFFC: return "object"
+            case 0x200B, 0x200C, 0x200D, 0xFEFF: return "zero_width"
+            case 0xD800...0xDFFF: return "surrogate"
+            default: return "other"
+            }
+        }
+        let relation = expected == observed ? "equal" :
+            (prefix == expected.count ? "snapshot_prefix" : (prefix == observed.count ? "selected_prefix" : "different"))
+        return ["source_relation": relation, "source_common_prefix": prefix, "source_common_suffix": suffix,
+                "source_first_expected_kind": kind(prefix < expected.count ? expected[prefix] : nil),
+                "source_first_observed_kind": kind(prefix < observed.count ? observed[prefix] : nil)]
+    }
 }
 
 /// Default edits use native selection then one IMK commit. Sentence undo selects
@@ -104,6 +136,10 @@ final class WeChatCompatibility {
 
     func prepareContext(instruction: String, selectedText: String, source: EditorTextRange?, candidate: String) {
         cancel(); failure = nil; readbackDiagnostics = [:]
+        readbackDiagnostics = ["operation_stage": "context_committed", "write_sent": false,
+            "source_range": source.map { [$0.range.location, $0.range.length] } ?? [-1, -1],
+            "instruction_characters": instruction.utf16.count, "candidate_characters": candidate.utf16.count,
+            "caret_restore_limit": 512]
         contextInstruction = instruction; contextSelectedText = selectedText
         contextSource = source; contextCandidate = candidate
         contextPrefix = ""; contextWhole = ""; contextCaret = 0
@@ -210,7 +246,8 @@ final class WeChatCompatibility {
 
     private func start(range: NSRange, before: String, text: String) {
         cancel(); failure = nil
-        readbackDiagnostics = [:]
+        readbackDiagnostics = ["write_sent": false, "source_range": [range.location, range.length],
+                               "caret_restore_limit": 512]
         operationStartedAt = clock()
         guard isValidRange(range), range.length == (before as NSString).length else {
             failure = "输入框原文范围无效"; return
@@ -227,6 +264,8 @@ final class WeChatCompatibility {
         stage = next; keyAcknowledged = false
         readbackDiagnostics["operation_stage"] = next
         readbackDiagnostics["key_acknowledged"] = false
+        readbackDiagnostics["key_command"] = command
+        readbackDiagnostics["key_count"] = count
         eventTag = Int64.random(in: 1...(1 << 50))
         keyDeliveryDeadline = clock() + 0.5
         switch command {
@@ -243,7 +282,7 @@ final class WeChatCompatibility {
         let token = generation
         sendKey(command, count, eventTag) { [weak self] error in
             guard let self, self.pending, self.generation == token else { return }
-            if let error { self.fail(error); return }
+            if let error { self.fail(error, code: "key_delivery_failed"); return }
             self.keyAcknowledged = true
             self.readbackDiagnostics["key_acknowledged"] = true
             // Posting isn't delivery. Also require selection/text readback.
@@ -251,7 +290,11 @@ final class WeChatCompatibility {
         }
     }
 
-    private func fail(_ message: String) { failure = message; cancel() }
+    private func fail(_ message: String, code: String = "unconfirmed") {
+        readbackDiagnostics["failure_code"] = code
+        readbackDiagnostics["operation_ms"] = (clock() - operationStartedAt) * 1000
+        failure = message; cancel()
+    }
 
     private func selectedDocument() -> String? {
         let probe = client.probe()
@@ -265,6 +308,7 @@ final class WeChatCompatibility {
               probe.selection.length <= 512 * 1024,
               let value = client.readText(in: probe.selection),
               (value as NSString).length == probe.selection.length else { return nil }
+        readbackDiagnostics["selected_characters"] = value.utf16.count
         // A dropped Cmd+A must not turn a prefix selection or an empty caret
         // into a claimed full document. Check the boundary using both lengths
         // so a surrogate pair at the boundary is not mistaken for no suffix.
@@ -281,10 +325,16 @@ final class WeChatCompatibility {
         let tail = string.substring(from: resultCaret)
         // Key motion uses composed characters; refuse a split grapheme.
         let prefix = string.substring(to: resultCaret)
+        readbackDiagnostics["tail_characters"] = tail.count
+        readbackDiagnostics["tail_utf16"] = tail.utf16.count
+        readbackDiagnostics["target_selection"] = [resultCaret, 0]
+        readbackDiagnostics["grapheme_boundary"] = (prefix + tail).count == prefix.count + tail.count
         guard (prefix + tail).count == prefix.count + tail.count, tail.count <= 512 else {
-            fail("输入框原文过长或光标位于复合字符内部，未移动光标"); return
+            fail("输入框原文过长或光标位于复合字符内部，未移动光标", code: "caret_restore_limit_or_boundary"); return
         }
-        if client.selection() == NSRange(location: resultCaret, length: 0) {
+        let selected = client.selection()
+        readbackDiagnostics["observed_selection"] = isValidRange(selected) ? [selected.location, selected.length] : [-1, -1]
+        if selected == NSRange(location: resultCaret, length: 0) {
             stage = "verify"; keyAcknowledged = true; earliest = clock()
             return
         }
@@ -295,6 +345,8 @@ final class WeChatCompatibility {
         // capture already read the selected original in this same run-loop
         // turn. No second full-document query before the single native write.
         selectionWriteSent = true
+        readbackDiagnostics["write_sent"] = true
+        readbackDiagnostics["operation_stage"] = "written"
         selectionWrittenAt = clock()
         if result.isEmpty {
             key("delete", next: "written")
@@ -307,7 +359,7 @@ final class WeChatCompatibility {
     func advance() {
         guard pending else { return }
         guard clock() < deadline else {
-            fail(stage.hasPrefix("native_") ? "输入框未确认编辑结果或末尾光标，已停止本次操作" : (stage.hasPrefix("sentence_") ? "输入框未确认本句选取或撤销结果，已停止本次操作" : "输入框未确认选区或替换结果，已停止本次操作"))
+            fail(stage.hasPrefix("native_") ? "输入框未确认编辑结果或末尾光标，已停止本次操作" : (stage.hasPrefix("sentence_") ? "输入框未确认本句选取或撤销结果，已停止本次操作" : "输入框未确认选区或替换结果，已停止本次操作"), code: "operation_timeout")
             return
         }
         guard keyAcknowledged, clock() >= earliest else { return }
@@ -315,6 +367,8 @@ final class WeChatCompatibility {
         switch stage {
         case "context_committed":
             let probe = client.probe()
+            readbackDiagnostics["observed_selection"] = isValidRange(probe.selection) ? [probe.selection.location, probe.selection.length] : [-1, -1]
+            readbackDiagnostics["observed_marked"] = isValidRange(probe.markedRange) ? [probe.markedRange.location, probe.markedRange.length] : [-1, -1]
             guard pending, generation == token, isValidRange(probe.selection), probe.selection.length == 0,
                   !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }
             // Cmd+Shift+Up is not a portable selection command in web editors.
@@ -322,15 +376,17 @@ final class WeChatCompatibility {
             // position alone never authorizes a write: verify the instruction
             // and the entire original against the selected text below.
             contextCaret = probe.selection.location
+            readbackDiagnostics["committed_caret"] = contextCaret
             key("select_all", next: "context_whole")
         case "context_whole":
             guard let whole = selectedDocument(), pending, generation == token else { return }
             guard contextCaret <= (whole as NSString).length else {
-                fail("输入框光标与当前原文不一致，未执行编辑"); return
+                fail("输入框光标与当前原文不一致，未执行编辑", code: "caret_outside_document"); return
             }
             contextPrefix = (whole as NSString).substring(to: contextCaret)
+            readbackDiagnostics["instruction_matches"] = contextPrefix.hasSuffix(contextInstruction)
             guard contextPrefix.hasSuffix(contextInstruction) else {
-                fail("当前选区未包含刚才的口述指令，未执行编辑"); return
+                fail("当前选区未包含刚才的口述指令，未执行编辑", code: "instruction_mismatch"); return
             }
             contextWhole = whole
             let instructionRange = NSRange(location: (contextPrefix as NSString).length - (contextInstruction as NSString).length,
@@ -341,9 +397,12 @@ final class WeChatCompatibility {
                 markedRange: unspecifiedRange, selectedText: contextSelectedText, documentAccess: true,
                 readableContext: EditorTextRange(text: source, range: NSRange(location: 0, length: (source as NSString).length)))
             let comparison = EditSourceComparison.compare(contextSource, with: source)
-            readbackDiagnostics = ["expected_characters": contextSource?.range.length ?? -1,
+            readbackDiagnostics.merge(["expected_characters": contextSource?.range.length ?? -1,
                 "observed_characters": (source as NSString).length,
-                "text_matches": comparison != .different, "source_match": comparison.rawValue]
+                "source_expected_characters": contextSource?.range.length ?? -1,
+                "source_observed_characters": (source as NSString).length,
+                "text_matches": comparison != .different, "source_match": comparison.rawValue]) { _, new in new }
+            readbackDiagnostics.merge(EditSourceComparison.diagnostics(contextSource, with: source)) { _, new in new }
             if comparison != .different, let original = contextOriginal, let candidate = contextCandidate {
                 // Source and native selection agree. Replace immediately while
                 // selected; no restore/reselect cycle, clipboard, or second read.
@@ -359,10 +418,15 @@ final class WeChatCompatibility {
                 return
             }
             let tail = (whole as NSString).substring(from: (contextPrefix as NSString).length)
-            guard tail.count <= 512 else { fail("编辑位置距文末过远，未移动光标或调用模型"); return }
+            readbackDiagnostics["tail_characters"] = tail.count
+            readbackDiagnostics["tail_utf16"] = tail.utf16.count
+            readbackDiagnostics["target_selection"] = [(contextPrefix as NSString).length, 0]
+            guard tail.count <= 512 else { fail("编辑位置距文末过远，未移动光标或调用模型", code: "source_mismatch_restore_limit"); return }
             key("caret_from_end", count: tail.count, next: "context_caret")
         case "context_caret":
             let probe = client.probe()
+            readbackDiagnostics["observed_selection"] = isValidRange(probe.selection) ? [probe.selection.location, probe.selection.length] : [-1, -1]
+            readbackDiagnostics["observed_marked"] = isValidRange(probe.markedRange) ? [probe.markedRange.location, probe.markedRange.length] : [-1, -1]
             guard pending, generation == token, let original = contextOriginal,
                   probe.selection == NSRange(location: (contextPrefix as NSString).length, length: 0),
                   !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }
@@ -406,7 +470,10 @@ final class WeChatCompatibility {
             guard let whole = selectedDocument(), isValidRange(expectedRange, length: (whole as NSString).length) else { return }
             guard pending, generation == token else { return }
             guard (whole as NSString).substring(with: expectedRange) == expectedBefore else {
-                fail("输入框原文已变化，未执行替换"); return
+                readbackDiagnostics.merge(EditSourceComparison.diagnostics(
+                    EditorTextRange(text: expectedBefore, range: expectedRange),
+                    with: (whole as NSString).substring(with: expectedRange))) { _, new in new }
+                fail("输入框原文已变化，未执行替换", code: "replacement_source_mismatch"); return
             }
             result = (whole as NSString).replacingCharacters(in: expectedRange, with: replacement)
             resultCaret = requestedCaret ?? (selectBeforeReplacing ? (result as NSString).length :
@@ -423,11 +490,15 @@ final class WeChatCompatibility {
                 let observed = client.readText(in: NSRange(location: 0, length: (result as NSString).length))
                 guard pending, generation == token else { return }
                 let wholeMatches = observed == result
-                readbackDiagnostics = ["expected_characters": (result as NSString).length,
+                readbackDiagnostics.merge(["replacement_expected_characters": (result as NSString).length,
+                    "replacement_observed_characters": observed.map { ($0 as NSString).length } ?? -1,
+                    "expected_characters": (result as NSString).length,
                     "observed_characters": observed.map { ($0 as NSString).length } ?? -1,
-                    "text_matches": wholeMatches, "ack_source": wholeMatches ? "text" : "selection_collapse",
+                    "text_matches": wholeMatches,
+                    "replacement_text_matches": wholeMatches, "ack_source": wholeMatches ? "text" : "selection_collapse",
+                    "operation_stage": "written", "observed_selection": isValidRange(probe.selection) ? [probe.selection.location, probe.selection.length] : [-1, -1],
                     "operation_ms": (clock() - operationStartedAt) * 1000,
-                    "post_write_ms": (clock() - selectionWrittenAt) * 1000]
+                    "post_write_ms": (clock() - selectionWrittenAt) * 1000]) { _, new in new }
                 // A native selection was verified before a single insertText.
                 // If the editor drops its document cache after that write,
                 // selection collapse at the result end acknowledges delivery.
@@ -450,6 +521,8 @@ final class WeChatCompatibility {
             moveCaret()
         case "verify":
             let probe = client.probe()
+            readbackDiagnostics["observed_selection"] = isValidRange(probe.selection) ? [probe.selection.location, probe.selection.length] : [-1, -1]
+            readbackDiagnostics["observed_marked"] = isValidRange(probe.markedRange) ? [probe.markedRange.location, probe.markedRange.length] : [-1, -1]
             if selectBeforeReplacing, replacementTextVerified {
                 guard probe.selection == NSRange(location: resultCaret, length: 0),
                       !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }

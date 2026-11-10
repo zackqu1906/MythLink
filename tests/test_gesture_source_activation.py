@@ -281,8 +281,15 @@ def test_first_tap_without_system_shortcut_still_requires_live_imk_focus(compone
     bridge.focus_state = lambda **_: state['reply']
     target = system.BUNDLE_ID + '.dictation'
     defaults = SimpleNamespace(persistentDomainForName_=lambda _: {'AppleSymbolicHotKeys': {'61': binding}})
-    monkeypatch.setitem(sys.modules, 'Foundation', SimpleNamespace(
-        NSUserDefaults=SimpleNamespace(standardUserDefaults=lambda: defaults)))
+    defaults_type = SimpleNamespace(standardUserDefaults=lambda: defaults)
+    try:
+        import Foundation
+    except ImportError:
+        monkeypatch.setitem(sys.modules, 'Foundation', SimpleNamespace(NSUserDefaults=defaults_type))
+    else:
+        # Qt may initialize its permission plugin between tests. Replacing the
+        # entire Foundation module can poison that native framework import.
+        monkeypatch.setattr(Foundation, 'NSUserDefaults', defaults_type)
     class Backend:
         shortcut = staticmethod(system.SystemInputSources.shortcut)
         def foreground(self): return ORIGIN
@@ -308,3 +315,53 @@ def test_first_tap_without_system_shortcut_still_requires_live_imk_focus(compone
     assert len(helpers) == 1 and helpers[0].cancelled
     if status == 'text':
         assert result['value'].target == (bridge.epoch, 'fresh-client', '', *ORIGIN, (0, 0))
+
+
+@pytest.mark.parametrize('selection', [[0, 0], [-1, -1]])
+@pytest.mark.parametrize('auto_return', [False, True])
+def test_ax_free_tap_with_multiple_keyboards_uses_guarded_helper_and_returns_failures(
+        component, monkeypatch, selection, auto_return):
+    from proximic_ring.desktop.app_shortcuts import MacAppShortcuts
+    inline, _ = component
+    inline.set_auto_return_input_source(auto_return)
+    monkeypatch.setattr(inline, '_foreground_identity', lambda: ORIGIN)
+    monkeypatch.setattr(MacAppShortcuts, 'capture', lambda *_, **__: pytest.fail('AX precheck'))
+    state = dict(source='abc', reply={'ready': False})
+    target = system.BUNDLE_ID + '.dictation'
+    bridge = inline._bridge
+    bridge.epoch, bridge.connected = inline._epoch, True
+    bridge.focus_state = lambda **_: state['reply']
+
+    class Backend:
+        def foreground(self): return ORIGIN
+        def sources(self, **_): return {'abc', 'pinyin', target}
+        def current(self, **_): return state['source']
+        def shortcut(self): pytest.fail('Do not cycle through an intermediate keyboard')
+    monkeypatch.setattr(system, 'SystemInputSources', Backend)
+    calls = []
+
+    class ProbeSource(Source):
+        def start_probe(self, origin, expected, on_borrow):
+            assert origin == ORIGIN and expected == state['source'] == 'abc'
+            on_borrow('abc')
+            calls.append('borrow')
+            state['source'] = target
+            state['reply'] = dict(epoch=bridge.epoch, application=ORIGIN[0], ready=True,
+                                 client_id='fresh-client', utterance_id='', selection=selection)
+            QTimer.singleShot(0, lambda: self.event.emit(dict(event='selected', previous_source='abc')))
+
+        def restore(self, origin, previous, expected):
+            assert origin == ORIGIN and previous == 'abc' and expected == state['source'] == target
+            calls.append('restore')
+            state['source'] = previous
+            QTimer.singleShot(0, lambda: self.event.emit(dict(event='restored', restored=True)))
+
+    inline._gesture_source_activation._factory = ProbeSource
+    thread, result = worker(lambda: inline.capture_start_focus(require_editable=True))
+    until(lambda: not thread.is_alive())
+    thread.join()
+    accepted = selection == [0, 0]
+    assert result['value'].status == ('text' if accepted else 'nontext')
+    assert calls == (['borrow'] if accepted else ['borrow', 'restore'])
+    assert state['source'] == (target if accepted else 'abc')
+    assert bool(inline._source_return.probe) is (accepted and auto_return)

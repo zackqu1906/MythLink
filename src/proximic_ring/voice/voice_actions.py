@@ -23,12 +23,8 @@ ACTION_EDIT = "edit"
 ACTION_CANCEL = "cancel"
 ACTION_SWITCH_MODE = "switch_mode"
 ACTION_UNDO = "undo"
-
-DEFAULT_MODE_SWITCH_SHORTCUT = "F8"
-MODE_SWITCH_SHORTCUTS = tuple(f"F{number}" for number in range(5, 13))
-_WINDOWS_FUNCTION_KEYS = {
-    f"F{number}": 0x6F + number for number in range(5, 13)
-}
+ACTION_REDO = "redo"
+ACTION_RETRY_EDIT = "retry_edit"
 
 
 def cancel_or_undo_action(*, interaction_active: bool, undo_active: bool) -> str | None:
@@ -44,6 +40,8 @@ def voice_action_for_gesture(
     interaction_active: bool = False,
     correction_active: bool = False,
     undo_active: bool = False,
+    redo_active: bool = False,
+    retry_active: bool = False,
     bindings: GestureBindings = GestureBindings(),
 ) -> str | None:
     """Resolve a recognized gesture against the current UI action availability."""
@@ -53,20 +51,11 @@ def voice_action_for_gesture(
         )
     if name and name in bindings.switch_mode and correction_active:
         return ACTION_SWITCH_MODE
+    if name and name in bindings.switch_mode and redo_active:
+        return ACTION_REDO
+    if name and name in bindings.switch_mode and retry_active:
+        return ACTION_RETRY_EDIT
     return None
-
-
-def normalize_mode_switch_shortcut(value: object) -> str:
-    shortcut = str(value or "").strip().upper()
-    return (
-        shortcut
-        if shortcut in MODE_SWITCH_SHORTCUTS
-        else DEFAULT_MODE_SWITCH_SHORTCUT
-    )
-
-
-def windows_mode_switch_key_code(shortcut: object) -> int:
-    return _WINDOWS_FUNCTION_KEYS[normalize_mode_switch_shortcut(shortcut)]
 
 
 if os.name == "nt":
@@ -98,33 +87,23 @@ class WindowsVoiceActionHotkeys:
     WM_QUIT = 0x0012
     PM_NOREMOVE = 0x0000
     VK_MENU = 0x12
-    VK_CONTROL = 0x11
-    VK_SHIFT = 0x10
-    VK_MODE_SWITCH = 0x77  # F8
     _ALT_ACTIONS = {
         0x31: ACTION_INPUT,      # Alt+1
         0x32: ACTION_EDIT,       # Alt+2
     }
+
     def __init__(
         self,
         on_action: Callable[[str], None],
         *,
-        mode_switch_shortcut: Callable[[], str] | None = None,
         is_interaction_active: Callable[[], bool] | None = None,
-        is_mode_correction_active: Callable[[], bool] | None = None,
         is_undo_active: Callable[[], bool] | None = None,
         on_error: Callable[[str], None] = print,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("全局语音动作快捷键目前仅支持 Windows")
         self._on_action = on_action
-        self._mode_switch_shortcut = mode_switch_shortcut or (
-            lambda: DEFAULT_MODE_SWITCH_SHORTCUT
-        )
         self._is_interaction_active = is_interaction_active or (lambda: False)
-        self._is_mode_correction_active = (
-            is_mode_correction_active or (lambda: False)
-        )
         self._is_undo_active = is_undo_active or (lambda: False)
         self._on_error = on_error
         self._ready = threading.Event()
@@ -169,14 +148,8 @@ class WindowsVoiceActionHotkeys:
                     is_up = message in (self.WM_KEYUP, self.WM_SYSKEYUP)
                     action = self._action_for_key(
                         key,
-                        mode_switch_key=windows_mode_switch_key_code(
-                            self._mode_switch_shortcut()
-                        ),
                         alt_down=self._alt_down(user32),
-                        control_down=self._key_down(user32, self.VK_CONTROL),
-                        shift_down=self._key_down(user32, self.VK_SHIFT),
                         interaction_active=self._is_interaction_active(),
-                        correction_active=self._is_mode_correction_active(),
                         undo_active=self._is_undo_active(),
                     )
                     if is_up:
@@ -233,11 +206,7 @@ class WindowsVoiceActionHotkeys:
         key: int,
         *,
         alt_down: bool,
-        control_down: bool = False,
-        shift_down: bool = False,
-        mode_switch_key: int | None = None,
         interaction_active: bool = False,
-        correction_active: bool = False,
         undo_active: bool = False,
     ) -> str | None:
         if alt_down:
@@ -250,19 +219,6 @@ class WindowsVoiceActionHotkeys:
             return cancel_or_undo_action(
                 interaction_active=interaction_active, undo_active=undo_active
             )
-        if (
-            correction_active
-            and int(key)
-            == (
-                cls.VK_MODE_SWITCH
-                if mode_switch_key is None
-                else int(mode_switch_key)
-            )
-            and not alt_down
-            and not control_down
-            and not shift_down
-        ):
-            return ACTION_SWITCH_MODE
         return None
 
     @staticmethod

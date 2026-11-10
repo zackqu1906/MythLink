@@ -110,7 +110,9 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     var inputBuffer = Data()
     let target: UUID
     let observing: Bool
-    let calibrating: Bool
+    let calibrationOnly: Bool
+    var liveCalibration = LiveCalibrationSession()
+    var calibrating: Bool { calibrationOnly || liveCalibration.active }
     let startedAt = ProcessInfo.processInfo.systemUptime
     var central: CBCentralManager!
     var peripheral: CBPeripheral?
@@ -125,6 +127,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     var lastLock: Bool?
     var lastReportAt = -100.0
     var lastCountdownSeconds = 0
+    var lastSignalTrace = ""
     var connectedSince: Double?
     var rssiSamples = 0
     var lastRawRSSI: Double?
@@ -168,7 +171,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     init(target: UUID, policy: PresencePolicy, observing: Bool = false,
          calibrating: Bool = false, baseline: Double? = nil) {
         self.target = target; self.policy = policy; self.observing = observing
-        self.calibrating = calibrating
+        self.calibrationOnly = calibrating
         self.calibration = ProximityCalibration(baseline: baseline)
         self.policy.thresholdsReady = self.calibration.qualified
         self.policy.setLockingEnabled(observing)
@@ -208,7 +211,17 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             let line = String(data: inputBuffer[..<end], encoding: .utf8) ?? ""
             inputBuffer.removeSubrange(...end)
             let fields = line.split(separator: " ").map(String.init)
-            if fields.count == 4 && fields[0] == "baseline-options",
+            if fields.count == 2 && fields[0] == "calibration-start", UUID(uuidString: fields[1]) != nil {
+                startLiveCalibration(identifier: fields[1])
+            } else if fields.count == 2 && fields[0] == "calibration-cancel", fields[1] == liveCalibration.identifier {
+                finishLiveCalibration(result: "cancelled")
+            } else if fields.count == 2 && fields[0] == "calibration-accept",
+                      let captured = liveCalibration.result(for: fields[1]), let levels = captured.thresholds() {
+                calibration = captured
+                policy.thresholdsReady = true
+                policy.setThresholds(lock: levels.lockRSSI, unlock: levels.unlockRSSI)
+                finishLiveCalibration(result: "saved")
+            } else if fields.count == 4 && fields[0] == "baseline-options", !liveCalibration.active,
                let revision = Int(fields[1]), revision >= activityCalibration.revision,
                let mask = Int(fields[2]), (0...7).contains(mask),
                let savedBaseline = Double(fields[3]), savedBaseline.isFinite, (-100 ... -20).contains(savedBaseline) {
@@ -322,7 +335,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         returnWake.connectionChanged()
         policy.disconnected(now: now)
         rssiSamples = 0; lastRawRSSI = nil; lastRSSIAt = nil; lastRSSIRequestAt = -100
-        if calibrating { calibration.begin(now: now) }
+        if calibrationOnly { calibration.begin(now: now) }
         peripheral.delegate = self
         tick() // Request the first RSSI without waiting for the periodic timer.
     }
@@ -354,8 +367,8 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         if canTrackActivity {
             let idle = keyboardMouseIdleSeconds()
             activityCalibration.activity(.keyboardMouse, at: sampleTime - idle, now: sampleTime)
-            if canLearnFromActivity, let baseline = calibration.baseline,
-               let capture = activityCalibration.observe(value, now: sampleTime, eligible: true, baseline: baseline) {
+            if canLearnFromActivity,
+               let capture = activityCalibration.observe(value, now: sampleTime, eligible: true) {
                 calibration = ProximityCalibration(baseline: capture.baseline)
                 if let thresholds = calibration.thresholds() {
                     policy.setThresholds(lock: thresholds.lockRSSI, unlock: thresholds.unlockRSSI)
@@ -371,15 +384,16 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         policy.sample(value, now: sampleTime)
         returnWake.sample(policy.smoothedRSSI ?? value, now: sampleTime, farThreshold: policy.lockRSSI)
         let collecting = calibrating
-        if calibrating { calibration.observe(value, now: now) }
-        var sampleReport: [String: Any] = ["event": "calibration_sample", "raw_rssi": value,
+        if calibrationOnly { calibration.observe(value, now: sampleTime) }
+        else if liveCalibration.active { liveCalibration.observe(value, now: sampleTime) }
+        var sampleReport: [String: Any] = ["event": "calibration_sample", "sample_id": rssiSamples, "raw_rssi": value,
               "decision_rssi": policy.smoothedRSSI ?? value, "collecting": collecting,
               "lock": policy.lockRSSI, "unlock": policy.unlockRSSI]
         if let previousSampleTime {
             sampleReport["sample_interval_seconds"] = sampleTime - previousSampleTime
         }
         emit(sampleReport)
-        if !calibrating { tick() } // Act on the callback immediately, not up to 250 ms later.
+        if !calibrationOnly { tick() } // Act on the callback immediately, not up to 250 ms later.
     }
     func fail(_ message: String) {
         unlockSecret.discard()
@@ -388,7 +402,56 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         emit(["event": "error", "error": message])
     }
     func calibrationFailed(_ message: String) {
+        // Once a complete valid result has been offered, later connection or
+        // screen changes must not race the host's save/accept acknowledgement.
+        if liveCalibration.awaitingAcceptance { return }
+        if liveCalibration.active { finishLiveCalibration(result: "failed", error: message); return }
         emit(["event": "error", "error": message]); exit(2)
+    }
+    func startLiveCalibration(identifier: String) {
+        guard !observing, !calibrating, awake, lockedSession() == false,
+              central.state == .poweredOn, peripheral?.state == .connected else {
+            emit(["event": "calibration_finished", "capture_id": identifier, "result": "failed",
+                  "error": "请保持电脑解锁并连接戒指后重新校准"])
+            return
+        }
+        liveCalibration.begin(identifier: identifier, now: now)
+        awaitingHost = nil; policy.cancelLockRequest(); returnWake.reset()
+        activityCalibration.reset(now: now)
+        tick()
+    }
+    func finishLiveCalibration(result: String, error: String = "") {
+        guard let identifier = liveCalibration.identifier else { return }
+        liveCalibration.cancel()
+        // Discard departure evidence collected during calibration, but retain
+        // the continuously measured RSSI and its EMA on both boundaries.
+        awaitingHost = nil; policy.cancelLockRequest(); returnWake.reset()
+        activityCalibration.reset(now: now)
+        lastReportAt = -100
+        emit(["event": "calibration_finished", "capture_id": identifier, "result": result, "error": error])
+        emitSignalTrace(locked: lockedSession(), connected: peripheral?.state == .connected)
+    }
+    func liveCalibrationTick() {
+        guard let identifier = liveCalibration.identifier else { return }
+        if liveCalibration.awaitingAcceptance { return }
+        guard awake, lockedSession() == false, peripheral?.state == .connected else {
+            calibrationFailed("连接或屏幕状态已改变，原校准数据已保留"); return
+        }
+        if let success = liveCalibration.finishIfDue(now: now) {
+            guard success, let baseline = liveCalibration.capture.baseline else {
+                calibrationFailed("10 秒内有效信号不足，原校准数据已保留，请重新校准"); return
+            }
+            emit(["event": "calibration_complete", "capture_id": identifier,
+                  "device": target.uuidString.lowercased(), "baseline": baseline,
+                  "samples": liveCalibration.capture.readings, "duration_seconds": 10])
+        }
+        if liveCalibration.awaitingAcceptance { return }
+        if liveCalibration.capture.startedAt == nil && now - liveCalibration.requestedAt >= 15 {
+            calibrationFailed("未收到新的 RSSI，原校准数据已保留"); return
+        }
+        let elapsed = liveCalibration.capture.startedAt.map { now - $0 } ?? 0
+        emit(["event": "calibration_progress", "capture_id": identifier,
+              "elapsed": elapsed, "samples": liveCalibration.capture.samples])
     }
     func wakeDisplayForReturn() {
         // Use power management, not synthetic keys or the password path. A
@@ -444,7 +507,12 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         if awake && connected && now - lastRSSIRequestAt >= rssiInterval - 0.02 {
             lastRSSIRequestAt = now; peripheral?.readRSSI()
         }
-        if calibrating { calibrationTick(); return }
+        if liveCalibration.active {
+            liveCalibrationTick()
+            emitSignalTrace(locked: locked, connected: connected)
+            return
+        }
+        if calibrationOnly { calibrationTick(); return }
         if !canTrackActivity { activityCalibration.reset(now: now) }
         else { activityCalibration.expire(now: now) }
         // Change boundaries only through the policy, which resets pending dwell.
@@ -540,8 +608,9 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 "calibration_window": calibration.samples,
                 "calibration_active": false,
                 "activity_calibration_samples": activityCalibration.samples,
-                "activity_calibration_active": canLearnFromActivity && activityCalibration.signalAllowsLearning
+                "activity_calibration_active": canLearnFromActivity
                     && !activityCalibration.activeSources(now: now).isEmpty,
+                "activity_calibration_sources": activityCalibration.activeSources(now: now).map(\.rawValue),
                 "activity_lock_protected": locallyActive,
                 "rssi_samples": rssiSamples,
                 "thresholds_ready": policy.thresholdsReady, "disconnect_evidence": policy.disconnectEvidence,
@@ -556,6 +625,27 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             if let rssi = policy.smoothedRSSI { report["rssi"] = Int(rssi.rounded()) }
             emit(report)
         }
+        emitSignalTrace(locked: locked, connected: connected)
+    }
+    func emitSignalTrace(locked: Bool?, connected: Bool) {
+        let instant = now
+        let signalState = liveCalibration.active ? "calibrating" : policy.signalState(now: instant, locked: locked, connected: connected,
+            permitted: permission && central.state == .poweredOn, awake: awake, locallyActive: locallyActive)
+        let countdown = policy.lockCountdownRemaining(now: instant)
+        let signature = "\(rssiSamples)|\(signalState)|\(policy.lockDepartureSamples)|\(countdown)|\(policy.lockRSSI)|\(policy.ownsLock)"
+        guard signature != lastSignalTrace else { return }
+        lastSignalTrace = signature
+        var trace: [String: Any] = ["event": "signal_trace", "trace_uptime": instant, "signal_state": signalState,
+            "lock_departure_samples": policy.lockDepartureSamples, "required_departure_samples": policy.awaySamples,
+            "lock_countdown_seconds": countdown, "lock_reason": policy.ownsLock || policy.lockPending ? policy.lastLockReason : ""]
+        if let baseline = calibration.baseline {
+            trace["baseline"] = baseline; trace["lock"] = policy.lockRSSI
+        }
+        if connected, let sampledAt = lastRSSIAt, instant - sampledAt <= DepartureEvidence.maxSampleGap,
+           let raw = lastRawRSSI, let smoothed = policy.smoothedRSSI {
+            trace["sample_id"] = rssiSamples; trace["raw_rssi"] = raw; trace["decision_rssi"] = smoothed
+        }
+        emit(trace)
     }
     /// Appended to the status line so the learned levels are visible in settings
     /// without adding another channel to the Qt side.
@@ -567,7 +657,7 @@ final class Monitor: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
     func hostReady() {
         refreshLockingAvailability()
-        guard !observing, let requested = awaitingHost, now - requested <= 2,
+        guard !observing, !calibrating, let requested = awaitingHost, now - requested <= 2,
               policy.lockPending, policy.hasFreshDeparture(now: now), lockingConnectionReady,
               lockedSession() == false, permitted(), awake else { return }
         if locallyActive {

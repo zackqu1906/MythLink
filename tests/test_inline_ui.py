@@ -264,8 +264,14 @@ def inline_ui(tmp_path, monkeypatch, request):
     monkeypatch.setattr(module, "app_data_root", lambda: tmp_path)
     monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
     initial_settings = module.QSettings()
-    for key, value in getattr(request, "param", {}).items():
-        initial_settings.setValue(key, value)
+    # Existing interaction scenarios exercise an explicitly selected manual lane.
+    # Default/migration tests use None to leave a preference absent.
+    preferences = {"input/routingMode": "manual", **getattr(request, "param", {})}
+    for key, value in preferences.items():
+        if value is None:
+            initial_settings.remove(key)
+        else:
+            initial_settings.setValue(key, value)
     monkeypatch.setattr(inline, "IMEBridge", FakeBridge)
     monkeypatch.setattr(inline, "warm_input_method", lambda: None)
     monkeypatch.setattr(inline.InlineInputController, "_foreground_identity", lambda self: None)
@@ -296,7 +302,8 @@ def inline_ui(tmp_path, monkeypatch, request):
     def event(kind="state", **fields):
         component._accept({"type": kind, "epoch": component._epoch, "client_id": component._client_id, "utterance_id": component._utterance_id, **fields})
 
-    event(phase="listening", ready=True, revision=0, original="明天三点开会", selection=[6, 0], context_complete=True)
+    event(phase="listening", ready=True, revision=0, original="明天三点开会", selection=[6, 0], context_complete=True,
+          routed_edit_mode=controller.inputRoutingMode == "manual_routed_edit", routed_edit_version=1)
     yield controller, component._bridge, requests, root, event
     controller.voicePractice.cancel()
     controller.proximity.close()
@@ -506,27 +513,52 @@ def test_partial_geometry_is_persisted_without_growing_live_log(inline_ui):
     assert 'characters=4321' in diagnostic
 
 
-def test_multi_undo_setting_is_visible_persisted_and_immediately_configures_native(inline_ui):
+@pytest.mark.parametrize("inline_ui", [{"input/modeCorrectionShortcut": "F7"}], indirect=True)
+def test_retired_conversion_shortcut_is_removed_from_settings_and_protocol(inline_ui):
+    from PySide6.QtCore import QObject
+    controller, bridge, _, root, _ = inline_ui
+    assert root.findChild(QObject, "modeCorrectionShortcutCombo") is None
+    assert not controller._settings.contains("input/modeCorrectionShortcut")
+    assert controller.metaObject().indexOfProperty("modeCorrectionShortcut") == -1
+    controller._inline_input._accept({"type": "connected", "epoch": "shortcut-retired"})
+    configurations = [message for message in bridge.messages if message["type"] == "configure"]
+    assert len(configurations) >= 2
+    assert all("mode_switch_shortcut" not in message for message in configurations)
+
+
+@pytest.mark.parametrize("inline_ui", [{"input/multiUndoEnabled": False}], indirect=True)
+def test_history_is_always_enabled_and_retired_setting_is_removed(inline_ui):
     from PySide6.QtCore import QObject
     controller, bridge, _, root, event = inline_ui
-    control = root.findChild(QObject, "multiUndoSwitch")
-    assert control is not None
-    assert controller.multiUndoEnabled
-    assert control.property("checked") is True
-    controller.multiUndoEnabled = False
-    assert controller._settings.value("input/multiUndoEnabled", type=bool) is False
-    assert bridge.messages[-1]["multi_undo_enabled"] is False
-    controller.multiUndoEnabled = True
-    assert control.property("checked") is True
-    assert controller._settings.value("input/multiUndoEnabled", type=bool) is True
-    assert bridge.messages[-1]["multi_undo_enabled"] is True
+    assert root.findChild(QObject, "multiUndoSwitch") is None
+    assert not controller._settings.contains("input/multiUndoEnabled")
+    assert [m for m in bridge.messages if m["type"] == "configure"][-1]["multi_undo_enabled"] is True
     event(phase="undone", ready=True, undo_history_depth=2)
     assert controller.nativeUndoAvailable
     controller.undoLastApplied()
     assert bridge.messages[-1]["type"] == "cancel"
-    controller.multiUndoEnabled = False
-    assert not controller.nativeUndoAvailable
-    assert bridge.messages[-1]["multi_undo_enabled"] is False
+
+
+@pytest.mark.parametrize("inline_ui,expected", [
+    ({}, "retry"), ({"input/redoEnabled": True}, "retry"),
+    ({"input/redoEnabled": False}, "undo"),
+    ({"input/historyActionMode": "next", "input/redoEnabled": True}, "next"),
+], indirect=["inline_ui"])
+def test_history_mode_migration_and_persistence_keep_undo(inline_ui, expected):
+    from PySide6.QtCore import QObject
+    controller, bridge, _, root, event = inline_ui
+    control = root.findChild(QObject, "historyActionModeCombo")
+    assert control is not None
+    assert control.property("currentIndex") == ["undo", "next", "retry"].index(expected)
+    assert controller.historyActionMode == expected
+    assert not controller._settings.contains("input/redoEnabled")
+    event(phase="undone", ready=True, undo_history_depth=2, can_redo=True, redo_history_depth=1)
+    for mode in ["next", "retry", "undo"]:
+        controller.historyActionMode = mode
+        assert controller._settings.value("input/historyActionMode") == mode
+        assert [m for m in bridge.messages if m["type"] == "configure"][-1]["history_action_mode"] == mode
+        assert [m for m in bridge.messages if m["type"] == "configure"][-1]["redo_enabled"] == (mode == "next")
+        assert [m for m in bridge.messages if m["type"] == "configure"][-1]["multi_undo_enabled"] is True and controller.nativeUndoAvailable
 
 
 @pytest.mark.parametrize(
@@ -1301,3 +1333,94 @@ def test_clef_settings_surface_is_in_service_settings(inline_ui, monkeypatch):
     assert c.clefConnection.config == dict(host='public.example', port=20032)
     assert checks == ['http://public.example:20032/v1/systemone', ('连接测试', '', {})]
     connection.close()
+
+
+def test_retry_uses_original_request_and_labels_each_history_attempt(inline_ui, monkeypatch):
+    from dataclasses import replace
+    from proximic_ring.voice.history_details import history_details
+    c, bridge, requests, _, event = inline_ui
+    original_request = _recording_test_begin_edit(c, event, requests)
+    inline = c._inline_input
+    source = inline._utterance_id
+    c._apply_text_processed(TextProcessingResult(original_request.request_id, 1, "edit", "扩写", "旧结果", .1, True))
+    event(phase="edited", ready=True, revision=1)
+    event("settled", phase="edited", text="旧结果", revision=1)
+    # A different audio session is now current. The old source is explicit in the native receipt.
+    inline.begin(); inline.bind_session(2)
+    c._latest_asr_session_id = 2
+    event(phase="dictated", ready=True, revision=3, has_composition=False, awaiting_readback=False,
+          edit_retry_version=1, can_retry_edit=True, retry_source_utterance_id=source, edit_requested=False)
+    monkeypatch.setattr(c, "_inline_edit_options", lambda _: pytest.fail("retry gathered new context"))
+    monkeypatch.setattr(c, "_voice_llm_settings", lambda _: pytest.fail("retry used new model settings"))
+    assert inline.canRetryEdit
+    inline.retry_edit()
+    assert bridge.messages[-1]["type"] == "retry_edit"
+    event(phase="editing", ready=True, revision=4, edit_requested=True, retry_source_utterance_id=source)
+    event("edit_requested", revision=4, instruction="扩写", original="原文", source_utterance_id=source, retry_edit=True)
+    retried = requests[-1]
+    assert len(requests) == 2 and retried.request_id != original_request.request_id
+    assert retried == replace(original_request, request_id=retried.request_id, reexecuted=True)
+    c._apply_text_processed(TextProcessingResult(retried.request_id, 1, "edit", "扩写", "新结果", .1, True))
+    event(phase="edited", ready=True, revision=4, retry_source_utterance_id=source)
+    event("settled", phase="edited", text="新结果", revision=4, source_utterance_id=source)
+    record = _recording_test_record(c)
+    assert [r["reexecuted"] for r in record["llm"]["requests"]] == [False, True]
+    assert [r["candidate_text"] for r in record["llm"]["requests"]] == ["旧结果", "新结果"]
+    assert c._modification_dataset.load_entries()[0]["reexecuted"] is True
+    sections = {r["key"]: r for r in history_details(Path("/private/tmp"), record)["sections"]}
+    assert "是否重新执行：否" in sections["llm_0"]["description"]
+    assert "是否重新执行：是" in sections["llm_1"]["description"]
+
+
+@pytest.mark.parametrize("routing_mode", ["auto", "manual_routed_edit"])
+def test_retry_keeps_original_route_plan_and_prepared_ocr(inline_ui, monkeypatch, routing_mode):
+    from dataclasses import replace
+    from proximic_ring.text_processing.task_routing import EditPlan
+    from proximic_ring.text_processing.context_preparation import PreparedContext
+    c, _, requests, _, event = inline_ui
+    context = {"status": "ok", "context": "当时的上文"}
+    future = PreparedContext()
+    plan = EditPlan(("polish", "modify")) if routing_mode == "auto" else None
+    monkeypatch.setattr(c, "_inline_edit_options", lambda _: dict(
+        task_type="edit" if routing_mode == "auto" else "", edit_plan=plan,
+        routing_mode=routing_mode, screen_context=future))
+    first = _recording_test_begin_edit(c, event, requests)
+    c._apply_text_processed(TextProcessingResult(first.request_id, 1, "edit", "扩写", "结果", .1, True,
+                                                 model_input={"screen_context": context}))
+    inline = c._inline_input
+    source = inline._utterance_id
+    context["context"] = "后来上文"
+    monkeypatch.setattr(c, "_inline_edit_options", lambda _: pytest.fail("retry classified again or captured new context"))
+    event(phase="editing", ready=True, revision=4, edit_requested=True, retry_source_utterance_id=source)
+    event("edit_requested", revision=4, instruction="扩写", original="原文", source_utterance_id=source, retry_edit=True)
+    retried = requests[-1]
+    assert retried.routing_mode == routing_mode and retried.edit_plan == plan
+    assert retried.screen_context.done() and retried.screen_context.result()["context"] == "当时的上文"
+    assert replace(retried, request_id=first.request_id, screen_context=future, reexecuted=False) == first
+
+
+def test_retry_interruption_finishes_original_history_attempt(inline_ui):
+    c, _, requests, _, event = inline_ui
+    first = _recording_test_begin_edit(c, event, requests)
+    c._apply_text_processed(TextProcessingResult(first.request_id, 1, "edit", "扩写", "结果", .1, True))
+    event(phase="edited", ready=True, revision=1)
+    event("settled", phase="edited", text="结果", revision=1)
+    assert not c._inline_unsettled_edits
+    event(phase="editing", ready=True, revision=3, edit_requested=True)
+    event("edit_requested", revision=3, instruction="扩写", original="原文", retry_edit=True)
+    assert c._inline_unsettled_edits == {1}
+    event("interrupted", reason="输入框已切换")
+    record = _recording_test_record(c)
+    assert record["llm"]["requests"][-1]["reexecuted"] is True
+    assert record["llm"]["requests"][-1]["status"] == "cancelled"
+    assert record["outcome"]["status"] == "cancelled"
+    assert not c._inline_input._edit_replays
+
+
+def test_late_edit_result_cannot_restore_a_cleared_replay_snapshot(inline_ui):
+    c, _, requests, _, event = inline_ui
+    first = _recording_test_begin_edit(c, event, requests)
+    # Native already advanced to another revision but its settlement is still in transit.
+    event(phase="dictated", ready=True, revision=2, edit_requested=False)
+    c._apply_text_processed(TextProcessingResult(first.request_id, 1, "edit", "扩写", "过期", .1, True))
+    assert not c._inline_input._edit_replays

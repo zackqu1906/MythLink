@@ -124,6 +124,19 @@ struct PresencePolicy {
         lockRSSI = lock; unlockRSSI = unlock
     }
     var lockPending: Bool { lockRequestedAt != nil }
+    var lockDepartureSamples: Int { departure.samples }
+    /// Read-only chart state after step(); never inferred from the return-wake counter.
+    func signalState(now: Double, locked: Bool?, connected: Bool, permitted: Bool,
+                     awake: Bool, locallyActive: Bool) -> String {
+        if locked == true { return "locked" }
+        if !connected { return "disconnected" }
+        guard awake, permitted, locked != nil, !failed, lockingEnabled, thresholdsReady else { return "paused" }
+        guard lastSample.map({ now >= $0 && now - $0 <= DepartureEvidence.maxSampleGap }) == true else { return "stale" }
+        if locallyActive { return "protected" }
+        if lockPending { return "locking" }
+        if lockCountdownStartedAt != nil { return "countdown" }
+        return departure.samples > 0 ? "away" : "normal"
+    }
     func lockCountdownRemaining(now: Double) -> Int {
         guard let started = lockCountdownStartedAt else { return 0 }
         return Int(ceil(max(0, lockCountdownDuration - max(0, now - started))))

@@ -87,9 +87,12 @@ class EditorGestureActions:
             return
         action=voice_action_for_gesture(name,
             interaction_active=self.owner.interactionCanCancel,
-            correction_active=(self.owner.modeCorrectionHotkeyAvailable
+            correction_active=(self.owner.modeConversionAvailable
                                or self.owner.processingModeCorrectionAvailable),
-            undo_active=self.owner.nativeUndoAvailable, bindings=bindings)
+            undo_active=self.owner.nativeUndoAvailable,
+            redo_active=self.owner._inline_input.canRedo and not self.owner._ring_gestures.speech_busy(),
+            retry_active=self.owner._inline_input.canRetryEdit and not self.owner._ring_gestures.speech_busy(),
+            bindings=bindings)
         if action:
             self._cancel_input_action()
             self.owner._event_log('AGENT_INPUT_GESTURE',gesture=name,action=action,card=key)

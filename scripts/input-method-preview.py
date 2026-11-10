@@ -192,7 +192,7 @@ def main() -> int:
     print("请先退出正在运行的主程序，避免同一输入法连接两个 ASR 主机。", flush=True)
     print(f"准备时间 {max(1, args.delay)} 秒；手动选择“Mythlink 语音”，切到 Codex 普通消息框或微信文件传输助手输入框。", flush=True)
     print("下划线、操作条和文字读写均来自真实输入法组件；仅 ASR 由脚本模拟。", flush=True)
-    print("有下划线时可转编辑；F8 / 已配置转换快捷键确认本句为指令，Esc 可取消。定稿后只可撤销。", flush=True)
+    print("有下划线时点击操作条的编辑按钮确认本句为指令，Esc 可取消。F8 等旧转换按键已移除；定稿后按历史操作模式操作。", flush=True)
     print("脚本不会选择输入法、模拟按键、按回车或点发送。", flush=True)
     if args.edit:
         print("请预先写入“明天三点开会”，将光标放在末尾，再观察“把三点改成四点。”；主动转换才调用模型。", flush=True)

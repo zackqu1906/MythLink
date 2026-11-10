@@ -44,6 +44,13 @@ UiScrollView {
                     Label { objectName: "lockCurrentGesture"; text: page.proximity.unlockGestureLabel; color: theme.text; font.pixelSize: 16; font.weight: Font.Medium }
                     Label { text: "解锁屏幕"; color: theme.muted; font.pixelSize: 14 }
                 }
+                Rectangle { Layout.fillWidth: true; height: 1; color: theme.line }
+                ProximitySignalStatus {
+                    Layout.fillWidth: true
+                    controller: page.proximity
+                    namePrefix: "lockLive"
+                    showChart: true
+                }
                 Label { Layout.fillWidth: true; visible: text.length > 0; text: page.proximity.error; color: theme.warning; font.pixelSize: 14; wrapMode: Text.Wrap }
             }
         }
@@ -109,7 +116,7 @@ UiScrollView {
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 4
                         Label { text: "自动适应距离"; color: theme.text; font.pixelSize: 16 }
-                        Label { Layout.fillWidth: true; text: "根据日常操作微调距离判断，减少长期使用的偏差。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
+                        Label { Layout.fillWidth: true; text: "根据所选的键鼠、手势或语音操作更新基线，适应信号变化。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
                     }
                     FigmaSwitch {
                         objectName: "lockAdaptiveSwitch"
@@ -214,7 +221,7 @@ UiScrollView {
             Label { Layout.fillWidth: true; text: page.proximity.calibrationStatus; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
             RowLayout {
                 FigmaAction { text: page.proximity.calibrating ? "取消校准" : "关闭"; onClicked: { if (page.proximity.calibrating) page.proximity.cancelCalibration(); calibrationDialog.close() } }
-                FigmaAction { text: "开始 10 秒校准"; primary: true; enabled: page.canCalibrate; onClicked: page.proximity.startCalibration() }
+                FigmaAction { objectName: "lockStartCalibrationButton"; text: "开始 10 秒校准"; primary: true; enabled: page.canCalibrate; onClicked: page.proximity.startCalibration() }
             }
         }
     }

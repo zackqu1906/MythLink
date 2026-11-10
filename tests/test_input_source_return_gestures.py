@@ -54,11 +54,12 @@ def inactive_source_probe(inline, backend, monkeypatch):
 
 
 @pytest.mark.parametrize("enabled,shared_action", [(True, False), (True, True), (False, False)])
-def test_spare_left_swipes_after_last_undo_preserve_source_and_shortcuts(route, monkeypatch, enabled, shared_action):
+@pytest.mark.parametrize("gesture", ["swipe-left", "swipe-right"])
+def test_spare_history_swipes_preserve_source_and_shortcuts(route, monkeypatch, enabled, shared_action, gesture):
     c, service, inline, backend, sent, messages, _ = route
     if shared_action:
         backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE, input_context="unknown")
-        assert configure(service, monkeypatch).setBinding(BUNDLE, "swipe-left", ACTION["id"])
+        assert configure(service, monkeypatch).setBinding(BUNDLE, gesture, ACTION["id"])
     finish_last_undo(inline, service, monkeypatch)
     if not enabled:
         inline.set_auto_return_input_source(False)
@@ -66,7 +67,7 @@ def test_spare_left_swipes_after_last_undo_preserve_source_and_shortcuts(route, 
     monkeypatch.setattr(c, "undoLastApplied", lambda: pytest.fail("unexpected application undo"))
     messages.clear()
     for _ in range(2):
-        send_gesture(c, "swipe-left")
+        send_gesture(c, gesture)
     assert len(activation) == (0 if enabled else 2)
     if enabled:
         # Only a competing binding needs a passive focus check; unknown never authorizes a shortcut.
@@ -75,7 +76,8 @@ def test_spare_left_swipes_after_last_undo_preserve_source_and_shortcuts(route, 
 
 
 @pytest.mark.parametrize("scope", ["application", "global", "scene"])
-def test_nontext_binding_still_runs_after_last_undo(scope, request: pytest.FixtureRequest, monkeypatch):
+@pytest.mark.parametrize("gesture", ["swipe-left", "swipe-right"])
+def test_nontext_binding_still_runs_after_history_end(scope, request: pytest.FixtureRequest, monkeypatch, gesture):
     if scope == "scene":
         c, service, inline, backend, _, sent, messages = request.getfixturevalue("presentation")
     else:
@@ -83,29 +85,33 @@ def test_nontext_binding_still_runs_after_last_undo(scope, request: pytest.Fixtu
         backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE,
                                  focus="page", role="AXGroup", input_context="nontext")
         if scope == "application":
-            assert configure(service, monkeypatch).setBinding(BUNDLE, "swipe-left", ACTION["id"])
+            assert configure(service, monkeypatch).setBinding(BUNDLE, gesture, ACTION["id"])
         else:
-            assert c.ringGestures.setGlobalBinding("window_selector", "swipe-left")
+            assert c.ringGestures.setGlobalBinding("window_selector", gesture)
     finish_last_undo(inline, service, monkeypatch)
     messages.clear()
     activation, _ = inactive_source_probe(inline, backend, monkeypatch)
     starts = []
     monkeypatch.setattr(c.ringGestures._selector, "start", lambda *_: starts.append(True))
-    send_gesture(c, "swipe-left")
-    assert sent == {"application": [(BUNDLE, "Ctrl+Tab")], "global": [], "scene": [(POWERPOINT, "Left")]}[scope]
+    send_gesture(c, gesture)
+    arrow = "Left" if gesture == "swipe-left" else "Right"
+    assert sent == {"application": [(BUNDLE, "Ctrl+Tab")], "global": [], "scene": [(POWERPOINT, arrow)]}[scope]
     assert bool(starts) == (scope == "global")
     assert not messages and not activation
 
 
-@pytest.mark.parametrize("gesture,command", [("swipe-left", "cancel"), ("swipe-down", "polish")])
+@pytest.mark.parametrize("gesture,command", [("swipe-left", "cancel"), ("swipe-down", "polish"), ("swipe-right", "redo"), ("swipe-right", "retry_edit")])
 def test_external_gesture_captures_resumed_sentence(route, monkeypatch, gesture, command):
     controller, service, inline, _, sent, messages, emit = route
+    inline.configure(history_action_mode="retry" if command == "retry_edit" else "next")
     inline._view.update(phase="idle", ready=False)
     finished = []
 
     def resume():
         inline._client_id, inline._utterance_id = "resumed-client", "resumed-sentence"
-        inline._view.update(phase="dictated", ready=True)
+        inline._view.update(phase="dictated", ready=True, can_redo=True, edit_retry_version=1,
+                            can_retry_edit=True, retry_source_utterance_id="original-source")
+        inline._edit_replays["original-source"] = object()
         finished.append(time.monotonic())
         return None
 
@@ -117,7 +123,7 @@ def test_external_gesture_captures_resumed_sentence(route, monkeypatch, gesture,
     assert messages[-1][0] == command and not sent
 
 
-@pytest.mark.parametrize("gesture", ["swipe-left", "swipe-down"])
+@pytest.mark.parametrize("gesture", ["swipe-left", "swipe-down", "swipe-right"])
 def test_failed_resume_blocks_input_and_external_fallback(route, monkeypatch, gesture):
     _, service, inline, backend, sent, messages, emit = route
     inline._view.update(phase="idle", ready=False)
@@ -140,7 +146,16 @@ def test_busy_and_unrelated_gestures_do_not_resume(route, monkeypatch, gesture, 
     service.envelope(SimpleNamespace(name=gesture), audio_busy=audio_busy)
 
 
-@pytest.mark.parametrize("gesture", ["swipe-left", "swipe-down"])
+def test_disabled_redo_does_not_resume_on_right_swipe(route, monkeypatch):
+    _, service, inline, _, sent, messages, emit = route
+    inline.configure(redo_enabled=False)
+    inline._view.update(phase="undone", can_redo=True, redo_history_depth=1)
+    monkeypatch.setattr(inline, "resume_gesture_failure", lambda: pytest.fail("disabled redo resumed old input"))
+    emit("swipe-right")
+    assert not sent and not messages
+
+
+@pytest.mark.parametrize("gesture", ["swipe-left", "swipe-down", "swipe-right"])
 @pytest.mark.parametrize("outcome", ["resumed", "failed", "editor_changed"])
 def test_agent_worker_resumes_before_capturing_editor_sentence(inline_ui, monkeypatch, gesture, outcome):
     owner = inline_ui[0]

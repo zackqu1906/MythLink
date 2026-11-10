@@ -18,6 +18,10 @@ def _controller(tmp_path, monkeypatch):
     monkeypatch.setattr(controller_module, "app_data_root", lambda: tmp_path)
     monkeypatch.setattr(controller_module, "QSettings", lambda *_args: QSettings(
         str(tmp_path / "settings.ini"), QSettings.IniFormat))
+    # These legacy interaction cases explicitly use the manual conversion lane.
+    settings = controller_module.QSettings()
+    if not settings.contains("input/routingMode"):
+        settings.setValue("input/routingMode", "manual")
     controller = controller_module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
     return controller
@@ -227,7 +231,7 @@ def test_processing_edit_can_be_switched_directly_to_dictation(
     _close(controller)
 
 
-def test_failed_initial_edit_keeps_f8_dictation_fallback(tmp_path, monkeypatch):
+def test_failed_initial_edit_keeps_explicit_dictation_fallback(tmp_path, monkeypatch):
     from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import (
         InputModeRoutingResult,
@@ -816,7 +820,7 @@ def test_delayed_mode_switch_never_converts_a_newer_operation_in_same_stack(
         ),
         message="新结果已应用",
     )
-    # Simulate an older asynchronous F8 request resolving after the next
+    # Simulate an older asynchronous conversion request resolving after the next
     # utterance has already become the top operation in the same field.
     controller._pending_applied_mode_switches[target_key] = (77, "edit")
     applied = []
@@ -866,6 +870,12 @@ def test_cancelling_next_utterance_keeps_previous_alternate_request(
     cancelled = []
 
     class Worker:
+        def capture_context(self, target):
+            return {"status": "ok", "messages": [], "coverage": "visible_only"}
+
+        def prepare_context(self, capture, settings):
+            return capture
+
         def cancel_request(self, request_id):
             cancelled.append(request_id)
 
@@ -1443,8 +1453,8 @@ def test_green_mode_switch_executes_after_accessibility_wrapper_rebuild(
         message="听写已应用",
     )
 
-    assert controller.modeCorrectionHotkeyAvailable is True
-    # Exercise the same signal path used by the global F8 hook, not a direct
+    assert controller.modeConversionAvailable is True
+    # Exercise the same signal path used by explicit voice actions, not a direct
     # call into the conversion implementation.
     controller.dispatchVoiceAction("switch_mode")
     QTest.qWait(70)
@@ -1536,7 +1546,7 @@ def test_green_mode_switch_rejects_a_different_field_in_the_same_app(
         message="听写已应用",
     )
 
-    assert controller.modeCorrectionHotkeyAvailable is True
+    assert controller.modeConversionAvailable is True
     controller.dispatchVoiceAction("switch_mode")
 
     assert desktop.replace_calls == 0
@@ -1748,6 +1758,7 @@ def _automatic_controller(tmp_path, monkeypatch, *, has_target=True):
     controller._text_processing_worker = SimpleNamespace(
         submit_routing=routed.append, submit=submitted.append, cancel_request=cancelled.append,
         capture_context=lambda target: {"status": "ok", "messages": [], "coverage": "visible_only"},
+        prepare_context=lambda capture, settings: capture,
         warmup_router=lambda: None, close=lambda **kw: None)
     controller._desktop_target = SimpleNamespace(
         capture_text=lambda target: DesktopTextSnapshot(target, "旧文本"),
@@ -1787,7 +1798,7 @@ def test_automatic_dictation_waits_for_route_then_one_llm_request(tmp_path, monk
         "明天开会。", .2, True, task_type=r.task_type))
     c._dictation_commit_timer.stop(); c._commit_pending_dictation()
     assert injected == ["明天开会。"]
-    assert not c.processingModeCorrectionAvailable and not c.modeCorrectionHotkeyAvailable
+    assert not c.processingModeCorrectionAvailable and not c.modeConversionAvailable
     c.switchCurrentInputMode()
     assert len(requests) == 1 and c._active_auto_interaction is None
     _close(c)
@@ -1815,7 +1826,7 @@ def test_automatic_dictation_cleanup_off_injects_asr_once_without_generation(tmp
         _close(c)
 
 
-def test_late_edit_protocol_failure_retries_only_after_explicit_f8(
+def test_late_edit_protocol_failure_retries_only_after_explicit_conversion(
     tmp_path, monkeypatch
 ):
     from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot

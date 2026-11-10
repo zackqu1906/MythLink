@@ -22,6 +22,8 @@ TRIGGER_LABELS = {
     "two-finger-scroll": "双指纵向滚动",
     "two-finger-swipe-left": "双指左滑 · 前进",
     "two-finger-swipe-right": "双指右滑 · 后退",
+    "dwell-drag-ready": "已停留 · 移动开始拖动",
+    "dwell-drag-started": "停留拖动 · 已开始",
 }
 
 

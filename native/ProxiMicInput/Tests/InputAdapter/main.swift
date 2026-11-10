@@ -922,6 +922,47 @@ final class WeChatFixture {
     }
 }
 
+test("Production adapters undo and redo dictation and edit steps without live composition or another model call") {
+    for app in ["com.tencent.xinWeChat", "com.openai.codex", "com.microsoft.VSCode", "test.editor"] {
+        let f = WeChatFixture("前文", codex: app != "com.tencent.xinWeChat", application: app, directRange: false)
+        let history = CompositionUndoHistory()
+        var session = try f.session()
+        func wire() {
+            session.onSettled = { _, _ in history.settled(session) }
+            session.onInterrupted = { _ in history.clear() }
+        }
+        func undo() { history.undo(session); f.drain(session) }
+        func redo() {
+            guard let step = history.prepareRedo(session) else { fatalError("missing redo: \(app)") }
+            session = CompositionSession(client: f.adapter, undo: step.result,
+                utteranceID: session.utteranceID, sequence: session.lastSequence, revision: session.revision + 1,
+                clock: { f.now })
+            wire()
+            session.onEdit = { _, _, _ in fatalError("redo called the model") }
+            session.onPolish = { _, _ in fatalError("redo called the model") }
+            session.restoreRedo(step); f.drain(session)
+        }
+        wire()
+        session.update("😀本句", final: true)
+        let before = f.proxy.view.string, caret = f.proxy.view.selectedRange()
+        undo(); check(f.proxy.view.string == "前文", "adapter undo failed: \(app)")
+        redo(); check(f.proxy.view.string == before && f.proxy.view.selectedRange() == caret,
+                      "adapter redo changed text or caret: \(app) \(session.error)")
+        undo(); redo(); undo()
+        check(f.proxy.view.string == "前文" && history.count == 0, "adapter alternation corrupted history")
+
+        history.clear()
+        session = try f.session(); wire()
+        session.update("改成新文", final: false); session.convert(); session.update("改成新文", final: true)
+        session.applyEdit(text: "新文", revision: session.revision, error: nil); f.drain(session)
+        check(session.phase == .edited && f.proxy.view.string == "新文", "edit setup failed: \(app)")
+        undo(); check(f.proxy.view.string == "前文改成新文", "edit restore failed: \(app)")
+        undo(); check(f.proxy.view.string == "前文", "instruction undo failed: \(app)")
+        redo(); check(f.proxy.view.string == "前文改成新文", "instruction redo failed: \(app)")
+        redo(); check(f.proxy.view.string == "新文" && !f.proxy.view.hasMarkedText(), "edit redo failed: \(app)")
+    }
+}
+
 for partial in [false, true] {
     for (instruction, result) in [("帮我回复一下", "好的，我会处理。"), ("加一句谢谢", "谢谢")] {
         test("WeChat empty-source generation, replacement and undo: \(instruction), partial=\(partial)") {
@@ -1509,6 +1550,61 @@ test("Default selection replacement preserves a bounded context's prefix and suf
     check(f.adapter.verifiedReplacement?.range == NSRange(location: 2, length: 6), "receipt does not match the requested scope")
 }
 
+test("Mail diagnostics distinguish bounded reads from post-write caret failure without changing behavior") {
+    for tailLength in [512, 513, 32769] {
+        let suffix = String(repeating: "乙", count: tailLength)
+        let f = WeChatFixture("甲" + suffix, caret: 1, codex: true,
+                              application: "com.google.Chrome", directRange: false)
+        let s = try f.session()
+        check(f.adapter.lastReadDiagnostics["context_origin"] as? String == "bounded", "missing read provenance")
+        s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+        let reads = f.proxy.reads
+        check(s.editDiagnostics["source_complete"] as? Bool == false &&
+              s.editDiagnostics["model_source_characters"] as? Int == 1 &&
+              s.editDiagnostics["original_selection"] as? [Int] == [1, 0], "request boundary was not captured")
+        _ = s.editDiagnostics; _ = f.adapter.clientOperationDiagnostics
+        check(f.proxy.reads == reads, "diagnostics queried the editor")
+        s.applyEdit(text: "丙", revision: s.revision, error: nil); f.drain(s)
+        let d = s.readbackDiagnostics
+        check(d["write_sent"] as? Bool == (tailLength <= 32768), "lost whether the candidate was written")
+        check(d["tail_characters"] as? Int == tailLength && d["caret_restore_limit"] as? Int == 512,
+              "lost the caret-distance evidence")
+        check(d["source_relation"] as? String == (tailLength <= 32768 ? "equal" : "snapshot_prefix"),
+              "missing bounded-source mismatch explanation")
+        if tailLength <= 512 {
+            check(s.phase == .edited && f.proxy.view.string == "丙" + suffix &&
+                  f.proxy.view.selectedRange() == NSRange(location: 1, length: 0), "logging changed the successful path")
+        } else {
+            // These are existing failures. Instrumentation must expose them,
+            // not change their write/selection policy in this diagnostic patch.
+            check(s.phase == .error, "logging unexpectedly changed the failed operation")
+            check(d["failure_code"] as? String == (tailLength == 513 ? "caret_restore_limit_or_boundary" : "source_mismatch_restore_limit"),
+                  "failure stage was lost after cancellation")
+            check(f.proxy.view.string == (tailLength == 513 ? "丙" + suffix : "甲改写" + suffix),
+                  "logging changed the existing write behavior")
+            check(f.keys == ["select_all"], "logging added selection or caret commands")
+        }
+        let data = try JSONSerialization.data(withJSONObject: [d, s.editDiagnostics])
+        let encoded = String(data: data, encoding: .utf8)!
+        check(!encoded.contains("甲") && !encoded.contains("乙") && !encoded.contains("改写"), "diagnostics leaked text")
+    }
+}
+
+test("Source disagreement diagnostics describe rich-text boundary classes without text") {
+    for (expected, observed, expectedKind, observedKind) in [
+        ("甲\n乙", "甲乙", "lf", "other"),
+        ("甲\u{00a0}乙", "甲 乙", "nbsp", "space"),
+        ("甲\u{fffc}乙", "甲乙", "object", "other"),
+        ("甲乙", "甲丙", "other", "other")
+    ] {
+        let d = EditSourceComparison.diagnostics(EditorTextRange(text: expected,
+            range: NSRange(location: 0, length: expected.utf16.count)), with: observed)
+        check(d["source_common_prefix"] as? Int == 1 &&
+              d["source_first_expected_kind"] as? String == expectedKind &&
+              d["source_first_observed_kind"] as? String == observedKind, "difference classification lost")
+    }
+}
+
 test("Source comparison distinguishes terminal paragraph metadata from changed content") {
     func compare(_ cached: String, _ selected: String, at location: Int = 0) -> EditSourceComparison {
         EditSourceComparison.compare(EditorTextRange(text: cached,
@@ -1903,6 +1999,30 @@ test("Stale committed caret cannot authorize replacing a different instruction")
         f.drain(s)
         check(s.phase == .error && f.proxy.view.string == "原文后缀改写", "stale caret authorized replacement")
         check(f.proxy.insertCount == 1, "invalid context wrote more than the committed instruction")
+    }
+}
+
+test("Production adapters retry restored instructions with original prefix and preserved suffix") {
+    for bundle in ["com.tencent.xinWeChat", "com.openai.codex", "com.microsoft.VSCode", "test.generic.editor"] {
+        let f = WeChatFixture("原文后缀", caret: 2, codex: bundle != "com.tencent.xinWeChat", application: bundle, directRange: false)
+        let s = try f.session()
+        var requests = 0
+        s.onEdit = { source, instruction, _ in
+            check(source == "原文" && instruction == "扩写", "retry changed source in \(bundle)")
+            requests += 1
+        }
+        s.update("扩写", final: false); s.convert(); s.update("扩写", final: true); f.drain(s)
+        s.applyEdit(text: "结果", revision: s.revision, error: nil); f.drain(s)
+        check(s.phase == .edited, "initial edit failed: \(s.error)")
+        s.cancel(); f.drain(s)
+        check(s.canRetryEdit && f.proxy.view.string == "原文扩写后缀", "instruction not restored in \(bundle)")
+        let writes = f.proxy.insertCount
+        s.retryEdit(); f.drain(s)
+        check(requests == 2 && f.proxy.insertCount == writes, "retry wrote before model in \(bundle): \(s.error)")
+        s.applyEdit(text: "新结果", revision: s.revision, error: nil); f.drain(s)
+        check(s.phase == .edited && f.proxy.view.string == "新结果后缀", "retry failed in \(bundle): \(s.error)")
+        s.cancel(); f.drain(s); s.cancel(); f.drain(s)
+        check(s.phase == .undone && f.proxy.view.string == "原文后缀", "retry broke undo in \(bundle)")
     }
 }
 

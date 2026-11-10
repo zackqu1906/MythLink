@@ -49,9 +49,13 @@ def prepare(c):
 def calibrate(c, baseline=-64):
     c.startCalibration()
     proc = c._process
+    token = c._live_calibration_id
     proc.send(dict(event="calibration_complete", device=c._target, baseline=baseline,
-                   samples=[baseline] * 20, duration_seconds=10))
-    proc.finished.emit(0, 0)
+                   samples=[baseline] * 20, duration_seconds=10, capture_id=token))
+    if token:
+        proc.send(dict(event="calibration_finished", capture_id=token, result="saved"))
+    else:
+        proc.finished.emit(0, 0)
 
 
 def test_explicit_opt_in_and_prerequisites(proximity):
@@ -102,6 +106,53 @@ def test_monitor_hang_stops_without_retrying_unlock(proximity):
     assert old.killed and c._process is None and "未响应" in c.error
     old.finished.emit(0, 0)
     assert c._process is None
+
+
+def test_live_signal_uses_each_native_callback_and_expires(proximity):
+    c, _ = proximity; prepare(c); c.enabled = True
+    proc = c._process
+    proc.send(dict(event="calibration_sample", raw_rssi=-82, decision_rssi=-71.24))
+    assert c.rawRssi == "-82.0" and c.rssi == "-71.2"
+    proc.send(dict(event="monitor", connected=True, rssi=-71, raw_rssi=-82, rssi_age_seconds=0.1))
+    assert c.rssi == "-71.2"  # A rounded summary must not replace the real decision value.
+    proc.send(dict(event="calibration_sample", raw_rssi=-61, decision_rssi=-67.144))
+    assert c.rawRssi == "-61.0" and c.rssi == "-67.1"
+    c._signal_timer.timeout.emit()
+    assert c.rawRssi == c.rssi == "—"
+    assert c.savedCalibration["baseline"] == -64
+
+
+@pytest.mark.parametrize("ending", ["disconnect", "stale", "invalid", "stop", "exit", "device"])
+def test_live_signal_does_not_outlive_its_connection(proximity, ending):
+    c, _ = proximity; prepare(c); c.enabled = True
+    proc = c._process
+    proc.send(dict(event="calibration_sample", raw_rssi=-63, decision_rssi=-64))
+    if ending in {"disconnect", "stale"}:
+        proc.send(dict(event="monitor", connected=ending != "disconnect", raw_rssi=-63,
+                       rssi=-64, rssi_age_seconds=3 if ending == "stale" else 0))
+    elif ending == "invalid":
+        proc.send(dict(event="calibration_sample", raw_rssi=127, decision_rssi=-64))
+    elif ending == "stop":
+        c.enabled = False
+    elif ending == "exit":
+        proc.finished.emit(1, 0)
+    else:
+        c.useDevice("023cb503-2538-4c12-80a2-e4ed8f214fc1", "other")
+    assert c.rawRssi == c.rssi == "—"
+
+
+def test_live_signal_during_manual_calibration_and_monitor_fallback(proximity):
+    c, _ = proximity
+    c.useDevice("a44fbefd-c2d7-46ce-a9a2-731f1d5b2cf3", "Ringo test")
+    c.startCalibration()
+    c._process.send(dict(event="calibration_sample", raw_rssi=-65, decision_rssi=-64.5, collecting=True))
+    assert c.rawRssi == "-65.0" and c.rssi == "-64.5"
+    c.cancelCalibration()
+    assert c.rawRssi == c.rssi == "—"
+    prepare(c); c.enabled = True
+    c._process.send(dict(event="monitor", connected=True, raw_rssi=-63, rssi=-64, rssi_age_seconds=1))
+    assert c.rawRssi == "-63.0" and c.rssi == "-64.0"
+    assert 0 < c._signal_timer.remainingTime() <= 2000
 
 
 def test_protocol_handles_partial_lines_and_bounds_buffer(proximity):
@@ -453,10 +504,12 @@ def test_calibration_while_monitoring_rejects_wrong_ring_and_resumes_original_ba
     c, _ = proximity; prepare(c); c.enabled = True
     monitor = c._process
     c.startCalibration()
-    assert monitor.killed and c.calibrating and c.enabled
+    assert not monitor.killed and c._process is monitor and c.calibrating and c.enabled
     original = c.savedCalibration
+    token = c._live_calibration_id
     c._process.send(dict(event="calibration_complete", device="wrong-device", baseline=-80,
-                        samples=[-80] * 20, duration_seconds=10))
+                        samples=[-80] * 20, duration_seconds=10, capture_id=token))
+    monitor.send(dict(event="calibration_finished", capture_id=token, result="cancelled"))
     assert c.savedCalibration == original and "无效" in c.calibrationStatus
     assert c._process.args == ["monitor", c._target, "2", "15", "-64"]
 
@@ -467,24 +520,27 @@ def test_calibration_available_with_either_switch_state_and_restores_that_state(
     monitor = c._process
     preference = settings.value("proximity/enabled")
     c.startCalibration(); capture = c._process
-    assert capture.args == ["calibrate", c._target] and c.calibrating
+    token = c._live_calibration_id
+    assert c.calibrating
+    if not enabled:
+        assert capture.args == ["calibrate", c._target]
     assert c.enabled == enabled and settings.value("proximity/enabled") == preference
     if monitor:
-        assert monitor.killed
-        writes = list(monitor.writes)
+        assert not monitor.killed and capture is monitor
         monitor.send(dict(event="prepare_lock"))
-        assert monitor.writes == writes  # Late old-monitor output cannot lock during capture.
+        assert monitor.writes[-1] == b"lock-cancel\n"
     capture.send(dict(event="calibration_complete", device=c._target, baseline=-70,
-                      samples=[-70] * 20, duration_seconds=10))
-    capture.finished.emit(0, 0)
+                      samples=[-70] * 20, duration_seconds=10, capture_id=token))
+    if enabled:
+        capture.send(dict(event="calibration_finished", capture_id=token, result="saved"))
+    else:
+        capture.finished.emit(0, 0)
     assert not c.calibrating and c.savedCalibration["baseline"] == -70
     assert "已保存" in c.calibrationStatus
     assert c.enabled == enabled and settings.value("proximity/enabled") == preference
     if enabled:
-        assert c._process.args == ["monitor", c._target, "2", "15", "-70"]
-        resumed = c._process
-        capture.finished.emit(0, 0); capture.errorOccurred.emit(0)
-        assert c._process is resumed and not resumed.killed
+        assert c._process is monitor and not monitor.killed
+        assert c.learnedThresholds["lock"] == -78
     else:
         assert c._process is None
 
@@ -494,11 +550,11 @@ def test_unsuccessful_calibration_restores_monitor_with_old_baseline(proximity, 
     c, settings = proximity; prepare(c); c.enabled = True
     original = c.savedCalibration
     c.startCalibration(); capture = c._process
+    token = c._live_calibration_id
     if outcome == "cancel":
         c.cancelCalibration()
     elif outcome == "error":
-        capture.send(dict(event="error", error="戒指断连，校准未保存"))
-        capture.finished.emit(2, 0)
+        capture.send(dict(event="calibration_finished", capture_id=token, result="failed", error="戒指断连，校准未保存"))
     elif outcome == "exit":
         capture.finished.emit(0, 0)
     elif outcome == "timeout":
@@ -508,17 +564,20 @@ def test_unsuccessful_calibration_restores_monitor_with_old_baseline(proximity, 
     elif outcome == "storage":
         monkeypatch.setattr(settings, "status", lambda: QSettings.AccessError)
         capture.send(dict(event="calibration_complete", device=c._target, baseline=-70,
-                          samples=[-70] * 20, duration_seconds=10))
+                          samples=[-70] * 20, duration_seconds=10, capture_id=token))
     else:
         capture.output = b"x" * 33000
         capture.readyReadStandardOutput.emit()
+    if outcome in {"cancel", "timeout", "storage"}:
+        capture.send(dict(event="calibration_finished", capture_id=token, result="cancelled"))
     assert c.enabled and not c.calibrating and c.savedCalibration == original
     assert c.calibrationStatus
     resumed = c._process
     assert resumed.args == ["monitor", c._target, "2", "15", "-64"]
     capture.send(dict(event="calibration_complete", device=c._target, baseline=-80,
-                      samples=[-80] * 20, duration_seconds=10))
-    capture.finished.emit(0, 0)
+                      samples=[-80] * 20, duration_seconds=10, capture_id=token))
+    if resumed is not capture:
+        capture.finished.emit(0, 0)
     assert c._process is resumed and c.savedCalibration == original
 
 
@@ -526,7 +585,8 @@ def test_finishing_process_cannot_clear_monitor_started_while_draining_invalid_r
     c, _ = proximity; prepare(c); c.enabled = True
     c.startCalibration(); capture = c._process
     capture.output = json.dumps(dict(event="calibration_complete", device="wrong-device",
-                                     baseline=-70, samples=[-70] * 20, duration_seconds=10)).encode() + b"\n"
+                                     baseline=-70, samples=[-70] * 20, duration_seconds=10,
+                                     capture_id=c._live_calibration_id)).encode() + b"\n"
     capture.finished.emit(0, 0)
     assert c.enabled and c._command == "monitor" and c._process is not capture
     assert c._process.args[-1] == "-64" and "无效" in c.calibrationStatus

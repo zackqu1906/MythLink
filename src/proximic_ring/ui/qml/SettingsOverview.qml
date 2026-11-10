@@ -145,7 +145,7 @@ ColumnLayout {
             preferenceStyle: true
             visible: pane.controller.inlineInput.enabled
             title: "语音输入后切回原输入法"
-            description: "完成后自动切回；润色、撤销手势会临时切回 Mythlink。默认关闭。"
+            description: "完成后自动切回；润色、撤销及右滑历史操作会临时切回 Mythlink。默认关闭。"
             PreferenceSwitch {
                 objectName: "autoReturnInputSourceSwitch"
                 Layout.alignment: Qt.AlignRight
@@ -157,28 +157,19 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             visible: pane.controller.inlineInput.enabled
-            title: "多次撤销"
-            description: "逐次撤回当前输入框内的听写和编辑；关闭时只保留最近一次操作。"
-            PreferenceSwitch {
-                objectName: "multiUndoSwitch"
-                Layout.alignment: Qt.AlignRight
-                Accessible.name: "多次撤销"
-                checked: pane.controller.multiUndoEnabled
-                onClicked: pane.controller.multiUndoEnabled = checked
-            }
-        }
-        FigmaFormRow {
-            preferenceStyle: true
-            title: "类型转换按键"
-            visible: pane.controller.inputRoutingMode !== "auto"
-            description: "仅在当前语音结果可以转换时生效，连接期间也可修改。"
+            title: "历史操作模式"
+            description: pane.controller.historyActionMode === "retry"
+                ? "左滑撤销；恢复出编辑指令后，右滑重做，使用原输入再次请求模型。"
+                : pane.controller.historyActionMode === "next"
+                  ? "左滑上一步，右滑下一步；直接恢复已保存结果，不请求模型。"
+                  : "左滑连续撤销；定稿后右滑不操作。"
             FigmaSelect {
-                objectName: "modeCorrectionShortcutCombo"
+                objectName: "historyActionModeCombo"
                 Layout.fillWidth: true
-                Accessible.name: "类型转换按键"
-                model: pane.controller.modeCorrectionShortcutOptions
-                currentIndex: Math.max(0, pane.controller.modeCorrectionShortcutOptions.indexOf(pane.controller.modeCorrectionShortcut))
-                onActivated: pane.controller.modeCorrectionShortcut = pane.controller.modeCorrectionShortcutOptions[currentIndex]
+                Accessible.name: "历史操作模式"
+                model: ["只撤销", "撤销和下一步", "撤销和重做"]
+                currentIndex: ["undo", "next", "retry"].indexOf(pane.controller.historyActionMode)
+                onActivated: pane.controller.historyActionMode = ["undo", "next", "retry"][currentIndex]
             }
         }
         FigmaFormRow {

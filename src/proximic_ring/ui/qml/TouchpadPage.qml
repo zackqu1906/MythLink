@@ -149,11 +149,25 @@ ScrollView {
                         Layout.fillWidth: true
                         ColumnLayout {
                             Layout.fillWidth: true; spacing: 4
-                            Label { Layout.fillWidth: true; text: "轻点后按住拖动"; color: theme.text; font.pixelSize: 14 }
-                            Label { Layout.fillWidth: true; text: "轻点一次，再按住移动；抬起结束"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
+                            Label { Layout.fillWidth: true; text: "停留后拖动"; color: theme.text; font.pixelSize: 14 }
+                            Label { Layout.fillWidth: true; text: "重新接触并停住，再移动拖动；抬起结束"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
                         }
-                        FigmaSwitch { objectName: "touchpadTapDragSwitch"; checked: page.touchpad.tapDrag; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "轻点后按住拖动"; onToggled: page.touchpad.tapDrag = checked }
+                        FigmaSwitch { objectName: "touchpadDwellDragSwitch"; checked: page.touchpad.dwellDrag; enabled: page.touchpad.raw2Supported && !page.touchpad.busy; Accessible.name: "停留后拖动"; onToggled: page.touchpad.dwellDrag = checked }
                     }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: 16
+                        Label { text: "停留时长"; color: theme.text; font.pixelSize: 14 }
+                        Slider {
+                            objectName: "touchpadDwellSlider"
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
+                            from: 300; to: 600; stepSize: 10; value: page.touchpad.dwellMs
+                            enabled: page.touchpad.raw2Supported && !page.touchpad.busy
+                            Accessible.name: "拖动停留时长，300 到 600 毫秒"
+                            onMoved: page.touchpad.dwellMs = Math.round(value)
+                        }
+                        Label { text: page.touchpad.dwellMs + " ms"; color: theme.text }
+                    }
+                    Label { Layout.fillWidth: true; text: "时长调整从下一次接触生效。已开始普通移动时，中途停顿不会触发拖动。"; color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap }
                     RowLayout {
                         Layout.fillWidth: true
                         Label { Layout.fillWidth: true; text: "右键单击"; color: theme.text; font.pixelSize: 14 }

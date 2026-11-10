@@ -59,7 +59,7 @@ def test_touchpad_recognition_callback_ignores_retired_output(inline_ui):
     old.options["on_gesture"]("double-click")
     QTest.qWait(20)
     new_gestures = ["left-click", "left-double-click", "right-click", "two-finger-scroll",
-                    "two-finger-swipe-left", "two-finger-swipe-right"]
+                    "two-finger-swipe-left", "two-finger-swipe-right", "dwell-drag-ready", "dwell-drag-started"]
     for name in new_gestures:
         old.options["on_gesture"](name)
     QTest.qWait(20)

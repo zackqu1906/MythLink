@@ -136,6 +136,7 @@ def test_mouse_adapter_allows_the_app_to_keep_escape_for_other_apps():
     from ring_python_sdk.touchpad.macos import MacSystemMouse
     posted = []
     quartz = SimpleNamespace(CGPreflightPostEventAccess=lambda: True, kCGHIDEventTap=0,
+        kCGMouseEventDeltaX=4, kCGMouseEventDeltaY=5, CGEventSetIntegerValueField=lambda *args: None,
         kCGEventMouseMoved=1, CGEventPost=lambda tap, event: posted.append(event))
     mouse = MacSystemMouse(quartz=quartz, accessibility=SimpleNamespace(AXIsProcessTrusted=lambda: True))
     mouse.escape_pressed = lambda: True

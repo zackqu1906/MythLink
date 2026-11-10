@@ -1,3 +1,5 @@
+import time
+
 from test_inline_ui import inline_ui
 
 
@@ -7,6 +9,7 @@ def test_live_log_reads_all_producers_and_exports_one_file(inline_ui, monkeypatc
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QFileDialog
     controller, _, _, root, _ = inline_ui
+    controller.diagnosticExport._ime_root = tmp_path / 'ime'
     dialog = root.findChild(QObject, 'runtimeLogDialog')
     area = root.findChild(QObject, 'logArea')
     root.show()
@@ -25,11 +28,21 @@ def test_live_log_reads_all_producers_and_exports_one_file(inline_ui, monkeypatc
     controller._diagnostic_log.record('native error evidence', source='native.stderr', level='ERROR')
     QTest.qWait(600)
     assert 'native error evidence' in area.property('text')
-    output = tmp_path / 'shared.log'
+    output = tmp_path / 'shared.zip'
     monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **k: (str(output), ''))
     button = root.findChild(QQuickItem, 'exportDiagnosticLogButton')
     QMetaObject.invokeMethod(button, 'click')
-    assert 'native error evidence' in output.read_text() and 'trace-ui' in output.read_text()
+    for _ in range(300):
+        QTest.qWait(10)
+        time.sleep(.005)
+        if not controller.diagnosticExport.busy:
+            break
+    assert not controller.diagnosticExport.busy
+    assert not controller.diagnosticExport.error, controller.diagnosticExport.message
+    from zipfile import ZipFile
+    with ZipFile(output) as archive:
+        content = archive.read('diagnostic.log').decode()
+        assert 'native error evidence' in content and 'trace-ui' in content
     assert root.grabWindow().save('/tmp/proximic-unified-log.png')
     for name in ['exportDiagnosticLogButton', 'openDiagnosticLogDirectoryButton', 'jumpToLatestLogButton']:
         item = root.findChild(QQuickItem, name)

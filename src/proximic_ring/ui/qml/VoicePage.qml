@@ -368,6 +368,12 @@ UiScrollView {
                         UiMenu {
                             id: historyOptions
                             objectName: "voiceHistoryOptionsMenu"
+                            UiMenuItem {
+                                objectName: "exportAllVoiceHistoryButton"
+                                text: page.controller.voiceHistoryExport.busy ? "正在导出…" : "导出全部语音记录"
+                                enabled: !page.controller.voiceHistoryExport.busy
+                                onTriggered: page.controller.voiceHistoryExport.export()
+                            }
                             UiMenuItem { objectName: "openDataDirectoryButton"; text: "打开数据文件夹"; onTriggered: page.controller.openDataDirectory() }
                             UiMenuItem { objectName: "clearVoiceHistoryButton"; destructive: true; text: "清空全部语音记录"; enabled: page.controller.voiceHistoryEntries.length > 0; onTriggered: clearHistoryDialog.open() }
                         }
@@ -393,6 +399,12 @@ UiScrollView {
                     visible: text.length > 0 && !deleteHistoryDialog.visible
                     text: page.controller.historyActionMessage
                     color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap
+                }
+                UiNotice {
+                    objectName: "voiceHistoryPageExportStatus"
+                    Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                    text: page.controller.voiceHistoryExport.message
+                    warning: page.controller.voiceHistoryExport.error
                 }
                 ListView {
                     id: voiceHistoryList

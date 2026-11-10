@@ -2,6 +2,8 @@
 
 三种模式共用录音、手势配置、OCR 采集和写回校验，各自拥有独立的处理策略。
 
+邮件／富文本的原文读取、选区和写回失败排查见 [IMK 编辑诊断](IME_EDIT_DIAGNOSTICS.md)。该诊断只记录元数据，不改变写入和校验策略。
+
 | 模式 | 谁决定听写／编辑 | 编辑处理 | UI 入口 | 文本处理 |
 |---|---|---|---|---|
 | 手动转换 `manual` | 用户手势 | 原有编辑候选流程 | `ui/voice/manual_voice.py` | `text_processing/manual_processing.py` |
@@ -93,6 +95,7 @@ Clef 联合七字段 → 一致性校验 → 组合提示词 → 一次生成 �
 | `text_processing/processing_common.py` | 输出预算和响应异常类型 |
 | `voice/modification_dataset.py` | 听写、编辑、自动分类及截图的统一记录与删除 |
 | `voice/history_details.py`、`ui/qml/VoiceHistoryDetails.qml` | 三种模式共用的易读详情：模型输出优先，输入按口述／原文／上文展示，不展开协议、提示词或日志 |
+| `voice/history_export.py`、`ui/voice/history_export_controller.py` | 设置首页与历史页整体菜单导出完整原始记录、附件、CSV/JSONL 索引和 context 覆盖清单；后台压缩，成功后自动打开导出文件夹，不受历史筛选或展示条数限制 |
 | `ui/voice/inline_controller.py`、`native/ProxiMicInput/Sources/` | 原生会话、目标与版本校验、文字应用、撤销 |
 
 记录 schema v5 将 `screen_capture`（采集状态／目标／时序）、`screen_evidence.ocr_lines`
@@ -107,6 +110,15 @@ Clef 联合七字段 → 一致性校验 → 组合提示词 → 一次生成 �
 显示层不修改记录、不重新请求模型。空输出与失败回退分开呈现，避免把原文回退误称为模型输出。
 详情文本按框宽换行并在框内滚动，右侧留出 40 像素空白用于滚动外层记录列表。
 旧记录仍可读，未采集的截图、上下文或传感器字段明确显示未记录。
+
+设置首页“数据与分析 → 语音历史记录 → 一键导出”和历史页整体“⋯ → 导出全部语音记录”
+共用后台任务，将本安装数据目录中的全部交互导出到下载文件夹；两个入口均显示进度并防止重复导出，
+成功后自动打开导出文件夹；打开失败时显示文件路径，设置首页仍可手动重新打开。
+文件名为 `Mythlink-voice-history-日期时间-唯一后缀.zip`。包内保留 `interactions/` 原始记录与附件，
+另有 `records.jsonl`、`summary.csv`、`associations.jsonl`、`manifest.json` 和字段说明 `README.txt`。
+导出固定起始记录列表，每条记录在锁内打开同一版本文件，锁外流式压缩；不更改记录或暂停语音输入。
+缺失/损坏文件在清单中列出；磁盘写入失败不发布不完整 ZIP。CSV 区分已保存空原文与未记录，
+JSON 保留完整模型输入、标签来源、取消/撤销事件等原始证据，不把成功应用当作用户满意度。
 
 ### OCR 上文开关与等待
 

@@ -123,6 +123,7 @@ final class NativeInputClient: HandoffClient {
     }
 
     private func readSnapshot(includeComposition: Bool) throws -> EditorSnapshot {
+        let readStartedAt = ProcessInfo.processInfo.systemUptime
         try validateReadLease()
         let previousRead = activeRead
         defer { activeRead = previousRead }
@@ -138,6 +139,7 @@ final class NativeInputClient: HandoffClient {
         try validateReadLease()
         var whole: String?
         var readable: EditorTextRange?
+        var usedContextHint = false
         activeRead = "snapshot.length"
         let length = client.length()
         try validateReadLease()
@@ -165,6 +167,7 @@ final class NativeInputClient: HandoffClient {
             }
         }
         if whole == nil, let hint = modelContextHint, isValidRange(selected, length: (hint as NSString).length) {
+            usedContextHint = true
             readable = EditorTextRange(text: hint, range: NSRange(location: 0, length: (hint as NSString).length))
             lastReadDiagnostics["context_queries"] = 0
             lastReadDiagnostics["context_characters"] = (hint as NSString).length
@@ -223,6 +226,10 @@ final class NativeInputClient: HandoffClient {
                (value as NSString).length == selected.length { selectedText = value }
         }
         try validateReadLease()
+        lastReadDiagnostics["context_origin"] = whole != nil ? "document" :
+            (usedContextHint ? "confirmed_hint" : (readable != nil ? "bounded" : "unavailable"))
+        lastReadDiagnostics["context_complete"] = whole != nil && isValidRange(selected, length: (whole! as NSString).length)
+        lastReadDiagnostics["snapshot_ms"] = (ProcessInfo.processInfo.systemUptime - readStartedAt) * 1000
         return EditorSnapshot(text: whole, selection: selected, markedRange: marked,
                               selectedText: selectedText, documentAccess: access, readableContext: readable)
     }

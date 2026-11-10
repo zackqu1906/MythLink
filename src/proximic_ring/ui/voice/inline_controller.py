@@ -66,11 +66,13 @@ class InlineInputController(QObject):
         self._requested = set()
         self._settled = set()
         self._compatibility_requests = set()
-        self._shortcut = "F8"
         from ...gestures.gesture_settings import GestureBindings
         self._gesture_hints = GestureBindings().as_dict()
         self._hud_scale_percent = 80
-        self._multi_undo_enabled = True
+        self._redo_enabled = False
+        self._history_action_mode = "retry"
+        self._edit_replays = {}
+        self._edit_request_sources = {}
         self._utterance_sessions = {}
         self._edit_intents = {}
         self.settled_session_id = None
@@ -288,9 +290,28 @@ class InlineInputController(QObject):
 
     @Property(bool, notify=changed)
     def canUndo(self):
-        return bool(self.active or (self.ready and self._multi_undo_enabled
+        return bool(self.active or (self.ready
                     and self._view.get("phase") == "undone"
                     and self._view.get("undo_history_depth", 0) > 0))
+
+    @Property(bool, notify=changed)
+    def canRedo(self):
+        return bool(self._redo_enabled and self.ready and self._utterance_id and not self.stroke_mode
+                    and not self._awaiting_settlement() and not self._view.get("has_composition")
+                    and self._view.get("phase") in {"dictated", "edited", "undone"}
+                    and self._view.get("can_redo", False))
+
+    @Property(bool, notify=changed)
+    def canRetryEdit(self):
+        return bool(self._history_action_mode == "retry" and self.ready and self._utterance_id
+                    and not self.stroke_mode and not self._awaiting_settlement()
+                    and not self._view.get("has_composition") and self._view.get("phase") == "dictated"
+                    and self._view.get("edit_retry_version") == 1 and self._view.get("can_retry_edit")
+                    and self._view.get("retry_source_utterance_id", self._utterance_id) in self._edit_replays)
+
+    @Property(bool, notify=changed)
+    def canHistoryForward(self):
+        return self.canRedo or self.canRetryEdit
 
     @Property(str, notify=changed)
     def status(self):
@@ -399,7 +420,6 @@ class InlineInputController(QObject):
         """Prefer live IMK text; confirmed shows may tolerate unavailable focus."""
         from ...voice.ime.focus_probe import probe_input_focus, InputFocus
         from ...voice.ime.system_input_source import activate_voice_input_source
-        from ...desktop.app_shortcuts import MacAppShortcuts
         if (not self.enabled or self._closed or self._installing or self.stroke_mode
                 or not callable(getattr(self._bridge, "focus_state", None))):
             if native_fallback is not None and not self._closed:
@@ -411,60 +431,58 @@ class InlineInputController(QObject):
                                       native_target=target)
             return InputFocus("unavailable", reason="input_method_not_ready")
         borrowed_origin = None
-        backend = MacAppShortcuts()
-        def activation_focus(origin):
-            nonlocal borrowed_origin
-            borrowed_origin = origin
-            target = backend.passive_focus(origin)
-            diagnostic = target.diagnostic if target is not None else backend.last_diagnostic or {}
-            self.diagnostic.emit({"type": "dictation_focus_probe", "application": origin[0], "pid": origin[1],
-                                  "input_context": target.input_context if target else "unknown",
-                                  "wechat_ime_probe": bool(target and target.wechat_ime_probe),
-                                  "role": target.role if target else "", "focus_source": diagnostic.get("focus_source", ""),
-                                  "reason": diagnostic.get("reason", ""), "ax_errors": diagnostic.get("ax_errors", {})})
-            return target
-
         gate = self._gesture_source_activation
         ticket = gate.invalidate_restore() if allow_activation else None
         def native_activate(origin, **options):
             self.diagnostic.emit({"type": "gesture_source_activation",
-                                  "reason": "wechat_guarded_selection" if options.get("expected_source") else "system_shortcut_unavailable",
+                                  "reason": "guarded_selection" if options.get("expected_source") else "system_shortcut_unavailable",
                                   "application": origin[0], "pid": origin[1]})
             return self._gesture_source_activation.activate(origin, **options)
         previous_source = ""
-        wechat_probe = False
         def remember_borrow(source):
             nonlocal previous_source
             if source is not None and not gate.owns_restore(ticket):
                 raise RuntimeError("输入目标已变化")
             previous_source = source
         def select_source(pid, **options):
-            nonlocal previous_source, wechat_probe
-            wechat_probe = options.pop("wechat_probe", False)
-            if wechat_probe:
+            nonlocal previous_source, borrowed_origin
+            borrowed_origin = self._foreground_identity()
+            if not borrowed_origin or borrowed_origin[1] != pid:
+                raise RuntimeError("输入目标已变化")
+            if require_editable:
+                # Record the loan before selection, including switches whose
+                # receipt times out. Never depend on AX exposing an editor.
                 options["on_borrow"] = remember_borrow
             if self._source_return.enabled or require_editable:
                 options["remember_source"] = True
             reported = activate_voice_input_source(pid, native_activate=native_activate, **options)
-            if reported or not wechat_probe:
+            if reported or not require_editable:
                 previous_source = reported
         proof = probe_input_focus(self._bridge, self._foreground_identity,
-                                  select_source if allow_activation else None, native_fallback=native_fallback,
-                                  activation_focus=activation_focus if require_editable else None,
-                                  verify_activation_target=backend.same_target)
+                                  select_source if allow_activation else None, native_fallback=native_fallback)
         restored = None
         if proof and proof.status == "text":
             self._source_return.remember_probe(proof.target, previous_source)
         elif require_editable and borrowed_origin and self._source_return._external(previous_source):
             restored = gate.restore_if_unused(borrowed_origin, previous_source, ticket)
-        if wechat_probe:
-            self.diagnostic.emit({"type": "wechat_input_method_probe", "success": bool(proof and proof.status == "text"),
+        if require_editable:
+            self.diagnostic.emit({"type": "input_method_focus_probe", "success": bool(proof and proof.status == "text"),
+                                  "status": proof.status, "reason": proof.reason,
+                                  "application": proof.target[3] if proof.target else borrowed_origin[0] if borrowed_origin else "",
                                   "borrowed": self._source_return._external(previous_source),
                                   "restore_attempted": restored is not None, "restored": bool(restored)})
         return proof
 
     def empty_undo_after_return(self):
         return self.enabled and self._source_return.enabled and self._source_return.saved is None and not self.canUndo
+
+    def empty_redo_after_return(self):
+        saved = self._source_return.saved
+        view = saved["view"] if saved else {}
+        retained = (self._redo_enabled and view.get("can_redo", False)) or (
+            self._history_action_mode == "retry" and view.get("can_retry_edit", False)
+            and view.get("retry_source_utterance_id", view.get("utterance_id")) in (saved or {}).get("edit_replays", {}))
+        return self.enabled and self._source_return.enabled and not retained and not self.canHistoryForward
 
     def set_auto_return_input_source(self, enabled):
         self._source_return.configure(enabled)
@@ -523,13 +541,23 @@ class InlineInputController(QObject):
             self._hud_scale_percent = percent
             self._publish_gesture_hints()
 
-    def configure(self, shortcut, *, multi_undo_enabled=None):
-        self._shortcut = str(shortcut or "F8")
-        if multi_undo_enabled is not None:
-            self._multi_undo_enabled = bool(multi_undo_enabled)
+    def configure(self, *, multi_undo_enabled=None, redo_enabled=None, history_action_mode=None):
+        if history_action_mode is None and redo_enabled is not None:
+            history_action_mode = "next" if redo_enabled else "undo"
+        if history_action_mode is not None:
+            if history_action_mode not in {"undo", "next", "retry"}:
+                raise ValueError("未知历史操作模式")
+            self._history_action_mode = history_action_mode
+            self._redo_enabled = history_action_mode == "next"
+            if not self._redo_enabled:
+                self._view.update(can_redo=False, redo_history_depth=0)
+                if self._source_return.saved:
+                    self._source_return.saved["view"].update(can_redo=False, redo_history_depth=0)
         if self._bridge is not None:
-            self._bridge.send({"type": "configure", "mode_switch_shortcut": self._shortcut,
-                               "cancel_shortcut": "Esc", "multi_undo_enabled": self._multi_undo_enabled})
+            self._bridge.send({"type": "configure",
+                               "cancel_shortcut": "Esc", "multi_undo_enabled": True,
+                               "redo_enabled": self._redo_enabled,
+                               "history_action_mode": self._history_action_mode})
         self.changed.emit()
 
     def _send(self, operation, **fields):
@@ -629,28 +657,9 @@ class InlineInputController(QObject):
 
     def _diagnose(self, kind, *, characters=None, error=None, reason=None):
         """Publish an explicit metadata allowlist, never editor or ASR text."""
+        from ...voice.ime.edit_diagnostics import edit_readback_metadata, edit_request_metadata, snapshot_metadata
         readback = self._view.get("readback_diagnostics", {})
-        safe_readback = {}
-        if isinstance(readback, dict):
-            for key in ("expected_characters", "observed_characters"):
-                if type(readback.get(key)) is int:
-                    safe_readback[key] = readback[key]
-            if type(readback.get("text_matches")) is bool:
-                safe_readback["text_matches"] = readback["text_matches"]
-            if type(readback.get("key_acknowledged")) is bool:
-                safe_readback["key_acknowledged"] = readback["key_acknowledged"]
-            if readback.get("operation_stage") in {"context_whole", "context_caret", "capture", "written",
-                    "sentence_selected", "sentence_written", "native_caret", "native_restore_caret", "verify"}:
-                safe_readback["operation_stage"] = readback["operation_stage"]
-            for key in ("operation_ms", "post_write_ms", "context_prepare_ms"):
-                if type(readback.get(key)) in (int, float):
-                    safe_readback[key] = readback[key]
-            if readback.get("ack_source") in {"text", "selection_collapse", "native_selection", "committed_range", "composition_end"}:
-                safe_readback["ack_source"] = readback["ack_source"]
-            for key in ("expected_selection", "observed_selection", "expected_marked", "observed_marked"):
-                value = readback.get(key)
-                if isinstance(value, list) and len(value) == 2 and all(type(item) is int for item in value):
-                    safe_readback[key] = value
+        safe_readback = edit_readback_metadata(readback)
         client_read = self._view.get("client_read_diagnostics", {})
         safe_client_read = {}
         if isinstance(client_read, dict):
@@ -666,6 +675,7 @@ class InlineInputController(QObject):
                 value = client_read.get(key)
                 if isinstance(value, list) and len(value) == 2 and all(type(item) is int for item in value):
                     safe_client_read[key] = value
+        safe_client_read.update(snapshot_metadata(client_read))
         handoff = self._view.get("handoff_diagnostics", {})
         safe_handoff = {}
         if isinstance(handoff, dict):
@@ -703,6 +713,15 @@ class InlineInputController(QObject):
             "handoff_state": str(self._view.get("handoff_state", "")) if self._view.get("handoff_state", "") in {"pending", "ready", "failed"} else "",
             "handoff_diagnostics": safe_handoff,
         }
+        edit = edit_request_metadata(self._view.get("edit_diagnostics"))
+        if edit:
+            event["edit_diagnostics"] = edit
+        for key in ("edit_trace_version", "native_pid"):
+            if type(self._view.get(key)) is int:
+                event[key] = self._view[key]
+        build = self._view.get("native_build")
+        if isinstance(build, str) and 0 < len(build) <= 40 and all(c in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ._-" for c in build):
+            event["native_build"] = build
         if kind == "state":
             if event == self._last_state_diagnostic:
                 return
@@ -1068,14 +1087,16 @@ class InlineInputController(QObject):
             self._session_id = int(session_id)
             self._remember_session()
 
-    def _confirm_edit_intent(self):
-        utterance = self._utterance_id
+    def _confirm_edit_intent(self, source=None):
+        utterance = source or self._utterance_id
         if not utterance:
             return
+        session_id = (self._session_id if utterance == self._utterance_id
+                      else self._utterance_sessions.get(utterance, 0))
         recorded_session = self._edit_intents.setdefault(utterance, 0)
-        if self._session_id and recorded_session != self._session_id:
-            self._edit_intents[utterance] = self._session_id
-            self.editIntentConfirmed.emit(self._session_id)
+        if session_id and recorded_session != session_id:
+            self._edit_intents[utterance] = session_id
+            self.editIntentConfirmed.emit(session_id)
         while len(self._edit_intents) > 256:
             self._edit_intents.pop(next(iter(self._edit_intents)))
 
@@ -1163,6 +1184,18 @@ class InlineInputController(QObject):
         self._action_timer.start(4000)
         self.changed.emit()
 
+    @Slot()
+    def redo(self):
+        if self.canRedo:
+            self._mark_action_pending("redo")
+            self._send("redo")
+
+    @Slot()
+    def retry_edit(self):
+        if self.canRetryEdit:
+            self._mark_action_pending("retry_edit")
+            self._send("retry_edit")
+
     def _clear_action_pending(self):
         self._action_timer.stop()
         if self._action_pending is not None:
@@ -1188,10 +1221,13 @@ class InlineInputController(QObject):
         if tuple(key) == current and self._view.get("phase") == "polishing":
             self._send("polish_result", revision=current[-1], text=str(text), error=str(error))
 
-    def apply_edit(self, key, text, error):
+    def accepts_edit_result(self, key):
         current = (self._epoch, self._client_id, self._utterance_id, self._view.get("revision", 0))
-        if tuple(key) == current and self._view.get("phase") == "editing":
-            self._send("edit_result", revision=current[-1], text=str(text), error=str(error))
+        return tuple(key) == current and self._view.get("phase") == "editing"
+
+    def apply_edit(self, key, text, error):
+        if self.accepts_edit_result(key):
+            self._send("edit_result", revision=key[-1], text=str(text), error=str(error))
 
     @Slot(object)
     def _accept(self, message):
@@ -1228,6 +1264,8 @@ class InlineInputController(QObject):
             if self._stroke_request is not None:
                 self._stroke_timed_out()
             self._utterance_sessions.clear()
+            self._edit_replays.clear()
+            self._edit_request_sources.clear()
             self.settled_session_id = None
             self._compatibility_requests.clear()
             if self._begin_origin is not None:
@@ -1237,7 +1275,7 @@ class InlineInputController(QObject):
                 self._wait_for_reply("ready")
                 self._transport_error = ""
                 self._publish_gesture_hints()
-                self.configure(self._shortcut)
+                self.configure()
                 self._diagnose("connected")
                 self.changed.emit()
                 return
@@ -1252,7 +1290,7 @@ class InlineInputController(QObject):
             self._transport_error = ""
             self._last_state_diagnostic = None
             self._publish_gesture_hints()
-            self.configure(self._shortcut)
+            self.configure()
             self._diagnose("connected")
             self.changed.emit()
             if had_transaction:
@@ -1269,7 +1307,8 @@ class InlineInputController(QObject):
                 return
         if kind == "activation_trace":
             allowed = {"type", "event", "controller", "lease", "client_id", "activated", "preparing",
-                       "native_read", "state_read", "phase", "application", "front_application", "sender", "bound_sender"}
+                       "native_read", "state_read", "phase", "application", "front_application", "sender", "bound_sender",
+                       "utterance_id", "revision"}
             self.diagnostic.emit({"lifecycle_event" if key == "event" else key: value
                                   for key, value in message.items()
                                   if key in allowed and isinstance(value, (str, int, bool))})
@@ -1294,6 +1333,8 @@ class InlineInputController(QObject):
                 self.changed.emit()
                 return
             self._utterance_sessions.clear()
+            self._edit_replays.clear()
+            self._edit_request_sources.clear()
             self.settled_session_id = None
             had_transaction = self._awaiting_settlement()
             self._stop_reply_wait()
@@ -1434,6 +1475,8 @@ class InlineInputController(QObject):
                     self._stroke_request = None
                     self.strokeCommitted.emit(char, False, "已切换输入框")
                 self._utterance_sessions.clear()
+                self._edit_replays.clear()
+                self._edit_request_sources.clear()
                 self._client_id = client_id
                 self._utterance_id = ""
                 self._view = {}
@@ -1441,7 +1484,7 @@ class InlineInputController(QObject):
                 self._utterance_id = ""
             self._view = {**self._view, **message}
             if utterance_id == self._utterance_id and (message.get("edit_requested") or message.get("phase") in {"editing", "edited"}):
-                self._confirm_edit_intent()
+                self._confirm_edit_intent(message.get("retry_source_utterance_id"))
             if self._action_pending is not None:
                 pending_id, pending_revision, pending_phase = self._action_pending
                 if (utterance_id != pending_id or self._view.get("revision", 0) != pending_revision
@@ -1522,6 +1565,8 @@ class InlineInputController(QObject):
         elif kind == "finish_audio":
             self.audioEndRequested.emit()
         elif kind == "interrupted":
+            self._edit_replays.clear()
+            self._edit_request_sources.clear()
             self._stop_reply_wait()
             reason = str(message.get("reason") or message.get("error") or self.error or "输入会话已结束")
             self._view = {**self._view, "error": reason, "reason": reason}
@@ -1529,6 +1574,9 @@ class InlineInputController(QObject):
                 self._view["lifecycle_event"] = str(message["lifecycle_event"])
             if "has_composition" in message:
                 self._view["has_composition"] = bool(message["has_composition"])
+            for field in ("edit_diagnostics", "readback_diagnostics"):
+                if field in message:
+                    self._view[field] = message[field]
             self._diagnose("interrupted", reason=reason)
             self.changed.emit()
             self.interrupted.emit()
@@ -1542,9 +1590,13 @@ class InlineInputController(QObject):
             revision = message.get("revision", 0)
             key = (self._epoch, client_id, utterance_id, revision)
             if (key not in self._requested and self._view.get("phase") == "editing"
+                    and revision == self._view.get("revision")
                     and message.get("edit_context_available", self._view.get("context_complete"))):
                 self._requested.add(key)
-                self._confirm_edit_intent()
+                source = message.get("source_utterance_id", utterance_id)
+                self._edit_request_sources[key] = (source, bool(message.get("retry_edit")))
+                if not message.get("retry_edit"):
+                    self._confirm_edit_intent()
                 original = message.get("original", self._view.get("original", ""))
                 self.editRequested.emit(key, str(message.get("instruction", "")), str(original), self.target_reference())
         elif kind == "settled":
@@ -1581,6 +1633,8 @@ class InlineInputController(QObject):
         self._sentence_origin = None
         self._session_id = 0
         self._utterance_sessions.clear()
+        self._edit_replays.clear()
+        self._edit_request_sources.clear()
         self.settled_session_id = None
         self._view = {**self._view, "phase": "idle", "raw": ""}
         self._requested.clear()
@@ -1607,6 +1661,8 @@ class InlineInputController(QObject):
         self._utterance_id = ""
         self._session_id = 0
         self._utterance_sessions.clear()
+        self._edit_replays.clear()
+        self._edit_request_sources.clear()
         self.settled_session_id = None
         self._requested.clear()
         self._settled.clear()
@@ -1614,7 +1670,8 @@ class InlineInputController(QObject):
                       "has_composition": False, "edit_requested": False,
                       "utterance_id": "", "revision": 0, "polished": False,
                       "can_polish": False, "polish_restore_available": False,
-                      "undo_history_depth": 0, "can_cancel": False, "can_convert": False}
+                      "undo_history_depth": 0, "redo_history_depth": 0, "can_redo": False,
+                      "can_cancel": False, "can_convert": False}
         self.changed.emit()
 
     def close(self):

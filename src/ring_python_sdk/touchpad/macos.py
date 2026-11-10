@@ -189,6 +189,13 @@ class MacSystemMouse:
                         self._drag_up = self._drag_event(self.q.kCGEventLeftMouseUp, point)
                     else:
                         movement = self._event(self.q.kCGEventMouseMoved, point)
+                    # Screenshot selection reads these relative fields. Derive
+                    # them from the final coordinates after gain/inversion/clamp;
+                    # quantizing endpoints retains travel across subpixel moves.
+                    self.q.CGEventSetIntegerValueField(movement, self.q.kCGMouseEventDeltaX,
+                                                       round(point[0])-round(x))
+                    self.q.CGEventSetIntegerValueField(movement, self.q.kCGMouseEventDeltaY,
+                                                       round(point[1])-round(y))
                     self.q.CGEventPost(self.q.kCGHIDEventTap, movement)
                     self.moves += 1
                 elif event['kind'] == 'scroll':

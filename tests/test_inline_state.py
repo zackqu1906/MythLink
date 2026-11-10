@@ -53,21 +53,20 @@ def receive(controller, kind="state", **fields):
 
 
 @pytest.mark.parametrize('enabled', [True, False])
-def test_multi_undo_setting_survives_shortcut_updates_and_reconnect(component, enabled):
+def test_history_stays_enabled_despite_legacy_setting_and_reconnect(component, enabled):
     c, _ = component
-    assert c._multi_undo_enabled is True
-    c.configure("F8", multi_undo_enabled=enabled)
-    c.configure("F9")
-    assert c._bridge.messages[-1]["multi_undo_enabled"] is enabled
+    c.configure(multi_undo_enabled=enabled)
+    c.configure()
+    assert c._bridge.messages[-1]["multi_undo_enabled"] is True
     c._accept({"type": "connected", "epoch": "new"})
-    assert c._bridge.messages[-1]["multi_undo_enabled"] is enabled
+    assert c._bridge.messages[-1]["multi_undo_enabled"] is True
 
 
 def test_hud_configuration_is_independent_of_voice_and_survives_reconnect(component):
     c, _ = component
     c.begin()
     receive(c, phase="listening", ready=True)
-    state = (dict(c._view), c._utterance_id, c._seq, c._shortcut, c._multi_undo_enabled)
+    state = (dict(c._view), c._utterance_id, c._seq, c._history_action_mode)
     signals = []
     c.changed.connect(lambda: signals.append("changed"))
     c.audioEndRequested.connect(lambda: signals.append("end"))
@@ -76,18 +75,18 @@ def test_hud_configuration_is_independent_of_voice_and_survives_reconnect(compon
     c._bridge.messages.clear()
     c.set_gesture_hints(bindings)
     assert c._bridge.messages == [{"type": "configure_hud", "gesture_hints": bindings, "scale_percent": 80}]
-    assert (c._view, c._utterance_id, c._seq, c._shortcut, c._multi_undo_enabled) == state
+    assert (c._view, c._utterance_id, c._seq, c._history_action_mode) == state
     assert signals == []
     c.set_gesture_hints(bindings)
     assert len(c._bridge.messages) == 1
     c.set_hud_scale(120)
     assert c._bridge.messages[-1]["scale_percent"] == 120
-    assert (c._view, c._utterance_id, c._seq, c._shortcut, c._multi_undo_enabled) == state
+    assert (c._view, c._utterance_id, c._seq, c._history_action_mode) == state
     assert signals == []
     c.set_hud_scale(120)
     assert len(c._bridge.messages) == 2
     bindings["undo"][0] = "circle-clockwise"
-    c.configure("F9")
+    c.configure()
     assert c._bridge.messages[-1]["type"] == "configure"
     assert "gesture_hints" not in c._bridge.messages[-1]
     c._accept({"type": "connected", "epoch": "hud-reconnect"})
@@ -98,16 +97,60 @@ def test_hud_configuration_is_independent_of_voice_and_survives_reconnect(compon
 
 def test_undo_history_remains_accessible_after_current_sentence_is_undone(component):
     c, _ = component
-    c.configure("F8", multi_undo_enabled=True)
+    c.configure(multi_undo_enabled=True)
     c.begin()
     receive(c, phase="undone", ready=True, undo_history_depth=2)
     assert c.canUndo and not c.active
     c.cancel()
     assert c._bridge.messages[-1]["type"] == "cancel"
-    c.configure("F8", multi_undo_enabled=False)
+    c.configure(multi_undo_enabled=False)
     before = len(c._bridge.messages)
     c.cancel()
-    assert not c.canUndo and len(c._bridge.messages) == before
+    assert c.canUndo and len(c._bridge.messages) == before + 1
+
+
+def test_redo_setting_clears_advertised_future_and_survives_reconnect(component):
+    c, _ = component
+    c.configure(history_action_mode="next")
+    c.begin()
+    receive(c, phase="undone", ready=True, can_redo=True, undo_history_depth=2, redo_history_depth=1)
+    assert c.canRedo and c.canUndo
+    c.configure(redo_enabled=False)
+    assert c.canUndo and not c.canRedo and c._view["redo_history_depth"] == 0
+    c.configure()
+    assert c._bridge.messages[-1]["redo_enabled"] is False
+    assert c._bridge.messages[-1]["multi_undo_enabled"] is True
+    c.configure(redo_enabled=True)
+    assert not c.canRedo
+    c.configure(redo_enabled=False)
+    c._accept({"type": "connected", "epoch": "new"})
+    assert c._bridge.messages[-1]["redo_enabled"] is False
+
+
+@pytest.mark.parametrize("phase,busy,composition,available,expected", [
+    ("undone", False, False, True, True),
+    ("dictated", False, False, True, True),
+    ("edited", False, False, True, True),
+    ("editing", False, False, True, False),
+    ("polishing", False, False, True, False),
+    ("dictated", True, False, True, False),
+    ("dictated", False, True, True, False),
+    ("undone", False, False, False, False),
+])
+def test_redo_only_sends_for_stable_native_history(component, phase, busy, composition, available, expected):
+    c, _ = component
+    c.configure(history_action_mode="next")
+    c.begin()
+    receive(c, phase=phase, ready=True, can_redo=available, redo_history_depth=1,
+            awaiting_readback=busy, has_composition=composition)
+    before = len(c._bridge.messages)
+    assert c.canRedo is expected
+    c.redo()
+    assert len(c._bridge.messages) == before + int(expected)
+    if expected:
+        assert c._bridge.messages[-1]["type"] == "redo"
+        c.redo()
+        assert len(c._bridge.messages) == before + 1  # Wait for native confirmation.
 
 
 def test_history_settlement_records_original_audio_session_and_deduplicates(component):
@@ -735,7 +778,7 @@ def test_native_conversion_intent_survives_cancel_and_does_not_leak_to_next_sent
     c.editIntentConfirmed.connect(intents.append)
     c.begin()
     receive(c, phase="listening", ready=True)
-    # Native toolbar/F8 conversion can arrive before audio START binds its ID.
+    # Native toolbar conversion can arrive before audio START binds its ID.
     receive(c, phase="finishing", edit_requested=True, ready=True)
     assert intents == []
     c.bind_session(11)
@@ -771,3 +814,108 @@ def test_selection_diagnostics_expose_stage_and_ack_but_not_arbitrary_text(compo
     receive(c, phase="error", readback_diagnostics={
         "operation_stage": "private text", "key_acknowledged": "private text"})
     assert events[-1]["readback_diagnostics"] == {}
+
+
+def test_mail_edit_evidence_survives_native_state_sanitizing_and_disk_rendering(component, tmp_path):
+    from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
+    from proximic_ring.ui.controller import AppController
+
+    c, events = component
+    assert c.begin()
+    verification = {
+        "operation_stage": "context_whole", "source_match": "different",
+        "source_relation": "snapshot_prefix", "source_common_prefix": 32769,
+        "source_common_suffix": 0, "source_first_expected_kind": "end",
+        "source_first_observed_kind": "other", "source_range": [0, 32769],
+        "expected_characters": 32769, "observed_characters": 32770,
+        "observed_selection": [0, 32772], "committed_caret": 3,
+        "instruction_matches": True, "write_sent": False,
+        "tail_characters": 32769, "tail_utf16": 32769, "caret_restore_limit": 512,
+        "failure_code": "source_mismatch_restore_limit", "operation_ms": 180,
+        "private": "private mail body", "expected": "private source",
+    }
+    receive(c, phase="error", ready=True, native_pid=123, native_build="47", edit_trace_version=1,
+            client_read_diagnostics={"query": "snapshot", "context_origin": "bounded", "context_complete": False,
+                                     "snapshot_ms": 1.25, "context_readable_range": [0, 32769]},
+            readback_diagnostics=verification,
+            edit_diagnostics={"schema": 1, "source_complete": False, "source_range": [0, 32769],
+                              "model_source_characters": 1, "original_selection": [1, 0],
+                              "verification": verification, "original": "private original"})
+    event = events[-1]
+    assert event["edit_diagnostics"]["verification_failure_code"] == "source_mismatch_restore_limit"
+    assert event["readback_diagnostics"]["write_sent"] is False
+    assert event["client_read_diagnostics"]["context_origin"] == "bounded"
+    assert "private" not in json.dumps(event)
+    assert event["native_pid"] == 123 and event["edit_trace_version"] == 1
+
+    class DiskLogger:
+        _diagnostic_run_id = "mail-test"
+        _diagnostic_field = staticmethod(AppController._diagnostic_field)
+        _event_log = AppController._event_log
+        _log_inline_diagnostic = AppController._log_inline_diagnostic
+        _append_background_diagnostic = AppController._append_background_diagnostic
+        _diagnostic_log = RotatingDiagnosticLog(tmp_path / "diagnostic.log")
+
+    DiskLogger()._log_inline_diagnostic(event)
+    line = (tmp_path / "diagnostic.log").read_text()
+    # The nested dictionary is longer than the old 240-character limit. Every
+    # critical field must also survive as an independently searchable scalar.
+    assert 'readback_failure_code="source_mismatch_restore_limit"' in line
+    assert 'readback_source_relation="snapshot_prefix"' in line
+    assert 'readback_write_sent=false' in line
+    assert 'edit_original_selection="[1, 0]"' in line
+    assert 'edit_verification_observed_characters=32770' in line
+    assert "private" not in line
+
+
+def test_edit_diagnostics_reject_text_in_typed_metadata_and_keep_interruption_evidence(component):
+    c, events = component
+    assert c.begin()
+    receive(c, phase="editing", ready=True, edit_diagnostics={"schema": 1})
+    receive(c, "interrupted", reason="已切换输入框", lifecycle_event="deactivate",
+            edit_diagnostics={"schema": 1, "source_range": [0, "private"],
+                              "model_wait_ms": float("nan"), "verification": {
+                                  "source_relation": ["private"], "failure_code": "private",
+                                  "write_sent": False, "operation_stage": "context_whole"}},
+            readback_diagnostics={"write_sent": False, "operation_stage": "context_whole"})
+    assert events[-1]["type"] == "interrupted"
+    assert events[-1]["edit_diagnostics"] == {
+        "schema": 1, "verification_write_sent": False, "verification_operation_stage": "context_whole"}
+    assert "private" not in json.dumps(events[-1])
+
+
+@pytest.mark.parametrize("mode,phase,available,has_saved,expected", [
+    ("retry", "dictated", True, True, True),
+    ("retry", "dictated", True, False, False),
+    ("retry", "dictated", False, True, False),
+    ("retry", "undone", True, True, False),
+    ("retry", "editing", True, True, False),
+    ("undo", "dictated", True, True, False),
+    ("next", "dictated", True, True, False),
+])
+def test_retry_gates_on_mode_saved_request_and_native_instruction(component, mode, phase, available, has_saved, expected):
+    c, _ = component
+    c.configure(history_action_mode=mode)
+    c.begin()
+    if has_saved:
+        c._edit_replays["older-source"] = object()
+    receive(c, phase=phase, ready=True, edit_retry_version=1,
+            can_retry_edit=available, retry_source_utterance_id="older-source")
+    before = len(c._bridge.messages)
+    assert c.canRetryEdit is expected
+    c.retry_edit(); c.retry_edit()
+    assert len(c._bridge.messages) == before + int(expected)
+    if expected:
+        assert c._bridge.messages[-1]["type"] == "retry_edit"
+
+
+def test_historical_retry_does_not_relabel_newer_audio_as_an_edit(component):
+    c, _ = component
+    c.begin(); c.bind_session(11)
+    old = c._utterance_id
+    c.begin(); c.bind_session(12)
+    intents = []
+    c.editIntentConfirmed.connect(intents.append)
+    receive(c, phase="editing", ready=True, revision=1, edit_requested=True, retry_source_utterance_id=old)
+    receive(c, phase="edited", ready=True, revision=1, retry_source_utterance_id=old)
+    assert intents == [11]

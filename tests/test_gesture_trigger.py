@@ -247,6 +247,12 @@ for name in ['two-finger-swipe-left', 'two-finger-swipe-right']:
 QTest.qWait(200)
 assert [card.property('gestureLabel') for card in cards()] == ['双指左滑 · 前进', '双指右滑 · 后退']
 assert toast.window.grabWindow().save(str(shots / 'gesture-trigger-navigation.png'))
+toast.hide()
+for name in ['dwell-drag-ready', 'dwell-drag-started']:
+    controller.submit(name, owner._disconnect_event)
+QTest.qWait(200)
+assert [card.property('gestureLabel') for card in cards()] == ['已停留 · 移动开始拖动', '停留拖动 · 已开始']
+assert toast.window.grabWindow().save(str(shots / 'gesture-trigger-dwell.png'))
 controller.enabled = False
 assert not toast.window.isVisible() and not toast._timer.isActive() and not names()
 controller.enabled = True

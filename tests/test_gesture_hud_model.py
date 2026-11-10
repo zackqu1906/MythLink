@@ -12,7 +12,7 @@ def test_input_hints_never_show_global_or_application_actions():
     globals = GlobalGestureBindings(window_selector="swipe-left").as_dict()
     view = hint_view("input", [row("swipe-left", "上一页")], globals)
     actions = {orb["key"]: orb["action"] for orb in view["orbs"]}
-    assert actions == {"swipe-left": "撤销", "swipe-right": "语音编辑", "swipe-up": "发送",
+    assert actions == {"swipe-left": "撤销", "swipe-right": "编辑 / 下一步", "swipe-up": "发送",
                        "swipe-down": "润色本句", "double-tap": "开始语音", "tap": "结束语音"}
     assert all(orb["scope"] == "mode" for orb in view["orbs"])
     assert view["modeTitle"] == "输入中"
@@ -27,6 +27,11 @@ def test_outside_hints_follow_defaults_and_explicit_unbindings():
     bindings = GlobalGestureBindings(scroll_up="", scroll_down="").as_dict()
     assert {orb["key"] for orb in hint_view("operation", global_bindings=bindings)["orbs"]} == {
         "double-tap", "clench", "index-pinch", "double-index-pinch", "double-middle-pinch"}
+
+
+def test_disabled_redo_keeps_the_original_input_hint():
+    actions = {orb["key"]: orb["action"] for orb in hint_view("input", redo_enabled=False)["orbs"]}
+    assert actions["swipe-right"] == "语音编辑" and actions["swipe-left"] == "撤销"
 
 
 def test_app_bindings_win_global_conflicts_without_duplicate_hints():

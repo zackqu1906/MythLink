@@ -1,4 +1,4 @@
-"""Per-click receipts, written off the BLE, pointer and native delivery threads."""
+"""Pointer diagnostics, written off the BLE, pointer and native delivery threads."""
 from __future__ import annotations
 
 import atexit
@@ -23,9 +23,9 @@ def _write_records():
         if isinstance(item, threading.Event):
             item.set()
             continue
-        record, native = item
+        tag, record, native = item
         try:
-            message = '[TOUCHPAD_CLICK] ' + json.dumps(record, ensure_ascii=False, allow_nan=False)
+            message = f'[{tag}] ' + json.dumps(record, ensure_ascii=False, allow_nan=False)
             if native:
                 # NativeAccessChannel already collects this private stderr pipe.
                 sys.stderr.write(message + '\n')
@@ -46,8 +46,16 @@ def start_click_diagnostics():
 
 
 def click_record(record, *, native=False):
+    _enqueue_record('TOUCHPAD_CLICK', record, native=native)
+
+
+def drag_record(record):
+    _enqueue_record('TOUCHPAD_DRAG', record)
+
+
+def _enqueue_record(tag, record, *, native=False):
     start_click_diagnostics()
-    _records.put(({**record, 'process': os.getpid(), 'recorded_at': time.monotonic()}, native))
+    _records.put((tag, {**record, 'process': os.getpid(), 'recorded_at': time.monotonic()}, native))
 
 
 def flush_click_diagnostics(timeout=1.):

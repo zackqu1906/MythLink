@@ -197,6 +197,7 @@ def native(monkeypatch):
     posted, native_records = [], []
     q = SimpleNamespace(CGPreflightPostEventAccess=lambda: True, kCGHIDEventTap=0,
         kCGEventLeftMouseDown=1, kCGEventLeftMouseUp=2, kCGEventMouseMoved=3,
+        kCGMouseEventDeltaX=4, kCGMouseEventDeltaY=5,
         kCGMouseEventClickState=1, CGEventSetIntegerValueField=lambda *args: None,
         CGEventPost=lambda _, event: posted.append(event))
     mouse = WorkerTouchpadMouse(read_fd, quartz=q,

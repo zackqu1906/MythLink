@@ -276,6 +276,14 @@ Rectangle {
                 font.family: theme.family; font.pixelSize: 12; font.weight: Font.Medium
                 lineHeight: 20; lineHeightMode: Text.FixedHeight
             }
+            Label {
+                objectName: "voiceHistoryReexecutedLabel"
+                visible: Boolean(row.entry.reexecuted)
+                text: "重新执行"; leftPadding: 6; rightPadding: 6
+                background: Rectangle { radius: 10; color: "#1A6552A3" }
+                color: theme.edit; font.family: theme.family; font.pixelSize: 12
+                lineHeight: 20; lineHeightMode: Text.FixedHeight
+            }
             RowLayout {
                 objectName: "voiceHistoryApplicationGroup"
                 Layout.minimumWidth: 0; Layout.maximumWidth: Math.max(80, Math.min(240, row.width * 0.4))

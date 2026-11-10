@@ -55,7 +55,7 @@ def test_unexpected_stop_alerts_once_and_retires_all_interaction(controller, mon
     assert not controller._utterance_active
     assert not controller.interactionCanCancel
     assert not controller.nativeUndoAvailable
-    assert not controller.modeCorrectionHotkeyAvailable
+    assert not controller.modeConversionAvailable
     assert not controller._transcript_active
     assert controller._manual_association_watch is None
     assert not controller._manual_association_timer.isActive()

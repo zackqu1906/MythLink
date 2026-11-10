@@ -19,11 +19,13 @@ def gesture_label(key):
         key, GESTURE_LABELS.get(key, key).split("（")[0])
 
 
-def hint_view(mode, actions=None, global_bindings=None, global_labels=None, voice_bindings=None):
+def hint_view(mode, actions=None, global_bindings=None, global_labels=None, voice_bindings=None, *, redo_enabled=True, history_action_mode=None):
     """Show the effective focus route; application bindings override global defaults."""
     from ...gestures.gesture_settings import GLOBAL_ACTION_LABELS
     labels = GLOBAL_ACTION_LABELS if global_labels is None else global_labels
     bindings = GlobalGestureBindings().as_dict() if global_bindings is None else global_bindings
+    history_action_mode = history_action_mode or ("next" if redo_enabled else "undo")
+    forward_label = {"undo": "语音编辑", "next": "编辑 / 下一步", "retry": "编辑 / 重做"}[history_action_mode]
     rows = actions or []
     context = rows[0] if rows and mode != "input" else {}
     scene = context.get("scene", "")
@@ -32,7 +34,7 @@ def hint_view(mode, actions=None, global_bindings=None, global_labels=None, voic
     if mode == "input":
         for action, label, symbol in [("send", "发送", None), ("polish", "润色本句", None),
                 ("confirm", "开始语音", "mic"), ("end", "结束语音", "mic"),
-                ("switch_mode", "语音编辑", "edit"), ("undo", "撤销", "undo")]:
+                ("switch_mode", forward_label, "edit"), ("undo", "撤销", "undo")]:
             for key in voice.get(action, []):
                 if key in SYMBOLS:
                     text = "开始 / 定稿" if action == "end" and key in voice.get("confirm", []) else label

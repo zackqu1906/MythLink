@@ -63,20 +63,13 @@ def main(argv: list[str] | None = None) -> int:
 
             voice_action_hotkeys = WindowsVoiceActionHotkeys(
                 controller.dispatchVoiceAction,
-                mode_switch_shortcut=(
-                    lambda: controller.modeCorrectionShortcut
-                ),
                 is_interaction_active=lambda: controller.interactionCanCancel,
-                is_mode_correction_active=lambda: (
-                    controller.modeCorrectionHotkeyAvailable
-                    or controller.processingModeCorrectionAvailable
-                ),
                 is_undo_active=lambda: controller.nativeUndoAvailable,
             )
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:
             print(f"[voice-actions] 全局交互快捷键不可用：{exc}", file=sys.stderr)
-    # On macOS the selected input method handles F8/Esc directly. No global
+    # On macOS the selected input method handles Esc directly. No global
     # event tap or Accessibility permission is needed for speech interactions.
     engine = QQmlApplicationEngine()
     from .desktop.application_icons import install_application_icons
@@ -111,11 +104,13 @@ def main(argv: list[str] | None = None) -> int:
     controller.ringGestures.showRequested.connect(
         lambda mode, message: gesture_hud.show_mode(
             mode, message=message, global_bindings=controller.ringGestures.globalBindings,
-            global_labels=controller.ringGestures.globalActionLabels, voice_bindings=controller.gestureBindings)
+            global_labels=controller.ringGestures.globalActionLabels, voice_bindings=controller.gestureBindings,
+            history_action_mode=controller.historyActionMode)
     )
     controller.ringGestures.sceneHudRequested.connect(
         lambda mode, actions: gesture_hud.show_mode(mode, scene_actions=actions,
-            global_bindings=controller.ringGestures.globalBindings, global_labels=controller.ringGestures.globalActionLabels, voice_bindings=controller.gestureBindings)
+            global_bindings=controller.ringGestures.globalBindings, global_labels=controller.ringGestures.globalActionLabels, voice_bindings=controller.gestureBindings,
+            history_action_mode=controller.historyActionMode)
     )
     controller.ringGestures.hideRequested.connect(gesture_hud.hide)
     from .desktop.window_selector_overlay import WindowSelectorOverlay

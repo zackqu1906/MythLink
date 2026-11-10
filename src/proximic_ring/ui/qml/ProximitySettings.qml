@@ -66,6 +66,8 @@ ColumnLayout {
                 text: pane.controller.error
                 color: "#BB4255"; font.pixelSize: 13; wrapMode: Text.Wrap
             }
+            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: theme.line }
+            ProximitySignalStatus { Layout.fillWidth: true; controller: pane.controller }
         }
     }
 
@@ -157,7 +159,7 @@ ColumnLayout {
         description: "选择哪些操作可以用于采集桌前信号，减轻长期漂移的影响。"
         FigmaFormRow {
             title: "根据操作更新基线"
-            description: "开启后，仅在所选操作后的 3 秒内采集近处信号；信号低于近处边界时暂停更新。最近 120 秒内至少 5 个有效读数、跨度至少 2 秒即可更新。键鼠操作及已启用的手势、语音证据仍可独立保护 10 秒不因远离锁屏。"
+            description: "开启后，采集所选操作后 3 秒内的信号，最近 120 秒内至少 5 个有效读数、采样跨度至少 2 秒后取中位数更新。键鼠、手势和语音使用相同规则，不限制新旧基线的差值。键鼠操作及已启用的手势、语音证据仍可独立保护 10 秒不因远离锁屏。"
             controlWidth: 48
             FigmaSwitch {
                 objectName: "proximityBaseline_enabled"
@@ -173,9 +175,9 @@ ColumnLayout {
         }
         Repeater {
             model: [
-                { key: "keyboardMouse", title: "键盘和鼠标操作", description: "将系统检测到的键鼠操作作为采样依据。" },
-                { key: "gestures", title: "戒指手势操作", description: "将当前戒指的有效手势作为采样依据；远处操作也会参与更新。" },
-                { key: "voice", title: "语音输入", description: "将本应用新识别到的语音文字作为采样依据；远处输入也会参与更新。" }
+                { key: "keyboardMouse", title: "键盘和鼠标操作", description: "系统检测到的按键、移动、点击或滚动。" },
+                { key: "gestures", title: "戒指手势操作", description: "当前戒指的有效手势。" },
+                { key: "voice", title: "语音输入", description: "本应用新识别到的语音文字。" }
             ]
             delegate: FigmaFormRow {
                 required property var modelData

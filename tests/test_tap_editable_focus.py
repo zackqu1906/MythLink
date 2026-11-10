@@ -1,153 +1,126 @@
-"""A dictation tap must verify the live editor before admitting microphone input."""
+"""Tap borrows a source, then requires fresh IMK proof without an AX editor gate."""
 from types import SimpleNamespace
 
 import pytest
 
-from proximic_ring.desktop.app_shortcuts import MacAppShortcuts, ShortcutTarget
+from proximic_ring.desktop.app_shortcuts import MacAppShortcuts
 from proximic_ring.voice.ime import system_input_source
 from test_app_gestures import route
-from test_app_shortcuts import shortcut_capture, wechat_capture, wechat_titlebar
-from test_inline_state import component
+from test_input_source_return import ORIGINAL, VOICE
 from test_ring_gestures import request as ring_tap
 
 
-FRONT = ("test.editor", 42)
-
-
-@pytest.mark.parametrize("context,expected", [
-    ("text", "text"), ("nontext", "outside"), ("unknown", "unavailable"),
-    ("window_changed", "unavailable"), ("app_changed", "unavailable"), ("blocked", "unavailable"),
-    ("no_target", "unavailable"), ("lost_after_selection", "nontext"), ("already_ready", "text"),
-])
-def test_idle_tap_checks_before_switch_and_returns_unused_source(component, monkeypatch, context, expected):
-    inline, _ = component
-    idle = {"ready": False, "client_id": "", "application": ""}
-    ready = dict(ready=True, client_id="current", epoch=inline._epoch, utterance_id="",
-                 selection=[2, 0], application=FRONT[0])
-    state = dict(front=FRONT, reply=ready if context == "already_ready" else idle)
-    monkeypatch.setattr(inline, "_foreground_identity", lambda: state["front"])
-    inline._bridge = SimpleNamespace(epoch=inline._epoch, connected=True,
-                                     focus_state=lambda **_: state["reply"], close=lambda: None,
-                                     send=lambda _: True)
-    checks, switches, restores = [], [], []
-    def passive(_, origin):
-        checks.append(origin)
-        if context == "app_changed":
-            state["front"] = ("other.app", 43)
-        if context == "no_target":
-            return None
-        return ShortcutTarget(FRONT[0], 43 if context == "window_changed" else 42, "",
-                              input_context=context if context in {"nontext", "unknown"} else "text",
-                              blocked=context == "blocked")
-    def select(pid, *, remember_source, **_):
-        assert remember_source and pid == 42
-        switches.append(pid)
-        state["reply"] = ({**ready, "ready": False, "selection": [-1, -1]}
-                          if context == "lost_after_selection" else ready)
-        return "original.keyboard"
-    monkeypatch.setattr(MacAppShortcuts, "passive_focus", passive)
-    monkeypatch.setattr(system_input_source, "activate_voice_input_source", select)
-    monkeypatch.setattr(inline._gesture_source_activation, "restore_if_unused",
-                        lambda front, previous, ticket: restores.append((front, previous)))
-    assert inline.capture_start_focus(require_editable=True).status == expected
-    assert checks == ([] if context == "already_ready" else [FRONT])
-    assert switches == ([42] if context in {"text", "lost_after_selection"} else [])
-    assert restores == ([(FRONT, "original.keyboard")] if context == "lost_after_selection" else [])
-
-
-@pytest.mark.parametrize("scene,reply", [
-    ("focused_editor", "ready"), ("focused_editor", "no_selection"), ("unfocused_editor", "unused"),
-    ("titlebar", "ready"), ("titlebar", "no_selection"), ("titlebar", "malformed_selection"),
-    ("titlebar", "missing_client"), ("titlebar", "ipc_timeout"), ("titlebar", "activation_timeout"),
-    ("titlebar", "window_changed"), ("focused_button", "unused"), ("other_app", "unused"),
-])
-def test_single_tap_from_an_inactive_input_method(route, request, monkeypatch, scene, reply):
-    from proximic_ring.platforms.macos import native_access, native_access_worker
-    from proximic_ring.platforms.macos.mac_permissions import PermissionState
-
-    controller, service, inline, _, _, _, _ = route
-    editor_fixture = scene in {"focused_editor", "unfocused_editor"}
-    backend, attrs, children, _ = request.getfixturevalue("wechat_capture" if editor_fixture else "wechat_titlebar")
-    bundle = "test.other" if scene == "other_app" else "com.tencent.xinWeChat"
-    front = (bundle, 42)
-    if scene == "focused_editor":
-        attrs[("window", "AXFocusedUIElement")] = "editor"
-        attrs[("editor", "AXFocused")] = True
-    elif scene == "focused_button":
-        button = children["window"][0]
-        attrs[("window", "AXFocusedUIElement")] = button
-        attrs[(button, "AXFocused")] = True
-    elif scene == "other_app":
-        import AppKit
-        app = SimpleNamespace(bundleIdentifier=lambda: bundle, processIdentifier=lambda: 42,
-                              localizedName=lambda: "Other")
-        monkeypatch.setattr(AppKit.NSWorkspace, "sharedWorkspace",
-                            lambda: SimpleNamespace(frontmostApplication=lambda: app))
-
+@pytest.fixture
+def tap_probe(route, monkeypatch):
+    controller, service, inline, backend, _, _, _ = route
     assert controller.setGestureBinding("confirm", 0, "tap")
+    state = dict(front=("com.tencent.xinWeChat", 42), source=ORIGINAL, outcome="ready",
+                 activation_attempted=False, already_ready=False, waited=False)
+    actions, restores = [], []
     monkeypatch.setattr(service, "foreground_has_binding", lambda _: False)
-    monkeypatch.setattr(inline, "_foreground_identity", lambda: front)
-    monkeypatch.delattr(inline, "capture_start_focus")  # Use the real method behind route's stub.
+    monkeypatch.setattr(inline, "_foreground_identity", lambda: state["front"])
+    monkeypatch.delattr(inline, "capture_start_focus")
     inline._client_id = inline._utterance_id = ""
-    inline._view.update(application=bundle, phase="idle", ready=False)
-    observed, restored = [], []
+    inline._view.update(phase="idle", ready=False)
 
-    # Only replace the native pipe. Capture, serialization, and pinned-window checks run normally.
-    dispatcher = native_access_worker.Dispatcher()
-    dispatcher.shortcuts = backend
-    monkeypatch.setattr(native_access_worker, "read_permission_state", lambda: PermissionState(True, False))
-    def native_call(operation, **params):
-        value = dispatcher.handle({"operation": operation, **params})["result"]
-        observed.append((operation, value["input_context"] if operation == "capture" else value))
-        return value
-    monkeypatch.setattr(native_access, "native_access", lambda: SimpleNamespace(call=native_call, last_diagnostic={}))
+    def forbidden(*_, **__):
+        pytest.fail("Starting dictation must not query AX editor/window structure")
+    monkeypatch.setattr(MacAppShortcuts, "capture", forbidden)
+    monkeypatch.setattr(backend, "capture", forbidden)
 
-    def select(pid, *, remember_source, on_borrow=None, **_):
-        assert pid == front[1] and remember_source
-        if on_borrow:
-            on_borrow("com.apple.keylayout.ABC")
-        observed.append("switch")
-        if reply == "activation_timeout":
-            raise TimeoutError  # Source changed before the native confirmation expired.
-        return "com.apple.keylayout.ABC"
-    monkeypatch.setattr(system_input_source, "activate_voice_input_source", select)
+    class Sources:
+        def sources(self, **_):
+            state["activation_attempted"] = True
+            return {ORIGINAL, VOICE}
+        def foreground(self): return state["front"]
+        def current(self, **_): return state["source"]
+        def shortcut(self): return (49, 786432)
+        def advance(self, shortcut, origin, *, before_key_down):
+            assert origin == state["front"]
+            before_key_down()
+            actions.append("switch")
+            state["source"] = VOICE
+            if state["outcome"] == "activation_timeout":
+                raise TimeoutError("Source changed, but selection receipt expired")
+    monkeypatch.setattr(system_input_source, "SystemInputSources", Sources)
 
-    selection = (7, 0)
     def focus_state(**_):
-        if "switch" not in observed:
-            observed.append("inactive")
-            return {"ready": False, "client_id": ""}
-        if "waiting" not in observed:
-            observed.append("waiting")
+        if state["outcome"] == "initial_timeout":
             return None
-        if "imk" not in observed:
-            observed.append("imk")
-        if reply == "ipc_timeout":
-            raise TimeoutError
-        if reply == "window_changed":
-            attrs[("app", "AXFocusedWindow")] = "another-window"
-        return {"epoch": inline._epoch, "application": bundle,
-                "client_id": "" if reply == "missing_client" else "wechat-client", "utterance_id": "",
-                "selection": {"no_selection": [-1, -1], "malformed_selection": [-2, 0]}.get(reply, selection),
-                "ready": True}
+        if not state["already_ready"] and not state["activation_attempted"]:
+            return {"ready": False, "client_id": "", "application": ""}
+        if not state["already_ready"] and not state["waited"]:
+            state["waited"] = True
+            return None
+        if state["outcome"] == "ipc_timeout":
+            raise TimeoutError("No usable client reply")
+        reply = dict(epoch=inline._epoch, application=state["front"][0],
+                     client_id="fresh-client", utterance_id="", ready=True, selection=[7, 0])
+        if state["outcome"] == "no_selection": reply["selection"] = [-1, -1]
+        if state["outcome"] == "malformed_selection": reply["selection"] = [-2, 0]
+        if state["outcome"] == "not_ready": reply["ready"] = False
+        if state["outcome"] == "missing_client": reply["client_id"] = ""
+        if state["outcome"] == "app_changed": state["front"] = ("other.app", 43)
+        if state["outcome"] == "pid_changed": state["front"] = (state["front"][0], 43)
+        if state["outcome"] == "epoch_changed": inline._bridge.epoch = "new-connection"
+        return reply
     monkeypatch.setattr(inline, "_bridge", SimpleNamespace(epoch=inline._epoch, connected=True,
-                                                          focus_state=focus_state))
+                        focus_state=focus_state, close=lambda: None, send=lambda _: True))
     monkeypatch.setattr(inline._gesture_source_activation, "restore_if_unused",
-                        lambda origin, original, ticket: restored.append((origin, original, ticket is not None)))
+                        lambda origin, previous, ticket: restores.append((origin, previous, ticket is not None)))
+    return controller, inline, state, actions, restores
 
-    accepted = ring_tap(controller, "tap", deliver=False)
-    assert accepted is (reply == "ready")
-    context = {"focused_editor": "text", "focused_button": "nontext"}.get(scene, "unknown")
-    expected = ["inactive", ("capture", context)]
-    if reply != "unused":
-        expected.append("switch")
-        if reply != "activation_timeout":
-            expected.extend(["waiting", "imk"])
-        if scene == "titlebar" and reply in {"ready", "window_changed"}:
-            expected.append(("same_target", reply == "ready"))
-    assert observed == expected
-    assert restored == ([(front, "com.apple.keylayout.ABC", True)] if not accepted and reply != "unused" else [])
-    if accepted:
-        assert inline._pending_gesture_focus[0] == (inline._epoch, "wechat-client", "", *front, selection)
-    else:
-        assert inline._pending_gesture_focus is None
+
+@pytest.mark.parametrize("bundle", ["com.tencent.xinWeChat", "com.openai.codex", "test.editor"])
+@pytest.mark.parametrize("auto_return", [False, True])
+def test_tap_uses_live_imk_for_every_app_without_ax(tap_probe, bundle, auto_return):
+    controller, inline, state, actions, restores = tap_probe
+    state["front"] = (bundle, 42)
+    inline.set_auto_return_input_source(auto_return)
+    assert ring_tap(controller, "tap", deliver=False)
+    target = inline._pending_gesture_focus[0]
+    assert target == (inline._epoch, "fresh-client", "", bundle, 42, (7, 0))
+    assert actions == ["switch"] and not restores
+    inline._source_return.begin(state["front"], target)
+    assert inline._source_return.original == (ORIGINAL if auto_return else "")
+
+
+@pytest.mark.parametrize("auto_return", [False, True])
+@pytest.mark.parametrize("outcome", ["no_selection", "malformed_selection", "not_ready", "ipc_timeout",
+                                     "activation_timeout", "app_changed", "pid_changed", "epoch_changed",
+                                     "missing_client"])
+def test_failed_tap_returns_its_borrow_even_when_auto_return_is_off(tap_probe, auto_return, outcome):
+    controller, inline, state, actions, restores = tap_probe
+    origin = state["front"]
+    inline.set_auto_return_input_source(auto_return)
+    state["outcome"] = outcome
+    assert not ring_tap(controller, "tap", deliver=False)
+    assert actions == ["switch"]
+    assert restores == [(origin, ORIGINAL, True)]
+    assert inline._pending_gesture_focus is None and inline._source_return.probe is None
+
+
+@pytest.mark.parametrize("already_ready", [False, True])
+@pytest.mark.parametrize("outcome", ["ready", "no_selection"])
+def test_already_selected_mythlink_does_not_cycle_or_invent_an_original(tap_probe, already_ready, outcome):
+    controller, inline, state, actions, restores = tap_probe
+    state.update(source=VOICE, already_ready=already_ready, outcome=outcome)
+    inline.set_auto_return_input_source(True)
+    assert ring_tap(controller, "tap", deliver=False) is (outcome == "ready")
+    assert not actions and not restores and inline._source_return.probe is None
+
+
+def test_no_live_ipc_reply_never_uses_cached_readiness_or_changes_source(tap_probe):
+    controller, inline, state, actions, restores = tap_probe
+    state["outcome"] = "initial_timeout"
+    inline._view.update(ready=True, application=state["front"][0])
+    assert not ring_tap(controller, "tap", deliver=False)
+    assert not actions and not restores and not state["activation_attempted"]
+
+
+@pytest.mark.parametrize("source", ["", "unavailable.keyboard"])
+def test_unknown_original_source_never_borrows_or_guesses_a_keyboard(tap_probe, source):
+    controller, inline, state, actions, restores = tap_probe
+    state["source"] = source
+    assert not ring_tap(controller, "tap", deliver=False)
+    assert not actions and not restores and inline._pending_gesture_focus is None

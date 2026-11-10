@@ -7,6 +7,8 @@ final class Editor: CompositionClient {
     var reads = 0
     var writes = 0
     var fullDocument = true
+    var acceptWrites = true
+    var onProbe: (() -> Void)?
     init(_ text: String = "") { body = text; selected = NSRange(location: (text as NSString).length, length: 0) }
     func snapshot() throws -> EditorSnapshot {
         reads += 1
@@ -20,11 +22,13 @@ final class Editor: CompositionClient {
     func selection() -> NSRange { selected }
     func probe() -> CompositionProbe {
         reads += 1
+        onProbe?()
         return CompositionProbe(selection: selected, markedRange: marked,
                                 markedText: isValidRange(marked) ? (body as NSString).substring(with: marked) : nil)
     }
     func replace(_ range: NSRange, with text: String) {
         writes += 1
+        guard acceptWrites else { return }
         body = (body as NSString).replacingCharacters(in: range, with: text)
         selected = NSRange(location: range.location + (text as NSString).length, length: 0)
         marked = unspecifiedRange
@@ -35,6 +39,10 @@ final class Editor: CompositionClient {
         marked = NSRange(location: range.location, length: (text as NSString).length)
     }
     func commit(_ text: String) { replace(isValidRange(marked) ? marked : selected, with: text) }
+    func replaceEditing(_ range: NSRange, with text: String, restoringCaret: Int?) {
+        replace(range, with: text)
+        if acceptWrites, let restoringCaret { selected = NSRange(location: restoringCaret, length: 0) }
+    }
 }
 
 final class Fixture {
@@ -71,7 +79,15 @@ final class Fixture {
                                          sequence: session.lastSequence, revision: session.revision + 1)
             wire()
         }
-        session.cancel()
+        history.undo(session, sourceUtteranceID: source)
+    }
+    func redo() {
+        guard let step = history.prepareRedo(session, sourceUtteranceID: source) else { return }
+        source = step.result.sourceUtteranceID
+        session = CompositionSession(client: editor, undo: step.result, utteranceID: session.utteranceID,
+                                     sequence: session.lastSequence, revision: session.revision + 1)
+        wire()
+        session.restoreRedo(step)
     }
     func roundTrip() throws {
         let writes = editor.writes
@@ -208,17 +224,186 @@ try test("Mixed edit restores dictation, then reaches previous dictation and edi
         f.undo(); check(f.editor.body == expected, "mixed undo failed: \(f.editor.body) expected \(expected)")
     }
 }
-try test("Disabled mode keeps only current sentence, including two-stage edit cancellation") {
+try test("Retired disabled setting cannot turn off multi-sentence history") {
     let f = Fixture(enabled: false)
     try f.say("甲"); try f.edit("改成乙", to: "乙")
     f.undo(); check(f.editor.body == "甲改成乙", "edit restore regressed")
-    f.undo(); f.undo(); check(f.editor.body == "甲" && f.history.count == 0, "disabled history leaked")
+    f.undo(); f.undo(); check(f.editor.body.isEmpty && f.history.count == 0, "legacy setting disabled history")
 }
-try test("Toggle off clears older entries, toggling on cannot resurrect them") {
+try test("Legacy configuration never clears retained undo or redo") {
     let f = Fixture()
     try f.say("甲"); try f.say("乙")
+    f.undo()
     f.history.configure(enabled: false); f.history.configure(enabled: true)
-    f.undo(); f.undo(); check(f.editor.body == "甲", "disabled entries returned")
+    f.redo(); check(f.editor.body == "甲乙", "legacy configure cleared redo")
+    f.undo(); f.undo(); check(f.editor.body.isEmpty, "legacy configure cleared undo")
+}
+try test("Disabling redo preserves undo and reenabling cannot resurrect discarded future") {
+    let f = Fixture()
+    try f.say("甲"); try f.say("乙"); f.undo()
+    check(f.history.redoCount == 1 && f.history.count == 1, "missing history setup")
+    f.history.configureRedo(enabled: false)
+    check(f.history.redoCount == 0 && f.history.count == 1, "toggle damaged undo history")
+    f.redo(); check(f.editor.body == "甲", "disabled redo wrote")
+    f.undo(); check(f.editor.body.isEmpty && f.history.redoCount == 0, "undo-only mode retained redo")
+    f.history.configureRedo(enabled: true)
+    f.redo(); check(f.editor.body.isEmpty && !f.history.canRedo, "reenable resurrected future")
+    try f.say("丙"); f.undo(); f.redo()
+    check(f.editor.body == "丙", "new undos did not become redoable")
+}
+try test("Disabling during a pending redo lets its accepted write settle without losing undo") {
+    let f = Fixture()
+    try f.say("甲"); try f.say("乙"); f.undo()
+    f.editor.acceptWrites = false
+    f.redo(); check(f.session.awaitingReadback, "expected an unconfirmed write")
+    f.history.configureRedo(enabled: false)
+    f.editor.body = "甲乙"; f.editor.selected = NSRange(location: 2, length: 0)
+    f.editor.acceptWrites = true; f.session.advanceReadback()
+    check(!f.session.awaitingReadback && f.history.redoCount == 0, "toggle lost pending redo receipt")
+    f.undo(); f.undo()
+    check(f.editor.body.isEmpty && f.history.redoCount == 0, "toggle broke past bookkeeping")
+}
+try test("A disabled host does not restore redo from a suspended snapshot") {
+    let f = Fixture()
+    try f.say("甲"); try f.say("乙"); f.undo()
+    let saved = f.history.snapshot()
+    f.history.configureRedo(enabled: false); f.history.restore(saved)
+    f.history.configureRedo(enabled: true)
+    check(f.history.count == 1 && !f.history.canRedo, "suspension resurrected disabled future")
+    f.history.restore(saved.withoutRedo())
+    check(f.history.count == 1 && !f.history.canRedo, "discardRedo lost past or retained future")
+}
+try test("A reentrant ownership change during undo receipt cannot resurrect redo") {
+    let f = Fixture()
+    try f.say("甲")
+    f.editor.onProbe = {
+        if f.session.phase == .undone {
+            f.editor.onProbe = nil
+            f.history.clear()
+        }
+    }
+    f.undo()
+    check(f.editor.body.isEmpty && f.history.redoCount == 0, "stale receipt resurrected future")
+}
+try test("A caret change during undo receipt cannot become a new redo anchor") {
+    let f = Fixture("原文")
+    try f.say("甲")
+    f.editor.onProbe = {
+        if f.session.phase == .undone {
+            f.editor.onProbe = nil
+            f.editor.selected = NSRange(location: 0, length: 0)
+        }
+    }
+    f.undo()
+    check(f.editor.body == "原文" && !f.history.canRedo, "changed caret authorized a redo anchor")
+}
+try test("Mixed history redoes each undo in reverse, including after undoing everything") {
+    let f = Fixture("原文")
+    try f.say("甲😀"); try f.edit("改成乙", to: "原文乙"); try f.say("丙\n")
+    let reversed = ["原文乙", "原文甲😀改成乙", "原文甲😀", "原文"]
+    for expected in reversed { f.undo(); check(f.editor.body == expected, "mixed undo failed") }
+    check(f.history.redoCount == 4 && f.history.count == 0, "redo disappeared at first step")
+    try f.roundTrip()
+    for expected in ["原文甲😀", "原文甲😀改成乙", "原文乙", "原文乙丙\n"] {
+        f.redo(); check(f.editor.body == expected, "mixed redo failed: \(f.editor.body)")
+        try f.roundTrip()
+    }
+    check(f.history.redoCount == 0, "redo was not consumed")
+    let writes = f.editor.writes
+    f.redo(); check(f.editor.writes == writes, "empty redo wrote")
+    for expected in reversed { f.undo(); check(f.editor.body == expected, "replayed undo duplicated an entry") }
+}
+try test("Polish redo mirrors both current undo granularities without calling a model") {
+    for restoreRaw in [true, false] {
+        let f = Fixture("前文")
+        try f.say("原句")
+        f.session.polish(restoringRawOnUndo: restoreRaw)
+        f.session.applyPolish(text: "润色结果😀", revision: f.session.revision, error: nil)
+        f.undo()
+        check(f.editor.body == (restoreRaw ? "前文原句" : "前文"), "polish undo granularity changed")
+        if restoreRaw { f.undo(); f.redo(); check(f.editor.body == "前文原句", "raw redo failed") }
+        f.redo()
+        check(f.editor.body == "前文润色结果😀" && f.session.polished, "polish result not restored")
+        f.session.applyPolish(text: "迟到结果", revision: f.session.revision - 1, error: nil)
+        check(f.editor.body == "前文润色结果😀", "redo accepted a late model result")
+    }
+}
+try test("Cancelled new recording retains future, successful new text discards it") {
+    let f = Fixture()
+    try f.say("甲"); try f.say("乙"); f.undo()
+    try f.begin(); f.session.update("临时口述", final: false); f.undo()
+    check(f.editor.body == "甲" && f.history.redoCount == 1, "cancelled recording lost future")
+    f.redo(); check(f.editor.body == "甲乙", "future after cancelled recording failed")
+    f.undo(); try f.say("丙")
+    check(f.history.redoCount == 0, "new branch kept old future")
+    f.redo(); check(f.editor.body == "甲丙", "redo entered discarded branch")
+    f.undo(); f.undo(); check(f.editor.body.isEmpty, "new branch corrupted past")
+}
+try test("Alternating directions restores exact text and caret without duplicate entries") {
+    let f = Fixture("前后")
+    f.editor.selected = NSRange(location: 1, length: 1)
+    try f.say("😀")
+    let caret = f.editor.selected
+    for _ in 0..<4 {
+        f.undo(); check(f.editor.body == "前后", "selected original not restored")
+        f.redo(); check(f.editor.body == "前😀" && f.editor.selected == caret, "redo changed result or caret")
+        check(f.history.count == 0, "alternation added a duplicate undo")
+    }
+}
+try test("Cancelled recording after a partial edit undo does not duplicate its archived sentence") {
+    let f = Fixture()
+    try f.say("甲"); try f.edit("改成乙", to: "乙"); f.undo()
+    try f.begin(); f.session.update("临时", final: false); f.undo()
+    f.redo(); check(f.editor.body == "乙", "edit future lost across cancelled recording")
+    f.undo(); f.undo(); f.undo()
+    check(f.editor.body.isEmpty && f.history.count == 0, "same sentence was restored twice")
+}
+try test("Cancelled polish keeps future but a successful new polish discards it") {
+    let f = Fixture()
+    try f.say("甲")
+    f.session.polish(restoringRawOnUndo: true)
+    f.session.applyPolish(text: "旧润色", revision: f.session.revision, error: nil)
+    f.undo()
+    f.session.polish(restoringRawOnUndo: true); f.undo()
+    check(f.history.redoCount == 1, "cancelled model request cleared future")
+    f.session.polish(restoringRawOnUndo: true)
+    f.session.applyPolish(text: "新润色", revision: f.session.revision, error: nil)
+    check(f.history.redoCount == 0 && f.editor.body == "新润色", "successful new result kept old branch")
+}
+try test("Redo rejects changed text, caret or another composition before writing") {
+    for scenario in ["text", "caret", "mark"] {
+        let f = Fixture("原文")
+        try f.edit("指令", to: "结果"); f.undo()
+        if scenario == "text" { f.editor.body = "外文指令" }
+        if scenario == "caret" { f.editor.selected = NSRange(location: 0, length: 0) }
+        if scenario == "mark" { f.editor.marked = NSRange(location: 0, length: 1) }
+        let text = f.editor.body, writes = f.editor.writes
+        f.redo()
+        check(f.editor.body == text && f.editor.writes == writes, "redo wrote across \(scenario)")
+    }
+}
+try test("Failed or unconfirmed redo does not consume the future or issue repeat writes") {
+    let f = Fixture()
+    try f.say("甲"); f.undo()
+    f.editor.acceptWrites = false
+    f.redo()
+    check(f.history.redoCount == 1 && f.session.awaitingReadback, "unconfirmed redo was consumed")
+    let writes = f.editor.writes
+    f.redo(); f.undo(); f.session.advanceReadback()
+    check(f.editor.writes == writes && f.history.redoCount == 1, "busy history issued another write")
+    f.session.interrupt("外部接管", commitIfOwned: false)
+    check(f.history.redoCount == 0, "interruption retained redo")
+}
+try test("A new sentence cannot inherit an unconfirmed redo or its old future") {
+    let f = Fixture()
+    try f.say("甲"); try f.say("乙"); try f.say("丙"); f.undo(); f.undo()
+    f.editor.acceptWrites = false
+    f.redo(); check(f.session.awaitingReadback, "expected pending redo")
+    f.editor.acceptWrites = true
+    try f.say("新句")
+    check(f.editor.body == "甲新句" && f.history.redoCount == 0 && f.history.count == 0,
+          "new sentence inherited unconfirmed history bookkeeping")
+    f.undo(); check(f.editor.body == "甲", "new sentence lost its own undo")
 }
 try test("Empty/live cancelled sentence leaves earlier undo history reachable") {
     let f = Fixture()
@@ -298,6 +483,93 @@ try test("Empty edit result remains undoable after a later sentence") {
     check(f.editor.body == "原文清空", "empty edit was mistaken for no edit")
     f.undo(); check(f.editor.body == "原文", "instruction not removable")
 }
+try test("Restored edit retries the original source and instruction without writing before the result") {
+    let f = Fixture("原文")
+    try f.say("甲")
+    try f.edit("扩写", to: "第一次结果")
+    f.undo()
+    check(f.session.canRetryEdit && f.editor.body == "原文甲扩写", "undo lost retry provenance")
+    let writes = f.editor.writes
+    var requests = 0
+    f.session.onEdit = { source, instruction, _ in
+        check(source == "原文甲" && instruction == "扩写", "retry changed original inputs")
+        requests += 1
+    }
+    f.session.retryEdit(); f.session.retryEdit()
+    check(requests == 1 && f.editor.writes == writes && !f.session.canRetryEdit, "busy retry duplicated request or wrote text")
+    f.session.applyEdit(text: "第二次结果", revision: f.session.revision, error: nil)
+    check(f.editor.body == "第二次结果" && !f.session.canRetryEdit && !f.history.canRedo, "retry did not create a fresh branch")
+    f.undo(); check(f.editor.body == "原文甲扩写" && f.session.canRetryEdit, "new result lost original instruction")
+    f.undo(); check(f.editor.body == "原文甲" && !f.session.canRetryEdit, "deleted instruction remains retryable")
+    f.undo(); check(f.editor.body == "原文", "retry corrupted earlier history")
+}
+try test("Failed or cancelled retries retain instruction and reject late results") {
+    for cancel in [false, true] {
+        let f = Fixture("原文")
+        try f.edit("修改", to: "旧结果"); f.undo()
+        let writes = f.editor.writes
+        f.session.retryEdit()
+        let revision = f.session.revision
+        if cancel { f.session.cancel() }
+        else { f.session.applyEdit(text: "", revision: revision, error: "模型超时") }
+        check(f.editor.writes == writes && f.editor.body == "原文修改" && f.session.canRetryEdit, "retry failure changed instruction")
+        f.session.applyEdit(text: "过期结果", revision: revision, error: nil)
+        check(f.editor.writes == writes, "late retry result wrote")
+        f.session.retryEdit(); f.session.applyEdit(text: "新结果", revision: f.session.revision, error: nil)
+        check(f.editor.body == "新结果", "retry after failure was blocked")
+    }
+}
+try test("Older edit and source-return snapshots preserve retry identity") {
+    let f = Fixture("原文")
+    try f.edit("扩写", to: "结果")
+    let source = f.session.utteranceID
+    try f.say("后来一句"); f.undo(); f.undo()
+    check(f.source == source && f.session.canRetryEdit, "older edit instruction lost provenance")
+    try f.roundTrip()
+    var requests = 0
+    f.session.onEdit = { text, instruction, _ in
+        check(text == "原文" && instruction == "扩写", "historical retry used later input")
+        requests += 1
+    }
+    f.session.retryEdit(); f.session.applyEdit(text: "再次扩写", revision: f.session.revision, error: nil)
+    check(requests == 1 && f.editor.body == "再次扩写", "resumed historical retry failed")
+}
+try test("Ordinary dictation and restored polish are not retryable edit instructions") {
+    let f = Fixture("原文")
+    try f.say("你好")
+    check(!f.session.canRetryEdit, "dictation offered retry")
+    f.session.polish(restoringRawOnUndo: true)
+    f.session.applyPolish(text: "您好", revision: f.session.revision, error: nil)
+    f.undo()
+    check(!f.session.canRetryEdit, "polish restoration offered retry")
+    let writes = f.editor.writes
+    f.session.onEdit = { _, _, _ in fatalError("ordinary dictation requested edit") }
+    f.session.retryEdit()
+    check(f.editor.writes == writes, "unavailable retry wrote")
+}
+try test("Retry validates current text caret and composition before requesting a model") {
+    for change in ["text", "caret", "mark"] {
+        let f = Fixture("原文")
+        try f.edit("修改", to: "结果"); f.undo()
+        if change == "text" { f.editor.body = "别处修改" }
+        if change == "caret" { f.editor.selected = NSRange(location: 0, length: 0) }
+        if change == "mark" { f.editor.marked = NSRange(location: 2, length: 2) }
+        let writes = f.editor.writes
+        f.session.onEdit = { _, _, _ in fatalError("unsafe retry requested model") }
+        f.session.retryEdit()
+        check(f.editor.writes == writes && !f.session.canRetryEdit, "unsafe retry was not blocked")
+    }
+}
+try test("Leaving next clears cached future while preserving the restored instruction") {
+    let f = Fixture("原文")
+    try f.edit("修改", to: "结果"); f.undo()
+    check(f.history.canRedo && f.session.canRetryEdit, "instruction must support the selected forward mode")
+    f.history.configureRedo(enabled: false)
+    check(!f.history.canRedo && f.session.canRetryEdit, "mode switch lost restored instruction")
+    f.history.configureRedo(enabled: true)
+    check(!f.history.canRedo, "mode switch resurrected future")
+}
+
 print("\(passed) history tests passed")
 
 if CommandLine.arguments.contains("--benchmark") {

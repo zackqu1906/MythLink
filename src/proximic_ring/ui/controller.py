@@ -114,9 +114,8 @@ from ..voice.voice_actions import (
     ACTION_INPUT,
     ACTION_SWITCH_MODE,
     ACTION_UNDO,
-    DEFAULT_MODE_SWITCH_SHORTCUT,
-    MODE_SWITCH_SHORTCUTS,
-    normalize_mode_switch_shortcut,
+    ACTION_REDO,
+    ACTION_RETRY_EDIT,
     voice_action_for_gesture,
 )
 
@@ -492,20 +491,21 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._input_routing_mode = normalize_input_routing_mode(
             str(
                 self._settings.value(
-                    "input/routingMode", INPUT_ROUTING_MANUAL
+                    "input/routingMode", INPUT_ROUTING_ROUTED_EDIT
                 )
             )
         )
         self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
         self._ocr_context_enabled = self._bool_setting("input/ocrContextEnabled", True)
-        self._mode_correction_shortcut = normalize_mode_switch_shortcut(
-            self._settings.value(
-                "input/modeCorrectionShortcut",
-                DEFAULT_MODE_SWITCH_SHORTCUT,
-            )
-        )
+        self._settings.remove("input/modeCorrectionShortcut")
         self._gesture_settings_error = ""
-        self._multi_undo_enabled = self._bool_setting("input/multiUndoEnabled", True)
+        self._settings.remove("input/multiUndoEnabled")
+        legacy_history_mode = "retry" if self._bool_setting("input/redoEnabled", True) else "undo"
+        self._history_action_mode = str(self._settings.value("input/historyActionMode", legacy_history_mode))
+        if self._history_action_mode not in {"undo", "next", "retry"}:
+            self._history_action_mode = legacy_history_mode
+        self._settings.setValue("input/historyActionMode", self._history_action_mode)
+        self._settings.remove("input/redoEnabled")
         self._auto_return_input_source = self._bool_setting("input/autoReturnInputSource", False)
         try:
             self._voice_hud_scale = max(80, min(140, int(self._settings.value("ui/voiceHudScale", 80))))
@@ -900,6 +900,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._permission_setup.diagnostic.connect(lambda fields: self._event_log("PERMISSION_SETUP", **fields))
         self._inline_requests: dict[int, object] = {}
+        self._inline_edit_requests = {}
         self._inline_unsettled_edits: set[int] = set()
         self._inline_interruption_logged = False
         self._inline_input.began.connect(self._inline_gesture_start_ready)
@@ -915,8 +916,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._inline_input.changed.connect(self.interactionChanged)
         self._inline_input.changed.connect(self._refresh_inline_status)
         self._inline_input.diagnostic.connect(self._log_inline_diagnostic)
-        self._inline_input.configure(self._mode_correction_shortcut,
-                                     multi_undo_enabled=self._multi_undo_enabled)
+        self._inline_input.configure(history_action_mode=self._history_action_mode)
         self._inline_input.set_gesture_hints(self.gestureBindings)
         self._inline_input.set_hud_scale(self._voice_hud_scale)
         self.gestureSettingsChanged.connect(lambda: self._inline_input.set_gesture_hints(self.gestureBindings))
@@ -962,7 +962,6 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             routing=self._input_routing_mode,
             ocr_context_enabled=self._ocr_context_enabled,
             default_mode=self._input_mode,
-            mode_correction_shortcut=self._mode_correction_shortcut,
             llm_provider=self._llm_provider,
             llm_model=self._llm_model,
             desktop_output=self._desktop_output,
@@ -1286,6 +1285,16 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                             "context_requested_range", "context_actual_range"):
                     if key in native:
                         fields[key] = native[key]
+            # Flatten the already allowlisted scalar/range evidence as well.
+            # Each field fits the event renderer's limit; the full failure
+            # evidence survives even when the nested dictionary is truncated.
+            for group, prefix in (("client_read_diagnostics", "read"),
+                                  ("readback_diagnostics", "readback"),
+                                  ("edit_diagnostics", "edit")):
+                values = fields.get(group)
+                if isinstance(values, dict):
+                    for key, value in values.items():
+                        fields[f"{prefix}_{key}"] = value
             # Per-partial geometry is useful on disk, but its large repeated
             # records must not grow/repaint the user-facing log for each mark.
             # Status and actionable errors are shown by the normal IME slots.
@@ -1344,18 +1353,35 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             except BaseException as exc:
                 self._append_log(f"编辑请求结束状态保存失败：{exc}")
         self._inline_requests.clear()
+        self._inline_edit_requests.clear()
 
     def _submit_inline_edit(self, key, instruction, original, target) -> None:
         self._suspend_recognition_for_interaction()
-        options = self._inline_edit_options(key)
-        self._submit_text_processing(
-            instruction, self._latest_asr_session_id, INPUT_MODE_EDIT,
+        inline = self._inline_input
+        source, retry = inline._edit_request_sources.pop(key, (key[2], False))
+        session_id = inline._utterance_sessions.get(source, inline._session_id)
+        if retry:
+            from .voice.edit_replay import replay_context
+            saved = inline._edit_replays.get(source)
+            if saved is None or saved.raw_text != instruction or saved.target_text != original:
+                inline.apply_edit(key, "", "原编辑输入已不可用，未重新请求模型")
+                return
+            session_id = saved.session_id
+            self._record_inline_edit_intent(session_id)
+            options = dict(settings=saved.settings, task_type=saved.task_type,
+                           edit_plan=saved.edit_plan, screen_context=replay_context(saved),
+                           routing_mode=saved.routing_mode, reexecuted=True)
+        else:
+            options = self._inline_edit_options(key)
+        request = self._submit_text_processing(
+            instruction, session_id or self._latest_asr_session_id, INPUT_MODE_EDIT,
             target_text=original, target=target,
             snapshot=DesktopTextSnapshot(target, original), update_interaction=False,
             **options,
         )
         self._inline_requests[self._text_request_id] = key
-        if self._asr_backend == "volcengine" and options.get("routing_mode") != INPUT_ROUTING_ROUTED_EDIT:
+        self._inline_edit_requests[self._text_request_id] = (request, source)
+        if not retry and self._asr_backend == "volcengine" and options.get("routing_mode") != INPUT_ROUTING_ROUTED_EDIT:
             self._hotwords.prepare(key, instruction, original, self._voice_llm_settings(INPUT_MODE_EDIT))
         self._set_interaction_state("processing")
 
@@ -1493,6 +1519,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Property("QVariantList", notify=voiceHistoryChanged)
     def voiceHistoryEntries(self) -> list[dict[str, object]]:
         return list(self._voice_history_entries)
+
+    @Property(QObject, constant=True)
+    def voiceHistoryExport(self):
+        if not hasattr(self, "_voice_history_export"):
+            from .voice.history_export_controller import HistoryExportController
+            self._voice_history_export = HistoryExportController(self._voice_history, self)
+        return self._voice_history_export
 
     @Slot(str, result="QVariantMap")
     def historyApplication(self, identity: str) -> dict:
@@ -2497,8 +2530,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
 
     @Property(bool, notify=interactionChanged)
-    def modeCorrectionHotkeyAvailable(self) -> bool:
-        """Keep the configured conversion key functional after timeout/failure.
+    def modeConversionAvailable(self) -> bool:
+        """Keep explicit gesture conversion available after timeout/failure.
 
         A failed alternate candidate was produced in the background before the
         user asked for a conversion. It must not prevent an explicit conversion
@@ -2553,6 +2586,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Property(str, constant=True)
     def diagnosticLogPath(self) -> str:
         return str(self._diagnostic_log.path)
+
+    @Property(QObject, constant=True)
+    def diagnosticExport(self):
+        if not hasattr(self, "_diagnostic_export"):
+            from .diagnostic_export_controller import DiagnosticExportController
+            self._diagnostic_export = DiagnosticExportController(self)
+        return self._diagnostic_export
 
     @Slot(result=str)
     def readDiagnosticLog(self) -> str:
@@ -2640,32 +2680,6 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self.settingsChanged.emit()
         self._event_log("USER_SETTING", setting="ocr_context_enabled", value=enabled)
 
-    @Property(str, notify=settingsChanged)
-    def modeCorrectionShortcut(self) -> str:
-        return self._mode_correction_shortcut
-
-    @modeCorrectionShortcut.setter
-    def modeCorrectionShortcut(self, value: str) -> None:
-        shortcut = normalize_mode_switch_shortcut(value)
-        if shortcut == self._mode_correction_shortcut:
-            return
-        previous = self._mode_correction_shortcut
-        self._mode_correction_shortcut = shortcut
-        if self._inline_enabled():
-            self._inline_input.configure(shortcut)
-        self._settings.setValue("input/modeCorrectionShortcut", shortcut)
-        self.settingsChanged.emit()
-        self._event_log(
-            "USER_SETTING",
-            setting="mode_correction_shortcut",
-            previous=previous,
-            value=shortcut,
-        )
-
-    @Property("QVariantList", constant=True)
-    def modeCorrectionShortcutOptions(self) -> list[str]:
-        return list(MODE_SWITCH_SHORTCUTS)
-
     @Property(int, notify=voiceHudAppearanceChanged)
     def voiceHudScale(self) -> int:
         return self._voice_hud_scale
@@ -2680,18 +2694,17 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._inline_input.set_hud_scale(value)
         self.voiceHudAppearanceChanged.emit()
 
-    @Property(bool, notify=settingsChanged)
-    def multiUndoEnabled(self) -> bool:
-        return self._multi_undo_enabled
+    @Property(str, notify=settingsChanged)
+    def historyActionMode(self) -> str:
+        return self._history_action_mode
 
-    @multiUndoEnabled.setter
-    def multiUndoEnabled(self, value: bool) -> None:
-        value = bool(value)
-        if value == self._multi_undo_enabled:
+    @historyActionMode.setter
+    def historyActionMode(self, value: str) -> None:
+        if value not in {"undo", "next", "retry"} or value == self._history_action_mode:
             return
-        self._multi_undo_enabled = value
-        self._settings.setValue("input/multiUndoEnabled", value)
-        self._inline_input.configure(self._mode_correction_shortcut, multi_undo_enabled=value)
+        self._history_action_mode = value
+        self._settings.setValue("input/historyActionMode", value)
+        self._inline_input.configure(history_action_mode=value)
         self.settingsChanged.emit()
 
     @Property(bool, notify=settingsChanged)
@@ -4484,19 +4497,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self.logChanged.emit()
 
     @Slot()
-    def exportDiagnosticLog(self) -> None:
-        from PySide6.QtWidgets import QFileDialog
-        name = 'Mythlink-diagnostic-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.log'
-        destination, _ = QFileDialog.getSaveFileName(None, '导出完整诊断日志',
-            str(Path.home() / 'Downloads' / name), '日志文件 (*.log)')
-        if not destination:
-            return
-        try:
-            self._event_log('USER_ACTION', action='export_diagnostic_log')
-            self._diagnostic_log.export(destination)
-            self._append_log('完整诊断日志已导出：' + destination)
-        except (OSError, ValueError) as exc:
-            self._append_log(f'导出诊断日志失败：{exc}')
+    @Slot(str)
+    def exportDiagnosticLog(self, period="all") -> None:
+        self.diagnosticExport.export(period)
 
     @Slot()
     def openDiagnosticLogDirectory(self) -> None:
@@ -4646,6 +4649,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if self._voice_history_closed:
             return
         self._voice_history_closed = True
+        if hasattr(self, "_voice_history_export"):
+            self._voice_history_export.close()
+        if hasattr(self, "_diagnostic_export"):
+            self._diagnostic_export.close()
         self._hotwords.close()
         self._home_statistics.close()
         self._cancel_inline_requests("主程序已退出")
@@ -5579,7 +5586,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         edit_plan=None,
         force_llm: bool = False,
         routing_mode: str = INPUT_ROUTING_MANUAL,
-    ) -> None:
+        settings=None,
+        reexecuted: bool = False,
+    ) -> TextProcessingRequest | None:
         normalized_mode = TEXT_MODE_POLISH if mode == TEXT_MODE_POLISH else normalize_input_mode(mode)
         if normalized_mode not in {INPUT_MODE_EDIT, TEXT_MODE_POLISH} and not self._llm_enabled and not force_llm:
             self._append_log("输入模式已跳过文本大模型，直接采用 ASR 最终结果")
@@ -5605,12 +5614,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             session_id=int(session_id),
             mode=normalized_mode,
             raw_text=text,
-            settings=replace(self._voice_llm_settings(normalized_mode), enabled=True) if force_llm else self._voice_llm_settings(normalized_mode),
+            settings=settings if settings is not None else (
+                replace(self._voice_llm_settings(normalized_mode), enabled=True) if force_llm else self._voice_llm_settings(normalized_mode)),
             target_text=target_text,
             task_type=task_type,
             screen_context=screen_context,
             edit_plan=edit_plan,
             routing_mode=routing_mode,
+            reexecuted=reexecuted,
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
@@ -5648,6 +5659,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if self._recognition_enabled and update_interaction:
             self._set_status("正在处理文本", f"大模型正在处理{label}内容", "starting")
         self._text_processing_worker.submit(request)
+        return request
 
     @Slot(object)
     def _apply_text_processed(self, result: object) -> None:
@@ -5661,6 +5673,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 self._record_interrupted_inline_edits("主程序已退出或设备已断开")
                 return
             key = self._inline_requests.pop(result.request_id)
+            replay = self._inline_edit_requests.pop(result.request_id, None)
             self._pending_text_requests.discard(result.request_id)
             self._pending_interactions.pop(result.request_id, None)
             self.textProcessingChanged.emit()
@@ -5674,6 +5687,12 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 if result.mode == TEXT_MODE_POLISH:
                     self._inline_input.apply_polish(key, result.final_text, result.error or "")
                 else:
+                    if (replay and replay[0] is not None and not result.error
+                            and self._inline_input.accepts_edit_result(key)):
+                        from .voice.edit_replay import frozen_edit_request
+                        saved = frozen_edit_request(replay[0], result)
+                        if saved is not None:
+                            self._inline_input._edit_replays[replay[1]] = saved
                     self._hotwords.expect_result(key, result.final_text, result.error or "")
                     self._inline_input.apply_edit(key, result.final_text, result.error or "")
             return
@@ -6804,9 +6823,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if self._recognition_enabled:
             detail = "原文本保持不变"
             if has_dictation_fallback:
-                detail += (
-                    f"；按 {self._mode_correction_shortcut} 可改为听写输入"
-                )
+                detail += "；可使用转换手势改为听写输入"
             self._set_status("修改未完成", detail, "error")
         self._resume_recognition_after_interaction()
 
@@ -7022,13 +7039,15 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                     event, app_event.generation, app_event.created, target.pid))
             return
         can_cancel = self.interactionCanCancel
-        can_switch = self.modeCorrectionHotkeyAvailable or self.processingModeCorrectionAvailable
+        can_switch = self.modeConversionAvailable or self.processingModeCorrectionAvailable
         can_undo = self.nativeUndoAvailable
         action = voice_action_for_gesture(
             name,
             interaction_active=can_cancel,
             correction_active=can_switch,
             undo_active=can_undo,
+            redo_active=self._inline_input.canRedo and not self._ring_gestures.speech_busy(),
+            retry_active=self._inline_input.canRetryEdit and not self._ring_gestures.speech_busy(),
             bindings=self._gesture_bindings,
         )
         if action is not None and app_event is not None:
@@ -7052,7 +7071,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 reason = "no_convertible_result"
         gesture_label = GESTURE_LABELS.get(name) if reason != "unmapped_gesture" else None
         outcome = {
-            ACTION_CANCEL: "取消", ACTION_UNDO: "撤销", ACTION_SWITCH_MODE: "转换类型",
+            ACTION_CANCEL: "取消", ACTION_UNDO: "撤销", ACTION_REDO: "下一步", ACTION_RETRY_EDIT: "重做", ACTION_SWITCH_MODE: "转换类型",
         }.get(action) or {
             "target_not_foreground": "目标窗口不在前台",
             "no_cancel_or_visible_undo": "当前无可取消或撤销的操作",
@@ -7081,13 +7100,17 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._set_status("笔画输入中", "请先结束书写，再使用语音操作", "paused")
             return
         action = str(action).strip().lower()
-        if action in {ACTION_CANCEL, ACTION_UNDO, ACTION_EDIT, ACTION_SWITCH_MODE}:
+        if action in {ACTION_CANCEL, ACTION_UNDO, ACTION_REDO, ACTION_RETRY_EDIT, ACTION_EDIT, ACTION_SWITCH_MODE}:
             self._app_gestures.cancel_pending()
         if self._inline_enabled():
             if action in {ACTION_SWITCH_MODE, ACTION_EDIT}:
                 self._inline_input.convert()
             elif action in {ACTION_CANCEL, ACTION_UNDO}:
                 self._inline_input.cancel()
+            elif action == ACTION_REDO:
+                self._inline_input.redo()
+            elif action == ACTION_RETRY_EDIT:
+                self._inline_input.retry_edit()
             return
         if self._automatic_session_enabled() and action in {ACTION_INPUT, ACTION_EDIT, ACTION_SWITCH_MODE}:
             if action != ACTION_INPUT:

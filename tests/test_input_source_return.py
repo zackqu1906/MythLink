@@ -1,5 +1,6 @@
 """Borrow/return/resume transactions without changing a real input source."""
 import threading
+import time
 
 import pytest
 from PySide6.QtCore import QCoreApplication
@@ -137,7 +138,7 @@ def test_new_sentence_inherits_only_verified_native_history(component, monkeypat
     if handoff == "other_pid":
         monkeypatch.setattr(c, "_foreground_identity", lambda: ("test.editor", 124))
     if handoff == "multi_off":
-        c.configure("F8", multi_undo_enabled=False)
+        c.configure(multi_undo_enabled=False)
     assert c.begin(auto_select=True)
     current = c._utterance_id
     assert old != current
@@ -148,7 +149,7 @@ def test_new_sentence_inherits_only_verified_native_history(component, monkeypat
     receive(c, client_id="reactivated", ready=True, phase="idle", utterance_id="", application="test.editor")
     begin = c._bridge.messages[-1]
     assert begin["type"] == "begin" and begin["utterance_id"] == current
-    eligible = handoff not in {"other_pid", "multi_off"}
+    eligible = handoff != "other_pid"
     assert begin.get("undo_history_token") == (token if eligible else None)
     assert any(m["type"] == "discard_suspended_input" and m["token"] == token
                for m in c._bridge.messages) == (not eligible)
@@ -328,6 +329,67 @@ def test_preselected_gesture_remembers_source_before_begin_and_auto_start_resele
     assert c._source_activation.calls == [("start", ("test.editor", 123))]
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("original", [ORIGINAL, VOICE])
+@pytest.mark.parametrize("phase", ["dictated", "edited"])
+def test_imk_probe_to_begin_and_final_return_preserves_source_across_sentences(
+        component, monkeypatch, enabled, original, phase):
+    from proximic_ring.desktop.app_shortcuts import MacAppShortcuts
+    from proximic_ring.voice.ime import system_input_source
+
+    c, _ = component
+    origin = ("test.editor", 123)
+    state = dict(source=original)
+    switches = []
+    monkeypatch.setattr(c, "_foreground_identity", lambda: origin)
+    monkeypatch.setattr(MacAppShortcuts, "capture", lambda *_, **__: pytest.fail("AX precheck"))
+    c._source_switch_factory = Source
+    c.set_auto_return_input_source(enabled)
+    bridge = c._bridge
+    bridge.connected, bridge.epoch = True, c._epoch
+    bridge.focus_state = lambda **_: (
+        dict(epoch=c._epoch, application=origin[0], client_id="probe-client", utterance_id="",
+             ready=True, selection=[22, 0]) if state["source"] == VOICE else dict(ready=False, client_id=""))
+
+    class Sources:
+        def sources(self, **_): return {ORIGINAL, VOICE}
+        def current(self, **_): return state["source"]
+        def foreground(self): return origin
+        def shortcut(self): return (49, 786432)
+        def advance(self, _, __, *, before_key_down):
+            before_key_down()
+            switches.append(state["source"])
+            state["source"] = VOICE
+    monkeypatch.setattr(system_input_source, "SystemInputSources", Sources)
+
+    returned = enabled and original == ORIGINAL
+    history_token = None
+    for sentence in range(2 if returned else 1):
+        proof = c.capture_start_focus(require_editable=True)
+        assert proof.status == "text"
+        c.pin_start_focus(proof.target, time.monotonic())
+        assert c.begin(auto_select=True)
+        assert c._source_activation is None  # The BEGIN path must not reselect the borrowed source.
+        assert c._source_return.original == (ORIGINAL if returned else "")
+        receive(c, client_id="probe-client", ready=True, phase="idle", utterance_id="",
+                application=origin[0], selection=[22, 0], request_id=c._startup_focus_request)
+        begin = bridge.messages[-1]
+        assert begin["type"] == "begin" and begin.get("undo_history_token") == history_token
+        receive(c, ready=True, phase="listening", application=origin[0], selection=[22, 0],
+                undo_history_depth=sentence)
+        c.bind_session(sentence + 1)
+        settle(c, phase=phase, undo_history_depth=sentence + 1)
+        if returned:
+            history_token = c._source_return.saved["token"]
+            suspend(c)
+            state["source"] = ORIGINAL
+            assert c._source_return.stage == "suspended"
+        else:
+            assert c._source_return.saved is None and c._source_return.helper is None
+            assert state["source"] == VOICE
+    assert switches == ([ORIGINAL] * (2 if returned else 1) if original == ORIGINAL else [])
+
+
 @pytest.mark.parametrize("failure", ["cancel", "timeout"])
 def test_cancelled_start_returns_a_source_already_borrowed(component, monkeypatch, failure):
     c, _ = component
@@ -343,3 +405,24 @@ def test_cancelled_start_returns_a_source_already_borrowed(component, monkeypatc
         c._reply_timed_out()
     assert c._source_return.helper.calls[0] == ("restore", ("test.editor", 123), ORIGINAL, VOICE)
     assert not any(m["type"] == "update" for m in c._bridge.messages)
+
+
+def test_retry_snapshot_survives_source_return_and_mode_switch(component, monkeypatch):
+    c, _ = component
+    start(c, monkeypatch)
+    source = c._utterance_id
+    request = object()
+    c._edit_replays[source] = request
+    settle(c, edit_retry_version=1, can_retry_edit=True, retry_source_utterance_id=source)
+    saved = suspend(c)
+    assert not c.empty_redo_after_return()
+    c.configure(history_action_mode="undo")
+    assert c.empty_redo_after_return()
+    c.configure(history_action_mode="retry")
+    assert not c.empty_redo_after_return()
+    worker, result = request_resume(c)
+    resumed(c, saved)
+    worker.join(1)
+    assert result == [None] and c.canRetryEdit and c._edit_replays[source] is request
+    c.retry_edit()
+    assert c._bridge.messages[-1]["type"] == "retry_edit"

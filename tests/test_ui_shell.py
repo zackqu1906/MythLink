@@ -69,7 +69,7 @@ def test_shell_navigation_preserves_live_state_and_configuration(inline_ui, tmp_
 
 
 def test_all_gestures_are_editable_without_navigation_mutating_settings(inline_ui):
-    from PySide6.QtCore import QObject, QMetaObject
+    from PySide6.QtCore import QObject, QMetaObject, Q_ARG
     from PySide6.QtTest import QTest
 
     controller, bridge, _, root, _ = inline_ui
@@ -224,7 +224,7 @@ def test_settings_form_navigation_preserves_configuration_and_live_voice(inline_
 
 
 def test_grouped_setting_changes_only_the_selected_preference(inline_ui):
-    from PySide6.QtCore import QObject, QMetaObject
+    from PySide6.QtCore import QObject, QMetaObject, Q_ARG
     from PySide6.QtTest import QTest
 
     controller, bridge, _, root, _ = inline_ui
@@ -234,14 +234,14 @@ def test_grouped_setting_changes_only_the_selected_preference(inline_ui):
     before = {key: controller._settings.value(key) for key in controller._settings.allKeys()}
     bindings = controller.gestureBindings
     phase = controller.inlineInput.status
-    control = root.findChild(QObject, "multiUndoSwitch")
-    assert controller.multiUndoEnabled
-    QMetaObject.invokeMethod(control, "click")
-    assert not controller.multiUndoEnabled
-    assert bridge.messages[-1]["type"] == "configure"
-    assert not bridge.messages[-1]["multi_undo_enabled"]
+    control = root.findChild(QObject, "historyActionModeCombo")
+    control.setProperty("currentIndex", 1)
+    QMetaObject.invokeMethod(control, "activated", Q_ARG(int, 1))
+    assert controller.historyActionMode == "next"
+    assert bridge.messages[-1]["history_action_mode"] == "next"
+    assert bridge.messages[-1]["multi_undo_enabled"] is True
     after = {key: controller._settings.value(key) for key in controller._settings.allKeys()}
-    assert {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)} == {"input/multiUndoEnabled"}
+    assert {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)} == {"input/historyActionMode"}
     assert controller.gestureBindings == bindings
     assert controller.inlineInput.status == phase
     QMetaObject.invokeMethod(root.findChild(QObject, "runtimeSettingsDialog"), "close")

@@ -142,7 +142,7 @@ def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_pat
     configured = []
     tp._run.output.configure = lambda **options: configured.append(options)
     controls = [('touchpadClicksSwitch', 'clicks'), ('touchpadDoubleClickSwitch', 'doubleClick'),
-                ('touchpadTapDragSwitch', 'tapDrag'),
+                ('touchpadDwellDragSwitch', 'dwellDrag'),
                 ('touchpadRightClickSwitch', 'rightClick'), ('touchpadScrollSwitch', 'scroll'),
                 ('touchpadInvertScrollSwitch', 'invertScroll'), ('touchpadHorizontalSwipeSwitch', 'horizontalSwipe'),
                 ('touchpadInvertSwitch', 'invertY')]
@@ -155,7 +155,20 @@ def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_pat
         assert getattr(tp, setting) is not before
         assert c._settings.value('touchpad/'+setting, type=bool) == getattr(tp, setting)
     assert len(configured) == 8 and source.stops == 0 and len(source.starts) == 1
-    assert configured[-1]['tap_drag'] == tp.tapDrag
+    assert configured[-1]['dwell_drag'] == tp.dwellDrag
+    dwell_slider = root.findChild(QObject, 'touchpadDwellSlider')
+    assert dwell_slider.property('enabled')
+    assert dwell_slider.property('from') == 300 and dwell_slider.property('to') == 600
+    assert tp.dwellMs == 400
+    for value in (300, 600, 450):
+        dwell_slider.setProperty('value', value)
+        QMetaObject.invokeMethod(dwell_slider, 'moved')
+        assert tp.dwellMs == value and configured[-1]['dwell_ms'] == value
+        assert c._settings.value('touchpad/dwellMs', type=int) == value
+    for invalid in (299, 601, float('nan'), float('inf')):
+        tp.dwellMs = invalid
+        assert tp.dwellMs == 450
+    assert len(source.starts) == 1 and source.stops == 0
     assert configured[-1]['invert_scroll'] == tp.invertScroll
     assert configured[-1]['horizontal_swipe'] == tp.horizontalSwipe
     assert configured[-1]['invert_y'] == tp.invertY
@@ -182,8 +195,25 @@ def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_pat
     assert all(getattr(reloaded, key) == getattr(tp, key) for _, key in controls)
     assert reloaded.scrollGain == 1.75
     assert reloaded.gain == 2.
+    assert reloaded.dwellMs == 450
     reloaded.close()
     tp.stop(); QTest.qWait(20)
+
+
+@pytest.mark.parametrize('old,new,expected', [(False, None, False), (True, None, True), (False, True, True)])
+def test_dwell_drag_migrates_only_the_old_enable_preference(inline_ui, old, new, expected):
+    from proximic_ring.ui.touchpad.touchpad_controller import TouchpadController
+    c, *_ = inline_ui
+    c._settings.setValue('touchpad/tapDrag', old)
+    if new is None:
+        c._settings.remove('touchpad/dwellDrag')
+    else:
+        c._settings.setValue('touchpad/dwellDrag', new)
+    tp = TouchpadController(c, output_factory=Output)
+    assert tp.dwellDrag is expected and tp.dwellMs == 400
+    assert not c._settings.contains('touchpad/tapDrag')
+    assert c._settings.value('touchpad/dwellDrag', type=bool) is expected
+    tp.close()
 
 
 def test_frame_diagnostics_keep_drop_reasons_as_numeric_fields(inline_ui, monkeypatch):

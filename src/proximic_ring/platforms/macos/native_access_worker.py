@@ -184,7 +184,6 @@ class Dispatcher:
                                "scene": target.scene, "scene_checked": target.scene_checked,
                                "input_context": target.input_context,
                                "focus_sensitive": target.focus_sensitive, "passive_undo": target.passive_undo,
-                               "wechat_ime_probe": target.wechat_ime_probe,
                                "page_key": target.page_key, "browser_target": target.browser_target,
                                "trace_id": target.trace_id, "diagnostic": target.diagnostic},
                     "diagnostic": target.diagnostic}

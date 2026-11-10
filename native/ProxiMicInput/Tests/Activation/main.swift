@@ -30,7 +30,8 @@ final class ActionPanel {
     func hide() {}
     func configureGestureHints(_ hints: VoiceHudBindings) { Self.displayedHints = hints }
     func configureAppearance(_ value: VoiceHudAppearance) { Self.displayedAppearance = value }
-    func update(_ session: CompositionSession, historyDepth: Int) {}
+    func update(_ session: CompositionSession, historyDepth: Int, redoAvailable: Bool = false, redoEnabled: Bool = true,
+                retryAvailable: Bool = false, historyActionMode: String = "next") {}
     func showLearnedHotwords(_ words: [String]) {}
     func position(caret: NSRect?, clientLevel: Int32) {}
 }
@@ -144,7 +145,12 @@ if CommandLine.arguments.contains("--return-ipc") {
             }
             controller.activateServer(editor)
         case "test_local_key":
-            if message["command"] as? String == "select_previous", let count = message["count"] as? Int {
+            if message["command"] as? String == "select_all" {
+                editor.selection = NSRange(location: 0, length: editor.text.utf16.count)
+            } else if message["command"] as? String == "caret_from_end", let count = message["count"] as? Int {
+                let prefix = String(editor.text.dropLast(count))
+                editor.selection = NSRange(location: prefix.utf16.count, length: 0)
+            } else if message["command"] as? String == "select_previous", let count = message["count"] as? Int {
                 let end = editor.selection.location
                 check(count <= end, "unexpected local selection")
                 editor.selection = NSRange(location: end - count, length: count)
@@ -153,6 +159,9 @@ if CommandLine.arguments.contains("--return-ipc") {
                 editor.insertText("", replacementRange: editor.selection)
                 print("AFTER_UNDO=" + editor.text)
             }
+        case "test_record_redo":
+            print("AFTER_REDO=" + editor.text)
+            print("AFTER_REDO_CARET=\(editor.selection.location),\(editor.selection.length)")
         case "test_exit":
             print("FINAL_TEXT=" + editor.text)
             service.transport.stop()
@@ -249,7 +258,7 @@ for scenario in ["same", "client", "text", "caret", "mark", "wrong_token", "togg
     let history = Mirror(reflecting: next).children.first { $0.label == "undoHistory" }!.value as! CompositionUndoHistory
     check(currentSession(next)?.utteranceID == (scenario == "newer_begin" ? "newer" : "second")
           && currentSession(next)?.phase == .listening, "history verification prevented a fresh BEGIN: \(scenario)")
-    check(history.count == (scenario == "same" ? 1 : 0) && historyService.suspendedInput == nil,
+    check(history.count == (["same", "toggle"].contains(scenario) ? 1 : 0) && historyService.suspendedInput == nil,
           "wrong history or replayable token after BEGIN: \(scenario)")
     check(target.writes == writes, "history transfer wrote old text: \(scenario)")
     next.deactivateServer(target)
@@ -270,9 +279,9 @@ do {
     check(currentSession(controller)?.phase == .dictated, "disabling earlier history also lost current sentence")
     controller.receive(["type": "begin", "client_id": id, "utterance_id": "after-toggle", "seq": 1])
     let history = Mirror(reflecting: controller).children.first { $0.label == "undoHistory" }!.value as! CompositionUndoHistory
-    check(history.count == 0, "resume revived history cleared during the editor read")
+    check(history.count == 1, "legacy configuration cleared history during the editor read")
     controller.deactivateServer(client)
-    print("PASS a settings change during resume revokes earlier history")
+    print("PASS retired settings cannot revoke earlier history during resume")
 }
 
 do {
@@ -569,6 +578,51 @@ do {
     print("PASS queued deactivate retires preparation before first remote read")
 }
 
+// Retired conversion preferences must never intercept function keys, even
+// while the sentence is eligible for editing or has just been committed.
+for final in [false, true] {
+    for code: UInt16 in [96, 97, 98, 100, 101, 109, 103, 111] { // F5–F12
+        let service = IMEService.shared
+        service.transport.onMessage?(["type": "welcome", "protocol": 1, "epoch": "retired-keys"])
+        service.transport.onMessage?(["type": "configure", "epoch": "retired-keys", "mode_switch_shortcut": "F7"])
+        let controller = ProxiMicInputController(), client = LocalClient()
+        client.text = "原文"; client.selection = NSRange(location: 2, length: 0)
+        controller.activateServer(client); drainActivation()
+        let id = currentClientID(controller)
+        controller.receive(["type": "begin", "client_id": id, "utterance_id": "function-key", "seq": 1])
+        controller.receive(["type": "update", "client_id": id, "utterance_id": "function-key", "seq": 2,
+                            "text": "改得简短一些", "final": final])
+        let session = currentSession(controller)!
+        check(final || session.canEdit, "function-key test did not reach editable composition")
+        let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function], timestamp: 0,
+                                  windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                                  isARepeat: false, keyCode: code)!
+        check(!controller.handle(key, client: client), "retired function key was consumed")
+        check(!session.editRequested && session.phase != .editing, "retired function key requested editing")
+        check(client.text == "原文改得简短一些", "function-key takeover lost current text")
+        controller.deactivateServer(client)
+    }
+}
+print("PASS retired F5–F12 conversion keys pass through before and after final text, including legacy F7 preference")
+
+// The gesture/toolbar command remains the explicit editing entry point.
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    client.text = "原文"; client.selection = NSRange(location: 2, length: 0)
+    controller.activateServer(client); drainActivation()
+    let id = currentClientID(controller)
+    controller.receive(["type": "begin", "client_id": id, "utterance_id": "gesture-edit", "seq": 1])
+    controller.receive(["type": "update", "client_id": id, "utterance_id": "gesture-edit", "seq": 2,
+                        "text": "改得简短一些", "final": false])
+    controller.receive(["type": "convert", "client_id": id, "utterance_id": "gesture-edit", "seq": 3])
+    check(currentSession(controller)!.editRequested, "gesture conversion lost editing intent")
+    controller.receive(["type": "update", "client_id": id, "utterance_id": "gesture-edit", "seq": 4,
+                        "text": "改得简短一些", "final": true])
+    check(currentSession(controller)!.phase == .editing, "gesture conversion did not start editing after final text")
+    controller.deactivateServer(client)
+    print("PASS gesture conversion still starts editing from the active composition")
+}
+
 // UI-only messages must not read/write a client, reconfigure keys or reset a sentence.
 do {
     let service = IMEService.shared
@@ -580,16 +634,16 @@ do {
     controller.receive(["type": "update", "client_id": id, "utterance_id": "hud-sentence", "seq": 2,
                         "text": "仍在听写", "final": false])
     let before = (client.reads, client.writes, client.text, client.marked)
-    let settings = (service.modeShortcut, service.cancelShortcut, service.multiUndoEnabled)
+    let settings = (service.cancelShortcut, service.multiUndoEnabled)
     service.transport.onMessage?([
         "type": "configure_hud", "epoch": "hud-test",
         "scale_percent": 120,
         "gesture_hints": ["confirm": ["tap", ""], "undo": ["snap", ""], "switch_mode": ["swipe-right", ""]],
-        "mode_switch_shortcut": "F1", "cancel_shortcut": "F2", "multi_undo_enabled": !settings.2
+        "mode_switch_shortcut": "F1", "cancel_shortcut": "F2", "multi_undo_enabled": !settings.1
     ])
     check(client.reads == before.0 && client.writes == before.1 && client.text == before.2 && client.marked == before.3,
           "HUD configuration touched the active sentence")
-    check(service.modeShortcut == settings.0 && service.cancelShortcut == settings.1 && service.multiUndoEnabled == settings.2,
+    check(service.cancelShortcut == settings.0 && service.multiUndoEnabled == settings.1,
           "HUD configuration applied unrelated voice settings")
     check(ActionPanel.displayedHints.actions["undo"] == ["snap"], "new icons did not reach the active panel")
     check(ActionPanel.displayedAppearance.scalePercent == 120, "HUD size did not reach the active panel")

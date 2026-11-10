@@ -618,7 +618,10 @@ class AppGestureController(QObject):
             return InputSourceGestureEvent(event, generation, created, pid, error)
         busy = bool(audio_busy or self.owner._ring_gestures.speech_busy())
         resume_failure = None
-        if input_priority and not busy and name in bindings.undo + bindings.polish:
+        resumes_history = name in bindings.undo + bindings.polish or (
+            self.owner._inline_input._history_action_mode != "undo" and name in bindings.switch_mode
+            and not self.owner._inline_input.empty_redo_after_return())
+        if input_priority and not busy and resumes_history:
             resume_failure = self.owner._inline_input.resume_gesture_failure()
             created = time.monotonic()
         state, sentence = self.phase_state(), self.sentence()
@@ -627,16 +630,18 @@ class AppGestureController(QObject):
         self._trace(trace_id, "received", "received", gesture=name, route="focus", **state)
         inline = self.owner._inline_input
         # With nothing left to undo, probing must not borrow the just-restored keyboard.
-        empty_undo = (input_priority and not busy and not resume_failure and name in bindings.undo
-                      and name != self._source_gesture and inline.empty_undo_after_return())
+        empty_history = (input_priority and not busy and not resume_failure and name != self._source_gesture
+                         and ((name in bindings.undo and inline.empty_undo_after_return())
+                              or (name in bindings.switch_mode and inline.empty_redo_after_return())))
+        empty_reason = "no_redo" if name in bindings.switch_mode else "no_cancel_or_visible_undo"
         def ignored(reason):
             self._trace(trace_id, "outcome", reason, gesture=name)
             return AppGestureEvent(BoundGestureEvent(source, bindings), None, generation, created,
                                    sentence=sentence, route="ignored", trace_id=trace_id, **state)
 
-        if (empty_undo and not self.owner._global_gesture_bindings.action_for(name)
+        if (empty_history and not self.owner._global_gesture_bindings.action_for(name)
                 and not self.foreground_has_binding(name)):
-            return ignored("no_cancel_or_visible_undo")
+            return ignored(empty_reason)
         target, error, capture_error = None, None, ""
         input_method_target = None
         try:
@@ -651,7 +656,7 @@ class AppGestureController(QObject):
                                if not input_only and self._catalog.uses_scene(name) else {})
                     if name in bindings.confirm:
                         options["require_editable"] = True
-                    elif empty_undo or end_only:
+                    elif empty_history or end_only:
                         options = {"allow_activation": False,
                                    "native_fallback": lambda front: self._passive_outside_target(name, front)}
                     start_focus = inline.capture_start_focus(**options)
@@ -660,8 +665,8 @@ class AppGestureController(QObject):
                 if start_focus is not None:
                     self._trace(trace_id, "input_focus", start_focus.reason or start_focus.status,
                                 gesture=name, elapsed_ms=start_focus.elapsed_ms)
-                    if empty_undo and start_focus.status in {"text", "unavailable"}:
-                        return ignored("no_cancel_or_visible_undo")
+                    if empty_history and start_focus.status in {"text", "unavailable"}:
+                        return ignored(empty_reason)
                     if input_only and (start_focus.status in {"nontext", "outside"} or start_focus.reason == "unknown_focus"):
                         return ignored(start_focus.reason or "input_method_no_focus")
                     if start_focus.status == "text":

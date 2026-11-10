@@ -186,8 +186,12 @@ for line in sys.stdin:
 def test_controller_view_and_export_show_background_scene_details(tmp_path, monkeypatch):
     from test_interaction_controls import _controller, _close
     from PySide6.QtWidgets import QFileDialog
+    from PySide6.QtTest import QTest
+    from zipfile import ZipFile
+    import time
     controller = _controller(tmp_path, monkeypatch)
-    destination = tmp_path / 'report.log'
+    controller.diagnosticExport._ime_root = tmp_path / 'ime'
+    destination = tmp_path / 'report.zip'
     monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **k: (str(destination), ''))
     try:
         controller._append_log('visible event')
@@ -200,7 +204,15 @@ def test_controller_view_and_export_show_background_scene_details(tmp_path, monk
         controller.clearLog()
         assert not controller.readDiagnosticLog()
         controller.exportDiagnosticLog()
-        text = destination.read_text()
+        for _ in range(300):
+            QTest.qWait(10)
+            time.sleep(.005)  # Let the Python worker run between Qt waits.
+            if not controller.diagnosticExport.busy:
+                break
+        assert not controller.diagnosticExport.busy
+        assert not controller.diagnosticExport.error, controller.diagnosticExport.message
+        with ZipFile(destination) as archive:
+            text = archive.read('diagnostic.log').decode()
         assert 'visible event' in text and 'background event' in text and '"scanned_nodes":1200' in text
         assert not (controller._diagnostic_log.path.parent / 'scene-events.jsonl').exists()
     finally:

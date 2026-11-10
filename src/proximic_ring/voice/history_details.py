@@ -177,7 +177,9 @@ def history_details(directory: Path, record: dict) -> dict:
         plan = request.get('edit_plan') or (mode.get('edit_plan') if routed else {})
         section('llm_' + str(index), title, output,
                 model=_model(request.get('model'), request.get('provider')), latency=request.get('latency_ms'), status=state,
-                description=('编辑类别：' + _tasks(plan)) if _tasks(plan) else '',
+                description='\n'.join(v for v in (
+                    ('是否重新执行：' + ('是' if request.get('reexecuted') else '否')) if kind == 'edit' else '',
+                    ('编辑类别：' + _tasks(plan)) if _tasks(plan) else '') if v),
                 input_text=_input(request.get('request_input', request.get('input'))), alternatives=alternatives)
 
     if mode.get('routing') == 'auto' and any(key in mode for key in ('router_request_id', 'router_output', 'task_type')):

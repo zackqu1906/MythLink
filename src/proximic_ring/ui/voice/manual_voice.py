@@ -270,8 +270,7 @@ class ManualVoiceMixin:
                 if self._failed_edit_fallback_interaction() is not None:
                     self._set_status(
                         "修改未完成",
-                        "原文本保持不变；按 "
-                        f"{self._mode_correction_shortcut} 可改为听写输入",
+                        "原文本保持不变；可使用转换手势改为听写输入",
                         "error",
                     )
                 else:

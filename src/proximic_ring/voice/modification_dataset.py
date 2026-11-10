@@ -778,6 +778,7 @@ class ModificationDatasetCollector:
                 model_input = self._llm_input(mode, raw_text, target_text)
             llm_request = {
                 "request_id": request_id,
+                "reexecuted": bool(getattr(request, "reexecuted", False)),
                 "mode": mode,
                 "routing_mode": routing,
                 "provider": str(getattr(settings, "provider", "")),
@@ -1046,8 +1047,20 @@ class ModificationDatasetCollector:
                 # Native restores the instruction as dictated text on failure or
                 # cancellation. That is not a successful dictation intent label.
                 if normalized_action == "applied" and mode == "dictation":
+                    # Undo clears final_applied, and deleting an instruction can
+                    # itself be undone even if its edit never succeeded. Retain
+                    # verified edit application evidence across all history steps.
+                    edit_applied = record["mode"].get("edit_ever_applied")
+                    if edit_applied is None:
+                        # Older records have no marker. Only an actual application
+                        # receipt is proof; a completed model request is not.
+                        edit_applied = record["mode"].get("final_applied") == "edit" or any(
+                            item.get("type") == "application" and item.get("action") == "applied"
+                            and item.get("mode") == "edit"
+                            for item in self._read_jsonl(self._interaction_dir(interaction_id) / "events.jsonl"))
+                        record["mode"]["edit_ever_applied"] = edit_applied
                     normalized_action = ("apply_failed" if error else "undone"
-                                         if record["mode"].get("final_applied") == "edit" else "cancelled")
+                                         if edit_applied else "cancelled")
                     event["restored_dictation"] = True
                 event.update(mode=normalized_mode, action=normalized_action)
                 if normalized_action == "apply_failed":
@@ -1062,6 +1075,8 @@ class ModificationDatasetCollector:
                 "dictation",
                 "edit",
             }:
+                if normalized_mode == "edit":
+                    record["mode"]["edit_ever_applied"] = True
                 # This is the stable binary-classification target. Unlike
                 # ``selected``, it is written only by a real application and
                 # cannot be changed by speculative/background LLM requests.
@@ -1207,7 +1222,7 @@ class ModificationDatasetCollector:
                     "corrected_mode": str(corrected_mode),
                 },
             )
-            # Mode correction is the terminal semantic state of an F8 action.
+            # Mode correction is the terminal semantic state of an explicit conversion.
             # Publish after every field above is committed so UI consumers never
             # have to infer completion from the earlier application callback.
             self._publish_history_locked(interaction_id, force=True)
@@ -1955,6 +1970,9 @@ class ModificationDatasetCollector:
             "error": str(record.get("outcome", {}).get("error") or asr.get("error") or ""),
             "mode": display_mode,
             "processingMode": processing_mode,
+            "reexecuted": any(request.get("reexecuted", False)
+                              for request in record.get("llm", {}).get("requests", [])
+                              if isinstance(request, dict)),
             "modeLabel": (
                 "编辑指令"
                 if display_mode == "edit"

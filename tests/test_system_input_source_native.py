@@ -14,6 +14,7 @@ from Foundation import NSThread
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QGuiApplication
 from proximic_ring.ui.gestures.ring_gesture_controller import RingGestureController
+from proximic_ring.gestures.gesture_settings import GestureBindings
 from proximic_ring.voice.ime.focus_probe import probe_input_focus
 from proximic_ring.voice.ime.system_input_source import SystemInputSources
 
@@ -51,7 +52,7 @@ inline = SimpleNamespace(
 owner = SimpleNamespace(_disconnect_event=connection, _inline_input=inline,
     _global_gesture_bindings=SimpleNamespace(action_for=lambda name: None),
     _app_gestures=SimpleNamespace(foreground_has_binding=lambda name: False),
-    _gesture_bindings=SimpleNamespace(confirm=('tap',), end=()))
+    _gesture_bindings=GestureBindings(confirm=('tap', ''), end=('', '')))
 gate = SimpleNamespace(owner=owner, session_blocked=lambda: False, speech_busy=lambda: False,
     _selector=SimpleNamespace(blocked=threading.Event()), _lock=threading.Lock(),
     _transition=None, _scroll=SimpleNamespace(applying=threading.Event()), _generation=0)

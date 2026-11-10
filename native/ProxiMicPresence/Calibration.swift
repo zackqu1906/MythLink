@@ -46,7 +46,40 @@ struct ProximityCalibration {
     }
 }
 
-/// Collect near RSSI callbacks covered by a fresh, explicitly enabled activity.
+/// A capture over an existing RSSI stream. Completion waits for the host to
+/// validate and persist the result before it can replace the live baseline.
+struct LiveCalibrationSession {
+    private(set) var identifier: String?
+    private(set) var requestedAt = 0.0
+    private(set) var capture = ProximityCalibration()
+    private(set) var awaitingAcceptance = false
+    var active: Bool { identifier != nil }
+
+    mutating func begin(identifier: String, now: Double) {
+        self = Self()
+        self.identifier = identifier; requestedAt = now
+    }
+    mutating func observe(_ rssi: Double, now: Double) {
+        guard active, !awaitingAcceptance, rssi.isFinite, (-100 ... -20).contains(rssi) else { return }
+        // No pre-click samples: start the same ten-second capture on the next
+        // fresh callback, rather than consuming part of it waiting for BLE.
+        if capture.startedAt == nil { capture.begin(now: now) }
+        capture.observe(rssi, now: now)
+    }
+    mutating func finishIfDue(now: Double) -> Bool? {
+        guard active, !awaitingAcceptance, let start = capture.startedAt,
+              now - start >= ProximityCalibration.duration else { return nil }
+        let success = capture.finish(now: now)
+        awaitingAcceptance = success
+        return success
+    }
+    func result(for identifier: String) -> ProximityCalibration? {
+        self.identifier == identifier && awaitingAcceptance ? capture : nil
+    }
+    mutating func cancel() { self = Self() }
+}
+
+/// Collect RSSI callbacks covered by a fresh, explicitly enabled activity.
 /// A short interaction can recalibrate; independent activity protection needs no capture.
 struct ActivityCalibration {
     enum Source: String, CaseIterable {
@@ -80,7 +113,6 @@ struct ActivityCalibration {
     private var readings: [Reading] = []
     private var lastSampleAt: Double?
     private var resetAt = -Double.infinity
-    private(set) var signalAllowsLearning = false
     var samples: Int { readings.count }
 
     mutating func configure(mask: Int, revision: Int, now: Double) {
@@ -93,7 +125,6 @@ struct ActivityCalibration {
     }
     mutating func reset(now: Double) {
         evidence.removeAll(); readings.removeAll(); lastSampleAt = nil; resetAt = now
-        signalAllowsLearning = false
     }
     mutating func activity(_ source: Source, at: Double, now: Double) {
         guard mask & source.bit != 0, at.isFinite, now.isFinite,
@@ -117,20 +148,16 @@ struct ActivityCalibration {
     mutating func expire(now: Double) {
         readings.removeAll { now - $0.at > Self.window || $0.at > now }
     }
-    mutating func observe(_ rssi: Double, now: Double, eligible: Bool, baseline: Double) -> Capture? {
+    mutating func observe(_ rssi: Double, now: Double, eligible: Bool) -> Capture? {
         guard eligible else { reset(now: now); return nil }
         guard mask != 0, now.isFinite, now >= resetAt,
               rssi.isFinite, (-100 ... -20).contains(rssi),
               lastSampleAt.map({ now > $0 }) ?? true else { return nil }
         expire(now: now)
         lastSampleAt = now
-        // Recent input grants protection, not proof that a weak signal is near.
-        // Gate raw callbacks before updating the baseline or clearing departure
-        // evidence, even while the ten-second protection is still active.
-        signalAllowsLearning = baseline.isFinite && (-100 ... -20).contains(baseline)
-            && rssi >= baseline - 4
-        guard signalAllowsLearning else { readings.removeAll(); return nil }
         let sources = activeSources(now: now)
+        // All selected activity sources qualify equally, regardless of the
+        // previous baseline or the size/direction of the signal change.
         guard !sources.isEmpty else { return nil }
         readings.append(Reading(at: now, rssi: rssi, sources: sources))
         if readings.count > 100 { readings.removeFirst(readings.count - 100) }

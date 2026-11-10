@@ -61,7 +61,6 @@ class ShortcutTarget:
     trace_id: str = field(default="", compare=False)
     diagnostic: dict = field(default_factory=dict, compare=False, repr=False)
     browser_target: dict = field(default_factory=dict, repr=False)
-    wechat_ime_probe: bool = False
 
 
 class LocalMacAppShortcuts:
@@ -76,15 +75,10 @@ class LocalMacAppShortcuts:
         try:
             system = ax.ax.AXUIElementCreateSystemWide()
             ax.ax.AXUIElementSetMessagingTimeout(system, .06)
-            can_probe = True
             for owner, source in ((app, "application"), (system, "system"), (window, "window")):
                 try:
                     node = ax.attr(owner, "AXFocusedUIElement")
-                except FocusError as exc:
-                    # The opaque WeChat window returns CannotComplete only for
-                    # the system focus query. Other read failures prove nothing.
-                    if source != "system" or exc.ax_error != -25204:
-                        can_probe = False
+                except FocusError:
                     continue
                 if node is None or node == app or node == window:
                     continue
@@ -92,10 +86,6 @@ class LocalMacAppShortcuts:
                 if error or actual_pid != pid or ax.attr(node, "AXWindow") != window:
                     return None, ""
                 return node, source
-            # The opaque title bar and a real editable subtree are mutually
-            # exclusive. Avoid traversing all six known nodes a second time.
-            if can_probe and self._wechat_titlebar_only(app, window, pid):
-                return None, "titlebar_only"
             # Only explicit keyboard focus counts. An existing chat editor (even
             # one retaining a valid selection) is not proof of insertion focus.
             deadline = time.monotonic() + .18
@@ -119,61 +109,6 @@ class LocalMacAppShortcuts:
             return None, ""
         except FocusError:
             return None, ""
-
-    def _wechat_titlebar_only(self, app, window, pid):
-        """WeChat 4.1.15 exposes only standard title-bar buttons for its chat window."""
-        ax = self._wechat_ax
-        if (ax.attr(window, "AXRole") != "AXWindow" or ax.attr(window, "AXSubrole") != "AXStandardWindow"
-                or ax.attr(window, "AXMain") != True or ax.attr(app, "AXMainWindow") != window
-                or ax.attr(window, "AXModal") != False or ax.attr(window, "AXMinimized") != False
-                or ax.attr(window, "AXSheets") or ax.attr(app, "AXEnhancedUserInterface") != True):
-            return False
-        windows = ax.attr(app, "AXWindows") or ()
-        if window not in windows:
-            return False
-        for other in windows:
-            if other != window and (ax.attr(other, "AXSubrole") != "AXStandardWindow"
-                                    or ax.attr(other, "AXModal") or ax.attr(other, "AXSheets")):
-                return False
-        for name in ("AXMenuBar", "AXExtrasMenuBar"):
-            bar = ax.attr(app, name)
-            if bar is not None and ax.attr(bar, "AXSelectedChildren"):
-                return False
-        buttons = [ax.attr(window, name) for name in ("AXCloseButton", "AXFullScreenButton", "AXMinimizeButton")]
-        if None in buttons or len(set(buttons)) != 3:
-            return False
-        # Read all children, not just visible ones. Reject extra controls, menus,
-        # truncated/unsupported containers and stale nodes from another process.
-        todo, seen = [window], set()
-        while todo:
-            node = todo.pop()
-            if node in seen or len(seen) >= 8 or ax.ax.AXUIElementGetPid(node, None) != (0, pid):
-                return False
-            seen.add(node)
-            if ax.attr(node, "AXFocused") != False:
-                return False
-            if node != window:
-                if node in buttons:
-                    if ax.attr(node, "AXRole") != "AXButton" or ax.attr(node, "AXWindow") != window:
-                        return False
-                elif ax.attr(node, "AXRole") != "AXGroup" or ax.attr(node, "AXWindow") not in (None, window):
-                    return False
-            error, count = ax.ax.AXUIElementGetAttributeValueCount(node, "AXChildren", None)
-            if error:
-                if error not in (-25205, -25212) or node == window:
-                    return False
-                count = 0
-            if count > 8:
-                return False
-            children = []
-            if count:
-                error, children = ax.ax.AXUIElementCopyAttributeValues(node, "AXChildren", 0, count, None)
-                if error or len(children or ()) != count:
-                    return False
-            if node == window and (count != 3 or set(children) != set(buttons)):
-                return False
-            todo.extend(children)
-        return True
 
     def capture(self, *, plain_enter: bool = False, menu_action: bool = False,
                 scene: bool = False, scene_observation: bool = False,
@@ -366,10 +301,8 @@ class LocalMacAppShortcuts:
                 current_focus = native_attr(element, "AXFocusedUIElement")
                 if wechat_fallback and current_focus in (None, element, window):
                     current_focus = None
-                    if focus is not None or wechat_source == "titlebar_only":
-                        current_focus, current_source = self._wechat_focused_control(element, window, pid)
-                        if wechat_source == "titlebar_only" and current_source != wechat_source:
-                            return finish("focus_changed")
+                    if focus is not None:
+                        current_focus, _ = self._wechat_focused_control(element, window, pid)
                 if current_focus != focus:
                     return finish("focus_changed")
             if menu_action and window is None and context_read_failed:
@@ -401,8 +334,6 @@ class LocalMacAppShortcuts:
                               web_area=recognized.web_area, player=recognized.player,
                               browser_target=recognized.browser_target, focus_sensitive=focus_sensitive,
                               passive_undo=passive_undo,
-                              wechat_ime_probe=(wechat_source == "titlebar_only" and tree_ready and not blocked
-                                                and input_context == "unknown"),
                               trace_id=info["trace_id"], diagnostic=safe_data(info))
 
     def browser_action(self, target, action):
@@ -443,7 +374,6 @@ class LocalMacAppShortcuts:
         if (target.window is not None or target.menu_action) and current.window != target.window:
             return outcome("window_changed")
         if target.passive_undo and (current.focus != target.focus or current.input_context != target.input_context
-                                    or current.wechat_ime_probe != target.wechat_ime_probe
                                     or current.browser_target.get("editor") != target.browser_target.get("editor")):
             return outcome("focus_changed")
         if target.page_key or current.page_key:
@@ -503,18 +433,6 @@ class MacAppShortcuts:
             options["focus_sensitive"] = False
         value = native_access().call("capture", **options)
         return ShortcutTarget(**value) if value is not None else None
-
-    def passive_focus(self, origin):
-        """Read focused editor evidence on the native worker without selecting an input source."""
-        if not origin:
-            return None
-        try:
-            target = self.capture(menu_action=True, scene=True, passive_undo=True)
-        except (OSError, RuntimeError, ValueError):
-            return None
-        if target is not None and not target.blocked and (target.bundle, target.pid) == origin:
-            return target
-        return None
 
     def same_target(self, target, *, require_focus=False):
         from ..platforms.macos.native_access import native_access

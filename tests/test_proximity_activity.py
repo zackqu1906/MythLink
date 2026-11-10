@@ -64,6 +64,29 @@ def test_automatic_baseline_and_both_thresholds_survive_relaunch(proximity):
         restored.close()
 
 
+@pytest.mark.parametrize("sources", [["keyboardMouse"], ["gestures"], ["voice"], ["gestures", "voice"]])
+@pytest.mark.parametrize("baseline", [-90, -65, -40])
+def test_each_activity_source_updates_without_a_baseline_delta_limit(proximity, sources, baseline):
+    c, settings = proximity
+    prepare(c); c.enabled = True; c.setBaselineOption("enabled", True)
+    for source in ("keyboardMouse", "gestures", "voice"):
+        c.setBaselineOption(source, source in sources)
+    process = c._process
+    process.send(dict(event="monitor", connected=True, permission=True, locked=False,
+                      raw_rssi=baseline, rssi=baseline, rssi_age_seconds=0,
+                      activity_calibration_active=True, activity_calibration_samples=4,
+                      activity_calibration_sources=sources))
+    assert "正在自动采样：4 / 5" in c.baselineLearningStatus
+    process.send(update(c, baseline=baseline, samples=[baseline] * 5, sources=sources))
+    assert c.savedCalibration["baseline"] == baseline
+    assert c.learnedThresholds["lock"] == baseline - 8
+    assert c.learnedThresholds["unlock"] == baseline - 4
+    assert c.signalTimeline.points[-1]["baseline"] == baseline
+    assert c.signalTimeline.points[-1]["threshold"] == baseline - 8
+    assert json.loads(settings.value("proximity/calibrations/" + c._target))["baseline"] == baseline
+    assert c._process is process and not process.killed
+
+
 @pytest.mark.parametrize("bad", [dict(device="wrong-ring"), dict(sources=["voice"]),
     dict(duration_seconds=1.9), dict(duration_seconds=121), dict(samples=[-70] * 4),
     dict(baseline=-71), dict(sources=[]), dict(samples=[127] * 11)])

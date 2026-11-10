@@ -10,7 +10,7 @@ from .touchpad_clicks import TouchpadClicks
 from .touchpad_drag import TouchpadDrag
 from .touchpad_swipe import TouchpadSwipe
 from .touchpad_diagnostics import note
-from .click_diagnostics import ClickTrace, start_click_diagnostics
+from .click_diagnostics import ClickTrace, drag_record, start_click_diagnostics
 
 
 class TouchpadMouseOutput:
@@ -18,7 +18,7 @@ class TouchpadMouseOutput:
                  mouse_factory=None, on_double_click=None, on_gesture=None, on_diagnostic=None,
                  click_context=None, on_capture_click=None, scroll=True, double_click=True,
                  right_click=True, scroll_gain=1., raw2=False, invert_scroll=False, horizontal_swipe=True,
-                 tap_drag=True):
+                 dwell_drag=True, dwell_ms=400):
         self.connection = connection
         self.options = (gain, clicks, invert_y)
         self.on_ready, self.on_end = on_ready, on_end
@@ -37,17 +37,19 @@ class TouchpadMouseOutput:
         self.lock = threading.Lock()
         self.events = deque(maxlen=32)
         self.overflowed = False
+        self._stop_reason = ''
         self.active = False
         self._pending_clicks = {}
         self._features = (bool(clicks), bool(double_click), bool(right_click), bool(scroll), float(scroll_gain),
-                          bool(invert_scroll), bool(horizontal_swipe), bool(tap_drag))
+                          bool(invert_scroll), bool(horizontal_swipe), bool(dwell_drag), float(dwell_ms))
         self.raw2 = raw2
         self._stream_key = None
         self._input_gap_at = 0.
         self._seen_clicks = deque(maxlen=256)
         self._last_scroll_hint = None
         self._drag_context = None
-        self.drag = TouchpadDrag(self._press_drag, self._release_drag, self._tap_click)
+        self.drag = TouchpadDrag(self._release_drag, lambda: self._notify_gesture('dwell-drag-ready'),
+                                 record=drag_record)
         self.swipe = TouchpadSwipe()
         self._swipe_context = None
         start_click_diagnostics()
@@ -61,10 +63,11 @@ class TouchpadMouseOutput:
         self.paused = False
 
     def configure(self, *, clicks, double_click, right_click, scroll, scroll_gain,
-                  invert_scroll=False, horizontal_swipe=True, gain=None, invert_y=None, tap_drag=True):
+                  invert_scroll=False, horizontal_swipe=True, gain=None, invert_y=None,
+                  dwell_drag=True, dwell_ms=400):
         # One immutable snapshot; the pointer worker reads it before dispatch.
         self._features = (bool(clicks), bool(double_click), bool(right_click), bool(scroll), float(scroll_gain),
-                          bool(invert_scroll), bool(horizontal_swipe), bool(tap_drag))
+                          bool(invert_scroll), bool(horizontal_swipe), bool(dwell_drag), float(dwell_ms))
         self.options = (self.options[0] if gain is None else float(gain), bool(clicks),
                         self.options[2] if invert_y is None else bool(invert_y))
         self.wake.set()
@@ -110,6 +113,7 @@ class TouchpadMouseOutput:
             if len(self.events) == self.events.maxlen:
                 if getattr(event, 'session_id', None) is not None:
                     # A lost Raw2 event must not turn a partial gesture into input.
+                    self._stop_reason = 'queue_overflow'
                     self.stopped.set()
                     self.active = False
                     if trace: trace.finish('queue_overflow')
@@ -293,11 +297,15 @@ class TouchpadMouseOutput:
                                 self._finish_click(trace, 'clicks_disabled')
                 if batch:
                     self._apply(batch)
+                self._sync_drag()
+                self.drag.tick(time.monotonic())
         except Exception as exc:
             error = exc
         finally:
             try:
-                self.drag.cancel()
+                self.drag.cancel('pointer_worker_error' if error else
+                                 self._stop_reason or self._blocked_reason() or 'worker_exit',
+                                 error_type=type(error).__name__ if error else None)
             except Exception as exc:
                 error = error or exc
             self.stop()
@@ -336,7 +344,7 @@ class TouchpadMouseOutput:
                  (tuple(e['stream']) == self._stream_key and
                   (e['kind'] != 'scroll' or self._features[3]))]
         batch = [e for e in batch if 'drag_context' not in e or
-                 (e['drag_context'] == self._drag_context and self._features[7])]
+                 (e['drag_context'] == self._drag_context and self._features[7] and self.drag.held)]
         batch = [e for e in batch if e['kind'] != 'scroll' or
                  e.get('scroll_inverted', self._features[5]) == self._features[5]]
         if not batch or self._blocked_reason():
@@ -345,7 +353,12 @@ class TouchpadMouseOutput:
         # button is held. Raw2 button switches remain independently gated here.
         self.mouse.gain, clicks, self.mouse.invert_y = self.options
         self.mouse.clicks_enabled = True if self.raw2 else clicks
-        result = self.mouse.apply(batch)
+        native_batch = []
+        for event in batch:
+            if event.get('begin_drag'):
+                native_batch.append(dict(kind='button_down', count=1, expires_at=event['expires_at']))
+            native_batch.append(event)
+        result = self.mouse.apply(native_batch)
         # Count actual Quartz posts reported by the child, not SDK frames or
         # requests (zero movement and expired IPC requests post nothing).
         if isinstance(result, dict):
@@ -359,17 +372,16 @@ class TouchpadMouseOutput:
         if self.mouse is not None:
             self.mouse.release_drag()
 
-    def _press_drag(self, count):
-        self._apply([dict(kind='button_down', count=count, stream=list(self._stream_key),
-                          drag_context=self._drag_context, expires_at=self.drag.active.timestamp+.2)])
-
-    def _tap_click(self, event):
-        self._send_click(ClickTrace(event), event)
-
     def _sync_drag(self):
         context = (self._stream_key, self._input_gap_at, self.click_context(), self._features[0], self._features[1], self._features[7])
-        if context != self._drag_context or self._blocked_reason():
-            self.drag.cancel()
+        blocked = self._blocked_reason()
+        if context != self._drag_context or blocked:
+            names = ('stream_changed', 'input_gap', 'input_owner_changed', 'single_click_changed',
+                     'double_click_changed', 'drag_setting_changed')
+            changed = [name for i, name in enumerate(names)
+                       if self._drag_context is not None and context[i] != self._drag_context[i]]
+            self.drag.cancel(self._stop_reason or blocked or (changed[0] if changed else 'context_initialized'),
+                             context_changes=changed)
             self._drag_context = context
         swipe_context = (self._stream_key, self._input_gap_at, self.click_context(), self._features[6])
         if swipe_context != self._swipe_context or self._blocked_reason():
@@ -416,19 +428,22 @@ class TouchpadMouseOutput:
             eligible = (not blocked and context == submitted_context and context[1] == 'closed'
                         and self._features[7] and 0 <= age <= .2)
             if not eligible:
-                self.drag.cancel()
+                reason = ('contact_event_expired' if not 0 <= age <= .2 else
+                          'input_owner_changed' if context != submitted_context or context[1] != 'closed'
+                          else 'drag_disabled')
+                self.drag.cancel(reason, event, age_limit_ms=200)
             # Release/cancel is cleanup: never let an expired up leave a hold.
-            self.drag.contact(event, enabled=eligible, doubles=self._features[1],
-                              context=self._drag_context)
+            self.drag.contact(event, enabled=eligible, dwell_ms=self._features[8])
             return
         if not 0 <= age <= limit:
             self.swipe.reset()
+            if event.kind == 'move':
+                self.drag.cancel('motion_event_expired', event, age_limit_ms=limit*1000)
+                # Missing motion must not look like stillness.
             self._finish_click(trace, 'mouse_queue_expired', queue_limit_ms=limit*1000)
             return
-        singles, doubles, right, scroll, gain, invert_scroll, horizontal_swipe, tap_drag = self._features
+        singles, doubles, right, scroll, gain, invert_scroll, horizontal_swipe, _, _ = self._features
         if getattr(event, 'is_preview', False):
-            if tap_drag and self.click_context()[1] == 'closed':
-                self.drag.preview(event, self._drag_context, singles=singles, now=now)
             return
         if trace:
             click_id = (key, event.click_id)
@@ -439,9 +454,8 @@ class TouchpadMouseOutput:
             if event.source_timestamp in self.swipe.handled_ends:
                 self._finish_click(trace, 'horizontal_swipe_owns_contact', outcome='routed')
                 return
-            if self.drag.consumed(event):
-                self._notify_gesture('left-double-click' if event.count == 2 else 'left-click')
-                self._finish_click(trace, 'contact_already_delivered', outcome='routed')
+            if self.drag.held or self.drag.consumed(event):
+                self._finish_click(trace, 'drag_owns_contact', outcome='routed')
                 return
             context = self.click_context()
             if context != submitted_context or context[1] in {'loading', 'activating'}:
@@ -463,6 +477,7 @@ class TouchpadMouseOutput:
                 self._notify_gesture(event.button + ('-double-click' if event.count == 2 else '-click'))
                 self._send_click(trace, event)
         elif event.mode == 'TWO_FINGER':
+            self.drag.cancel('two_finger', event)
             dy, direction = ((event.dy, None) if not horizontal_swipe or self.click_context()[1] != 'closed'
                              else self.swipe.move(event))
             if direction:
@@ -479,7 +494,13 @@ class TouchpadMouseOutput:
                             scroll_inverted=invert_scroll,
                             stream=list(key), expires_at=event.timestamp+.2)
         else:
-            return dict(kind='drag' if self.drag.held else 'move', dx=event.dx, dy=event.dy,
+            value = self.drag.move(event)
+            if value is None:
+                return
+            kind, dx, dy, begin_drag = value
+            if begin_drag:
+                self._notify_gesture('dwell-drag-started')
+            return dict(kind=kind, dx=dx, dy=dy, begin_drag=begin_drag,
                         stream=list(key), expires_at=event.timestamp+.2,
                         **({'drag_context': self._drag_context} if self.drag.held else {}))
 

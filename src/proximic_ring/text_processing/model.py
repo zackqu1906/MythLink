@@ -124,6 +124,7 @@ class TextProcessingRequest:
     screen_context: object = None
     edit_plan: EditPlan | None = None
     routing_mode: str = INPUT_ROUTING_MANUAL
+    reexecuted: bool = False
 
 
 @dataclass(frozen=True)

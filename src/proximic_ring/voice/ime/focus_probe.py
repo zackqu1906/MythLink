@@ -24,8 +24,7 @@ class InputFocus:
     native_target: object = None
 
 
-def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_fallback=None,
-                      activation_focus=None, verify_activation_target=None):
+def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_fallback=None):
     """Run on the gesture worker. Source selection and replies share a deadline.
 
     A bound client's invalid selection is nontext. Outside an explicitly
@@ -74,7 +73,6 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
     if not origin or origin[1] <= 0:
         return result("unavailable", "target_unavailable")
     selected = False
-    wechat_target = None
     try:
         while time.monotonic() < deadline:
             if not epoch:
@@ -89,12 +87,6 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
                 break
             if state and state.get("application") == origin[0] and state.get("client_id"):
                 if state.get("ready") and valid_selection(state.get("selection")):
-                    if wechat_target is not None:
-                        # A valid IMK client in a different WeChat window cannot authorize this tap.
-                        if not verify_activation_target(wechat_target) or changed():
-                            return result("unavailable", "foreground_or_connection_changed")
-                        if time.monotonic() >= deadline:
-                            return result("unavailable", "input_method_timeout")
                     return result("text", state=state)
                 if absent_selection(state.get("selection")):
                     if select_source is None:
@@ -107,26 +99,9 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
             if connected and state is None and not selected:
                 return unavailable("input_method_timeout")
             if not selected:
-                if select_source is not None and activation_focus is not None:
-                    # The IMK client is inactive. Only a currently editable control can justify borrowing a keyboard.
-                    target = activation_focus(origin)
-                    if changed():
-                        return result("unavailable", "foreground_or_connection_changed")
-                    if target is None or target.blocked or (target.bundle, target.pid) != origin:
-                        return unavailable("unknown_focus")
-                    if target.input_context == "nontext":
-                        return result("outside", "passive_nontext_focus", native_target=target)
-                    if target.input_context != "text":
-                        if (target.input_context == "unknown" and target.wechat_ime_probe
-                                and origin[0] in {"com.tencent.xinWeChat", "com.tencent.WeChat"}
-                                and verify_activation_target is not None):
-                            wechat_target = target
-                        else:
-                            return unavailable("unknown_focus")
-                else:
-                    native = native_focus()
-                    if native is not None:
-                        return native
+                native = native_focus()
+                if native is not None:
+                    return native
                 if changed():
                     return unavailable("foreground_or_connection_changed")
                 if time.monotonic() >= deadline:
@@ -136,10 +111,9 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
-                if wechat_target is not None:
-                    select_source(origin[1], timeout=remaining, wechat_probe=True)
-                else:
-                    select_source(origin[1], timeout=remaining)
+                # Inactive means our IMK does not own the editor yet, not that
+                # the editor is absent. Select once, then require fresh proof.
+                select_source(origin[1], timeout=remaining)
                 selected = True
             else:
                 time.sleep(min(.02, max(0, deadline - time.monotonic())))

@@ -17,11 +17,12 @@ final class IMEService {
     let activation = InputActivation<ProxiMicInputController>()
     var activeController: ProxiMicInputController? { activation.current }
     private(set) var epoch: String?
-    var modeShortcut = "F8"
     var cancelShortcut = "Esc"
     var gestureHints = VoiceHudBindings()
     var hudAppearance = VoiceHudAppearance()
-    var multiUndoEnabled = true
+    let multiUndoEnabled = true
+    var historyMode: HistoryActionMode = .retry
+    var redoEnabled: Bool { historyMode == .next }
     var suspendedInput: SuspendedInput?
     private lazy var noticePanel = ActionPanel()
 
@@ -96,12 +97,17 @@ final class IMEService {
             return // Presentation only: never reconfigure shortcuts, undo or a sentence.
         }
         if type == "configure" {
-            if let value = message["mode_switch_shortcut"] as? String { modeShortcut = value }
             if let value = message["cancel_shortcut"] as? String { cancelShortcut = value }
-            if let value = message["multi_undo_enabled"] as? Bool {
-                multiUndoEnabled = value
-                if !value { suspendedInput?.history = nil }
-                activeController?.configureUndoHistory(value)
+            // Ignore the retired multi_undo_enabled preference from older hosts.
+            let mode = (message["history_action_mode"] as? String).flatMap(HistoryActionMode.init(rawValue:))
+                ?? (message["redo_enabled"] as? Bool).map { $0 ? .next : .undo }
+            if let mode {
+                historyMode = mode
+                if mode != .next {
+                    let retained = suspendedInput?.history?.withoutRedo()
+                    suspendedInput?.history = retained
+                }
+                activeController?.configureRedoHistory(mode == .next)
             }
             return
         }
@@ -188,6 +194,11 @@ final class ProxiMicInputController: IMKInputController {
         if activated { changed() }
     }
 
+    func configureRedoHistory(_ enabled: Bool) {
+        undoHistory.configureRedo(enabled: enabled)
+        if activated { changed() }
+    }
+
     private func traceLifecycle(_ event: String, sender: AnyObject? = nil) {
         let fields: [String: Any] = [
             "event": event, "controller": String(describing: ObjectIdentifier(self)),
@@ -195,6 +206,7 @@ final class ProxiMicInputController: IMKInputController {
             "activated": activated, "preparing": preparingActivation,
             "native_read": adapter?.activeRead ?? "", "state_read": stateReadInProgress,
             "phase": session?.phase.rawValue ?? "idle",
+            "utterance_id": session?.utteranceID ?? "", "revision": session?.revision ?? 0,
             "application": activationApplication,
             "front_application": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
             "sender": sender.map { String(describing: ObjectIdentifier($0)) } ?? "",
@@ -224,6 +236,7 @@ final class ProxiMicInputController: IMKInputController {
         strokeActive = false
         strokeSessionID = ""
         undoHistory.configure(enabled: service.multiUndoEnabled)
+        undoHistory.configureRedo(enabled: service.redoEnabled)
         undoSourceUtteranceID = nil
         if let previous, previous !== self {
             previous.lastLifecycleEvent = "client_switched"
@@ -297,7 +310,11 @@ final class ProxiMicInputController: IMKInputController {
         lastContext = nil
         rejectedBeginID = nil
         panel.onCancel = { [weak self] in self?.cancelCurrentOrHistory() }
-        panel.onConvert = { [weak self] in self?.perform { $0.convert() } }
+        panel.onConvert = { [weak self] in
+            guard let self else { return }
+            if self.session?.historyReady == true { self.historyForward() }
+            else { self.perform { $0.convert() } }
+        }
         panel.onFinish = { [weak self] in self?.perform { $0.finish() } }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in self?.tick() }
         guard service.activation.owns(self, lease) else { return }
@@ -379,10 +396,6 @@ final class ProxiMicInputController: IMKInputController {
             return false
         }
         guard session.active else { undoHistory.clear(); sendState(); return false }
-        if matches(IMEService.shared.modeShortcut, event: event) {
-            perform { $0.convert() }
-            return true
-        }
         if (event.keyCode == 36 || event.keyCode == 76), [.listening, .finishing].contains(session.phase) {
             perform { $0.finish() }
             return true
@@ -621,6 +634,14 @@ final class ProxiMicInputController: IMKInputController {
             cancelCurrentOrHistory()
             return
         }
+        if type == "redo" {
+            redoHistory()
+            return
+        }
+        if type == "retry_edit" {
+            if IMEService.shared.historyMode == .retry { perform { $0.retryEdit() } }
+            return
+        }
         if type == "wechat_key_result" {
             guard let reply = compatibilityKeyReply, message["request_id"] as? String == reply.id else { return }
             compatibilityKeyReply = nil
@@ -708,7 +729,7 @@ final class ProxiMicInputController: IMKInputController {
             }
             isWriting = true
             defer { isWriting = false }
-            let restorable = current.phase != .undone || undoHistory.count > 0
+            let restorable = current.phase != .undone || undoHistory.count > 0 || undoHistory.redoCount > 0
             if restorable {
                 let saved = try current.suspension()
                 guard owns() else { throw CompositionError.interrupted("输入会话已变化，未切回输入法") }
@@ -779,7 +800,9 @@ final class ProxiMicInputController: IMKInputController {
                 throw CompositionError.interrupted("输入会话已变化，未恢复语音操作")
             }
             configureGestureHints()
-            panel.update(next, historyDepth: undoHistory.count)
+            panel.update(next, historyDepth: undoHistory.count, redoAvailable: undoHistory.canRedo && next.historyReady,
+                         redoEnabled: undoHistory.redoEnabled, retryAvailable: next.canRetryEdit,
+                         historyActionMode: IMEService.shared.historyMode.rawValue)
         } catch {
             if service.suspendedInput?.token == token { service.suspendedInput = nil }
             IMEService.shared.send(suspensionReply("input_resumed", token: token,
@@ -942,12 +965,14 @@ final class ProxiMicInputController: IMKInputController {
         next.onSettled = { [weak self] phase, text in
             if isCurrent(), let self, let session = self.session {
                 self.undoHistory.settled(session, sourceUtteranceID: self.undoSourceUtteranceID)
+                guard isCurrent() else { return }
                 self.sendEvent("settled", extra: ["phase": phase, "text": text])
             }
         }
         next.onEdit = { [weak self] original, instruction, revision in
             guard isCurrent() else { return }
-            self?.sendEvent("edit_requested", extra: ["original": original, "instruction": instruction, "revision": revision])
+            self?.sendEvent("edit_requested", extra: ["original": original, "instruction": instruction,
+                "revision": revision, "retry_edit": self?.session?.retryingEdit ?? false])
         }
         next.onPolish = { [weak self] text, revision in
             guard isCurrent() else { return }
@@ -969,7 +994,24 @@ final class ProxiMicInputController: IMKInputController {
             // request, so the host never posts keys for an inactive old phase.
             sendState()
         }
-        perform { $0.cancel() }
+        perform { self.undoHistory.undo($0, sourceUtteranceID: self.undoSourceUtteranceID) }
+    }
+
+    private func redoHistory() {
+        guard activated, ownsActivation, !isWriting, let current = session, let adapter,
+              let step = undoHistory.prepareRedo(current, sourceUtteranceID: undoSourceUtteranceID) else { return }
+        let restored = CompositionSession(client: adapter, undo: step.result,
+            utteranceID: current.utteranceID, sequence: current.lastSequence, revision: current.revision + 1)
+        undoSourceUtteranceID = step.result.sourceUtteranceID
+        session = restored
+        lastContext = restored.original
+        wire(restored)
+        perform { $0.restoreRedo(step) }
+    }
+
+    private func historyForward() {
+        if IMEService.shared.historyMode == .retry { perform { $0.retryEdit() } }
+        else if IMEService.shared.historyMode == .next { redoHistory() }
     }
 
     private func perform(_ operation: (CompositionSession) -> Void) {
@@ -994,6 +1036,8 @@ final class ProxiMicInputController: IMKInputController {
         event["error"] = session.error
         event["lifecycle_event"] = lastLifecycleEvent
         event["has_composition"] = session.hasComposition
+        event["edit_diagnostics"] = session.editDiagnostics
+        event["readback_diagnostics"] = session.readbackDiagnostics
         event["edit_context_available"] = session.editContextAvailable
         event["edit_scope"] = session.editScope
         event["source_utterance_id"] = undoSourceUtteranceID ?? session.utteranceID
@@ -1045,10 +1089,22 @@ final class ProxiMicInputController: IMKInputController {
                                     "lifecycle_event": lastLifecycleEvent, "has_composition": session?.hasComposition ?? false,
                                     "awaiting_readback": session?.awaitingReadback ?? false, "readback_stage": session?.readbackStage ?? "",
                                     "readback_diagnostics": session?.readbackDiagnostics ?? [:],
+                                    "edit_diagnostics": session?.editDiagnostics ?? [:],
+                                    "edit_trace_version": 1,
+                                    "native_pid": ProcessInfo.processInfo.processIdentifier,
+                                    "native_build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unbundled",
                                     "client_read_diagnostics": adapter.lastReadDiagnostics,
                                     "capabilities": capabilities, "can_convert": session?.canEdit ?? false,
                                     "can_cancel": (session?.canCancel ?? false) || (session?.phase == .undone && undoHistory.count > 0),
                                     "undo_history_depth": undoHistory.count,
+                                    "can_redo": undoHistory.canRedo && (session?.historyReady ?? false),
+                                    "redo_history_depth": undoHistory.redoCount,
+                                    "redo_version": 1,
+                                    "redo_enabled": undoHistory.redoEnabled,
+                                    "history_action_mode": IMEService.shared.historyMode.rawValue,
+                                    "edit_retry_version": 1,
+                                    "can_retry_edit": session?.canRetryEdit ?? false,
+                                    "retry_source_utterance_id": undoSourceUtteranceID ?? session?.utteranceID ?? "",
                                     "multi_undo_enabled": undoHistory.enabled,
                                     "edit_context_available": session?.editContextAvailable ?? false,
                                     "edit_scope": session?.editScope ?? "unavailable",
@@ -1079,7 +1135,9 @@ final class ProxiMicInputController: IMKInputController {
         sendState(includeSnapshot: includeSnapshot || session.phase == .error)
         guard activated, ownsActivation, self.session === session else { return }
         configureGestureHints()
-        panel.update(session, historyDepth: undoHistory.count)
+        panel.update(session, historyDepth: undoHistory.count, redoAvailable: undoHistory.canRedo && session.historyReady,
+                     redoEnabled: undoHistory.redoEnabled, retryAvailable: session.canRetryEdit,
+                     historyActionMode: IMEService.shared.historyMode.rawValue)
         tick()
     }
 
@@ -1121,7 +1179,7 @@ final class ProxiMicInputController: IMKInputController {
             session.checkSelection()
             isWriting = false
         }
-        guard session.active || (session.phase == .undone && undoHistory.count > 0) else { return }
+        guard session.active || (session.phase == .undone && (undoHistory.count > 0 || undoHistory.redoCount > 0)) else { return }
         let trace = CaretDiagnostics.shared.shouldSample()
         let length = session.hasComposition ? (session.raw as NSString).length : 0
         if panel.needsPosition {

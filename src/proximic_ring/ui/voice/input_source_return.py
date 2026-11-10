@@ -69,12 +69,13 @@ class InputSourceReturn(QObject):
         probe, self.probe = self.probe, None
         history = None
         borrowed = self.original if self.stage in {"suspending", "returning"} and origin == self.origin else ""
-        if (self.enabled and self.inline._multi_undo_enabled and origin and origin == self.origin
+        if (self.enabled and origin and origin == self.origin
                 and self.stage in {"suspending", "returning", "suspended"}
                 and self.saved and self.saved["epoch"] == self.inline._epoch):
             # BEGIN consumes the native token only after checking the live editor again.
             history, self.saved = self.saved, None
             self.inline._utterance_sessions = {}
+            self.inline._edit_replays = {}
         self.discard()
         if not self.enabled:
             return
@@ -92,12 +93,15 @@ class InputSourceReturn(QObject):
     def begin_acknowledged(self, state):
         c = self.inline
         history, self.begin_history = self.begin_history, None
-        if history and state.get("undo_history_depth", 0) > 0:
+        if history and (state.get("undo_history_depth", 0) > 0 or state.get("redo_history_depth", 0) > 0):
             # Keep the new audio session, which may already have been bound during startup.
             history["sessions"].update(c._utterance_sessions)
             c._utterance_sessions = history["sessions"]
+            history.get("edit_replays", {}).update(c._edit_replays)
+            c._edit_replays = history.get("edit_replays", {})
         elif state.get("undo_history_depth") == 0:
             c._utterance_sessions.clear()
+            c._edit_replays.clear()
             c._remember_session()
 
     def schedule(self):
@@ -125,7 +129,7 @@ class InputSourceReturn(QObject):
         self.saved = dict(token=uuid.uuid4().hex, epoch=c._epoch,
                           utterance_id=c._utterance_id, client_id=c._client_id,
                           view=dict(c._view), session_id=c._session_id,
-                          sessions=c._utterance_sessions)
+                          sessions=c._utterance_sessions, edit_replays=c._edit_replays)
         self.stage = "suspending"
         self._timer.start(1500)
         if not c._send("suspend_input", token=self.saved["token"], revision=identity[2]):
@@ -186,6 +190,7 @@ class InputSourceReturn(QObject):
             c._view = dict(state)
             c._session_id = saved["session_id"]
             c._utterance_sessions = saved["sessions"]
+            c._edit_replays = saved.get("edit_replays", {})
             c._sentence_origin = self.origin
             self.saved = None
             self.stage = ""
@@ -210,6 +215,7 @@ class InputSourceReturn(QObject):
     def _idle(self):
         c = self.inline
         c._utterance_sessions = {}
+        c._edit_replays = {}
         c._utterance_id = c._client_id = ""
         c._session_id = 0
         c._view = {"phase": "idle", "ready": False,

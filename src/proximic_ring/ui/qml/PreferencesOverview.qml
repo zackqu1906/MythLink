@@ -67,9 +67,81 @@ ColumnLayout {
         }
     }
     PreferenceSection {
+        Layout.fillWidth: true; title: "数据与分析"
+        PreferenceRow {
+            objectName: "voiceHistoryExportRow"
+            Layout.fillWidth: true; title: "语音历史记录"
+            description: "导出全部记录、上下文、录音和截图到下载文件夹，附带便于分析的统计表。"
+            FigmaAction {
+                objectName: "exportVoiceHistoryButton"
+                Layout.fillWidth: true
+                text: pane.controller.voiceHistoryExport.busy ? "正在导出…" : "一键导出"
+                enabled: !pane.controller.voiceHistoryExport.busy
+                onClicked: pane.controller.voiceHistoryExport.export()
+            }
+        }
+        UiNotice {
+            objectName: "voiceHistoryExportStatus"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: pane.controller.voiceHistoryExport.message
+            warning: pane.controller.voiceHistoryExport.error
+            wrapMode: Text.Wrap
+        }
+        FigmaAction {
+            objectName: "openVoiceHistoryExportFolderButton"
+            visible: pane.controller.voiceHistoryExport.path.length > 0
+            text: "打开导出文件夹"; quiet: true
+            onClicked: pane.controller.voiceHistoryExport.openFolder()
+        }
+    }
+    PreferenceSection {
         Layout.fillWidth: true; title: "连接与运行"
         PreferenceRow {
-            Layout.fillWidth: true; title: "运行日志"; description: "查看实时日志，导出记录以便排查问题。"
+            objectName: "diagnosticLogExportRow"
+            Layout.fillWidth: true; title: "导出诊断日志"
+            description: "包含运行日志、错误堆栈、设备状态，以及相关语音的上下文、录音和截图。"
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                FigmaSelect {
+                    id: diagnosticPeriod
+                    objectName: "diagnosticLogRangeSelect"
+                    Layout.fillWidth: true
+                    Accessible.name: "诊断日志时间范围"
+                    model: ["今天", "近一周", "全部"]
+                    enabled: !pane.controller.diagnosticExport.busy
+                }
+                FigmaAction {
+                    objectName: "settingsExportDiagnosticLogButton"
+                    Layout.fillWidth: true
+                    text: pane.controller.diagnosticExport.busy ? "正在导出…" : "导出诊断包"
+                    enabled: !pane.controller.diagnosticExport.busy
+                    onClicked: pane.controller.exportDiagnosticLog(["today", "week", "all"][diagnosticPeriod.currentIndex])
+                }
+            }
+        }
+        Label {
+            Layout.fillWidth: true; Layout.leftMargin: 16
+            text: "近一周包含今天及前六天；全部为本地仍保留的记录。诊断包仅保存到本机。"
+            color: theme.muted; font.pixelSize: 13; wrapMode: Text.Wrap
+        }
+        UiNotice {
+            objectName: "diagnosticLogExportStatus"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: pane.controller.diagnosticExport.message
+            warning: pane.controller.diagnosticExport.error
+            wrapMode: Text.Wrap
+        }
+        FigmaAction {
+            objectName: "openDiagnosticExportFolderButton"
+            visible: pane.controller.diagnosticExport.path.length > 0
+            text: "打开导出文件夹"; quiet: true
+            onClicked: pane.controller.diagnosticExport.openFolder()
+        }
+        PreferenceRow {
+            Layout.fillWidth: true; title: "运行日志"; description: "查看最近的实时运行记录。"
             FigmaAction { objectName: "runtimeLogButton"; Layout.fillWidth: true; text: "查看日志"; font.pixelSize: 16; onClicked: pane.logRequested() }
         }
     }
