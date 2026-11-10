@@ -93,7 +93,10 @@ def test_disabled_recommendation_input_keeps_firmware_worker_alive(route):
 
 @pytest.mark.parametrize("owner_focus", ["none", "agent", "recommendation"])
 def test_optional_editor_focus_preserves_endpoint_arbitration(route, monkeypatch, owner_focus):
-    c, service, _, _, sent, _, _ = route
+    from test_application_menus import ACTION, configure
+    c, service, _, backend, sent, _, _ = route
+    assert c.setGestureBinding("confirm", 0, "tap")
+    assert configure(service, monkeypatch, backend.target.bundle).setBinding(backend.target.bundle, "tap", ACTION["id"])
     from proximic_ring.agent_workflow import pipeline_policy
     monkeypatch.setattr(pipeline_policy, "LEGACY_WORKFLOW_ENABLED", owner_focus == "recommendation")
     monkeypatch.setattr(c.agent, "owns_input_focus", lambda: owner_focus == "agent")
@@ -182,7 +185,7 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_double_tap_endp
                 service = c.appGestures
                 service.backend.target = replace(service.backend.target, input_context="nontext", focus="page")
                 from proximic_ring.voice.ime.focus_probe import InputFocus
-                monkeypatch.setattr(c._inline_input, 'capture_start_focus', lambda: InputFocus('text',
+                monkeypatch.setattr(c._inline_input, 'capture_start_focus', lambda **_: InputFocus('text',
                     ('e', 'c', '', service.backend.target.bundle, service.backend.target.pid, (0, 0))))
                 gesture("middle-pinch")  # Retired mode switch does nothing.
                 gesture("double-tap")

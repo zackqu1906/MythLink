@@ -1,4 +1,4 @@
-"""Deterministic port of 579694e InteractionEngine and ClickPairing.
+"""Deterministic port of 2035acc InteractionEngine and ClickPairing.
 
 Packet ingress timestamps are metadata; frame times drive gesture intervals.
 Call only from one owner. No OS input, display scaling or wall-clock time.
@@ -26,6 +26,7 @@ class ContactTimes:
 class Pairing:
     def __init__(self, sink, ids):
         self.sink, self.ids = sink, ids
+        self.late_candidates = 0
         self.clear()
 
     def clear(self):
@@ -51,8 +52,7 @@ class Pairing:
 
     def candidate(self, button, contact, now):
         if now > contact.up+200*MS:
-            self.rejected(contact.down_frame, now)
-            return
+            self.late_candidates += 1
         if self.first and self.second is not None and self.second == contact.down_frame:
             if button == "LEFT":
                 self.sink("click", now, id=self.id, button="LEFT", contacts=(self.first, contact))
@@ -133,6 +133,7 @@ class Engine:
     def __init__(self, sink):
         self.sink = sink
         self.episode_ids = self.click_ids = 0
+        self.late_motion_frames = 0
         self.clicks = Pairing(sink, self._next_click)
         self.clear()
 
@@ -274,11 +275,10 @@ class Engine:
         safe = self.fixed.get(self.last_touch-14)
         if safe:
             self.clicks.progress(safe.frame*PERIOD, now)
-        if now > r.source+200*MS:
-            self.dropped += 1
-            return
         dx, dy = delta(r.x, r.y)
         if dx or dy:
+            if now > r.source+200*MS:
+                self.late_motion_frames += 1
             self.sink("motion", now, frame=r.frame, source=r.source, dx=dx, dy=dy,
                       mode=self.mode(self.active) if self.active else "SINGLE",
                       id=self.active.id if self.active else None)

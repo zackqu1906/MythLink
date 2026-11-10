@@ -109,7 +109,10 @@ def test_first_start_with_current_app_conflict_uses_imk_without_ax(route, monkey
     backend.target = replace(backend.target, bundle=bundle, input_context='unknown', focus=None)
     assert configure(service, monkeypatch, bundle).setBinding(bundle, 'tap', ACTION['id'])
     proof = ('e', 'idle-client', '', bundle, backend.target.pid, (0, 0))
-    monkeypatch.setattr(inline, 'capture_start_focus', lambda: InputFocus('text', proof))
+    def capture(*, require_editable):
+        assert require_editable
+        return InputFocus('text', proof)
+    monkeypatch.setattr(inline, 'capture_start_focus', capture)
     monkeypatch.setattr(backend, 'capture', lambda **_: pytest.fail('first IMK start queried AX'))
     assert request(c, 'tap')
     assert inline._pending_gesture_focus[0] == proof
@@ -125,7 +128,7 @@ def test_start_timeout_never_falls_back_to_ax_text(route, monkeypatch, reason, n
     c, service, inline, backend, sent, messages, _ = route
     assert c.setGestureBinding('confirm', 0, 'tap')
     assert configure(service, monkeypatch, backend.target.bundle).setBinding(backend.target.bundle, 'tap', ACTION['id'])
-    monkeypatch.setattr(inline, 'capture_start_focus', lambda: InputFocus('unavailable', reason=reason))
+    monkeypatch.setattr(inline, 'capture_start_focus', lambda **_: InputFocus('unavailable', reason=reason))
     monkeypatch.setattr(backend, 'capture', lambda **_: pytest.fail('timeout fell back to AX'))
     notices = []
     monkeypatch.setattr(service, 'notify', notices.append)
@@ -138,25 +141,30 @@ def test_imk_nontext_cannot_be_overridden_by_ax_text(route, monkeypatch):
     c, service, inline, backend, sent, messages, _ = route
     assert c.setGestureBinding('confirm', 0, 'tap')
     assert configure(service, monkeypatch, backend.target.bundle).setBinding(backend.target.bundle, 'tap', ACTION['id'])
-    monkeypatch.setattr(inline, 'capture_start_focus', lambda: InputFocus('nontext', reason='input_method_no_focus'))
+    monkeypatch.setattr(inline, 'capture_start_focus', lambda **_: InputFocus('nontext', reason='input_method_no_focus'))
     backend.target = replace(backend.target, input_context='text')
     assert not request(c, 'tap')
     assert not sent and not messages
 
 
-@pytest.mark.parametrize('status', ['text', 'nontext', 'unavailable'])
-def test_unconflicted_first_start_also_uses_live_imk_without_ax(route, monkeypatch, status):
+@pytest.mark.parametrize('status,reason', [('text', ''), ('nontext', 'input_method_no_focus'),
+    ('unavailable', 'unknown_focus'), ('unavailable', 'input_method_timeout')])
+def test_unconflicted_first_start_needs_proof_and_unknown_focus_stays_quiet(route, monkeypatch, status, reason):
     c, service, inline, backend, sent, messages, _ = route
     monkeypatch.setattr(service, 'foreground_has_binding', lambda _: False)
     proof = ('e', 'fresh', '', BUNDLE, 42, (0, 0))
     notices = []
     monkeypatch.setattr(service, 'notify', notices.append)
-    monkeypatch.setattr(inline, 'capture_start_focus', lambda: InputFocus(status, proof if status == 'text' else None,
-                      'input_method_timeout' if status == 'unavailable' else 'input_method_no_focus'))
+    def capture(*, require_editable):
+        assert require_editable
+        return InputFocus(status, proof if status == 'text' else None, reason)
+    monkeypatch.setattr(inline, 'capture_start_focus', capture)
     monkeypatch.setattr(backend, 'capture', lambda **_: pytest.fail('unconflicted start queried AX'))
     assert request(c, c._gesture_bindings.confirm[0]) == (status == 'text')
     assert not sent and not messages
-    assert bool(notices) == (status != 'text')
+    assert bool(notices) == (reason == 'input_method_timeout')
+    if reason == 'unknown_focus':
+        assert any(row["stage"] == "outcome" and row["reason"] == reason for row in service._diagnostics.recent())
     if status == 'text':
         assert inline._pending_gesture_focus[0] == proof
 

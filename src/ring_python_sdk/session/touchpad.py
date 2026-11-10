@@ -20,14 +20,15 @@ class TouchpadMixin:
                           protocol: str = 'legacy'):
         """Start legacy or Raw2 touchpad inference, without posting OS input.
 
-        Call on the session BLE event loop. Callbacks are synchronous on that
-        loop; use a Qt signal or your own queue to reach a GUI. Callback errors
-        stop this stream. None duration means explicitly unlimited streaming.
+        Call on the session BLE event loop. Legacy event callbacks run on that
+        loop. Raw2 event/stats callbacks run serially on the SDK callback
+        thread; enqueue UI work and post to asyncio loops thread-safely.
+        Pass duration_s=None to stream until explicitly stopped.
         Raw IMU and quaternion modes are mutually exclusive with touchpad.
         Optional on_pointer_move receives the original paced mouse movement;
         on_event keeps the current full trajectory and click/stroke decisions.
         on_discarded_event optionally observes expired/closed event delivery.
-        protocol='raw2' uses the paired 0.3.0 receiver on this BLE connection.
+        protocol='raw2' uses the paired 0.4.0 receiver on this BLE connection.
         In that mode on_pointer_move also receives confirmed button/count
         events; on_event retains full-frame geometry and legacy stroke verdicts.
         Swipe/MIC stay active throughout; dev15 firmware owns their coexistence.

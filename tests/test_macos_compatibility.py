@@ -52,6 +52,33 @@ def verifier():
     return module
 
 
+def test_packaging_uses_selected_standalone_python_for_the_target(tmp_path, monkeypatch):
+    tools_path = Path(__file__).resolve().parents[1] / 'tools'
+    monkeypatch.syspath_prepend(str(tools_path))
+    import verify_macos_python as preflight
+
+    python = tmp_path / 'python.exe'
+    python.touch(mode=0o755)
+    monkeypatch.setattr(preflight.sys, '_base_executable', str(python))
+    monkeypatch.setattr(preflight.sys, 'version_info', (3, 11))
+    config = {'LDLIBRARY': 'libpython3.11.dylib', 'LIBDIR': str(tmp_path)}
+    monkeypatch.setattr(preflight.sysconfig, 'get_config_var', config.get)
+    library = tmp_path / config['LDLIBRARY']
+    library.write_bytes(binary((11, 0, 0)))
+    preflight.verify_python(str(python), '13.3')
+
+    other = tmp_path / 'other-python.exe'
+    other.touch(mode=0o755)
+    with pytest.raises(SystemExit, match='Recreate'):
+        preflight.verify_python(str(other), '13.3')
+    library.write_bytes(binary((15, 0, 0)))
+    with pytest.raises(SystemExit, match='macOS 13.3'):
+        preflight.verify_python(str(python), '13.3')
+    config['LDLIBRARY'] = 'Python.framework/Versions/3.11/Python'
+    with pytest.raises(SystemExit, match='standalone CPython'):
+        preflight.verify_python(str(python), '13.3')
+
+
 def test_release_gate_rejects_nested_bundle_old_style_load_command_and_foreign_library(tmp_path):
     app=tmp_path/'Mythlink.app';contents=app/'Contents'
     (contents/'MacOS').mkdir(parents=True);(contents/'Resources').mkdir()

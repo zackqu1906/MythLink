@@ -23,6 +23,22 @@ def helper(tmp_path, body):
     return [sys.executable, '-u', str(path)]
 
 
+@pytest.mark.parametrize('skipped', [True, False])
+def test_temporary_probe_acknowledges_original_before_helper_can_select(tmp_path, skipped):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    command = helper(tmp_path, '''assert sys.argv[1:] == ['borrow-source', '123', 'test.editor', 'original']
+print(json.dumps({'event': 'will_borrow', 'previous_source': 'original'}), flush=True)
+assert sys.stdin.readline().strip() == 'borrow'
+''' + f'print(json.dumps(dict(event="error", error="failed", borrow_skipped={skipped!r})), flush=True)')
+    source = InputSourceActivation(command=command)
+    events = []
+    source.event.connect(events.append)
+    source.start_probe(('test.editor', 123), 'original', events.append)
+    wait_until(lambda: events and isinstance(events[-1], dict))
+    assert events == ['original', *([None] if skipped else []), {'event': 'error', 'error': 'failed'}]
+    app.processEvents()
+
+
 @pytest.mark.parametrize('already_selected', [True, False])
 def test_source_result_requires_no_focus_or_stdin_handshake(tmp_path, already_selected):
     app = QCoreApplication.instance() or QCoreApplication([])
@@ -35,6 +51,39 @@ print(json.dumps({{'event':'selected','already_selected':{already_selected!r}}})
     source.start(('test.editor', 123))
     wait_until(lambda: bool(events))
     assert events == [{'event':'selected', 'already_selected':already_selected}]
+    source.cancel()
+    app.processEvents()
+
+
+@pytest.mark.parametrize('restored, reason', [(True, 'restored'), (False, 'source_changed')])
+def test_restore_source_passes_ids_and_delivers_outcome_without_focus_handshake(tmp_path, local_window,
+                                                                            restored, reason):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    _, _, restores = local_window
+    response = dict(event='restored', restored=restored, reason=reason)
+    command = helper(tmp_path, f'''assert sys.argv[1:] == ['restore-source', '123', '', 'com.apple.inputmethod.SCIM.ITABC', 'test.mythlink.dictation']
+print(json.dumps({response!r}),flush=True)
+''')
+    source = InputSourceActivation(command=command)
+    events = []
+    source.event.connect(events.append)
+    source.restore(('', 123), 'com.apple.inputmethod.SCIM.ITABC', 'test.mythlink.dictation')
+    wait_until(lambda: bool(events))
+    assert events == [response]
+    assert not restores and source._local_window is None
+    source.cancel()
+    app.processEvents()
+
+
+def test_restore_source_rejects_a_selection_reply(tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    command = helper(tmp_path, "print(json.dumps({'event':'selected','already_selected':False}),flush=True)\n")
+    source = InputSourceActivation(command=command)
+    events = []
+    source.event.connect(events.append)
+    source.restore(('test.editor', 123), 'com.apple.keylayout.ABC', 'test.mythlink.dictation')
+    wait_until(lambda: bool(events))
+    assert events == [dict(event='error', error='输入法切换工具状态异常')]
     source.cancel()
     app.processEvents()
 

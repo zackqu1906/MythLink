@@ -90,13 +90,16 @@ def test_real_gesture_route_sends_bound_window_command_without_clicking_another_
     before_voice = dict(inline._view)
     if request(c, gesture):
         c._apply_gesture(c.ringGestures.envelope(SimpleNamespace(name=gesture)), c._disconnect_event)
-    assert len(state.sent) == 4 and all(pid == 42 for pid, _ in state.sent)
+    # Recorded shortcuts go through macOS hotkey handling after the target window is verified.
+    assert [destination for destination, _ in state.sent] == ['hid'] * 4
     assert [event['down'] for _,event in state.sent] == [True, True, False, False]
     assert not messages and inline._view == before_voice
     assert c.ringGestures.mode == mode
     outcome = service._diagnostics.recent(bundle)[-1]
     assert outcome['reason'] == 'shortcut_posted'
-    observed = outcome['native']['validation']['observed']
+    validation = outcome['native']['validation']
+    assert validation['expected_pid'] == validation['observed_pid'] == 42
+    observed = validation['observed']
     assert not observed['focus_sensitive']  # IMK owns text arbitration; AX still guards the window.
     assert 'disabled_containers' not in observed
 

@@ -1,5 +1,6 @@
 """Contact-to-Quartz drag acceptance with fake input/output only."""
 from dataclasses import replace
+import asyncio
 import os
 import threading
 import time
@@ -185,7 +186,7 @@ def test_two_finger_scroll_and_right_click_never_hold_left(pointer):
     assert kinds(posts) == ['scroll', 'right-down', 'right-up']
 
 
-@pytest.mark.parametrize('reason', ['stop', 'disconnect', 'pause', 'capture', 'toggle', 'drag_toggle', 'reset', 'cancel', 'stale_up'])
+@pytest.mark.parametrize('reason', ['stop', 'disconnect', 'pause', 'capture', 'toggle', 'drag_toggle', 'reset', 'input_gap', 'cancel', 'stale_up'])
 def test_every_interruption_releases_without_another_move(pointer, reason):
     worker, mouse, posts, context, _ = pointer
     start = begin_drag(worker, posts)
@@ -197,13 +198,20 @@ def test_every_interruption_releases_without_another_move(pointer, reason):
         worker.configure(clicks=False, double_click=True, right_click=True, scroll=True, scroll_gain=1)
     elif reason == 'drag_toggle':
         worker.configure(clicks=True, double_click=True, right_click=True, scroll=True, scroll_gain=1, tap_drag=False)
-    elif reason == 'reset':
-        worker.submit(Raw2Reset('reset', 0, time.monotonic(), session_id='test', generation=1))
+    elif reason in {'reset', 'input_gap'}:
+        worker.submit(Raw2Reset('reset', 0, time.monotonic(), session_id='test',
+                                generation=1 if reason == 'reset' else 0))
     else:
         worker.submit(replace(start, phase='CANCEL' if reason == 'cancel' else 'END',
                               end_timestamp=time.monotonic(), timestamp=time.monotonic()-1))
     until(lambda: kinds(posts) == ['down', 'up'])
     assert mouse._drag_up is None
+    if reason == 'input_gap':
+        # A deferred confirmation from before the gap can't click after release.
+        worker.submit(click(start.timestamp))
+        worker.submit(movement())
+        until(lambda: posts[-1]['kind'] == 'move')
+        assert kinds(posts) == ['down', 'up', 'move']
 
 
 def test_disabling_drag_keeps_formal_clicks_and_motion(pointer):
@@ -342,69 +350,77 @@ def test_native_idle_gate_releases_on_stop_or_parent_pipe_close():
 
 def sdk_engine(emit):
     from ring_mac_sdk.interaction import Engine, Recognition
-    from ring_mac_sdk.touchpad import Touchpad
-    from ring_python_sdk.touchpad.raw2 import Raw2Stream
+    from ring_mac_sdk.types import TouchpadStatus
+    from ring_python_sdk.touchpad.raw2 import Raw2Stream, StrokeTouchpad
     stream = Raw2Stream.__new__(Raw2Stream)
     stream.closed, stream.pointer, stream._key = False, emit, ('test', 0)
-    receiver = Touchpad.__new__(Touchpad)
-    receiver.accepting, receiver.error = True, None
+    stream.transport = None
+    receiver = StrokeTouchpad(stream, None)
+    receiver.accepting = True
     receiver.session, receiver.generation, receiver.sequence, receiver.ordinal = 'test', 0, 0, 20
-    receiver.emit = stream._pointer_event
+    receiver.status = TouchpadStatus('RUNNING', session_id='test')
     stream.receiver = receiver
-    return Engine(receiver._event), Recognition
+    return Engine(receiver._event), Recognition, receiver
 
 
 def test_real_sdk_engine_contact_and_preview_reach_pointer_adapter():
-    events = []
-    engine, Recognition = sdk_engine(events.append)
-    base = time.monotonic_ns()-190_000_000
-    for frame in range(36):
-        stamp = base + frame*5_000_000
-        engine.recognize(Recognition(frame, stamp, stamp, 0, 0, float(15 <= frame < 27), 0), stamp)
-    contacts = [e for e in events if e.kind == 'pointer_contact']
-    assert [e.phase for e in contacts] == ['BEGIN', 'CLASSIFIED', 'END']
-    assert [e.mode for e in contacts] == ['UNKNOWN', 'SINGLE', 'SINGLE']
-    preview = next(e for e in events if e.kind == 'click')
-    assert preview.is_preview and preview.source_timestamp == contacts[-1].end_timestamp
+    async def run():
+        events = []
+        engine, Recognition, receiver = sdk_engine(events.append)
+        base = time.monotonic_ns()-190_000_000
+        for frame in range(36):
+            stamp = base + frame*5_000_000
+            engine.recognize(Recognition(frame, stamp, stamp, 0, 0, float(15 <= frame < 27), 0), stamp)
+        await receiver.delivery.task
+        contacts = [e for e in events if e.kind == 'pointer_contact']
+        assert [e.phase for e in contacts] == ['BEGIN', 'CLASSIFIED', 'END']
+        assert [e.mode for e in contacts] == ['UNKNOWN', 'SINGLE', 'SINGLE']
+        preview = next(e for e in events if e.kind == 'click')
+        assert preview.is_preview and preview.source_timestamp == contacts[-1].end_timestamp
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize('scenario', ['normal_move', 'tap_hold_drag', 'double_tap'])
 def test_real_sdk_sequence_to_native_pointer(monkeypatch, scenario):
-    mouse, posts = native()
-    now = [time.monotonic()]
-    monkeypatch.setattr(time, 'monotonic', lambda: now[0])
-    worker = TouchpadMouseOutput(connection=threading.Event(), gain=1, clicks=True, invert_y=False,
-        on_ready=lambda: None, on_end=lambda *_: None, raw2=True)
-    worker.mouse = mouse
-    worker.activate()
-    def emit(event):
-        from proximic_ring.touchpad.click_diagnostics import ClickTrace
-        trace = ClickTrace(event) if event.kind == 'click' and not event.is_preview else None
-        value = worker._raw2_event(event, (0, 'closed'), trace)
-        if value:
-            worker._apply([value])
-    engine, Recognition = sdk_engine(emit)
-    base = int(now[0]*1e9)
-    mouse.enable()
-    try:
-        for frame in range(140):
-            stamp = base + frame*5_000_000
-            now[0] = stamp/1e9
-            first = 15 <= frame < (100 if scenario == 'normal_move' else 27)
-            second = scenario != 'normal_move' and 44 <= frame < (115 if scenario == 'tap_hold_drag' else 56)
-            moving = (scenario == 'normal_move' and 30 <= frame < 95 or
-                      scenario == 'tap_hold_drag' and 60 <= frame < 110)
-            engine.recognize(Recognition(frame, stamp, stamp, .4 if moving else 0, 0,
-                                         float(first or second), 0), stamp)
-        if scenario == 'normal_move':
-            assert posts and set(kinds(posts)) == {'move'}
-        elif scenario == 'tap_hold_drag':
-            assert kinds(posts)[:3] == ['down', 'up', 'down']
-            assert set(kinds(posts)[3:-1]) == {'drag'}
-            assert kinds(posts)[-1] == 'up'
-        else:
-            assert kinds(posts) == ['down', 'up', 'down', 'up']
-            assert [e['count'] for e in posts] == [1, 1, 2, 2]
-        assert not worker.drag.held and mouse._drag_up is None
-    finally:
-        mouse.disable()
+    async def run():
+        mouse, posts = native()
+        now = [time.monotonic()]
+        monkeypatch.setattr(time, 'monotonic', lambda: now[0])
+        worker = TouchpadMouseOutput(connection=threading.Event(), gain=1, clicks=True, invert_y=False,
+            on_ready=lambda: None, on_end=lambda *_: None, raw2=True)
+        worker.mouse = mouse
+        worker.activate()
+        def emit(event):
+            from proximic_ring.touchpad.click_diagnostics import ClickTrace
+            trace = ClickTrace(event) if event.kind == 'click' and not event.is_preview else None
+            value = worker._raw2_event(event, (0, 'closed'), trace)
+            if value:
+                worker._apply([value])
+        engine, Recognition, receiver = sdk_engine(emit)
+        base = int(now[0]*1e9)
+        mouse.enable()
+        try:
+            for frame in range(140):
+                stamp = base + frame*5_000_000
+                now[0] = stamp/1e9
+                first = 15 <= frame < (100 if scenario == 'normal_move' else 27)
+                second = scenario != 'normal_move' and 44 <= frame < (115 if scenario == 'tap_hold_drag' else 56)
+                moving = (scenario == 'normal_move' and 30 <= frame < 95 or
+                          scenario == 'tap_hold_drag' and 60 <= frame < 110)
+                engine.recognize(Recognition(frame, stamp, stamp, .4 if moving else 0, 0,
+                                             float(first or second), 0), stamp)
+                if receiver.delivery.task is not None:
+                    await receiver.delivery.task
+            if scenario == 'normal_move':
+                assert posts and set(kinds(posts)) == {'move'}
+            elif scenario == 'tap_hold_drag':
+                assert kinds(posts)[:3] == ['down', 'up', 'down']
+                assert set(kinds(posts)[3:-1]) == {'drag'}
+                assert kinds(posts)[-1] == 'up'
+            else:
+                assert kinds(posts) == ['down', 'up', 'down', 'up']
+                assert [e['count'] for e in posts] == [1, 1, 2, 2]
+            assert not worker.drag.held and mouse._drag_up is None
+        finally:
+            mouse.disable()
+    asyncio.run(run())

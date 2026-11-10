@@ -176,8 +176,8 @@ def controller(tmp_path, monkeypatch):
     import proximic_ring.ui.controller as controller_module
 
     app = QCoreApplication.instance() or QCoreApplication(["gesture-controls"])
-    QSettings.setDefaultFormat(QSettings.IniFormat)
-    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    monkeypatch.setattr(controller_module, "QSettings",
+                        lambda *_: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
     monkeypatch.setattr(controller_module, "app_data_root", lambda: tmp_path)
     instance = controller_module.AppController(inline_input_enabled=False)
     instance._text_processing_worker.close(wait=True)

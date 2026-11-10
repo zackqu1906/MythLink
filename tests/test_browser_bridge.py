@@ -58,6 +58,13 @@ def test_protocol_drops_content_and_rejects_bad_identities():
     for values in [dict(tab=True),dict(media='x'*161),dict(document=''),dict(focused='yes')]:
         with pytest.raises(ValueError): clean_snapshot(snapshot(**values))
 
+    # Preserve only opaque, frame-scoped editor evidence from new extensions.
+    key = "a" * 8 + "-1111-2222-3333-" + "b" * 12
+    editor = f"2:{key}:{key}"
+    assert clean_snapshot(snapshot(editor=editor))["editor"] == editor
+    assert clean_snapshot(snapshot(editor="blocked"))["editor"] == "blocked"
+    assert "editor" not in clean_snapshot(snapshot(editor="arbitrary field content"))
+
 
 @pytest.mark.parametrize('field', ['session','window','tab','page','frame','document','media','source'])
 def test_every_identity_dimension_invalidates_a_command(field):

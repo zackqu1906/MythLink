@@ -46,7 +46,7 @@ def select(pid, *, timeout):
 
 proofs = []
 inline = SimpleNamespace(
-    capture_start_focus=lambda: probe_input_focus(bridge, lambda: front, select),
+    capture_start_focus=lambda **_: probe_input_focus(bridge, lambda: front, select),
     pin_start_focus=lambda target, created: proofs.append(target))
 owner = SimpleNamespace(_disconnect_event=connection, _inline_input=inline,
     _global_gesture_bindings=SimpleNamespace(action_for=lambda name: None),

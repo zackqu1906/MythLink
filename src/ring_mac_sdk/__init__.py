@@ -6,7 +6,10 @@ from .types import (Click, ContactRange, ContactUpdate, DeviceInfo, InfoComponen
                     GestureEvent, GestureMode, GestureResponse, Motion,
                     SwipeDirection, TouchpadEvent, TouchpadStatus, WearingHand)
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["Ring", "scan", "DiscoveredRing", "RingError", "ProtocolError", "GestureMode",
            "WearingHand", "SwipeDirection", "GestureEvent", "GestureResponse", "DeviceInfo", "InfoComponent",
            "Motion", "ContactUpdate", "ContactRange", "Click", "EventMeta", "TouchpadEvent", "TouchpadStatus"]
+
+from .diagnostics import TouchpadDiagnostics
+__all__.append("TouchpadDiagnostics")

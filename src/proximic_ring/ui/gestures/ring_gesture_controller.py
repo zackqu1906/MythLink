@@ -273,33 +273,29 @@ class RingGestureController(QObject):
         if endpoint and busy:
             return True
         start_focus = None
-        input_only = (endpoint and name in bindings.confirm and not global_action
+        end_only = endpoint and name not in bindings.confirm
+        input_only = (endpoint and not global_action
                       and not service.foreground_has_binding(name))
         if input_only:
-            # No app conflict still needs a real first-start client. Keep this
-            # independent of AX and of the legacy focus-window recovery helper.
+            if end_only:
+                return False  # There is no active sentence to finish.
             created = time.monotonic()
             inline = self.owner._inline_input
-            start_focus = inline.capture_start_focus()
-            if start_focus is not None and start_focus.status == "text":
-                inline.pin_start_focus(start_focus.target if start_focus else None, created)
+            start_focus = inline.capture_start_focus(require_editable=True)
+            if start_focus is not None and start_focus.status == "text" and len(start_focus.target or ()) == 6:
+                inline.pin_start_focus(start_focus.target, created)
                 return True
         routed = service.envelope(event, audio_busy=audio_busy,
-                                  start_focus=start_focus, input_only=input_only)
+                                  start_focus=start_focus, input_only=input_only, end_only=end_only)
         if isinstance(routed, InputSourceGestureEvent):
             self._sceneRequested.emit(ModeGestureEvent(routed, generation), connection)
             return False
+        if routed.route == "ignored":
+            return False
         if routed.route == "input" and endpoint:
-            if not busy and name in bindings.confirm:
-                # Carry the live proof across the audio/UI queue. BEGIN must
-                # still target this client and selection, even if Qt learns
-                # about an IMK activation after this worker has returned.
-                focus = routed.input_method_target
-                self.owner._inline_input.pin_start_focus(focus if focus and len(focus) == 6 else None,
-                                                        routed.created)
-            return True
-        if (routed.route == "outside" and name in bindings.confirm
-                and service.outside_binding(routed) is None and not global_action):
+            if end_only or len(routed.input_method_target or ()) != 6:
+                return False
+            self.owner._inline_input.pin_start_focus(routed.input_method_target, routed.created)
             return True
         transition = None
         if (routed.route == "outside" and global_action == "window_selector"
@@ -323,6 +319,8 @@ class RingGestureController(QObject):
     def handle_outside(self, event, connection):
         """App/scene binding wins; only an absent binding may use a global default."""
         service = self.owner._app_gestures
+        if event.route == "ignored":
+            return
         if event.capture_error and not service._override_stop_reason(event):
             reason = event.capture_reason or "capture_failed"
             service._stop_trace(event, reason)
@@ -419,7 +417,7 @@ class RingGestureController(QObject):
             self._hud_timer.start()
             def work():
                 try:
-                    focus = self.owner._inline_input.capture_start_focus()
+                    focus = self.owner._inline_input.capture_start_focus(allow_activation=False)
                     target = (self.owner._app_gestures.backend.capture(menu_action=True, scene=True,
                               focus_sensitive=False) if focus and focus.status == "nontext" else None)
                     if (target is not None and focus.target

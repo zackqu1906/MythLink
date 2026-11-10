@@ -6,6 +6,7 @@
   const documentID = crypto.randomUUID();
   let route = location.href, page = crypto.randomUUID();
   const ids = new WeakMap(), tracked = new Set(), roots = new Set([document]);
+  const editorIDs = new WeakMap();
   let lastDiscover = 0, partial = false;
   function remember(media) {
     if (!ids.has(media)) {
@@ -54,9 +55,19 @@
   function context() {
     let el = document.activeElement;
     while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+    if (!el || !document.hasFocus()) return {input_context: "unknown"};
     const editable = el?.isContentEditable || el?.matches("textarea,input:not([type=button]):not([type=submit]):not([type=range]):not([type=checkbox]):not([type=radio]),[role=textbox],[role=searchbox],[role=combobox]");
-    if (!editable && el?.localName?.includes("-") && !el.shadowRoot) return "unknown";
-    return editable ? "text" : document.hasFocus() && !el?.matches("iframe,frame") ? "nontext" : "unknown";
+    if (!editable && el.localName.includes("-") && !el.shadowRoot) return {input_context: "unknown"};
+    if (!editable) return {input_context: el.matches("iframe,frame") ? "unknown" : "nontext"};
+    // A textbox role alone can block media shortcuts but cannot authorize dictation.
+    if (el.matches(":disabled,[readonly],input[type=password]") ||
+        el.closest("[inert],[aria-disabled=true],[aria-readonly=true]"))
+      return {input_context: "text", editor: "blocked"};
+    if (!(el.isContentEditable || el.localName === "textarea" ||
+          (el.localName === "input" && ["text","search","url","email","tel"].includes(el.type))))
+      return {input_context: "text"};
+    if (!editorIDs.has(el)) editorIDs.set(el, crypto.randomUUID());
+    return {input_context: "text", editor: editorIDs.get(el)};
   }
   function probe() {
     if (route !== location.href) { route = location.href; page = crypto.randomUUID(); }
@@ -76,13 +87,13 @@
         interacted: meta.interacted, pip: document.pictureInPictureElement === el,
         fullscreen: !!document.fullscreenElement && (document.fullscreenElement === el || document.fullscreenElement.contains(el))});
     }
-    return {document: documentID, page, input_context: context(), focused: document.hasFocus(), media, partial};
+    return {document: documentID, page, ...context(), focused: document.hasFocus(), media, partial};
   }
   async function action(message) {
     const current = probe(), t = message.target;
     if (Date.now() >= message.expires) return {ok: false, reason: "browser_command_expired"};
     if (current.document + ":" + current.page !== t.document || current.page !== message.framePage) return {ok: false, reason: "page_changed"};
-    if (context() === "text") return {ok: false, reason: "text_focus"};
+    if (context().input_context === "text") return {ok: false, reason: "text_focus"};
     const el = [...tracked].find(e => ids.get(e).id === t.media);
     if (!el || ids.get(el).source !== t.source || !el.isConnected) return {ok: false, reason: "page_changed"};
     try {

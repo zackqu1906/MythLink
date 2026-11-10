@@ -116,16 +116,41 @@ struct InputMethodAdmin {
                 extra["input_source_restored"] = try restoreUpdateSource(handoff, voiceIDs: voiceIDs,
                     currentSource: currentSourceID, foreground: currentApplication, select: selectUpdateSource)
             } catch { fail(error.localizedDescription) }
-        case "ensure-selected", "refresh-selected":
+        case "restore-source":
             let args = CommandLine.arguments
+            guard args.count == 6, let pid = Int32(args[2]), pid > 0 else {
+                fail("restore-source requires a foreground PID, bundle ID, previous source and expected source")
+            }
+            // Resolve the target before checking the foreground/source lease.
+            let target = allSources().first(where: { property($0, kTISPropertyInputSourceID) as? String == args[4] })
+            let result = restoreVoiceSource(previousSource: args[4], expectedSource: args[5], voiceIDs: voiceIDs,
+                pid: pid, bundle: args[3], currentSource: currentSourceID, foreground: currentApplication,
+                select: { _ in
+                    guard let source = target,
+                          property(source, kTISPropertyInputSourceIsEnabled) as? Bool == true,
+                          property(source, kTISPropertyInputSourceIsSelectCapable) as? Bool == true else {
+                        throw SourceSelectionFailure("原输入法不可用，当前输入法保持不变")
+                    }
+                    guard TISSelectInputSource(source) == noErr else {
+                        throw SourceSelectionFailure("系统未能恢复原输入法")
+                    }
+                })
+            FileHandle.standardOutput.write(try JSONEncoder().encode(result))
+            FileHandle.standardOutput.write(Data("\n".utf8))
+            return
+        case "ensure-selected", "refresh-selected", "borrow-source":
+            let args = CommandLine.arguments
+            let borrow = command == "borrow-source"
             let hostRestoresFocus = args.count == 5 && args[4] == "--host-restores-focus"
-            guard (args.count == 4 || hostRestoresFocus), let pid = Int32(args[2]), pid > 0 else {
+            guard (borrow ? args.count == 5 && !args[4].isEmpty : args.count == 4 || hostRestoresFocus),
+                  let pid = Int32(args[2]), pid > 0 else {
                 fail("ensure-selected requires a foreground PID and bundle ID")
             }
             let modeID = productID + ".dictation"
             selectSourceSession(pid: pid, bundle: CommandLine.arguments[3], modeID: modeID,
                 refreshOnly: command == "refresh-selected",
                 hostRestoresFocus: hostRestoresFocus,
+                expectedSource: borrow ? args[4] : nil,
                 currentSource: {
                     guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue() else { return "" }
                     return property(source, kTISPropertyInputSourceID) as? String ?? ""
@@ -199,7 +224,7 @@ struct InputMethodAdmin {
                 }
             }
         default:
-            fail("用法：InputMethodAdmin [status|register|enable|disable|prepare-update|restore-after-update 交接信息|select [前台进程 ID]]")
+            fail("用法：InputMethodAdmin [status|register|enable|disable|prepare-update|restore-after-update 交接信息|select [前台进程 ID]|restore-source PID bundle 原输入源 预期输入源]")
         }
         let json = try JSONSerialization.data(withJSONObject: snapshot().merging(extra) { _, new in new }, options: [.prettyPrinted, .sortedKeys])
         FileHandle.standardOutput.write(json)

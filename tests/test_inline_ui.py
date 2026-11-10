@@ -194,6 +194,8 @@ def test_shortcut_click_capture_cancel_invalid_key_and_shortcut_override(inline_
     event = QKeyEvent(QEvent.KeyPress, Qt.Key_BraceLeft, Qt.ControlModifier | Qt.ShiftModifier,
                       0, 33, 0x120000, "{")
     QCoreApplication.sendEvent(root, event)
+    QCoreApplication.sendEvent(root, QKeyEvent(QEvent.KeyRelease, Qt.Key_BracketLeft,
+                                               Qt.NoModifier, 0, 33, 0, "["))
     QTest.qWait(20)
     assert c.appGestures._profiles["codex"]["next"].shortcut == "Cmd+Shift+["
     click_field()
@@ -240,7 +242,7 @@ def test_settings_pages_and_back_navigation_fit_small_window(inline_ui):
 
 
 @pytest.fixture
-def inline_ui(tmp_path, monkeypatch):
+def inline_ui(tmp_path, monkeypatch, request):
     from PySide6.QtCore import QCoreApplication, QSettings, QUrl, QEvent
     from PySide6.QtWidgets import QApplication
     from PySide6.QtQml import QQmlApplicationEngine
@@ -261,6 +263,9 @@ def inline_ui(tmp_path, monkeypatch):
     app = app or QApplication(["ime-tests", "-platform", "offscreen"])
     monkeypatch.setattr(module, "app_data_root", lambda: tmp_path)
     monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
+    initial_settings = module.QSettings()
+    for key, value in getattr(request, "param", {}).items():
+        initial_settings.setValue(key, value)
     monkeypatch.setattr(inline, "IMEBridge", FakeBridge)
     monkeypatch.setattr(inline, "warm_input_method", lambda: None)
     monkeypatch.setattr(inline.InlineInputController, "_foreground_identity", lambda self: None)
@@ -522,6 +527,44 @@ def test_multi_undo_setting_is_visible_persisted_and_immediately_configures_nati
     controller.multiUndoEnabled = False
     assert not controller.nativeUndoAvailable
     assert bridge.messages[-1]["multi_undo_enabled"] is False
+
+
+@pytest.mark.parametrize(
+    "inline_ui, expected",
+    [({}, False), ({"input/autoReturnInputSource": True}, True)],
+    indirect=["inline_ui"],
+)
+def test_auto_return_setting_loads_persists_and_updates_inline(inline_ui, expected, monkeypatch):
+    from PySide6.QtCore import QObject, QMetaObject, QSettings
+    from PySide6.QtTest import QSignalSpy
+
+    controller, _, _, root, _ = inline_ui
+    control = root.findChild(QObject, "autoReturnInputSourceSwitch")
+    assert control is not None
+    assert controller.autoReturnInputSource is expected
+    assert control.property("checked") is expected
+    updates = []
+    monkeypatch.setattr(controller._inline_input, "set_auto_return_input_source", updates.append)
+    changes = QSignalSpy(controller.settingsChanged)
+    before = {key: controller._settings.value(key) for key in controller._settings.allKeys()}
+    QMetaObject.invokeMethod(control, "click")
+    assert controller.autoReturnInputSource is not expected
+    assert control.property("checked") is not expected
+    assert updates == [not expected]
+    assert changes.count() == 1
+    controller._settings.sync()
+    saved = QSettings(controller._settings.fileName(), QSettings.IniFormat)
+    assert saved.value("input/autoReturnInputSource", type=bool) is not expected
+    after = {key: controller._settings.value(key) for key in controller._settings.allKeys()}
+    assert {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)} == {"input/autoReturnInputSource"}
+    controller.autoReturnInputSource = not expected
+    assert updates == [not expected]
+    assert changes.count() == 1
+    controller.autoReturnInputSource = expected
+    assert updates == [not expected, expected]
+    assert changes.count() == 2
+    assert control.property("checked") is expected
+    assert controller._settings.value("input/autoReturnInputSource", type=bool) is expected
 
 
 def test_historical_undo_records_previous_session_without_reassigning_active_audio(inline_ui, monkeypatch):

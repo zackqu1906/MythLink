@@ -18,7 +18,27 @@ import uuid
 from .diagnostic_log import RotatingDiagnosticLog
 
 SCHEMA = 1
+# InputController and CompositionSession return these fixed descriptions.
+# Unexpected native errors can contain application data; only return a known reason.
+_NATIVE_RESUME_ERRORS = {
+    'input_method_resume_field_changed': '已切换输入框，未恢复语音操作',
+    'input_method_resume_text_changed': '本句文字或光标已变化，未恢复语音操作',
+    'input_method_resume_position_changed': '输入位置已变化，未恢复语音操作',
+    'input_method_resume_session_changed': '输入会话已变化，未恢复语音操作',
+    'input_method_resume_session_lost': '原输入会话已失效，未恢复语音操作',
+    'input_method_resume_expired': '输入恢复请求已过期',
+}
+
+
+def native_resume_reason(error):
+    return next((code for code, text in _NATIVE_RESUME_ERRORS.items() if text == error),
+                'input_method_resume_unverified')
+
+
 MESSAGES = {
+    **_NATIVE_RESUME_ERRORS,
+    'input_method_resume_timeout': '恢复原输入会话超时，本次操作已取消',
+    'input_method_resume_unverified': '无法核验原输入会话，本次操作已取消',
     'browser_disconnected': '浏览器扩展未连接，请在设置中连接浏览器助手',
     'browser_unsupported': '此浏览器尚未支持扩展场景识别，请使用 Chrome 或 Safari',
     'browser_permission_required': '请在浏览器扩展中允许当前网站访问，然后刷新页面',

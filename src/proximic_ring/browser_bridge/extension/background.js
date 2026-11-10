@@ -64,6 +64,12 @@ async function collectPage(base, tab) {
   base.page = top.document + ":" + top.page;
   const focused = results.filter(r => r?.focused && r.input_context !== "unknown");
   base.input_context = focused.some(r => r.input_context === "text") ? "text" : focused.length ? "nontext" : "unknown";
+  const editors = focused.filter(r => r.input_context === "text");
+  if (editors.some(r => r.editor === "blocked")) base.editor = "blocked";
+  else if (editors.length === 1 && editors[0].editor) {
+    const r = editors[0];
+    base.editor = [r.frame, r.document, r.editor].join(":");
+  }
   // Include each frame's route identity too: an iframe can navigate with
   // history.pushState without changing the top document or media element.
   const candidates = results.filter(Boolean).flatMap(r => r.media.map(m => ({...m, frame: r.frame, document: r.document + ":" + r.page, framePage: r.page})));

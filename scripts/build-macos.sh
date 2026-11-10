@@ -31,17 +31,16 @@ if [[ "$REQUIRE_SIGNED_RELEASE" == "1" ]]; then
         exit 1
     fi
 fi
-if [[ -n "${PROXIMIC_PYTHON:-}" ]]; then
-    PYTHON_BIN="$PROXIMIC_PYTHON"
-elif command -v python3.11 >/dev/null 2>&1; then
-    PYTHON_BIN="python3.11"
-else
+# The release bundles a standalone libpython. A Homebrew framework Python can
+# require the builder's macOS even when MACOSX_DEPLOYMENT_TARGET is set.
+PYTHON_BIN="${PROXIMIC_PYTHON:-$PROJECT_ROOT/.runtime/python-bin/python3.11}"
+if [[ -z "${PROXIMIC_PYTHON:-}" && ! -x "$PYTHON_BIN" ]]; then
     "$PROJECT_ROOT/scripts/install-python-macos.sh"
-    PYTHON_BIN="$PROJECT_ROOT/.runtime/python-bin/python3.11"
 fi
-VENV_ROOT="$PROJECT_ROOT/.build/packaging-venv"
+VENV_ROOT="$PROJECT_ROOT/.build/packaging-venv-macos13"
 [[ -x "$VENV_ROOT/bin/python" ]] || "$PYTHON_BIN" -m venv "$VENV_ROOT"
 PYTHON="$VENV_ROOT/bin/python"
+"$PYTHON" tools/verify_macos_python.py "$PYTHON_BIN" "$MACOSX_DEPLOYMENT_TARGET"
 # macOS ships Bash 3.2, where an empty array under nounset needs this guard.
 APP_VERSION="$("$PYTHON" tools/build_version.py ${VERSION_ARGS[@]+"${VERSION_ARGS[@]}"})"
 export MYTHLINK_BUILD_VERSION="$APP_VERSION"
@@ -56,7 +55,7 @@ fi
 /bin/zsh scripts/build-input-method.sh
 /bin/zsh scripts/build-proximity.sh
 /bin/bash scripts/install-node-macos.sh
-/bin/bash scripts/build-llama-macos.sh
+PROXIMIC_CMAKE="${PROXIMIC_CMAKE:-$VENV_ROOT/bin/cmake}" /bin/bash scripts/build-llama-macos.sh
 "$PYTHON" tools/build_browser_extension.py --identity "$APPLE_SIGNING_IDENTITY"
 PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
     "$PYTHON" -m PyInstaller --noconfirm --clean packaging/mythlink.spec

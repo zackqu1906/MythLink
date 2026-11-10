@@ -1,5 +1,10 @@
 # Ringo SDK integration
 
+The current Apple Silicon receiver is [Ring macOS SDK 0.4.0](RING_MAC_SDK.md).
+It runs on the existing shared BLE connection. Raw2 waits through temporary
+input gaps, and a user can stop a pending start without waiting for a token.
+The hardware measurements below were taken with SDK 0.3.0.
+
 ## dev.touchpad.15 firmware (2026-11-09)
 
 The new user-supplied ZIP is a signed application firmware package only; it
@@ -23,8 +28,8 @@ the probe. See [the hardware report](../outputs/ringo-dev15-verification-2026110
 
 ## 2026-11-05 delivery: Raw2 product integration
 
-The complete provider `ring_mac_sdk` 0.3.0 package is now vendored, unchanged,
-under `src/ring_mac_sdk`. Its original wheel, documentation, examples, calibration
+The provider `ring_mac_sdk` 0.3.0 package introduced the Raw2 integration.
+Its original wheel, documentation, examples, calibration
 utility and dev9 firmware are retained under
 `third_party/ringo-touchpad-delivery-20261105`. See
 [the update and feature inventory](RING_MAC_SDK.md) for provenance, standalone

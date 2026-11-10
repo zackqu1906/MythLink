@@ -1,5 +1,6 @@
 """Small, versioned protocol shared by native hosts and the desktop broker."""
 from __future__ import annotations
+import re
 
 VERSION = 1
 PORT = 47837
@@ -44,6 +45,9 @@ def clean_snapshot(value):
         result[key] = value.get(key, False)
     result["scene"] = value.get("scene", "") if value.get("scene", "") in {"video", "music", "pdf", "image"} else ""
     result["input_context"] = value.get("input_context", "unknown") if value.get("input_context") in {"text", "nontext"} else "unknown"
+    editor = value.get("editor", "")
+    if isinstance(editor, str) and (editor == "blocked" or re.fullmatch(r"[0-9]+:[0-9a-f-]{36}:[0-9a-f-]{36}", editor)):
+        result["editor"] = editor
     reason = value.get("reason", "no_web_player")
     result["reason"] = reason if reason in {"recognized", "no_web_player", "multiple_players", "page_loading",
         "browser_permission_required", "browser_page_unavailable", "browser_window_unfocused"} else "browser_page_unavailable"

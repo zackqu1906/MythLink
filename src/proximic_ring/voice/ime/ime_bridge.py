@@ -18,6 +18,7 @@ import uuid
 PROTOCOL = 1
 MAX_MESSAGE = 8 * 1024 * 1024
 STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared"})
+SUSPENSION_REPLIES = frozenset({"input_suspended", "input_resumed"})
 
 
 def default_socket_path() -> Path:
@@ -198,7 +199,7 @@ class IMEBridge:
                 if not isinstance(message, dict) or message.get("epoch") != epoch:
                     continue
                 kind = message.get("type")
-                if kind not in {"state", "finish_audio", "edit_requested", "polish_requested", "interrupted", "settled", "pong", "wechat_key", "activation_recovery", "activation_trace"} | STROKE_REPLIES:
+                if kind not in {"state", "finish_audio", "edit_requested", "polish_requested", "interrupted", "settled", "pong", "wechat_key", "activation_recovery", "activation_trace"} | STROKE_REPLIES | SUSPENSION_REPLIES:
                     continue
                 with self._condition:
                     if self._connection is not connection:
@@ -217,9 +218,9 @@ class IMEBridge:
                 # even though they also carry request IDs. Keep epoch checks
                 # above and let that controller check the client/session token.
                 ui_probe = (kind == "state" and isinstance(request_id, str)
-                            and request_id.startswith(("stroke:", "start:")))
+                            and request_id.startswith(("stroke:", "start:", "resume:")))
                 if (not request_id or ui_probe
-                        or kind in {"wechat_key", "activation_recovery"} | STROKE_REPLIES):
+                        or kind in {"wechat_key", "activation_recovery"} | STROKE_REPLIES | SUSPENSION_REPLIES):
                     self._notify(message)
         except (OSError, ValueError, TypeError):
             pass

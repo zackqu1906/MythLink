@@ -123,6 +123,17 @@ def test_history_settlement_records_original_audio_session_and_deduplicates(comp
     assert c._session_id == 12
 
 
+def test_history_settlement_keeps_first_audio_session_after_300_sentences(component):
+    c, _ = component
+    for session_id in range(1, 301):
+        c.begin()
+        c.bind_session(session_id)
+        if session_id == 1:
+            first = c._utterance_id
+    receive(c, "settled", phase="undone", revision=2, source_utterance_id=first)
+    assert c.settled_session_id == 1 and c._session_id == 300
+
+
 def test_begin_failure_before_audio_has_no_previous_history_identity(component):
     c, _ = component
     c.begin(); c.bind_session(11)

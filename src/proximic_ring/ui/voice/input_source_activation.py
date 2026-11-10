@@ -83,12 +83,23 @@ class InputSourceActivation(QObject):
         self._stage = "new"
         self._released = False
         self._local_window = None
+        self._expected_event = "selected"
+        self._probe_borrow = None
+        self._withdraw_probe = None
 
     def start(self, origin):
         self._start(origin, "ensure-selected")
 
+    def start_probe(self, origin, expected_source, on_borrow):
+        self._probe_borrow = expected_source, on_borrow
+        self._start(origin, "borrow-source", [expected_source])
+
     def recover(self, origin):
         self._start(origin, "refresh-selected")
+
+    def restore(self, origin, previous_source, expected_source):
+        self._expected_event = "restored"
+        self._start(origin, "restore-source", [previous_source, expected_source])
 
     def owns_foreground(self):
         """Allow only this live helper during its intentional focus interval."""
@@ -102,16 +113,16 @@ class InputSourceActivation(QObject):
         except Exception:
             return False
 
-    def _start(self, origin, operation):
+    def _start(self, origin, operation, extra_args=()):
         if self._stage != "new":
             return
         self._stage = "probing"
-        self._local_window = agent_input_window(origin)
+        self._local_window = agent_input_window(origin) if operation != "restore-source" else None
         if self._local_window is not None:
             QGuiApplication.instance().focusWindowChanged.connect(self._local_focus_changed)
         command = self._command or [str(payload_directory() / "InputMethodAdmin")]
         self._timer.start(self._timeout_ms)
-        args = [*command[1:], operation, str(origin[1]), origin[0]]
+        args = [*command[1:], operation, str(origin[1]), origin[0], *extra_args]
         if self._local_window is not None:
             args.append("--host-restores-focus")
         self._process.start(command[0], args)
@@ -162,8 +173,24 @@ class InputSourceActivation(QObject):
                 self._fail("输入法切换工具返回异常数据")
                 return
             if kind == "error":
+                if data.get("borrow_skipped") is True and self._withdraw_probe is not None:
+                    self._withdraw_probe(None)
                 self._fail(str(data.get("error") or "无法切换输入法"))
                 return
+            if kind == "will_borrow" and self._stage == "probing" and self._probe_borrow is not None:
+                expected, on_borrow = self._probe_borrow
+                self._probe_borrow = None
+                if data.get("previous_source") != expected:
+                    self._fail("输入法已变化")
+                    return
+                try:
+                    on_borrow(expected)
+                except RuntimeError as exc:
+                    self._fail(str(exc))
+                    return
+                self._withdraw_probe = on_borrow
+                self._process.write(b"borrow\n")
+                continue
             if kind == "restore_focus" and self._stage == "probing":
                 try:
                     restored = (self._local_window is not None and
@@ -173,7 +200,7 @@ class InputSourceActivation(QObject):
                 if not restored:
                     self._fail("Agent 输入窗口已变化，本句已取消")
                 continue
-            if kind != "selected" or self._stage != "probing":
+            if kind != self._expected_event or self._stage != "probing":
                 self._fail("输入法切换工具状态异常")
                 return
             self._stage = "done"

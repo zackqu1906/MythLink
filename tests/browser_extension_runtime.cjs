@@ -79,6 +79,20 @@ async function main() {
         assert.ok(await page.evaluate(() => Math.abs(document.querySelector('video').volume-.9)<.01));count++;
         await page.locator('#editor').focus();
         assert.equal((await page.evaluate(() => probe())).input_context,'text');
+        const editor = (await page.evaluate(() => probe())).editor;
+        assert.match(editor, /^[0-9a-f-]{36}$/);
+        assert.equal((await page.evaluate(() => probe())).editor, editor);
+        for (const attrs of [{type:'password'},{readonly:''},{'aria-readonly':'true'}]) {
+          const guarded = await page.evaluate(attrs => {
+            const field = document.createElement('input');
+            for (const [key,value] of Object.entries(attrs)) field.setAttribute(key,value);
+            document.body.append(field); field.focus();
+            const snapshot = probe(); field.remove(); return snapshot;
+          }, attrs);
+          assert.equal(guarded.input_context, 'text');
+          assert.equal(guarded.editor, 'blocked');
+        }
+        await page.locator('#editor').focus();
         assert.equal((await command('play')).reason,'text_focus');count++;
         await page.locator('#editor').evaluate(el => el.blur());
         await page.evaluate(() => {

@@ -8,6 +8,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
 
 from proximic_ring.ui.voice.gesture_source_activation import GestureSourceActivation
+from proximic_ring.ui.voice.input_source_activation import InputSourceActivation
 from proximic_ring.voice.ime import system_input_source as system
 from test_inline_state import component
 
@@ -36,6 +37,7 @@ class Source(QObject):
 
     def start(self, origin): self.calls.append(('start', origin))
     def recover(self, origin): self.calls.append(('recover', origin))
+    def restore(self, origin, previous, expected): self.calls.append(('restore', origin, previous, expected))
     def cancel(self): self.cancelled = True
 
 
@@ -101,6 +103,123 @@ def test_already_selected_inactive_client_recovers_once_with_remaining_budget(ac
     second.event.emit({'event': 'selected', 'focus_restored': True})
     thread.join(1)
     assert result == {'value': None} and second.cancelled
+
+
+def test_native_selection_returns_previous_source_for_opt_in_borrowing(activation):
+    gate, data = activation
+    thread, result = worker(lambda: gate.activate(ORIGIN, timeout=.5))
+    until(lambda: bool(data['sources']))
+    data['sources'][0].event.emit({'event': 'selected', 'focus_restored': True,
+                                 'previous_source': 'com.apple.keylayout.ABC'})
+    thread.join(1)
+    assert result == {'value': 'com.apple.keylayout.ABC'}
+
+
+def test_helper_timeout_after_a_probe_switch_can_return_the_recorded_keyboard(tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    selected = tmp_path / 'selected'
+    selected.write_text('original')
+    helper = tmp_path / 'helper.py'
+    helper.write_text('''import json, sys, time
+from pathlib import Path
+state = Path(sys.argv[1])
+if sys.argv[2] == "borrow-source":
+    print(json.dumps(dict(event="will_borrow", previous_source=state.read_text())), flush=True)
+    assert sys.stdin.readline().strip() == "borrow"
+    state.write_text("voice")
+    time.sleep(5)  # No terminal selection receipt.
+else:
+    assert sys.argv[2] == "restore-source" and sys.argv[5] == "original"
+    assert state.read_text() == "voice"
+    state.write_text("original")
+    print(json.dumps(dict(event="restored", restored=True)), flush=True)
+''')
+    command = [sys.executable, '-u', str(helper), str(selected)]
+    gate = GestureSourceActivation(foreground=lambda: ORIGIN,
+        factory=lambda parent, **options: InputSourceActivation(parent, command=command, **options))
+    ticket = gate.invalidate_restore()
+    original = []
+    def probe():
+        with pytest.raises((TimeoutError, RuntimeError)):
+            gate.activate(ORIGIN, expected_source='original', on_borrow=original.append, timeout=.3)
+        return gate.restore_if_unused(ORIGIN, original[0], ticket)
+    try:
+        thread, result = worker(probe)
+        until(lambda: not thread.is_alive(), timeout=2)
+        assert original == ['original'] and result == {'value': True}
+        assert selected.read_text() == 'original'
+    finally:
+        gate.close()
+        app.processEvents()
+
+
+@pytest.mark.parametrize('restored', [True, False])
+def test_failed_probe_restore_obeys_helper_current_source_guard(activation, restored):
+    gate, data = activation
+    ticket = gate.invalidate_restore()
+    thread, result = worker(lambda: gate.restore_if_unused(ORIGIN, 'abc', ticket))
+    until(lambda: bool(data['sources']))
+    source, = data['sources']
+    assert source.calls == [('restore', ORIGIN, 'abc', system.BUNDLE_ID + '.dictation')]
+    source.event.emit({'event': 'restored', 'restored': restored,
+                       'reason': 'restored' if restored else 'source_changed'})
+    thread.join(1)
+    assert result == {'value': restored} and source.cancelled
+    assert gate.restore_if_unused(ORIGIN, 'abc', ticket) is False
+
+
+@pytest.mark.parametrize('when', ['before_request', 'queued', 'running'])
+def test_new_input_cancels_older_failed_probe_restore(activation, when):
+    gate, data = activation
+    ticket = gate.invalidate_restore()
+    if when == 'before_request':
+        gate.invalidate_restore()
+    thread, result = worker(lambda: gate.restore_if_unused(ORIGIN, 'abc', ticket))
+    if when == 'queued':
+        # Keep the GUI off its event queue until the new voice session starts.
+        deadline = time.monotonic() + .5
+        while gate._restore_request is None and time.monotonic() < deadline:
+            time.sleep(.001)
+        assert gate._restore_request is not None
+        gate.invalidate_restore()
+    if when == 'running':
+        until(lambda: bool(data['sources']))
+        gate.invalidate_restore()
+        assert data['sources'][0].cancelled
+    until(lambda: not thread.is_alive())
+    assert result == {'value': False}
+    assert len(data['sources']) == int(when == 'running') and not gate._pending
+
+
+@pytest.mark.parametrize('previous', ['', None, system.BUNDLE_ID, system.BUNDLE_ID + '.dictation', 'abc'])
+def test_restore_requires_external_source_and_original_frontmost_pid(activation, previous):
+    gate, data = activation
+    ticket = gate.invalidate_restore()
+    data['front'] = (ORIGIN[0], ORIGIN[1] + 1) if previous == 'abc' else ORIGIN
+    thread, result = worker(lambda: gate.restore_if_unused(ORIGIN, previous, ticket))
+    until(lambda: not thread.is_alive())
+    assert result == {'value': False} and not data['sources']
+
+
+def test_expired_queued_restore_never_starts_helper(activation):
+    gate, data = activation
+    ticket = gate.invalidate_restore()
+    thread, result = worker(lambda: gate.restore_if_unused(ORIGIN, 'abc', ticket, timeout=.02))
+    thread.join(1)
+    QCoreApplication.processEvents()
+    assert result == {'value': False} and not data['sources']
+
+
+def test_new_voice_begin_stops_unserviced_helper_after_worker_timeout(activation):
+    gate, data = activation
+    ticket = gate.invalidate_restore()
+    thread, result = worker(lambda: gate.restore_if_unused(ORIGIN, 'abc', ticket, timeout=.1))
+    until(lambda: bool(data['sources']))
+    thread.join(1)  # GUI has started the helper but hasn't serviced the queued cancellation.
+    source, = data['sources']
+    assert result == {'value': False} and not source.cancelled
+    gate.invalidate_restore()
+    assert source.cancelled
 
 
 def test_expired_queued_request_never_starts_native_selection(activation):

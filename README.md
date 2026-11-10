@@ -197,6 +197,7 @@ macOS 源码现在通过 Mythlink 输入法在文本框中流式听写；右滑�
 - 片段协议由 Python 完成单处或全量匹配替换；完整文本协议直接生成完整候选。
 - 修改结果通过校验后直接应用，随后可撤销或改用听写结果。
 - macOS 行内听写默认开启“多次撤销”，可继续撤销同一输入框内更早的听写与编辑；在设置中关闭后仍可撤销当前语音事务，编辑取消还原为听写。手动输入、移动光标、切换目标或输入法会清除历史，关闭开关也会清除历史。详细规则和性能记录见 [多次撤销](docs/UNDO_HISTORY.md)。
+- macOS 可选开启“语音输入后切回原输入法”（默认关闭）；润色、撤销手势会重新切入 Mythlink 并核验、恢复本句，操作完成再切回。试用和兼容性边界见 [输入法自动切回](docs/IME_AUTO_RETURN.md)。
 - 写入和撤销均核验结果。未定稿撤销直接清除本句组合；微信与 Codex 定稿听写撤销只选中本句再退格，不全选全文或依赖 `Cmd+Z` 分组；其他应用通过输入法范围替换。
 - Windows 保持原生 `Ctrl+Z` 路径，撤销粒度由目标应用决定；每次发送前检查焦点，断开设备后清除目标。原生撤销事件日志不代表应用已确认文字恢复。
 - 明确的“删除全文”通过协议校验后直接执行，并进入同一个可撤销操作栈。
@@ -594,7 +595,7 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
 
 ## 触摸板 SDK 开发
 
-2026-11-05 交付版 `ring_mac_sdk` 0.3.0 已接入 Apple Silicon Mac 触摸板，支持独立开关的左键单击/双击、右键单击和双指纵向滚轮；macOS 蓝牙连接由新版 SDK 管理，音频和手势共用这一连接。
+Apple Silicon Mac 触摸板使用 `ring_mac_sdk` 0.4.0，音频和手势共用同一个蓝牙连接。触摸板短暂断流时会继续等待；等待首包期间也可以取消开启。
 新功能、独立验证环境和固件位置见 [新版 SDK 更新记录](docs/RING_MAC_SDK.md)。
 
 `ring_python_sdk.touchpad` 复用现有蓝牙连接，提供移动/点击回调及系统鼠标适配器。新版入口为 `RingSession(connection_backend="sdk")` 连接后的 `touchpad_on(protocol="raw2")` / `touchpad_off()`；不传 protocol 时保留旧 MNN 兼容接口。
@@ -667,7 +668,7 @@ src/proximic_ring/
     └── assets/            界面素材（保持原位置）
 
 src/ring_python_sdk/       当前集成的 Ringo SDK snapshot
-src/ring_mac_sdk/          0.3.0 新版 Mac SDK（原件保留，管理 macOS BLE 连接）
+src/ring_mac_sdk/          0.4.0 Mac SDK（原件保留，管理 macOS BLE 连接）
 third_party/               外部源码快照与 Ringo 原始交付包
 tools/                     LLM、增益、设备和现场诊断工具
 tests/                     自动化测试

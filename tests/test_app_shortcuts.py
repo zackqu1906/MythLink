@@ -94,7 +94,8 @@ def test_existing_shortcut_backend_recovers_after_grant_and_stops_after_revocati
     assert len(state.sent) == 2
 
 
-def test_capture_is_bounded_metadata_only_no_text_or_clipboard(monkeypatch):
+@pytest.fixture
+def shortcut_capture(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     reads = []
     values = {("app", "AXFocusedWindow"): "window", ("app", "AXFocusedUIElement"): "focus",
@@ -107,15 +108,209 @@ def test_capture_is_bounded_metadata_only_no_text_or_clipboard(monkeypatch):
     monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(
         AXUIElementCreateApplication=lambda pid: "app",
         AXUIElementCopyAttributeValue=read,
+        AXUIElementIsAttributeSettable=lambda node, attribute, _: (0, values.get((node, attribute + ".writable"), False)),
         AXUIElementSetMessagingTimeout=lambda elem, timeout: None))
     app = SimpleNamespace(bundleIdentifier=lambda: "com.openai.codex", processIdentifier=lambda: 42,
                           localizedName=lambda: "Codex")
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWorkspace=SimpleNamespace(
         sharedWorkspace=lambda: SimpleNamespace(frontmostApplication=lambda: app))))
-    target = MacAppShortcuts().capture()
+    return MacAppShortcuts(), values, reads
+
+
+def test_capture_is_bounded_metadata_only_no_text_or_clipboard(shortcut_capture):
+    backend, _, reads = shortcut_capture
+    target = backend.capture()
     assert target.profile == "codex" and target.focus is None and not target.blocked
     assert len(reads) == 5
     assert set(reads) == {"AXFocusedWindow", "AXSubrole", "AXModal", "AXSheets", "AXMinimized"}
+
+
+def test_passive_undo_shortcut_rechecks_native_control_before_dispatch(shortcut_capture):
+    backend, values, _ = shortcut_capture
+    values.update({("focus", "AXRole"): "AXButton", ("focus", "AXWindow"): "window",
+                   ("focus", "AXFocused"): True, ("focus", "AXEnabled"): True})
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target.input_context == "nontext" and backend.same_target(target)
+    values[("focus", "AXRole")] = "AXTextArea"
+    assert not backend.same_target(target)
+
+
+@pytest.mark.parametrize("attributes,expected", [
+    ({"AXRole": "AXTextArea", "AXValue.writable": True}, "text"),
+    ({"AXRole": "AXComboBox", "AXIsEditable": True}, "text"),
+    ({"AXRole": "AXComboBox", "AXValue.writable": True}, "unknown"),
+    ({"AXRole": "AXTextField", "AXValue.writable": True, "AXSubrole": "AXSecureTextField"}, "unknown"),
+    ({"AXRole": "AXTextField", "AXIsEditable": True, "AXEnabled": False}, "unknown"),
+    ({"AXRole": "AXTextArea", "AXIsEditable": False, "AXValue.writable": True}, "unknown"),
+    ({"AXRole": "AXWebArea", "AXIsEditable": False}, "unknown"),
+    ({"AXRole": "AXGroup"}, "unknown"),
+])
+def test_passive_focus_requires_editability_not_just_a_text_role(shortcut_capture, attributes, expected):
+    backend, values, reads = shortcut_capture
+    values.update({("focus", name): value for name, value in attributes.items()})
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target.input_context == expected
+    assert "AXValue" not in reads
+
+
+@pytest.fixture
+def wechat_capture(shortcut_capture, monkeypatch):
+    backend, values, _ = shortcut_capture
+    values[("app", "AXFocusedUIElement")] = None
+    values.update({("editor", "AXWindow"): "window", ("editor", "AXRole"): "AXTextArea",
+                   ("editor", "AXValue.writable"): True, ("editor", "AXFocused"): False})
+    app = SimpleNamespace(bundleIdentifier=lambda: "com.tencent.xinWeChat", processIdentifier=lambda: 42,
+                          localizedName=lambda: "WeChat")
+    monkeypatch.setattr(sys.modules["AppKit"].NSWorkspace, "sharedWorkspace",
+                        lambda: SimpleNamespace(frontmostApplication=lambda: app))
+    children = {"window": ["editor"]}
+    pids = {"editor": 42, "button": 42}
+    ax = sys.modules["ApplicationServices"]
+    ax.AXUIElementCreateSystemWide = lambda: "system"
+    ax.AXUIElementGetPid = lambda node, _: (0, pids.get(node, 0))
+    backend._wechat_ax = SimpleNamespace(ax=ax, attr=lambda node, key: values.get((node, key)),
+        prepare_application=lambda pid, node: True, children=lambda node, limit: children.get(node, []))
+    return backend, values, children, pids
+
+
+@pytest.fixture
+def wechat_titlebar(wechat_capture):
+    backend, values, children, pids = wechat_capture
+    values.update({("window", "AXRole"): "AXWindow", ("window", "AXSubrole"): "AXStandardWindow",
+                   ("window", "AXMain"): True, ("window", "AXMinimized"): False, ("window", "AXModal"): False,
+                   ("app", "AXEnhancedUserInterface"): True, ("app", "AXMainWindow"): "window",
+                   ("app", "AXWindows"): ["window"]})
+    children.clear()
+    children.update(window=["close", "fullscreen", "minimize"], fullscreen=["group1"], group1=["group2"])
+    for node, key in (("close", "AXCloseButton"), ("fullscreen", "AXFullScreenButton"),
+                      ("minimize", "AXMinimizeButton")):
+        values[("window", key)] = node
+        values[(node, "AXRole")] = "AXButton"
+        values[(node, "AXWindow")] = "window"
+    for node in ("group1", "group2"):
+        values[(node, "AXRole")] = "AXGroup"
+    for node in ("window", "group1", "group2", *children["window"]):
+        values[(node, "AXFocused")] = False
+        pids[node] = 42
+    ax = backend._wechat_ax.ax
+    ax.AXUIElementGetAttributeValueCount = lambda node, key, _: (0, len(children.get(node, [])))
+    ax.AXUIElementCopyAttributeValues = lambda node, key, start, count, _: (0, children[node][start:start+count])
+    return wechat_capture
+
+
+def test_only_confirmed_opaque_wechat_window_allows_temporary_ime_probe(wechat_titlebar):
+    backend, values, children, _ = wechat_titlebar
+    values[("app", "AXWindows")].append("background-chat")
+    values[("background-chat", "AXSubrole")] = "AXStandardWindow"
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target.wechat_ime_probe and target.input_context == "unknown" and backend.same_target(target)
+    children["window"].append("editor")
+    assert not backend.same_target(target)
+    assert not backend.capture(menu_action=True, scene=True, passive_undo=True).wechat_ime_probe
+
+
+@pytest.mark.parametrize("case", ["known_focus", "unknown_control", "extra_window", "sheet", "modal",
+                                  "foreign_child", "menu", "open_menu", "unreadable", "incomplete", "denied"])
+def test_wechat_probe_requires_complete_unblocked_titlebar(wechat_titlebar, case):
+    from proximic_ring.desktop.text_focus import FocusError
+    backend, values, children, pids = wechat_titlebar
+    if case == "known_focus":
+        values[("app", "AXFocusedUIElement")] = "close"
+    elif case == "unknown_control":
+        values[("group1", "AXRole")] = "AXUnknown"
+    elif case == "extra_window":
+        values[("app", "AXWindows")].append("popup")
+    elif case == "sheet":
+        values[("window", "AXSheets")] = ["sheet"]
+    elif case == "modal":
+        values[("window", "AXModal")] = True
+    elif case == "foreign_child":
+        pids["close"] = 99
+    elif case == "menu":
+        children["group1"].append("menu")
+        values[("menu", "AXRole")], pids["menu"] = "AXMenu", 42
+    elif case == "open_menu":
+        values[("app", "AXMenuBar")] = "bar"
+        values[("bar", "AXSelectedChildren")] = ["menu item"]
+    elif case == "unreadable":
+        backend._wechat_ax.ax.AXUIElementGetAttributeValueCount = lambda *_: (-25204, 0)
+    elif case == "incomplete":
+        backend._wechat_ax.ax.AXUIElementCopyAttributeValues = lambda *_: (0, [])
+    else:
+        read = backend._wechat_ax.attr
+        def denied(owner, key):
+            if owner == "system" and key == "AXFocusedUIElement":
+                raise FocusError("unavailable", ax_error=-25211)
+            return read(owner, key)
+        backend._wechat_ax.attr = denied
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target is None or not target.wechat_ime_probe
+
+
+@pytest.mark.parametrize("source,placeholder", [("system", None), ("window", "app"), ("tree", "window")])
+def test_wechat_missing_application_focus_rechecks_positive_editor(wechat_capture, source, placeholder):
+    backend, values, _, _ = wechat_capture
+    values[("app", "AXFocusedUIElement")] = placeholder
+    values[("editor", "AXFocused")] = True
+    if source != "tree":
+        values[(source, "AXFocusedUIElement")] = "editor"
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target.input_context == "text" and target.focus == "editor"
+    assert backend.same_target(target)
+    values[("editor", "AXFocused")] = False
+    assert not backend.same_target(target)
+
+
+def test_wechat_conflicting_authoritative_focus_beats_stale_tree_node(wechat_capture):
+    backend, values, _, _ = wechat_capture
+    values.update({("window", "AXFocusedUIElement"): "button", ("button", "AXWindow"): "window",
+                   ("button", "AXRole"): "AXButton", ("editor", "AXFocused"): True})
+    assert backend.capture(menu_action=True, scene=True, passive_undo=True).input_context == "nontext"
+
+
+def test_wechat_application_reported_as_window_does_not_authorize_menu_search(wechat_capture):
+    backend, values, _, _ = wechat_capture
+    values.update({("app", "AXFocusedWindow"): "app", ("app", "AXFocusedUIElement"): "editor",
+                   ("editor", "AXFocused"): True, ("editor", "AXWindow"): "app"})
+    assert backend.capture(menu_action=True, scene=True, passive_undo=True) is None
+
+
+@pytest.mark.parametrize("case", ["unfocused", "other_window", "other_pid", "conflict", "secure", "readonly"])
+def test_wechat_static_or_unowned_editors_do_not_grant_dictation(wechat_capture, case):
+    backend, values, children, pids = wechat_capture
+    values[("editor", "AXFocused")] = case != "unfocused"
+    if case == "other_window":
+        values[("editor", "AXWindow")] = "another"
+    if case == "other_pid":
+        pids["editor"] = 55
+    if case == "conflict":
+        children["window"].append("button")
+        values.update({("button", "AXFocused"): True, ("button", "AXWindow"): "window"})
+    if case == "secure":
+        values[("editor", "AXSubrole")] = "AXSecureTextField"
+    if case == "readonly":
+        values[("editor", "AXIsEditable")] = False
+    target = backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert target is None or target.input_context == "unknown"
+
+
+def test_passive_browser_editor_fences_readonly_fields_and_editor_changes(shortcut_capture, monkeypatch):
+    from proximic_ring.scenes.models import SceneResult
+    backend, values, _ = shortcut_capture
+    values[("focus", "AXRole")] = "AXWebArea"
+    result = SceneResult(input_context="text", page_key="page", browser_target={})
+    monkeypatch.setattr("proximic_ring.desktop.app_shortcuts.detect_scene", lambda *a, **k: result)
+    def capture():
+        return backend.capture(menu_action=True, scene=True, passive_undo=True)
+    assert capture().input_context == "unknown"  # Legacy extension does not distinguish passwords.
+    result = replace(result, browser_target={"editor": "current"})
+    target = capture()
+    assert target.input_context == "text"
+    result = replace(result, browser_target={"editor": "different"})
+    assert not backend.same_target(target)
+    result = replace(result, browser_target={"editor": "blocked"})
+    values.update({("focus", "AXRole"): "AXTextField", ("focus", "AXValue.writable"): True})
+    assert capture().input_context == "unknown"
 
 
 @pytest.mark.parametrize("bundle,role,description", [

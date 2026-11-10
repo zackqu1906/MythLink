@@ -1066,7 +1066,13 @@ class AgentController(QObject, EditorGestureActions):
             if name in bindings.send + bindings.polish + bindings.undo + bindings.switch_mode:
                 # Qt tool windows are AXSystemDialog. Use the already-bound
                 # local editor and native sentence, not a generic AX dialog route.
-                self._inputGestureReceived.emit(name,self.inputKey,connection,time.monotonic(),
+                key = self.inputKey
+                if name in bindings.undo + bindings.polish and not self.owner._ring_gestures.speech_busy():
+                    if not self.owner._inline_input.resume_for_gesture():
+                        return True
+                    if key != self.inputKey:
+                        return True
+                self._inputGestureReceived.emit(name,key,connection,time.monotonic(),
                     (self.owner._app_gestures.sentence(),bindings))
                 return True
             return False

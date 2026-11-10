@@ -131,6 +131,35 @@ def test_global_binding_still_requires_focus_arbitration(route):
     assert not request(c, "tap") and not sent
 
 
+@pytest.mark.parametrize("automatic,gesture", [(False, "tap"), (True, "swipe-right")])
+def test_idle_end_does_not_borrow_a_keyboard_and_active_end_needs_no_focus(route, monkeypatch, automatic, gesture):
+    c, service, inline, backend, sent, _, _ = route
+    monkeypatch.setattr(c, "_automatic_session_enabled", lambda: automatic)
+    probes = []
+    capture = inline.capture_start_focus
+    def probe(**options):
+        probes.append(options)
+        return capture(**options)
+    monkeypatch.setattr(inline, "capture_start_focus", probe)
+    assert not request(c, gesture)
+    assert request(c, gesture, busy=True)
+    assert not probes
+
+    backend.target = replace(backend.target, input_context="nontext")
+    assert configure(service, monkeypatch, backend.target.bundle).setBinding(backend.target.bundle, gesture, ACTION["id"])
+    assert not request(c, gesture)
+    assert sent == [(backend.target.profile, "Ctrl+Tab")]
+    assert len(probes) == 1 and probes[0].get("allow_activation") is False
+
+
+def test_manual_conversion_still_reaches_a_live_sentence(route, monkeypatch):
+    c, _, inline, _, sent, messages, _ = route
+    monkeypatch.setattr(c, "_automatic_session_enabled", lambda: False)
+    inline._view.update(phase="listening", has_composition=True, can_convert=True)
+    assert not request(c, "swipe-right", busy=True)
+    assert [kind for kind, _ in messages] == ["convert"] and not sent
+
+
 def test_other_app_binding_does_not_block_explicit_input_source(route, monkeypatch):
     _, service, _, backend, _, _, _ = route
     catalog = configure(service, monkeypatch, POWERPOINT)

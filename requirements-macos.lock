@@ -28,5 +28,5 @@ websocket-client==1.9.0
 
 # Optional original-AAR touchpad inference.
 MNN==3.6.1
-# Paired Raw2 receiver supplied with the Ringo dev9 firmware.
+# Raw2 CPU inference used by the Ring macOS SDK.
 onnxruntime==1.21.0

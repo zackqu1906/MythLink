@@ -89,18 +89,74 @@ func restoreUpdateSource(_ handoff: UpdateSourceHandoff, voiceIDs: Set<String>,
     return true
 }
 
+struct VoiceSourceSelection {
+    let alreadySelected: Bool
+    let previousSource: String
+}
+
+struct VoiceSourceRestore: Encodable {
+    let event = "restored"
+    let restored: Bool
+    let reason: String
+    var error: String? = nil
+}
+
+/// Restore only the source borrowed by this voice session, without moving focus.
+func restoreVoiceSource(previousSource: String, expectedSource: String, voiceIDs: Set<String>,
+                        pid: Int32, bundle: String, currentSource: () -> String,
+                        foreground: () -> (Int32, String),
+                        select: (String) throws -> Void) -> VoiceSourceRestore {
+    guard pid > 0, !previousSource.isEmpty, voiceIDs.contains(expectedSource) else {
+        return VoiceSourceRestore(restored: false, reason: "invalid_handoff")
+    }
+    guard foreground() == (pid, bundle) else {
+        return VoiceSourceRestore(restored: false, reason: "application_changed")
+    }
+    let current = currentSource()
+    if current == previousSource {
+        return VoiceSourceRestore(restored: false, reason: "already_original")
+    }
+    guard !voiceIDs.contains(previousSource) else {
+        return VoiceSourceRestore(restored: false, reason: "invalid_handoff")
+    }
+    guard current == expectedSource else {
+        return VoiceSourceRestore(restored: false, reason: "source_changed")
+    }
+    guard foreground() == (pid, bundle) else {
+        return VoiceSourceRestore(restored: false, reason: "application_changed")
+    }
+    guard currentSource() == expectedSource else {
+        return VoiceSourceRestore(restored: false, reason: "source_changed")
+    }
+    do {
+        try select(previousSource)
+    } catch {
+        return VoiceSourceRestore(restored: false, reason: "selection_failed", error: error.localizedDescription)
+    }
+    guard currentSource() == previousSource else {
+        return VoiceSourceRestore(restored: false, reason: "selection_unconfirmed")
+    }
+    return VoiceSourceRestore(restored: true, reason: "restored")
+}
+
 /// A source-only operation: never queries AX, a text field or its contents.
-/// Returns true when already selected, so an active composition is untouched.
-func ensureVoiceSource(modeID: String, currentSource: () -> String,
-                       sameApplication: () -> Bool, select: () throws -> Void) throws -> Bool {
+/// An already-selected source is left untouched, including its composition.
+func ensureVoiceSource(modeID: String, expectedSource: String? = nil,
+                       beforeBorrow: ((String) throws -> Void)? = nil, currentSource: () -> String,
+                       sameApplication: () -> Bool, select: () throws -> Void) throws -> VoiceSourceSelection {
     guard sameApplication() else { throw SourceSelectionFailure("前台应用已变化，请重新 tap") }
     let current = currentSource()
     guard !current.isEmpty else { throw SourceSelectionFailure("系统未返回当前输入法，请重试") }
-    if current == modeID { return true }
+    guard expectedSource == nil || current == expectedSource else {
+        throw SourceSelectionFailure("输入法已变化，请重新 tap")
+    }
+    if current == modeID { return VoiceSourceSelection(alreadySelected: true, previousSource: current) }
+    try beforeBorrow?(current)
     guard sameApplication() else { throw SourceSelectionFailure("前台应用已变化，请重新 tap") }
+    guard currentSource() == current else { throw SourceSelectionFailure("输入法已变化，请重新 tap") }
     try select()
     guard currentSource() == modeID else { throw SourceSelectionFailure("系统未确认切换到语音输入法") }
-    return false
+    return VoiceSourceSelection(alreadySelected: false, previousSource: current)
 }
 
 /// Restore the foreground client's input context through a real, bounded focus
@@ -225,6 +281,7 @@ func restoreInputFocus(pid: Int32, bundle: String, currentSource: @escaping () -
 func selectSourceSession(pid: Int32, bundle: String, modeID: String,
                          refreshOnly: Bool = false,
                          hostRestoresFocus: Bool = false,
+                         expectedSource: String? = nil,
                          currentSource: @escaping () -> String, select: () throws -> Void) -> Never {
     func emit(_ fields: [String: Any]) {
         if let data = try? JSONSerialization.data(withJSONObject: fields) {
@@ -234,6 +291,7 @@ func selectSourceSession(pid: Int32, bundle: String, modeID: String,
     }
     alarm(5)
     let start = ProcessInfo.processInfo.systemUptime
+    var selectionAttempted = false
     do {
         guard !hostRestoresFocus || pid == getppid() else {
             throw SourceSelectionFailure("窗口焦点只能由原宿主恢复")
@@ -243,25 +301,38 @@ func selectSourceSession(pid: Int32, bundle: String, modeID: String,
         if refreshOnly && currentSource() != modeID {
             throw SourceSelectionFailure("输入法已变化，请重新 tap")
         }
-        let alreadySelected = try ensureVoiceSource(modeID: modeID, currentSource: currentSource,
+        // A killed/timed-out helper must not switch before the host knows the
+        // original source and can conditionally return it.
+        let beforeBorrow: ((String) throws -> Void)? = expectedSource == nil ? nil : { original in
+            emit(["event": "will_borrow", "previous_source": original])
+            guard readLine() == "borrow" else { throw SourceSelectionFailure("输入法激活已取消") }
+        }
+        let selection = try ensureVoiceSource(modeID: modeID, expectedSource: expectedSource,
+            beforeBorrow: beforeBorrow, currentSource: currentSource,
             sameApplication: {
                 let current = NSWorkspace.shared.frontmostApplication
                 return matchesSourceApplication(pid: current?.processIdentifier, bundle: current?.bundleIdentifier,
                                                 expectedPID: pid, expectedBundle: bundle)
-            }, select: select)
-        let restore = !alreadySelected || refreshOnly
+            }, select: {
+                selectionAttempted = true
+                try select()
+            })
+        let restore = !selection.alreadySelected || refreshOnly
         if restore {
             let hostFocus: (() -> Void)? = hostRestoresFocus
                 ? { emit(["event": "restore_focus"]) } : nil
             try restoreInputFocus(pid: pid, bundle: bundle, currentSource: currentSource,
                                   modeID: modeID, requestHostFocus: hostFocus)
         }
-        emit(["event": "selected", "already_selected": alreadySelected,
+        emit(["event": "selected", "already_selected": selection.alreadySelected,
+              "previous_source": selection.previousSource,
               "focus_restored": restore,
               "elapsed_ms": (ProcessInfo.processInfo.systemUptime - start) * 1000])
         exit(0)
     } catch {
-        emit(["event": "error", "error": error.localizedDescription])
+        var fields: [String: Any] = ["event": "error", "error": error.localizedDescription]
+        if expectedSource != nil { fields["borrow_skipped"] = !selectionAttempted }
+        emit(fields)
         exit(1)
     }
 }

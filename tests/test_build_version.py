@@ -89,16 +89,24 @@ def test_macos_entry_selects_version_before_packaging(tmp_path, args, expected):
     (tmp_path / 'tools').mkdir()
     shutil.copyfile(ROOT / 'tools/build_version.py', tmp_path / 'tools/build_version.py')
     (tmp_path / 'pyproject.toml').write_text('[project]\nversion = "0.6.9"\n')
-    python = tmp_path / '.build/packaging-venv/bin/python'
+    python = tmp_path / '.build/packaging-venv-macos13/bin/python'
     python.parent.mkdir(parents=True)
     # Run real version selection, then stop at the dependency-install boundary.
-    python.write_text('#!/bin/bash\nif [[ "$1" == tools/build_version.py ]]; then\n'
+    python.write_text('#!/bin/bash\nif [[ "$1" == tools/verify_macos_python.py ]]; then\n'
+                      '  [[ "$2" == "$EXPECTED_PYTHON" ]]; exit $?\nfi\n'
+                      'if [[ "$1" == tools/build_version.py ]]; then\n'
                       f'  exec {shlex.quote(sys.executable)} "$@"\nfi\nexit 91\n')
     python.chmod(0o755)
     env = {key: value for key, value in os.environ.items() if key not in {
         'MYTHLINK_BUILD_VERSION', 'CI', 'GITHUB_REF_TYPE', 'GITHUB_REF_NAME',
         'PROXIMIC_SKIP_DEPENDENCY_INSTALL', 'PROXIMIC_REQUIRE_SIGNED_RELEASE'}}
-    env['PROXIMIC_PYTHON'] = sys.executable
+    standalone = tmp_path / '.runtime/python-bin/python3.11'
+    standalone.parent.mkdir(parents=True)
+    standalone.symlink_to(sys.executable)
+    env.pop('PROXIMIC_PYTHON', None)
+    if '--version' in args:
+        env['PROXIMIC_PYTHON'] = sys.executable
+    env['EXPECTED_PYTHON'] = env.get('PROXIMIC_PYTHON', str(standalone))
     master, slave = pty.openpty()
     try:
         process = subprocess.Popen(['/bin/bash', str(scripts / 'build-macos.sh'), '--app-only', *args],

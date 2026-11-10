@@ -72,16 +72,20 @@ final class LocalClient: NSObject, IMKTextInput {
     }
     func insertText(_ string: Any!, replacementRange range: NSRange) {
         writes += 1
-        text = string as! String
-        selection = NSRange(location: (text as NSString).length, length: 0)
+        let target = isValidRange(range) ? range : (isValidRange(marked) ? marked : selection)
+        let value = string as! String
+        text = (text as NSString).replacingCharacters(in: target, with: value)
+        selection = NSRange(location: target.location + (value as NSString).length, length: 0)
         marked = unspecifiedRange
         let f = onInsert; onInsert = nil; f?()
     }
     func setMarkedText(_ string: Any!, selectionRange: NSRange, replacementRange: NSRange) {
         writes += 1
-        text = (string as? NSAttributedString)?.string ?? (string as! String)
-        marked = text.isEmpty ? unspecifiedRange : NSRange(location: 0, length: (text as NSString).length)
-        selection = NSRange(location: (text as NSString).length, length: 0)
+        let target = isValidRange(replacementRange) ? replacementRange : (isValidRange(marked) ? marked : selection)
+        let value = (string as? NSAttributedString)?.string ?? (string as! String)
+        text = (text as NSString).replacingCharacters(in: target, with: value)
+        marked = value.isEmpty ? unspecifiedRange : NSRange(location: target.location, length: (value as NSString).length)
+        selection = NSRange(location: target.location + selectionRange.location, length: selectionRange.length)
     }
     func attributedSubstring(from range: NSRange) -> NSAttributedString! { nil }
     func characterIndex(for point: NSPoint, tracking mode: IMKLocationToOffsetMappingMode, inMarkedRange: UnsafeMutablePointer<ObjCBool>!) -> Int { NSNotFound }
@@ -92,7 +96,7 @@ final class LocalClient: NSObject, IMKTextInput {
     func supportsUnicode() -> Bool { true }
     func windowLevel() -> Int32 { 0 }
     func supportsProperty(_ property: TSMDocumentPropertyTag) -> Bool { true }
-    func uniqueClientIdentifierString() -> String! { "local-activation" }
+    func uniqueClientIdentifierString() -> String! { UUID().uuidString }
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
 }
 func check(_ condition: @autoclosure () -> Bool, _ message: String) { if !condition() { fputs("FAIL: \(message)\n", stderr); exit(1) } }
@@ -112,6 +116,227 @@ func firstSentence(_ controller: ProxiMicInputController, _ client: LocalClient)
 
 func currentSession(_ controller: ProxiMicInputController) -> CompositionSession? {
     (Mirror(reflecting: controller).children.first { $0.label == "sessionLifetime" }!.value as! CompositionSessionLifetime).current
+}
+
+func suspendSentence(_ controller: ProxiMicInputController, token: String = "return-source") {
+    controller.receive(["type": "suspend_input", "client_id": currentClientID(controller),
+        "utterance_id": "first", "seq": 4, "token": token, "revision": currentSession(controller)!.revision])
+}
+
+// The IPC regression uses the production service and a process-local editor.
+if CommandLine.arguments.contains("--return-ipc") {
+    var editor = LocalClient()
+    let controller = ProxiMicInputController(), service = IMEService.shared
+    let receive = service.transport.onMessage
+    service.transport.onMessage = { message in
+        switch message["type"] as? String {
+        case "test_reactivate":
+            controller.deactivateServer(editor)
+            switch message["change"] as? String {
+            case "client":
+                let other = LocalClient()
+                other.text = editor.text
+                other.selection = editor.selection
+                editor = other
+            case "text": editor.text = "不是原句"
+            case "caret": editor.selection = NSRange(location: 0, length: 0)
+            default: break
+            }
+            controller.activateServer(editor)
+        case "test_local_key":
+            if message["command"] as? String == "select_previous", let count = message["count"] as? Int {
+                let end = editor.selection.location
+                check(count <= end, "unexpected local selection")
+                editor.selection = NSRange(location: end - count, length: count)
+            } else {
+                check(message["command"] as? String == "delete" && editor.selection.length > 0, "unexpected local key")
+                editor.insertText("", replacementRange: editor.selection)
+                print("AFTER_UNDO=" + editor.text)
+            }
+        case "test_exit":
+            print("FINAL_TEXT=" + editor.text)
+            service.transport.stop()
+            exit(0)
+        default: receive?(message)
+        }
+    }
+    controller.activateServer(editor)
+    service.start()
+    RunLoop.main.run(until: Date().addingTimeInterval(10))
+    fatalError("input source return IPC test timed out")
+}
+
+do {
+    let old = ProxiMicInputController(), client = LocalClient()
+    old.activateServer(client); drainActivation(); firstSentence(old, client)
+    let revision = currentSession(old)!.revision
+    let writes = client.writes
+    suspendSentence(old)
+    check(currentSession(old) == nil && IMEService.shared.suspendedInput?.token == "return-source", "suspend did not detach settled input")
+    old.deactivateServer(client)
+    let next = ProxiMicInputController()
+    next.activateServer(client); drainActivation()
+    next.receive(["type": "resume_input", "client_id": currentClientID(next), "utterance_id": "first", "seq": 5, "token": "return-source"])
+    check(currentSession(next)?.phase == .dictated && currentSession(next)?.revision == revision,
+          "new controller did not resume the same settled transaction")
+    check(currentSession(next)?.canPolish == true && IMEService.shared.suspendedInput == nil, "resume lost polish or retained a replayable token")
+    check(client.writes == writes, "suspend/resume performed a text write")
+    next.receive(["type": "polish", "client_id": currentClientID(next), "utterance_id": "first", "seq": 6])
+    check(currentSession(next)?.phase == .polishing, "polish gesture could not operate after resume")
+    next.deactivateServer(client)
+    print("PASS explicit input-source suspension survives native controller replacement")
+}
+
+for scenario in ["application", "client", "text", "selection", "mark"] {
+    let old = ProxiMicInputController(), client = LocalClient()
+    old.activateServer(client); drainActivation(); firstSentence(old, client); suspendSentence(old)
+    old.deactivateServer(client)
+    let other = scenario == "client" ? LocalClient() : client
+    other.text = client.text
+    other.selection = client.selection
+    if scenario == "application" { other.bundle = "other.application" }
+    if scenario == "text" { other.text = "外部替换句" }
+    if scenario == "selection" { other.selection = NSRange(location: 0, length: 0) }
+    if scenario == "mark" { other.marked = NSRange(location: 0, length: 1) }
+    let writes = other.writes
+    let next = ProxiMicInputController()
+    next.activateServer(other); drainActivation()
+    next.receive(["type": "resume_input", "client_id": currentClientID(next), "utterance_id": "first", "seq": 5, "token": "return-source"])
+    check(currentSession(next) == nil && other.writes == writes, "resumed over changed \(scenario)")
+    check(IMEService.shared.suspendedInput == nil, "failed restoration retained an invalid snapshot")
+    next.deactivateServer(other)
+    print("PASS input-source resume rejects changed \(scenario) without writing")
+}
+
+for scenario in ["new_sentence", "disconnect", "reset"] {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client); suspendSentence(controller)
+    switch scenario {
+    case "new_sentence": controller.receive(["type": "begin", "client_id": currentClientID(controller), "utterance_id": "new", "seq": 1])
+    case "disconnect": controller.hostDisconnected()
+    default: controller.receive(["type": "reset", "all": true])
+    }
+    check(IMEService.shared.suspendedInput == nil, "\(scenario) did not discard suspended input")
+    controller.deactivateServer(client)
+    print("PASS \(scenario) discards suspended input")
+}
+
+// A new BEGIN can inherit history, but must never revive the old sentence or write text.
+let historyService = IMEService.shared
+historyService.transport.onMessage?(["type": "welcome", "protocol": 1, "epoch": "history-test"])
+for scenario in ["same", "client", "text", "caret", "mark", "wrong_token", "toggle", "discard", "newer_begin"] {
+    let old = ProxiMicInputController(), editor = LocalClient()
+    old.activateServer(editor); drainActivation(); firstSentence(old, editor); suspendSentence(old)
+    old.deactivateServer(editor)
+    if scenario == "toggle" {
+        for enabled in [false, true] {
+            historyService.transport.onMessage?(["type": "configure", "epoch": "history-test", "multi_undo_enabled": enabled])
+        }
+    }
+    let next = ProxiMicInputController(), target = scenario == "client" ? LocalClient() : editor
+    target.text = scenario == "text" ? "外部替换句" : editor.text
+    target.selection = scenario == "caret" ? NSRange(location: 0, length: 0) : editor.selection
+    if scenario == "mark" { target.marked = NSRange(location: 0, length: 1) }
+    next.activateServer(target); drainActivation()
+    let id = currentClientID(next), writes = target.writes
+    if scenario == "discard" {
+        target.onRead = { historyService.transport.onMessage?(["type": "discard_suspended_input", "epoch": "history-test", "token": "return-source"]) }
+    } else if scenario == "newer_begin" {
+        target.onRead = { next.receive(["type": "begin", "client_id": id, "utterance_id": "newer", "seq": 1]) }
+    }
+    next.receive(["type": "begin", "client_id": id, "utterance_id": "second", "seq": 1,
+                  "undo_history_token": scenario == "wrong_token" ? "wrong" : "return-source"])
+    let history = Mirror(reflecting: next).children.first { $0.label == "undoHistory" }!.value as! CompositionUndoHistory
+    check(currentSession(next)?.utteranceID == (scenario == "newer_begin" ? "newer" : "second")
+          && currentSession(next)?.phase == .listening, "history verification prevented a fresh BEGIN: \(scenario)")
+    check(history.count == (scenario == "same" ? 1 : 0) && historyService.suspendedInput == nil,
+          "wrong history or replayable token after BEGIN: \(scenario)")
+    check(target.writes == writes, "history transfer wrote old text: \(scenario)")
+    next.deactivateServer(target)
+    print("PASS cross-sentence input-source history: \(scenario)")
+}
+
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client); suspendSentence(controller)
+    let id = currentClientID(controller)
+    client.onRead = {
+        for enabled in [false, true] {
+            historyService.transport.onMessage?(["type": "configure", "epoch": "history-test", "multi_undo_enabled": enabled])
+        }
+    }
+    controller.receive(["type": "resume_input", "client_id": id, "utterance_id": "first",
+                        "seq": 5, "token": "return-source"])
+    check(currentSession(controller)?.phase == .dictated, "disabling earlier history also lost current sentence")
+    controller.receive(["type": "begin", "client_id": id, "utterance_id": "after-toggle", "seq": 1])
+    let history = Mirror(reflecting: controller).children.first { $0.label == "undoHistory" }!.value as! CompositionUndoHistory
+    check(history.count == 0, "resume revived history cleared during the editor read")
+    controller.deactivateServer(client)
+    print("PASS a settings change during resume revokes earlier history")
+}
+
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client); suspendSentence(controller)
+    controller.receive(["type": "resume_input", "client_id": currentClientID(controller), "utterance_id": "first", "seq": 5, "token": "wrong-token"])
+    check(currentSession(controller) == nil && IMEService.shared.suspendedInput?.token == "return-source", "unrelated token consumed suspended input")
+    controller.receive(["type": "resume_input", "client_id": currentClientID(controller), "utterance_id": "first", "seq": 5, "token": "return-source"])
+    check(currentSession(controller)?.phase == .dictated, "restore after failed source switch could not reattach")
+    controller.deactivateServer(client)
+    check(IMEService.shared.suspendedInput == nil, "ordinary deactivation saved an unrequested snapshot")
+    print("PASS token isolation and reattachment after source-switch failure")
+}
+
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation()
+    let id = currentClientID(controller)
+    controller.receive(["type": "begin", "client_id": id, "utterance_id": "first", "seq": 1])
+    controller.receive(["type": "cancel", "client_id": id, "utterance_id": "first", "seq": 2])
+    check(currentSession(controller)?.phase == .undone, "empty sentence was not cancelled")
+    suspendSentence(controller)
+    check(currentSession(controller) == nil && IMEService.shared.suspendedInput == nil && client.writes == 0,
+          "final undo did not allow source return without a writable snapshot")
+    controller.deactivateServer(client)
+    print("PASS final undo returns without retaining unusable empty-field history")
+}
+
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client)
+    client.onRead = { controller.deactivateServer(client) }
+    suspendSentence(controller)
+    check(IMEService.shared.suspendedInput == nil, "suspension captured a retired editor")
+    print("PASS lifecycle reentry cannot save a stale suspended editor")
+}
+
+for stage in ["snapshot", "reply"] {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client); suspendSentence(controller)
+    let id = currentClientID(controller)
+    let reenter = { controller.receive(["type": "begin", "client_id": id, "utterance_id": "new", "seq": 1]) }
+    if stage == "snapshot" { client.onRead = reenter } else { client.onBundle = reenter }
+    let writes = client.writes
+    controller.receive(["type": "resume_input", "client_id": id, "utterance_id": "first", "seq": 5, "token": "return-source"])
+    check(currentSession(controller)?.utteranceID == "new" && IMEService.shared.suspendedInput == nil,
+          "resume replaced a reentrant new sentence")
+    check(client.writes == writes, "resume reentry wrote old text")
+    controller.deactivateServer(client)
+    print("PASS new sentence wins over reentrant resume \(stage)")
+}
+
+for confirmed in [false, true] {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client); suspendSentence(controller)
+    let id = currentClientID(controller), writes = client.writes
+    controller.receive(["type": "resume_input", "client_id": id, "utterance_id": "first", "seq": 5, "token": "return-source"])
+    if confirmed { controller.receive(["type": "polish", "client_id": id, "utterance_id": "first", "seq": 6]) }
+    controller.discardResumedInput(token: "return-source")
+    check(confirmed ? currentSession(controller)?.phase == .polishing : currentSession(controller) == nil,
+          "resume timeout discarded confirmed work or retained an unacknowledged session")
+    check(client.writes == writes, "discarding a resumed session wrote text")
+    controller.deactivateServer(client)
+    print("PASS resume timeout cleanup, confirmed=\(confirmed)")
 }
 
 // Source-launched Mythlink has an empty bundle ID. Committed undo must use
@@ -420,7 +645,7 @@ do {
     check(client.writes == 0, "a character outside the displayed predictions was committed")
     let commit: [String: Any] = ["type": "stroke_commit", "client_id": id, "stroke_session": "predict", "request_id": "pred1", "text": "吗"]
     controller.receive(commit)
-    check(client.writes == 1 && client.text == "吗" && StrokeCandidatePanel.visible,
+    check(client.writes == 1 && client.text == "你好吗" && StrokeCandidatePanel.visible,
           "a prediction without ink could not be confirmed")
     controller.receive(commit)
     check(client.writes == 1, "a prediction confirmation was replayed")
@@ -430,7 +655,7 @@ do {
                               isARepeat: false, keyCode: 7)!
     _ = controller.handle(key, client: client)
     controller.receive(commit)
-    check(client.writes == 1 && client.text == "吗", "keyboard takeover left stale prediction candidates")
+    check(client.writes == 1 && client.text == "你好吗", "keyboard takeover left stale prediction candidates")
     controller.receive(update)
     controller.receive(["type": "stroke_end", "client_id": id, "stroke_session": "predict"])
     controller.receive(update); controller.receive(commit)

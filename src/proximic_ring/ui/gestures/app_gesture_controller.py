@@ -589,7 +589,18 @@ class AppGestureController(QObject):
             return target
         return None
 
-    def envelope(self, event, *, audio_busy=False, start_focus=None, input_only=False):
+    def _passive_outside_target(self, gesture, front):
+        target = self.backend.capture(menu_action=True, scene=True, passive_undo=True)
+        if not target or target.blocked or (target.bundle, target.pid) != front:
+            return None
+        if target.input_context == "nontext":
+            return target
+        if (target.input_context == "unknown" and target.scene_checked and target.scene == PRESENTATION
+                and "scene:" + gesture in self._catalog.for_scene(front[0], PRESENTATION)):
+            return target
+        return None
+
+    def envelope(self, event, *, audio_busy=False, start_focus=None, input_only=False, end_only=False):
         """Only gestures sharing an input binding need focus-based arbitration."""
         source = event.event if isinstance(event, BoundGestureEvent) else event
         name = str(getattr(source, "name", ""))
@@ -605,14 +616,32 @@ class AppGestureController(QObject):
             except Exception as exc:
                 pid, error = 0, str(exc)
             return InputSourceGestureEvent(event, generation, created, pid, error)
+        busy = bool(audio_busy or self.owner._ring_gestures.speech_busy())
+        resume_failure = None
+        if input_priority and not busy and name in bindings.undo + bindings.polish:
+            resume_failure = self.owner._inline_input.resume_gesture_failure()
+            created = time.monotonic()
         state, sentence = self.phase_state(), self.sentence()
         busy = bool(audio_busy or self.owner._ring_gestures.speech_busy())
         trace_id = new_trace_id()
         self._trace(trace_id, "received", "received", gesture=name, route="focus", **state)
+        inline = self.owner._inline_input
+        # With nothing left to undo, probing must not borrow the just-restored keyboard.
+        empty_undo = (input_priority and not busy and not resume_failure and name in bindings.undo
+                      and name != self._source_gesture and inline.empty_undo_after_return())
+        def ignored(reason):
+            self._trace(trace_id, "outcome", reason, gesture=name)
+            return AppGestureEvent(BoundGestureEvent(source, bindings), None, generation, created,
+                                   sentence=sentence, route="ignored", trace_id=trace_id, **state)
+
+        if (empty_undo and not self.owner._global_gesture_bindings.action_for(name)
+                and not self.foreground_has_binding(name)):
+            return ignored("no_cancel_or_visible_undo")
         target, error, capture_error = None, None, ""
         input_method_target = None
         try:
-            inline = self.owner._inline_input
+            if resume_failure:
+                raise SceneActionError(resume_failure)
             # WeChat can retain a valid IMK text client while AX returns
             # NoValue permanently. Ask that client live; a retained sentence
             # or ready flag alone must never override application focus.
@@ -620,12 +649,21 @@ class AppGestureController(QObject):
                 if start_focus is None:
                     options = ({"native_fallback": lambda front: self._presentation_fallback_target(name, front)}
                                if not input_only and self._catalog.uses_scene(name) else {})
+                    if name in bindings.confirm:
+                        options["require_editable"] = True
+                    elif empty_undo or end_only:
+                        options = {"allow_activation": False,
+                                   "native_fallback": lambda front: self._passive_outside_target(name, front)}
                     start_focus = inline.capture_start_focus(**options)
                 if start_focus is None:
                     raise SceneActionError("input_method_not_ready")
                 if start_focus is not None:
                     self._trace(trace_id, "input_focus", start_focus.reason or start_focus.status,
                                 gesture=name, elapsed_ms=start_focus.elapsed_ms)
+                    if empty_undo and start_focus.status in {"text", "unavailable"}:
+                        return ignored("no_cancel_or_visible_undo")
+                    if input_only and (start_focus.status in {"nontext", "outside"} or start_focus.reason == "unknown_focus"):
+                        return ignored(start_focus.reason or "input_method_no_focus")
                     if start_focus.status == "text":
                         input_method_target = start_focus.target
                     elif start_focus.status == "unavailable":
@@ -688,7 +726,7 @@ class AppGestureController(QObject):
         scene = (target.scene if route == "outside" and target.scene in
                  self._catalog.configured_scenes().get(target.bundle, []) else "")
         self._trace(trace_id, "route", "input_method_focus" if input_method_target is not None else "speech_busy" if busy else
-                    "presentation_focus_fallback" if presentation_fallback else context if input_priority else "no_input_conflict",
+                    start_focus.reason if presentation_fallback else context if input_priority else "no_input_conflict",
                     target=target, gesture=name, owner=route, active_scene=scene)
         return AppGestureEvent(BoundGestureEvent(source, bindings),
             target, generation, created, sentence=sentence, capture_error=capture_error,
