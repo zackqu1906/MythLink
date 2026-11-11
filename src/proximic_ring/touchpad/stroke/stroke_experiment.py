@@ -4,6 +4,8 @@ Reference labels are dictionary five-class stroke orders, not fine shape labels.
 Every retry stays in the denominator; manual input is never a recognition sample.
 """
 from collections import Counter
+import csv
+import json
 import time
 
 
@@ -103,3 +105,116 @@ class SentenceTrial:
                     contains_manual_strokes=bool(counts['manual_stroke']),
                     measurement='five-class dictionary order; local editor delivery; timing from Start',
                     events=self.events)
+
+
+class FreeWritingSession:
+    """Free-writing log with the SentenceTrial event interface but no target.
+
+    The clock starts at the first input. Strokes have no ground truth while
+    written; when a candidate is committed, the pending strokes are labelled
+    with the committed character's dictionary order. Those labels are inferred
+    from the user's choice and are kept apart from trial stroke accuracy.
+    """
+    IDLE_GAP_S = 10.
+
+    def __init__(self, entries, *, clock=time.monotonic):
+        self.codes = {}
+        for char, code, *_ in entries:
+            if code and char not in self.codes:
+                self.codes[char] = code
+        self.clock = clock
+        self.started = clock()
+        self.ended = None
+        self.events = []
+        self.actual = ''
+        self.pending = {}
+
+    @property
+    def active(self):
+        return self.ended is None
+
+    def event(self, kind, **values):
+        if not self.active:
+            return None
+        row = dict(kind=kind, elapsed_s=self.clock() - self.started, **values)
+        self.events.append(row)
+        if kind in ('manual_stroke', 'joined_contact_unscored') and 'stroke_index' in values:
+            self.pending[values['stroke_index']] = None  # This code position has no labellable trace.
+        return row
+
+    def stroke(self, position, stroke_index, result, recognition_ms=0):
+        row = self.event('stroke', position=position, stroke_index=stroke_index,
+                         recognized=result.get('category') if result else None,
+                         recognized_shape=result.get('shape') if result else None,
+                         recognition_ms=recognition_ms)
+        if row is not None and result:
+            self.pending[stroke_index] = row
+
+    def commit(self, position, character, delivered, *, source='candidate', code='', label=True):
+        self.event('commit', position=position, character=character, delivered=delivered,
+                   source=source, code=code)
+        reference = self.codes.get(character, '') if delivered and source == 'candidate' else ''
+        rows = [self.pending.get(i) for i in range(len(code))]
+        if label and reference and code and all(rows):
+            for index, row in enumerate(rows):
+                expected = reference[index] if index < len(reference) else None
+                row.update(label_character=character, label_expected=expected,
+                           label_correct=row['recognized'] == expected)
+        self.pending = {}
+
+    def finish(self, actual):
+        if self.active:
+            self.actual = actual
+            self.ended = self.clock()
+        return self.summary(actual)
+
+    def summary(self, actual):
+        elapsed = self.events[-1]['elapsed_s'] if self.events else 0.
+        times = [e['elapsed_s'] for e in self.events]
+        active = sum(min(b - a, self.IDLE_GAP_S) for a, b in zip(times, times[1:]))
+        strokes = [e for e in self.events if e['kind'] == 'stroke']
+        labelled = [e for e in strokes if e.get('label_expected') is not None]
+        commits = [e for e in self.events if e['kind'] == 'commit']
+        characters = [e for e in commits if e['delivered'] and e['source'] == 'candidate']
+        counts = Counter(e['kind'] for e in self.events)
+        tap_decisions = [e for e in self.events if e['kind'] == 'tap_confirmation']
+        ratio = lambda n, d: n / d if d else None
+        per_category = {}
+        for category in 'hspnz':
+            subset = [e for e in labelled if e['label_expected'] == category]
+            per_category[category] = dict(samples=len(subset), correct=sum(e['label_correct'] for e in subset),
+                                          accuracy=ratio(sum(e['label_correct'] for e in subset), len(subset)),
+                                          recognized=sum(e['recognized'] == category for e in strokes))
+        return dict(mode='free-writing', actual=actual, elapsed_s=elapsed, active_s=active,
+                    idle_gap_cap_s=self.IDLE_GAP_S,
+                    committed_characters=len(characters),
+                    characters_per_active_minute=len(characters) * 60 / active if active else 0.,
+                    commit_attempts=len(commits), delivered_commits=sum(e['delivered'] for e in commits),
+                    stroke_attempts=len(strokes), labelled_strokes=len(labelled),
+                    inferred_stroke_accuracy=ratio(sum(e['label_correct'] for e in labelled), len(labelled)),
+                    per_category=per_category,
+                    mean_recognition_ms=ratio(sum(e['recognition_ms'] for e in strokes), len(strokes)),
+                    counts=dict(counts),
+                    tap_confirmations_allowed=sum(e['allowed'] for e in tap_decisions),
+                    tap_confirmations_suppressed=sum(not e['allowed'] for e in tap_decisions),
+                    contains_manual_strokes=bool(counts['manual_stroke']),
+                    measurement='no target; clock from first input; labels inferred from committed '
+                                'candidate dictionary order; idle gaps capped for active time',
+                    events=self.events)
+
+
+REPORT_COLUMNS = ['kind', 'elapsed_s', 'position', 'character', 'stroke_index', 'expected',
+                  'recognized', 'recognized_shape', 'correct', 'recognition_ms', 'delivered', 'source', 'code',
+                  'allowed', 'reason', 'path_length', 'since_commit_ms', 'start_step', 'end_step', 'duration_ms',
+                  'level', 'policy', 'base_level', 'effective_level', 'boost', 'speed', 'fuzzy_matching',
+                  'elapsed_ms', 'response_ms', 'candidate_count', 'match_type', 'corrected_code', 'edits',
+                  'correction_summary', 'label_character', 'label_expected', 'label_correct']
+
+
+def write_report(path, report):
+    """Write a trial or free-writing report as JSON plus an event CSV."""
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    with path.with_suffix('.csv').open('w', newline='', encoding='utf-8-sig') as stream:
+        writer = csv.DictWriter(stream, fieldnames=REPORT_COLUMNS, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(report['events'])

@@ -69,7 +69,7 @@ private final class StrokeTraceView: NSView {
     }
 }
 
-/// Hold-to-select path, projected onto the menu cells exactly as the trial
+/// Two-finger selection path, projected onto the menu cells exactly as the trial
 /// window does (stroke_trial_trace.selection_point).
 private final class StrokeSelectionPathView: NSView {
     override var isFlipped: Bool { true }
@@ -241,12 +241,14 @@ final class StrokeCandidatePanel {
     static let hintHeight: CGFloat = 24
     static var gridSide: CGFloat { inset * 2 + cellSize * 3 + cellGap * 2 }
     static var menuSize: NSSize { NSSize(width: gridSide, height: gridSide + hintHeight) }
-    // Same order as stroke_menu.CANDIDATE_CELLS / PUNCTUATION_CELLS.
+    // Same order as stroke_menu.CANDIDATE_CELLS / PUNCTUATION_CELLS / ACTION_CELLS.
     static let candidateCells: [(String, Int, Int, String)] = [
-        ("center", 1, 1, "首选"), ("left", 1, 0, "←"), ("right", 1, 2, "→"),
+        ("center", 1, 1, "首选"), ("right", 1, 2, "→"),
         ("down-left", 2, 0, "↙"), ("down", 2, 1, "↓"), ("down-right", 2, 2, "↘")]
-    static let punctuationCells: [(String, Int, String, String, String)] = [
-        ("up-left", 0, "↖", "，", "逗号"), ("up", 1, "↑", "。", "句号"), ("up-right", 2, "↗", "？", "问号")]
+    // Fixed action cells: punctuation on top, two-finger-left delete.
+    static let punctuationCells: [(String, Int, Int, String, String, String)] = [
+        ("up-left", 0, 0, "↖", "，", "逗号"), ("up", 0, 1, "↑", "。", "句号"), ("up-right", 0, 2, "↗", "？", "问号"),
+        ("left", 1, 0, "←", "⌫", "删除")]
 
     var exitGestureLabel = "Touchpad 双击"
     private let panel: NSPanel
@@ -263,6 +265,7 @@ final class StrokeCandidatePanel {
     private var hasCandidates = false
     private var phase = "idle"
     private var progress = 0.0
+    private var selectionDirection = ""
     private(set) var placedAboveCaret = false
     var isVisible: Bool { showing && panel.isVisible }
     var needsPosition: Bool { showing && (anchor.needsCaret || !panel.isVisible) }
@@ -285,9 +288,9 @@ final class StrokeCandidatePanel {
         hint.textColor = .secondaryLabelColor
         hint.lineBreakMode = .byTruncatingTail
         hint.identifier = NSUserInterfaceItemIdentifier("strokeSelectionHint")
-        for (direction, column, arrow, symbol, title) in Self.punctuationCells {
+        for (direction, row, column, arrow, symbol, title) in Self.punctuationCells {
             let cell = StrokeMenuCell(direction: direction, arrow: arrow, rank: nil, symbol: symbol, title: title)
-            cell.frame = Self.cellFrame(row: 0, column: column)
+            cell.frame = Self.cellFrame(row: row, column: column)
             cells.append(cell)
         }
         for (index, (direction, row, column, arrow)) in Self.candidateCells.enumerated() {
@@ -317,7 +320,7 @@ final class StrokeCandidatePanel {
                width: cellSize, height: cellSize)
     }
 
-    /// Candidates of the current page (up to six); `selected` is the keyboard/swipe choice.
+    /// Candidates of the current page (up to five); `selected` is the keyboard/swipe choice.
     func update(code: String, candidates: [String], selected: Int, glyphs: [[String: String]] = []) {
         self.code = code
         hasCandidates = !candidates.isEmpty
@@ -332,10 +335,11 @@ final class StrokeCandidatePanel {
         showing = true
     }
 
-    /// Live hold-to-select feedback; phase is idle/writing/holding/selecting.
+    /// Live two-finger selection feedback; phase is idle/writing/holding/selecting.
     func selection(phase value: String, progress: Double, direction: String,
                    origin: [Double], points: [[Double]], selectDistance: Double) {
         phase = value
+        selectionDirection = direction
         self.progress = progress.isFinite ? min(100, max(0, progress)) : 0
         let selecting = value == "selecting"
         let target = selecting ? (direction.isEmpty ? "center" : direction) : ""
@@ -349,12 +353,14 @@ final class StrokeCandidatePanel {
 
     private func refreshHint() {
         switch phase {
-        case "selecting": hint.stringValue = "选字模式 · 抬手确认"
+        case "selecting":
+            hint.stringValue = selectionDirection == "left" ? "双指左滑 · 抬手删除"
+                : selectionDirection.isEmpty ? "双指滑向目标格子 · 原地抬手取消" : "双指选字 · 抬手确认"
         case "holding": hint.stringValue = "保持不动 · \(Int(progress.rounded()))%"
         case "writing": hint.stringValue = "书写中 · 抬手结束"
         default:
             hint.stringValue = !hasCandidates && code.isEmpty ? "笔画输入 · \(exitGestureLabel)退出"
-                : "停留 0.333 秒后滑向候选，抬手确认 · \(exitGestureLabel)退出"
+                : "双指滑向候选，抬手确认 · \(exitGestureLabel)退出"
         }
         hint.textColor = phase == "selecting" ? NSColor(hex: 0x234CDB) : .secondaryLabelColor
         hint.font = phase == "selecting" ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)

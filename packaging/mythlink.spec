@@ -30,6 +30,8 @@ datas += copy_metadata("transformers", recursive=True)
 datas += collect_data_files("ring_python_sdk", includes=["touchpad/assets/*"])
 if platform.system() == 'Darwin':
     datas += collect_data_files("ring_mac_sdk", includes=["assets/*", "licenses/*", "py.typed"])
+if platform.system() == 'Windows':
+    datas += collect_data_files("ring_windows_sdk", includes=["assets/*", "licenses/*", "py.typed"])
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
 datas += collect_data_files("funasr", includes=["version.txt"])
@@ -68,6 +70,9 @@ if platform.system() in {"Darwin", "Windows"}:
     hiddenimports += ["MNN", "_mnncengine"]
 if platform.system() == "Windows":
     binaries += collect_dynamic_libs("MNN")
+    binaries += collect_dynamic_libs("onnxruntime")
+    binaries += collect_dynamic_libs("ring_windows_sdk")
+    hiddenimports += ["ring_windows_sdk.model", "ring_python_sdk.touchpad.raw2_model", "onnxruntime"]
 hiddenimports += [
     "PySide6.QtWebEngineQuick",
     "PySide6.QtWebEngineCore",

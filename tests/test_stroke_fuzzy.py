@@ -21,8 +21,10 @@ def test_later_strokes_recover_an_earlier_alternative_without_rewriting_observat
     assert d.fuzzy_candidates([first])[0]['char'] == '小'
     assert not d.candidates('ss')
     rows = d.fuzzy_candidates([first, stroke_evidence('s')])
-    assert [row['char'] for row in rows] == ['你']
-    assert rows[0]['corrections'] == [0] and first['category'] == 's'
+    assert rows[0]['char'] == '你'
+    assert rows[0]['corrections'] == [0] and not rows[0]['far_corrections'] and first['category'] == 's'
+    # Anything else is only reachable through one far class, after the near repair.
+    assert all(row['far_corrections'] for row in rows[1:])
 
 
 def test_closest_trace_wins_when_priors_are_equal():
@@ -151,6 +153,9 @@ def test_diagonal_hook_can_rescue_dot_but_a_distant_hook_cannot_rescue_dot_input
     result = dict(shape='点', category_scores=[dict(category='n', distance=.001),
         dict(category='z', shape='竖弯', distance=.04)], shape_scores=[
         dict(category='z', shape='斜钩', distance=.12)])
+    # Unhooked 斜钩 reads as 捺 often, so a 0.119 gap is now within the hook limit.
+    assert stroke_evidence('n', result)['rescues'] == ['z']
+    result['shape_scores'][0]['distance'] = .2
     assert stroke_evidence('n', result)['rescues'] == []
     for distance in (float('nan'), float('inf'), -1.):
         result['shape_scores'][0]['distance'] = distance
@@ -192,8 +197,34 @@ def test_shape_specific_distance_is_used_when_unrelated_fold_is_closer(simple,sh
         dict(category='z',shape=shape,distance=.075)])
     evidence = stroke_evidence(simple,result)
     assert evidence['costs']['z'] == pytest.approx(1.+(.075-.005)/(.04+.005))
+    # Hook rescues (横/竖/捺 → z) allow twice the gap; 撇 keeps the original one.
     result['shape_scores'][0]['distance'] = .1
+    assert ('z' in stroke_evidence(simple,result)['costs']) == (simple != 'p')
+    result['shape_scores'][0]['distance'] = .2
     assert 'z' not in stroke_evidence(simple,result)['costs']
+
+
+@pytest.mark.parametrize('shape', ['斜钩', '卧钩'])
+def test_vertical_may_stand_for_an_unhooked_diagonal_hook_in_one_direction(shape):
+    result = dict(shape='竖', category_scores=[dict(category='s', distance=.005),
+        dict(category='z', shape='横折', distance=.3)], shape_scores=[
+        dict(category='z', shape=shape, distance=.12)])
+    evidence = stroke_evidence('s', result)
+    assert 'z' in evidence['rescues'] and evidence['costs']['z'] > 1.
+    # A z read as 斜钩/卧钩 is still not offered as 竖.
+    folded = dict(shape=shape, category_scores=[dict(category='z', shape=shape, distance=.003),
+        dict(category='s', distance=.045)])
+    assert 's' not in stroke_evidence('z', folded)['costs']
+
+
+def test_hook_gap_scales_with_strength_and_snapshot_records_it():
+    from proximic_ring.touchpad.stroke.stroke_fuzzy import FuzzyPolicy
+    result = dict(shape='横', category_scores=[dict(category='h', distance=.005),
+        dict(category='z', shape='横折', distance=.3)], shape_scores=[
+        dict(category='z', shape='横钩', distance=.125)])
+    assert 'z' in stroke_evidence('h', result, policy=FuzzyPolicy(50))['costs']
+    assert 'z' not in stroke_evidence('h', result, policy=FuzzyPolicy(0))['costs']
+    assert FuzzyPolicy().snapshot()['hookRescueGapLimit'] == pytest.approx(.16)
 
 
 def test_new_pairs_do_not_admit_arbitrary_fold_or_high_distance_inputs():
@@ -235,3 +266,22 @@ def test_dtw_short_tail_synthetic_traces_keep_fold_explanation(points,observed):
     evidence=stroke_evidence(observed,result)
     assert 'z' in evidence['costs']
     assert evidence['category']==observed
+
+
+def test_far_classes_are_continuous_bounded_and_start_at_the_second_stroke():
+    from proximic_ring.touchpad.stroke.stroke_fuzzy import FAR_POLICY, FuzzyPolicy, match_prefix
+    stroke = recognized(s=.001, p=.002, n=.2, h=.05, z=.4)
+    near, far = stroke['far']['h'], stroke['far']['z']
+    assert 'p' not in stroke['far'] and 's' not in stroke['far']   # near classes stay ordinary
+    assert FAR_POLICY['base'] <= near < far <= FAR_POLICY['base'] + FAR_POLICY['span']
+    short = stroke_evidence('s', dict(category_scores=stroke['recognition']['category_scores']),
+                            metrics=dict(length=20.))
+    assert short['far']['h'] < near
+    other = stroke_evidence('s', dict(category_scores=stroke['recognition']['category_scores']))
+    assert match_prefix('h', [stroke]) is None                          # one stroke: no far class
+    row = match_prefix('hs', [stroke, other])
+    assert row['far_corrections'] == row['replacement_corrections'] == [0] and row['cost'] == near
+    assert match_prefix('hh', [stroke, other]) is None                  # at most one far stroke
+    assert match_prefix('hs', [stroke, other], policy=FuzzyPolicy(10)) is None
+    assert 'far' not in stroke_evidence('s')                            # manual input stays locked
+    assert stroke_evidence('s', dict(shape='竖', distance=.001))['far'] == {}  # no scores, no far class

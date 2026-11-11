@@ -1,10 +1,20 @@
 """Win32 pointer output; loading or enabling the adapter never posts input."""
 from __future__ import annotations
 
+from collections import deque
 import ctypes
 import math
 import os
 import time
+
+# SendInput mouse flags.
+_LEFT = (0x0002, 0x0004)
+_RIGHT = (0x0008, 0x0010)
+_WHEEL = 0x0800
+# Raw2 scroll arrives in Quartz pixel units. One 120-unit notch scrolls three
+# lines by default (about 60 px), so 2 wheel units per pixel keeps the speed
+# close to macOS. Modern apps accept these high-resolution partial notches.
+WHEEL_UNITS_PER_PIXEL = 2.
 
 
 class _Point(ctypes.Structure):
@@ -60,9 +70,15 @@ class WindowsSystemMouse:
         self.clicks_enabled = True
         self.stop_on_escape = True
         self._fraction_x = self._fraction_y = 0.
+        self._scroll_remainder = 0.
+        self._scroll_stream = None
+        self._click_ids = deque(maxlen=256)
 
     def enable(self):
         self._fraction_x = self._fraction_y = 0.
+        self._scroll_remainder = 0.
+        self._scroll_stream = None
+        self._click_ids.clear()
         self.enabled = True
 
     def disable(self):
@@ -87,14 +103,34 @@ class WindowsSystemMouse:
             raise self._error('GetCursorPos')
         return point
 
-    def _click(self):
-        if not self.enabled or not self.clicks_enabled:
-            return
-        inputs = (_Input * 2)(
-            _Input(type=0, mi=_MouseInput(dwFlags=0x0002)),
-            _Input(type=0, mi=_MouseInput(dwFlags=0x0004)))
-        if self.user32.SendInput(2, inputs, ctypes.sizeof(_Input)) != 2:
+    def _send(self, *inputs):
+        array = (_Input * len(inputs))(*inputs)
+        if self.user32.SendInput(len(inputs), array, ctypes.sizeof(_Input)) != len(inputs):
             raise self._error('SendInput')
+
+    def _click(self, button='left'):
+        if not self.enabled or not self.clicks_enabled:
+            return False
+        down, up = _RIGHT if button == 'right' else _LEFT
+        self._send(_Input(type=0, mi=_MouseInput(dwFlags=down)),
+                   _Input(type=0, mi=_MouseInput(dwFlags=up)))
+        return True
+
+    def _scroll(self, event):
+        dy = float(event['dy'])
+        if not math.isfinite(dy):
+            raise ValueError('滚轮位移不是有限数值')
+        stream = event.get('stream')
+        if stream != self._scroll_stream:
+            self._scroll_remainder = 0.
+            self._scroll_stream = stream
+        self._scroll_remainder += dy*WHEEL_UNITS_PER_PIXEL
+        units = math.trunc(self._scroll_remainder)
+        self._scroll_remainder -= units
+        if not units:
+            return False
+        self._send(_Input(type=0, mi=_MouseInput(mouseData=units & 0xFFFFFFFF, dwFlags=_WHEEL)))
+        return True
 
     def double_click_target(self):
         self.check_health()
@@ -114,9 +150,18 @@ class WindowsSystemMouse:
             self.apply([dict(kind='click')])
 
     def apply(self, events):
+        """Post one batch. Raw2 entries may carry expiry, stream, button,
+        count and click_id; legacy entries are plain left clicks."""
         moves = 0
+        receipt = {}
+        if any(e['kind'] == 'scroll' for e in events):
+            receipt['scrolls'] = 0
+        if any(e['kind'] == 'click' and 'button' in e for e in events):
+            receipt.update(clicks_posted=0, down_posts=0, up_posts=0, reason='no_click_posted')
         if not self.enabled:
-            return dict(moves=moves)
+            if 'reason' in receipt:
+                receipt['reason'] = 'native_disabled'
+            return dict(moves=moves, **receipt)
         try:
             self.check_health()
             point = self._position()
@@ -127,6 +172,11 @@ class WindowsSystemMouse:
                 if not self.enabled:
                     break
                 self.check_health()
+                expires = event.get('expires_at')
+                if expires is not None and (not math.isfinite(expires) or time.monotonic() > expires):
+                    if 'button' in event:
+                        receipt['reason'] = 'native_expired'
+                    continue
                 if event['kind'] == 'move':
                     dx = float(event['dx'])*self.gain
                     dy = float(event['dy'])*self.gain*(-1 if self.invert_y else 1)
@@ -146,9 +196,36 @@ class WindowsSystemMouse:
                             moves += 1
                             # Windows can clamp again (ClipCursor/display gaps).
                             point = self._position()
-                elif event['kind'] == 'click' and self.clicks_enabled:
-                    self._click()
+                elif event['kind'] == 'scroll':
+                    receipt['scrolls'] += self._scroll(event)
+                elif event['kind'] == 'click' and 'button' not in event:
+                    if self.clicks_enabled:
+                        self._click()
+                elif event['kind'] == 'click':
+                    button, count = event['button'], event.get('count', 1)
+                    if button not in {'left', 'right'} or type(count) is not int or count not in {1, 2}:
+                        raise ValueError('无效鼠标按键或点击次数')
+                    if not self.clicks_enabled:
+                        receipt['reason'] = 'clicks_disabled'
+                        continue
+                    click_id = event.get('click_id')
+                    if click_id is not None:
+                        if click_id in self._click_ids:
+                            receipt['reason'] = 'duplicate_click'
+                            continue
+                        self._click_ids.append(click_id)
+                    # Windows pairs two quick clicks at one position into a
+                    # double click using the system double-click time.
+                    for _ in range(count):
+                        if not self.enabled or (expires is not None and time.monotonic() > expires):
+                            break
+                        if self._click(button):
+                            receipt['clicks_posted'] += 1
+                            receipt['down_posts'] += 1
+                            receipt['up_posts'] += 1
+                    if receipt['clicks_posted']:
+                        receipt['reason'] = 'posted'
         except Exception:
             self.disable()
             raise
-        return dict(moves=moves)
+        return dict(moves=moves, **receipt)

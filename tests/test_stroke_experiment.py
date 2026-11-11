@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from proximic_ring.touchpad.stroke.stroke_experiment import SentenceTrial, edit_distance
+from proximic_ring.touchpad.stroke.stroke_experiment import SentenceTrial, FreeWritingSession, edit_distance
 
 
 def test_retries_failed_delivery_extra_strokes_and_unsupported_labels():
@@ -123,6 +123,78 @@ def test_free_writing_without_target_then_start_clears_practice(tmp_path, monkey
         assert window.trial.active and window.trial.events == []
         assert not window.editor.text() and not window.code and not window.evidence
         assert window.editor.isReadOnly()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_free_session_labels_committed_strokes_and_caps_idle_time():
+    now = [0.]
+    session = FreeWritingSession([('十', 'hs'), ('土', 'hsh')], clock=lambda: now[0])
+    stroke = lambda index, category: session.stroke(0, index, dict(category=category), 2.)
+    stroke(0, 'h')
+    now[0] = 1.
+    stroke(1, 'p')
+    session.event('undo_stroke', code='hp')
+    stroke(1, 's')  # Rewritten position replaces the undone stroke.
+    session.commit(0, '十', True, code='hs')
+    now[0] = 100.  # A long pause counts only up to the idle cap.
+    stroke(0, 'h')
+    session.event('manual_stroke', category='s', stroke_index=1)
+    session.commit(1, '十', True, code='hs')  # Manual position: nothing is labelled.
+    report = session.finish('十十')
+    strokes = [e for e in report['events'] if e['kind'] == 'stroke']
+    assert [e.get('label_expected') for e in strokes] == ['h', None, 's', None]  # Undone stroke stays unlabelled.
+    assert report['labelled_strokes'] == 2 and report['committed_characters'] == 2
+    assert report['active_s'] == pytest.approx(1. + FreeWritingSession.IDLE_GAP_S)
+    assert report['contains_manual_strokes'] and report['mode'] == 'free-writing'
+
+
+def test_free_writing_records_after_connect_and_saves_on_close(tmp_path, monkeypatch):
+    from test_complete_stroke_input import load_window, prepare, trace, select_after_hold
+    app, window = load_window(tmp_path, monkeypatch)
+    try:
+        prepare(window)
+        window.accept_stroke(dict(points=trace(*([(0, 2)] * 30))))
+        assert window.free_session is None  # Not connected: nothing is armed.
+        window.clear()
+        window.free_armed = True
+        window.punctuate('，')
+        session = window.free_session
+        assert session is not None and session.events[0]['kind'] == 'commit'
+        window.accept_stroke(dict(points=trace(*([(0, 2)] * 30))))
+        select_after_hold(window, (0, 0))
+        window.save_free_session('autosave')
+        path = window.free_path
+        assert json.loads(path.read_text(encoding='utf-8'))['in_progress'] is True
+        window.close()
+        report = json.loads(path.read_text(encoding='utf-8'))
+        assert report['finish_reason'] == 'window_closed' and not report['in_progress']
+        assert report['committed_characters'] == 1 and report['stroke_attempts'] == 1
+        assert report['labelled_strokes'] == 1 and report['raw_log'] == str(window.log_path)
+        assert path.with_suffix('.csv').exists()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_starting_a_trial_closes_the_free_writing_report(tmp_path, monkeypatch):
+    from test_complete_stroke_input import load_window, prepare, trace
+    app, window = load_window(tmp_path, monkeypatch)
+    try:
+        prepare(window)
+        window.free_armed = True
+        window.accept_stroke(dict(points=trace(*([(0, 2)] * 30))))
+        path = window.free_path
+        window.target_input.setPlainText('小')
+        window.start_trial()
+        assert window.free_session is None
+        assert json.loads(path.read_text(encoding='utf-8'))['finish_reason'] == 'trial_started'
+        window.accept_stroke(dict(points=trace(*([(0, 2)] * 30))))
+        assert window.free_session is None and window.trial.events[-1]['kind'] == 'stroke'
+        window.finish_trial()
+        window.punctuate('。')  # Free writing after the trial opens a new report.
+        assert window.free_session is not None and window.free_path != path
     finally:
         window.close()
         app.processEvents()

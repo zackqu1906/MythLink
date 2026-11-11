@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, QSize, QObject, QEvent
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
                               QHBoxLayout, QGridLayout, QSizePolicy, QProgressBar, QScrollArea)
 from shiboken6 import delete
-from stroke_trial_menu import CANDIDATE_CELLS, PUNCTUATION_CELLS
+import stroke_trial_menu as trial_menu
 
 
 class SquareArea(QWidget):
@@ -204,7 +204,7 @@ def compact_layout(window):
     selection_card, selection = card()
     left.addWidget(selection_card, 1)
     selection_header = QHBoxLayout()
-    selection_header.addWidget(label('八向选字 · 笔画轨迹'))
+    selection_header.addWidget(label('双指八向选字 · 笔画轨迹' if trial_menu.TWO_FINGER else '八向选字 · 笔画轨迹'))
     window.selection_hint.setObjectName('directionHint')
     window.selection_hint.setMinimumWidth(0)
     window.selection_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -219,18 +219,24 @@ def compact_layout(window):
     for i in range(3):
         grid.setRowStretch(i, 1)
         grid.setColumnStretch(i, 1)
-    for index, (_, row, col, _) in enumerate(CANDIDATE_CELLS):
+    for index, (_, row, col, _) in enumerate(trial_menu.CANDIDATE_CELLS):
         candidate = window.buttons[index]
         candidate.setMinimumSize(0, 0)
         candidate.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         candidate.setObjectName('candidate')
         add(grid, candidate, row, col)
-    for direction, col, _, _, _ in PUNCTUATION_CELLS:
+    for direction, col, _, _, _ in trial_menu.PUNCTUATION_CELLS:
         punctuation = window.direction_buttons[direction]
         punctuation.setMinimumHeight(0)
         punctuation.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         punctuation.setObjectName('directionAction')
         add(grid, punctuation, 0, col)
+    for direction, row, col, *_ in trial_menu.ACTION_CELLS:
+        action = window.direction_buttons[direction]
+        action.setMinimumHeight(0)
+        action.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        action.setObjectName('deleteAction')
+        add(grid, action, row, col)
     window.selection_square = SquareArea(menu)
     window.selection_square.setMinimumSize(260, 260)
     selection.addWidget(window.selection_square, 1)
@@ -320,6 +326,10 @@ def compact_layout(window):
     side.addLayout(settings)
     add(side, window.joined_toggle)
     add(side, window.joined_status)
+    if hasattr(window, 'vector_toggle'):
+        add(side, window.vector_toggle)
+    if hasattr(window, 'fill_toggle'):
+        add(side, window.fill_toggle)
     strength_header = QHBoxLayout()
     window.fuzzy_strength_label.setMinimumWidth(0)
     window.fuzzy_strength_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -379,7 +389,9 @@ def compact_layout(window):
     examples.setWordWrap(True)
     examples.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     add(side, examples)
-    footer = label('选字：静止 0.333 秒（书写后也可停顿）→ 向目标滑动 → 抬手确认   ·   左→右退笔 / 删字   ·   三段往返清空笔画', 'muted')
+    footer = label('选字：双指滑向目标格子 → 抬手确认（原地抬手取消）   ·   双指左滑 / 单指左→右退笔、删字   ·   三段往返清空笔画'
+                   if trial_menu.TWO_FINGER else
+                   '选字：静止 0.333 秒（书写后也可停顿）→ 向目标滑动 → 抬手确认   ·   左→右退笔 / 删字   ·   三段往返清空笔画', 'muted')
     root.addWidget(footer)
     window.setStyleSheet('''
         QWidget { font-family:"Microsoft YaHei UI"; font-size:12px; color:#24334d; }
@@ -409,6 +421,8 @@ def compact_layout(window):
         QPushButton#candidate[directionActive="true"] { background:#edf2ff; border:2px solid #345ee5; }
         QPushButton#directionAction { font-size:20px; background:#edf2fb; border:1px solid #dce4f0; border-radius:10px; padding:4px; }
         QPushButton#directionAction[directionActive="true"] { background:#234cdb; color:white; border:2px solid #1739ac; }
+        QPushButton#deleteAction { font-size:20px; background:#fbeeee; border:1px solid #f0d6d6; border-radius:10px; padding:4px; }
+        QPushButton#deleteAction[directionActive="true"] { background:#dc2626; color:white; border:2px solid #a61b1b; }
         QFrame#selectionSquare { background:#f3f6fc; border:1px solid #dce4f0; border-radius:14px; }
         QScrollArea#statisticsScroll { background:transparent; border:none; }
         QScrollBar:vertical { background:#edf1f7; width:6px; margin:0; }

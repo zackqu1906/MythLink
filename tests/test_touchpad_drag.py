@@ -489,10 +489,15 @@ def test_native_idle_gate_releases_on_stop_or_parent_pipe_close():
         if write_fd is not None: os.close(write_fd)
 
 
-def sdk_engine(emit):
-    from ring_mac_sdk.interaction import Engine, Recognition
-    from ring_mac_sdk.types import TouchpadStatus
+def sdk_engine(emit, monkeypatch):
+    import sys
+    from ring_python_sdk import sdk_provider
+    from ring_python_sdk.touchpad import raw2
     from ring_python_sdk.touchpad.raw2 import Raw2Stream, StrokeTouchpad
+    # This platform's SDK; the tests supply their own source clock in seconds.
+    Engine, Recognition = sdk_provider.Engine, sys.modules[sdk_provider.Engine.__module__].Recognition
+    TouchpadStatus = sys.modules[sdk_provider.Click.__module__].TouchpadStatus
+    monkeypatch.setattr(raw2, 'host_seconds', lambda source_ns: source_ns/1e9)
     stream = Raw2Stream.__new__(Raw2Stream)
     stream.closed, stream.pointer, stream._key = False, emit, ('test', 0)
     stream.transport = None
@@ -504,10 +509,10 @@ def sdk_engine(emit):
     return Engine(receiver._event), Recognition, receiver
 
 
-def test_real_sdk_engine_contact_and_preview_reach_pointer_adapter():
+def test_real_sdk_engine_contact_and_preview_reach_pointer_adapter(monkeypatch):
     async def run():
         events = []
-        engine, Recognition, receiver = sdk_engine(events.append)
+        engine, Recognition, receiver = sdk_engine(events.append, monkeypatch)
         base = time.monotonic_ns()-190_000_000
         for frame in range(36):
             stamp = base + frame*5_000_000
@@ -537,7 +542,7 @@ def test_real_sdk_sequence_to_native_pointer(monkeypatch, scenario):
             value = worker._raw2_event(event, (0, 'closed'), trace)
             if value:
                 worker._apply([value])
-        engine, Recognition, receiver = sdk_engine(emit)
+        engine, Recognition, receiver = sdk_engine(emit, monkeypatch)
         base = int(now[0]*1e9)
         mouse.enable()
         try:

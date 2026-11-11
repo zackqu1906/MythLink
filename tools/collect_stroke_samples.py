@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gc
 from dataclasses import asdict
 from collections import Counter
 from datetime import datetime
@@ -82,12 +83,16 @@ class RingWorker(QThread):
     sdk_click = Signal(object)
     contact_samples = Signal(object)
     contact_reset = Signal()
+    # 'raw2' needs the provider SDK link and a touchpad firmware; it adds the
+    # per-frame single/two-finger tag that on_pointer receives.
+    protocol = 'legacy'
 
     def __init__(self, device, dictionary, synthetic=False, gestures=True):
         super().__init__()
         self.device, self.dictionary, self.synthetic = device, dictionary, synthetic
         self.gestures = gestures
         self.stop_requested = threading.Event()
+        self.output = None
 
     def stop(self):
         self.stop_requested.set()
@@ -108,6 +113,7 @@ class RingWorker(QThread):
             on_stroke=self.recognize, on_tap=self.tap.emit,
             on_stroke_details=lambda value: self.recognize(value['points'], value.get('kinematics')),
             on_trace=lambda points, finished: self.trace.emit(points))
+        self.output = output
         self.configure_output(output)
         output.collector = TraceMonitor(output.collector, self.contact_samples.emit,
                                         self.contact_reset.emit)
@@ -155,7 +161,8 @@ class RingWorker(QThread):
             self.status.emit('已断开，可再次连接测试')
 
     async def stream(self):
-        session = RingSession(self.device, 10.)
+        raw2 = self.protocol == 'raw2'
+        session = RingSession(self.device, 10., connection_backend='sdk' if raw2 else 'legacy')
         session.battery_poll_enabled = False
         session.auto_reconnect = False
         ended = threading.Event()
@@ -171,15 +178,29 @@ class RingWorker(QThread):
             if self.stop_requested.is_set():
                 return
             # Explicitly send OFF so previous clients cannot leave these channels on.
+            if raw2:
+                info = getattr(session._sdk_transport, 'device_info', None)
+                if info is not None and '.touchpad.' not in info.firmware_version:
+                    raise RuntimeError(f'固件 {info.firmware_version} 不支持 Raw2 双指；'
+                                       '请换配套触摸板固件的戒指，或加 --hold-select 用旧版停留选字')
             await send_mic_control(session.client, session.rx_uuid, on=False)
             await send_swipe_stop(session.client, session.rx_uuid)
+            if raw2:
+                # Raw2 fails the stream when a token waits >200 ms. A full GC over
+                # the loaded dictionaries/models (~600k objects) holds the GIL for
+                # ~200 ms on every thread, so move them out of collection first.
+                gc.collect()
+                gc.freeze()
             await session.touchpad_on(on_event=submit, on_stats=self.stats.emit,
-                                     on_stopped=lambda error: ended.set(), duration_s=None)
+                                     on_stopped=lambda error: ended.set(), duration_s=None,
+                                     protocol=self.protocol,
+                                     on_pointer_move=self.on_pointer if raw2 else None)
             await self.configure_touchpad(session.touchpad)
             if self.gestures:
                 await session.swipe_on(on_trigger=self.gesture.emit, print_events=False,
                                        print_triggers=False, print_profile=False)
-            self.status.emit('已连接 · 麦克风关闭 · 四向手势' + ('开启' if self.gestures else '关闭'))
+            self.status.emit('已连接 · 麦克风关闭 · 四向手势' + ('开启' if self.gestures else '关闭')
+                             + (' · Raw2 双指' if raw2 else ''))
             while not self.stop_requested.is_set() and not ended.is_set():
                 await asyncio.sleep(.05)
             if ended.is_set() and not self.stop_requested.is_set():
@@ -201,8 +222,16 @@ class RingWorker(QThread):
         """Optional instance-only diagnostics; invoked on the inference thread."""
 
     async def configure_touchpad(self, stream):
-        await asyncio.get_running_loop().run_in_executor(
-            stream.executor, self.configure_processor, stream.processor)
+        # Raw2 runs the provider engine; it has no local processor to instrument.
+        if getattr(stream, 'protocol', 'legacy') != 'raw2':
+            await asyncio.get_running_loop().run_in_executor(
+                stream.executor, self.configure_processor, stream.processor)
+
+    def on_pointer(self, event):
+        """Raw2 paced pointer feed (BLE loop): forward the two-finger frame tags."""
+        submit = getattr(self.output, 'submit_pointer', None)
+        if submit is not None and event.kind == 'move':
+            submit(event)
 
     def recognize(self, points, kinematics=None):
         started = time.monotonic()
@@ -535,6 +564,10 @@ class Window(QWidget):
         ink = capture_ink(value['points'])
         if ink is not None:
             self.evidence[-1]['ink'] = ink
+        from proximic_ring.touchpad.stroke.stroke_vectors import stroke_vector
+        vector = stroke_vector(value['points'])
+        if vector is not None:
+            self.evidence[-1]['vector'] = vector
         self.update_adaptive_status()
         self.selected = 0
         self.refresh()
@@ -605,12 +638,11 @@ class Window(QWidget):
 
     def refresh(self):
         self.update_adaptive_status()
-        self.matches = self.dictionary.fuzzy_candidates(self.evidence, predictor=self.predictor,
+        self.matches = self.dictionary.encoding_candidates(self.evidence, predictor=self.predictor,
             context=self.editor.text()[:self.editor.cursorPosition()] if not self.editor.hasSelectedText() else '',
-            allowed_characters=self.allowed_characters, policy=self.fuzzy_policy) \
-            if self.fuzzy_toggle.isChecked() else []
-        self.candidates = [item['char'] for item in self.matches] if self.fuzzy_toggle.isChecked() \
-            else self.dictionary.candidates(self.code, 30, allowed_characters=self.allowed_characters)
+            allowed_characters=self.allowed_characters, policy=self.fuzzy_policy,
+            fuzzy=self.fuzzy_toggle.isChecked())
+        self.candidates = [item['char'] for item in self.matches]
         self.selected = max(0, min(self.selected, len(self.candidates) - 1))
         offset = self.selected // 5 * 5
         corrected = {index for item in self.matches[:5] for index in item['corrections']}

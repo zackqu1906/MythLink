@@ -231,7 +231,7 @@ $SelfCheck = if ($SkipFunASR) {
 } else {
     "import sys, torch, torchaudio, PySide6, comtypes, cryptography, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; from ring_python_sdk.public_protocol import decode_adpcm; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); assert len(decode_adpcm(bytes.fromhex('000000000100'))) == 2; $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('TorchAudio:', torchaudio.__version__); print('PySide6:', PySide6.__version__); print('Ring SDK:', ring_python_sdk.__file__); print('Project:', proximic_ring.__file__); print('ADPCM decoder: ready'); print('Installation self-check passed.')"
 }
-$SelfCheck += "; import numpy as np; from ring_python_sdk.touchpad import TouchpadBackbone; result=TouchpadBackbone().step(np.zeros(6, dtype=np.float32)); assert result.shape == (5,3) and np.isfinite(result).all(); print('Touchpad model: ready')"
+$SelfCheck += "; import numpy as np; from ring_python_sdk.touchpad import TouchpadBackbone; result=TouchpadBackbone().step(np.zeros(6, dtype=np.float32)); assert result.shape == (5,3) and np.isfinite(result).all(); print('Touchpad model: ready'); from ring_python_sdk.touchpad.raw2_model import default_model_factory; factory=default_model_factory(); raw2=factory().step(np.zeros(8, dtype=np.float32)) if factory else None; assert raw2 is None or (raw2.shape == (2,4) and np.isfinite(raw2).all()); print('Raw2 touchpad model: ' + ('ready' if factory else 'not enabled'))"
 & $VenvPython -c $SelfCheck
 Assert-LastCommand "installation self-check"
 

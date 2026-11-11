@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import replace
 import struct
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -14,7 +15,8 @@ from ring_python_sdk.touchpad import TouchpadClick, TouchpadContact, TouchpadMov
 from ring_python_sdk.touchpad.events import Raw2PointerClick, Raw2PointerMove, Raw2Reset
 from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 from test_ring_mac_sdk_delivery import FakeClient, FakeModel, status, token
-from ring_mac_sdk import protocol as p
+from ring_python_sdk.sdk_provider import Engine, RingError, clock_ns, host_seconds
+from ring_python_sdk.sdk_provider import protocol as p
 
 
 async def until(predicate):
@@ -180,7 +182,6 @@ def test_unknown_sequence_gap_cleans_up_without_disconnecting_mic(monkeypatch, t
 
 @pytest.mark.parametrize('confirmed', [False, True])
 def test_stop_during_raw2_start_waits_for_stop_ack_on_shared_demux(monkeypatch, tmp_path, confirmed):
-    from ring_mac_sdk.errors import RingError
 
     async def run():
         session, client = await shared_session(monkeypatch, tmp_path)
@@ -245,7 +246,7 @@ def test_repeated_stop_does_not_cancel_delayed_cleanup_ack(monkeypatch, tmp_path
 
 
 def test_quiet_input_is_inspected_and_resumes_on_the_existing_session(monkeypatch, tmp_path, caplog):
-    from ring_mac_sdk.interaction import ContactTimes
+    ContactTimes = sys.modules[Engine.__module__].ContactTimes
     from test_public_sdk_integration import compact
 
     async def run():
@@ -288,12 +289,13 @@ def test_quiet_input_is_inspected_and_resumes_on_the_existing_session(monkeypatc
             boundary = receiver.output_after_ns
             contact = ContactTimes(boundary-1, boundary+1, 0, 1)
             fresh = ContactTimes(boundary+1, boundary+3, 2, 3)
-            emitted = time.monotonic_ns()
+            emitted = clock_ns()
             receiver._event('click', emitted, id=90, button='LEFT', contacts=(contact, fresh))
             receiver._event('click', emitted, id=91, button='LEFT', contacts=(fresh,))
             await until(lambda: any(getattr(e, 'click_id', None) == 91 for e in pointer))
             assert [e.click_id for e in pointer if e.kind == 'click'] == [91]
-            assert pointer[-1].timestamp == emitted/1e9
+            # Exact on macOS; Windows maps the SDK's perf_counter clock onto monotonic.
+            assert pointer[-1].timestamp == pytest.approx(host_seconds(emitted), abs=.05)
             client.callback(None, token(1, reset=False))
             await until(lambda: receiver.ordinal == 2)
             assert receiver.generation == 0
@@ -325,7 +327,6 @@ def test_known_local_loss_recovers_both_output_lanes(monkeypatch, tmp_path):
 
 
 def test_cancelled_native_call_fences_reconnect_until_the_worker_returns(monkeypatch, tmp_path):
-    from ring_mac_sdk.errors import RingError
     from ring_python_sdk.touchpad import raw2
     entered, release = threading.Event(), threading.Event()
     stream_class = raw2.Raw2Stream
@@ -365,7 +366,6 @@ def test_cancelled_native_call_fences_reconnect_until_the_worker_returns(monkeyp
 
 
 def test_busy_application_callback_fences_new_connection_until_it_returns(monkeypatch, tmp_path):
-    from ring_mac_sdk.errors import RingError
     from ring_python_sdk.touchpad.raw2 import Raw2Stream
     entered, release = threading.Event(), threading.Event()
     def slow_callback(event):

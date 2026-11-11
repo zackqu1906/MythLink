@@ -1,4 +1,4 @@
-"""Continuous local trial: DTW/fuzzy composition, deletion and hold selection."""
+"""Continuous local trial: DTW/fuzzy composition, deletion and two-finger (or hold) selection."""
 import argparse
 from pathlib import Path
 import sys
@@ -15,19 +15,19 @@ from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import (QApplication, QGridLayout, QHBoxLayout, QLabel, QPushButton,
                               QCheckBox, QPlainTextEdit, QProgressBar, QLineEdit)
-from proximic_ring.touchpad.stroke.stroke_experiment import SentenceTrial
+from proximic_ring.touchpad.stroke.stroke_experiment import SentenceTrial, FreeWritingSession, REPORT_COLUMNS, write_report
 from proximic_ring.touchpad.stroke.stroke_tap_guard import TapConfirmationGuard
 from proximic_ring.touchpad.stroke.stroke_display import TRIAL_TRACE_SCALE
 from collect_stroke_samples import Window as StrokeWindow, RingWorker as StrokeWorker
 from proximic_ring.touchpad.stroke.stroke_test_gestures import recognize, DELETE, CLEAR, DELETION_SOURCE
-from stroke_trial_menu import PAGE_SIZE, CANDIDATE_CELLS, PUNCTUATION_CELLS, TRIAL_SELECTION, trial_selection
-from stroke_trial_menu import trial_contact
+import stroke_trial_menu as trial_menu
 from stroke_trial_trace import TrialTraceView, SELECTION_DISPLAY
+from stroke_trial_status_log import StatusLogWindow
 from proximic_ring.touchpad.stroke.stroke_clear_review import snapshot as clear_review_snapshot
 from proximic_ring.touchpad.stroke.stroke_common import COMMON_CHARACTER_COUNT, common_characters, candidate_scope_snapshot
 from proximic_ring.touchpad.stroke.stroke_left_dots import annotation_snapshot as left_dot_snapshot
 from proximic_ring.touchpad.stroke.stroke_fuzzy import ADAPTIVE_SETTINGS
-from proximic_ring.touchpad.stroke.stroke_context import ranking_snapshot
+from proximic_ring.touchpad.stroke.stroke_context import StrokeContext, ranking_snapshot
 from stroke_trial_candidates import GlyphCandidateButton, DirectionActionButton, trial_candidate_visuals
 from stroke_trial_correction import TrialCorrection
 from proximic_ring.touchpad.stroke.stroke_word_correction import DEFAULT_CORRECTION_POLICY, merge_candidates
@@ -37,6 +37,13 @@ from stroke_trial_batch import CandidateBatch, BUDGET_MS
 from proximic_ring.touchpad.stroke.stroke_personal import PersonalStrokeModel, TextLearningHistory, profile_key, qt_text_index
 from stroke_contact_diagnostics import ContactDiagnostics, marker_value
 from proximic_ring.touchpad.stroke.stroke_joined import JoinedStrokeModel, merge_joined_candidates
+from proximic_ring.touchpad.stroke.stroke_vectors import StrokeVectorModel
+from proximic_ring.touchpad.stroke.stroke_tolerant import DEFAULT_TOLERANT_POLICY, fill_page, index_for
+
+FREE_AUTOSAVE_MS = 30000
+# Events caused by a contact or button press; anything else (model results,
+# candidate batches) is recorded only once the user has started writing.
+FREE_INPUT_KINDS = {'gesture', 'tap_confirmation', 'manual_stroke', 'delete_character', 'undo_stroke'}
 
 
 class RingWorker(StrokeWorker):
@@ -67,6 +74,11 @@ class RingWorker(StrokeWorker):
         if self.diagnostics is not None:
             self.diagnostics.observe_packets(stream)
 
+    @property
+    def protocol(self):
+        # Only Raw2 tags frames as two-finger; the hold menu keeps the legacy link.
+        return 'raw2' if trial_menu.TWO_FINGER else 'legacy'
+
     def configure_output(self, output):
         output.input_since = lambda: self.focus_since
         def send(kind, value):
@@ -77,7 +89,8 @@ class RingWorker(StrokeWorker):
         output.on_tap_contact = lambda value: send('tap', value)
         output.on_selection = lambda value: send('selection', value)
         output.on_selection_state = lambda value: send('selection_state', value)
-        output.contact_classifier = trial_contact
+        output.contact_classifier = trial_menu.trial_contact
+        output.two_finger_classifier = trial_menu.two_finger_selection
         output.on_contact_intent = lambda value: send('contact_intent', value)
         if self.diagnostics is not None:
             self.diagnostics.observe_collector(output.collector)
@@ -94,11 +107,15 @@ class Window(StrokeWindow):
 
     def __init__(self, device='Ringo6B72', *, common_only=True, llm_context=False,
                  writing_profile='默认', personal_learning=True, single_display=False,
-                 joined_model_path=None, joined_enabled=True):
+                 joined_model_path=None, joined_enabled=True, vectors_enabled=True, components_enabled=True,
+                 vector_scope='prefix', fill_enabled=True, context_model='wanxiang'):
         self._focus_since = None
         self._last_focus_since = 0.
         super().__init__(device, gestures=False, recognizer='dtw',
                          allowed_characters=common_characters() if common_only else None)
+        self.dictionary.components_enabled = components_enabled and self.dictionary.component_decoder is not None
+        self.record('component_encoding_settings', enabled=self.dictionary.components_enabled,
+                    model=self.dictionary.component_decoder.snapshot() if self.dictionary.component_decoder else {})
         self.joined_model = None
         self._trial_joined_ambiguous = False
         self.joined_error = ''
@@ -110,13 +127,34 @@ class Window(StrokeWindow):
         self.joined_toggle = QCheckBox('连笔适配（本地样本）')
         self.joined_toggle.setChecked(joined_enabled and self.joined_model is not None)
         self.joined_toggle.setEnabled(self.joined_model is not None)
-        self.joined_toggle.setToolTip('反、白／的、了／子、衤的连写；保留单笔解释，一次落笔整体撤回。')
+        self.joined_toggle.setToolTip('按厂形／斤、白、了／子、衤、走之底末两笔展开；走之第一点单独写。保留原笔画，一次落笔整体撤回；走之暂用部件参考轨迹，可补采个人样本。')
         self.joined_status = QLabel()
         self.joined_status.setWordWrap(True)
         self.joined_status.setObjectName('muted')
         self.joined_toggle.toggled.connect(self.set_joined_enabled)
         self.record('joined_stroke_settings', enabled=self.joined_toggle.isChecked(),
             model=self.joined_model.snapshot() if self.joined_model else None, error=self.joined_error)
+        if context_model != getattr(self.predictor, 'model', 'legacy'):
+            self.predictor = StrokeContext(model=context_model)
+        self.record('context_model_settings', model=self.predictor.model)
+        self.vector_model = StrokeVectorModel(scope=vector_scope)
+        self.vector_toggle = QCheckBox('按笔画长短／方向排序' if vector_scope == 'prefix' else '同码字按笔画长短／方向排序')
+        self.vector_toggle.setChecked(vectors_enabled)
+        self.vector_toggle.setToolTip(
+            '从第一笔起，所有候选（含未写完和纠错的字）都按已写各笔的起止向量与字形前几笔比较后计分；'
+            '只在同一优先级内调整，不使用笔间位置。' if vector_scope == 'prefix' else
+            '笔画编码完全相同的完整字（如土／士／工、人／八／入）按各笔起止向量与字形比较后重排；'
+            '不使用笔间位置，不改变其他候选。')
+        self.vector_toggle.toggled.connect(self.set_vectors_enabled)
+        page_word = '五六'[trial_menu.PAGE_SIZE - 5] if trial_menu.PAGE_SIZE in (5, 6) else str(trial_menu.PAGE_SIZE)
+        self.fill_toggle = QCheckBox(f'候选不足时补足{page_word}个')
+        self.fill_toggle.setChecked(fill_enabled)
+        self.fill_toggle.setToolTip(f'第一页不满{page_word}个时，按“错认、多写、漏写、换序”放宽匹配补位，仍不够再用联想和常用字补满；'
+                                    '补位字标“猜”，不改变原有候选顺序，选中后不参与个人学习。')
+        self.fill_toggle.toggled.connect(self.set_fill_enabled)
+        self.record('candidate_fill_settings', enabled=fill_enabled, policy=DEFAULT_TOLERANT_POLICY.snapshot())
+        self.dictionary.stroke_vectors = self.vector_model if vectors_enabled else None
+        self.record('stroke_vector_settings', enabled=vectors_enabled, model=self.vector_model.snapshot())
         self.writing_profile = writing_profile.strip()[:24] or '默认'
         self._initial_personal_learning = personal_learning
         if sys.platform == 'win32':
@@ -127,32 +165,40 @@ class Window(StrokeWindow):
                 if families: self.setFont(QFont(families[0], 10))
             kaishu = Path('C:/Windows/Fonts/simkai.ttf')
             if kaishu.is_file(): QFontDatabase.addApplicationFont(str(kaishu))
-        self.setWindowTitle('Ring 完整输入测试 · 触桌停留／八向选字')
+        self.setWindowTitle('Ring 完整输入测试 · ' + ('双指八向选字' if trial_menu.TWO_FINGER else '触桌停留／八向选字'))
         self.resize(850, 760)
         candidate_row = self.layout().takeAt(4)
         for button in self.buttons: button.hide()
         self._old_candidate_row = candidate_row
         menu = QGridLayout()
-        self.buttons = [None]*PAGE_SIZE
+        self.buttons = [None]*trial_menu.PAGE_SIZE
         self.direction_buttons = {}
         self.selection_state = dict(phase='idle', progress=0, direction=None)
-        self.arrows = [cell[3] for cell in CANDIDATE_CELLS]
-        for index, (direction, row, col, arrow) in enumerate(CANDIDATE_CELLS):
+        self.arrows = [cell[3] for cell in trial_menu.CANDIDATE_CELLS]
+        for index, (direction, row, col, arrow) in enumerate(trial_menu.CANDIDATE_CELLS):
             button = GlyphCandidateButton(self.arrows[index], index + 1)
             button.setMinimumHeight(48)
             button.setFocusPolicy(Qt.NoFocus)
-            button.clicked.connect(lambda checked=False, i=index: self.commit(self.selected//PAGE_SIZE*PAGE_SIZE+i))
+            button.clicked.connect(lambda checked=False, i=index: self.commit(self.selected//trial_menu.PAGE_SIZE*trial_menu.PAGE_SIZE+i))
             self.buttons[index] = button
             self.direction_buttons[direction] = button
             menu.addWidget(button, row, col)
-        for direction, col, arrow, symbol, title in PUNCTUATION_CELLS:
+        for direction, col, arrow, symbol, title in trial_menu.PUNCTUATION_CELLS:
             button = DirectionActionButton(arrow, symbol, title)
             button.setMinimumHeight(48)
             button.setFocusPolicy(Qt.NoFocus)
             button.clicked.connect(lambda checked=False, s=symbol: self.punctuate(s))
             self.direction_buttons[direction] = button
             menu.addWidget(button, 0, col)
-        self.selection_hint = QLabel('停留 0.333 秒进入选字')
+        for direction, row, col, arrow, symbol, title, action in trial_menu.ACTION_CELLS:
+            button = DirectionActionButton(arrow, symbol, title)
+            button.setMinimumHeight(48)
+            button.setFocusPolicy(Qt.NoFocus)
+            button.setObjectName('deleteAction')
+            button.clicked.connect(lambda checked=False: self.delete_one())
+            self.direction_buttons[direction] = button
+            menu.addWidget(button, row, col)
+        self.selection_hint = QLabel(self.idle_hint())
         self.selection_hint.setAlignment(Qt.AlignCenter)
         self.layout().insertLayout(4, menu)
         pages = QHBoxLayout()
@@ -160,7 +206,7 @@ class Window(StrokeWindow):
         self.common_toggle = QCheckBox(f'常用／通用字（{COMMON_CHARACTER_COUNT}）')
         self.common_toggle.setChecked(common_only)
         self.common_toggle.toggled.connect(self.set_common_only)
-        for title, shift in [('上一页', -PAGE_SIZE), ('下一页', PAGE_SIZE)]:
+        for title, shift in [('上一页', -trial_menu.PAGE_SIZE), ('下一页', trial_menu.PAGE_SIZE)]:
             button = QPushButton(title)
             button.setFocusPolicy(Qt.NoFocus)
             if shift > 0:
@@ -170,7 +216,7 @@ class Window(StrokeWindow):
             else:
                 self.previous_page_button = button
                 button.setObjectName('trialPreviousPage')
-                button.clicked.connect(lambda checked=False: self.page(-PAGE_SIZE))
+                button.clicked.connect(lambda checked=False: self.page(-trial_menu.PAGE_SIZE))
             pages.addWidget(button)
         pages.addWidget(self.common_toggle)
         pages.addWidget(self.page_label)
@@ -195,9 +241,11 @@ class Window(StrokeWindow):
                     if isinstance(widget, QPushButton) and widget.text().startswith('标记：'): widget.hide()
             widget = item.widget()
             if isinstance(widget, QLabel) and widget.text().startswith('轻触确认候选；'):
-                widget.setText('左→右退一笔（不抬手，尽量沿原方向返回）；单独左滑按笔画识别\n笔序为空时删正文一字 · 往返≥3段清空笔画 · 轻触选第1候选')
+                widget.setText('双指滑向格子选字 · 双指左滑退一笔（笔序为空时删正文一字）· 原地抬手取消\n'
+                               '单指左→右也可退一笔 · 往返≥3段清空笔画 · 轻触选第1候选' if trial_menu.TWO_FINGER else
+                               '左→右退一笔（不抬手，尽量沿原方向返回）；单独左滑按笔画识别\n笔序为空时删正文一字 · 往返≥3段清空笔画 · 轻触选第1候选')
         self.editor.textChanged.connect(self.refresh)
-        self.record('complete_trial', selection=TRIAL_SELECTION, deletion=DELETE, clear=CLEAR,
+        self.record('complete_trial', selection=trial_menu.TRIAL_SELECTION, deletion=DELETE, clear=CLEAR,
                     context_ranking=ranking_snapshot(),
                     fuzzy_policy=self.fuzzy_policy.snapshot(),
                     clearReview=clear_review_snapshot(),
@@ -251,6 +299,9 @@ class Window(StrokeWindow):
     def record(self, kind, **values):
         values.setdefault('monotonic', time.monotonic())
         super().record(kind, **values)
+        status_log = getattr(self, 'status_log', None)
+        if status_log is not None:
+            status_log.add(kind, values)
         diagnostics = getattr(self, 'contact_diagnostics', None)
         if diagnostics is not None and kind in {
                 'input_focus', 'contact_intent', 'contact_intent_state', 'tap_confirmation',
@@ -360,6 +411,12 @@ class Window(StrokeWindow):
     def setup_experiment(self):
         self.trial = None
         self.report_path = None
+        self.free_session = None
+        self.free_path = None
+        self.free_armed = False
+        self.free_autosave = QTimer(self)
+        self.free_autosave.timeout.connect(lambda: self.save_free_session('autosave'))
+        self.free_autosave.start(FREE_AUTOSAVE_MS)
         self.target_input = QPlainTextEdit('今天我用戒指输入一句话。')
         self.target_input.setPlaceholderText('粘贴或输入待测试文本（换行会转为空格）')
         self.target_input.setMaximumHeight(75)
@@ -495,6 +552,7 @@ class Window(StrokeWindow):
         if not target:
             self.trial_hint.setText('请先输入待测试文本。')
             return
+        self.save_free_session('trial_started', finish=True)
         self.trial = None
         self._trial_joined_ambiguous = False
         self.language.reset()
@@ -519,6 +577,8 @@ class Window(StrokeWindow):
         self.llm_toggle.setEnabled(False)
         self.once_toggle.setEnabled(False)
         self.joined_toggle.setEnabled(False)
+        self.vector_toggle.setEnabled(False)
+        self.fill_toggle.setEnabled(False)
         self.start_trial_button.setEnabled(False)
         self.finish_trial_button.setEnabled(True)
         self.record('sentence_trial_start', target=target,
@@ -602,22 +662,56 @@ class Window(StrokeWindow):
             return
         report = trial.finish(self.editor.text())
         report['finish_reason'] = reason if isinstance(reason, str) else 'manual'
+        report['fuzzy_policy_initial'] = self.trial_initial_fuzzy_policy
+        report['personal_model_initial'] = self.trial_initial_personal_model
+        self.add_report_settings(report)
+        self.record('sentence_trial_end', summary=report)
+        self.log.flush()
+        self.report_path = self.log_path.with_name(self.log_path.stem + f'-trial-{time.time_ns()}.json')
+        write_report(self.report_path, report)
+        self.target_input.setEnabled(True)
+        self.personal_toggle.setEnabled(True)
+        self.personal_profile.setEnabled(True)
+        self.common_toggle.setEnabled(True)
+        self.fuzzy_toggle.setEnabled(True)
+        self.correction_toggle.setEnabled(True)
+        self.llm_toggle.setEnabled(not self.once_toggle.isChecked())
+        self.once_toggle.setEnabled(True)
+        self.joined_toggle.setEnabled(self.joined_model is not None)
+        self.vector_toggle.setEnabled(True)
+        self.fill_toggle.setEnabled(True)
+        self.start_trial_button.setEnabled(True)
+        self.start_trial_button.setText('重新开始实验')
+        self.finish_trial_button.setEnabled(False)
+        self.tap_guard_toggle.setEnabled(True)
+        self.editor.setReadOnly(False)
+        self.editor.setPlaceholderText('可继续自由书写、选字；重新开始实验后清空并计时')
+        self.update_trial()
+        self.trial_hint.setText(('完成' if report['completed'] else '已结束（未完成）') +
+                               f' · 报告：{self.report_path}\n可继续自由书写；本轮统计和报告已冻结。' +
+                               (' 本轮含手动笔画，请勿作为纯戒指实验数据。' if report['contains_manual_strokes'] else ''))
+
+    def add_report_settings(self, report):
         report['common_only'] = self.common_toggle.isChecked()
         report['fuzzy_matching'] = self.fuzzy_toggle.isChecked()
         report['fuzzy_policy'] = self.fuzzy_policy.snapshot()
-        report['fuzzy_policy_initial'] = self.trial_initial_fuzzy_policy
         report['adaptive_fuzzy_policy'] = dict(ADAPTIVE_SETTINGS)
         report['left_dot_policy'] = dict(left_dot_snapshot(), cost=self.fuzzy_policy.left_dot_cost)
         report['recognizer'] = self.recognizer
         report['context_ranking'] = ranking_snapshot()
+        report['context_model'] = getattr(self.predictor, 'model', 'legacy')
         report['personal_learning'] = self.personal_toggle.isChecked()
         report['writing_profile'] = self.writing_profile
-        report['personal_model_initial'] = self.trial_initial_personal_model
         report['personal_model_final'] = self.personal_model.snapshot()
         report['whole_correction_enabled'] = self.correction_toggle.isChecked()
         report['llm_context_enabled'] = self.llm_toggle.isChecked()
         report['single_display_enabled'] = self.once_toggle.isChecked()
         report['joined_stroke_enabled'] = self.joined_toggle.isChecked()
+        report['stroke_vector_enabled'] = self.vector_toggle.isChecked()
+        report['stroke_vector_model'] = self.vector_model.snapshot()
+        report['candidate_fill_enabled'] = self.fill_toggle.isChecked()
+        report['component_encoding'] = dict(enabled=self.dictionary.components_enabled,
+            model=self.dictionary.component_decoder.snapshot() if self.dictionary.component_decoder else {})
         report['joined_stroke_model'] = self.joined_model.snapshot() if self.joined_model else None
         report['joined_contacts_unscored'] = sum(e['kind'] == 'joined_contact_unscored' for e in report['events'])
         report['single_display_budget_ms'] = BUDGET_MS
@@ -640,56 +734,80 @@ class Window(StrokeWindow):
         report['trace_display']['selection'] = dict(SELECTION_DISPLAY)
         report['tap_guard_enabled'] = self.tap_guard_toggle.isChecked()
         report['tap_guard_policy'] = self.tap_guard.snapshot()
-        report['selection_policy'] = dict(TRIAL_SELECTION)
+        report['selection_policy'] = dict(trial_menu.TRIAL_SELECTION)
         report['raw_log'] = str(self.log_path)
-        self.record('sentence_trial_end', summary=report)
-        self.log.flush()
-        self.report_path = self.log_path.with_name(self.log_path.stem + f'-trial-{time.time_ns()}.json')
-        self.report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-        with self.report_path.with_suffix('.csv').open('w', newline='', encoding='utf-8-sig') as stream:
-            columns = ['kind', 'elapsed_s', 'position', 'character', 'stroke_index', 'expected',
-                       'recognized', 'recognized_shape', 'correct', 'recognition_ms', 'delivered', 'source', 'code',
-                       'allowed', 'reason', 'path_length', 'since_commit_ms', 'start_step', 'end_step', 'duration_ms',
-                       'level', 'policy', 'base_level', 'effective_level', 'boost', 'speed', 'fuzzy_matching']
-            columns += ['elapsed_ms', 'response_ms', 'candidate_count', 'match_type', 'corrected_code', 'edits', 'correction_summary']
-            writer = csv.DictWriter(stream, fieldnames=columns, extrasaction='ignore')
-            writer.writeheader()
-            writer.writerows(report['events'])
-        self.target_input.setEnabled(True)
-        self.personal_toggle.setEnabled(True)
-        self.personal_profile.setEnabled(True)
-        self.common_toggle.setEnabled(True)
-        self.fuzzy_toggle.setEnabled(True)
-        self.correction_toggle.setEnabled(True)
-        self.llm_toggle.setEnabled(not self.once_toggle.isChecked())
-        self.once_toggle.setEnabled(True)
-        self.joined_toggle.setEnabled(self.joined_model is not None)
-        self.start_trial_button.setEnabled(True)
-        self.start_trial_button.setText('重新开始实验')
-        self.finish_trial_button.setEnabled(False)
-        self.tap_guard_toggle.setEnabled(True)
-        self.editor.setReadOnly(False)
-        self.editor.setPlaceholderText('可继续自由书写、选字；重新开始实验后清空并计时')
-        self.update_trial()
-        self.trial_hint.setText(('完成' if report['completed'] else '已结束（未完成）') +
-                               f' · 报告：{self.report_path}\n可继续自由书写；本轮统计和报告已冻结。' +
-                               (' 本轮含手动笔画，请勿作为纯戒指实验数据。' if report['contains_manual_strokes'] else ''))
+
+    def recording(self, *, start=False):
+        """The active sentence trial, else the free-writing session.
+
+        Free writing is armed while the ring is connected and opens on the
+        first input, so idle connected time is not logged as writing.
+        """
+        trial = getattr(self, 'trial', None)
+        if trial is not None and trial.active:
+            return trial
+        if getattr(self, 'free_session', None) is None and start and getattr(self, 'free_armed', False):
+            self.free_session = FreeWritingSession(self.dictionary.entries)
+            self.free_path = self.log_path.with_name(self.log_path.stem + f'-free-{time.time_ns()}.json')
+            self.free_initial_fuzzy_policy = self.fuzzy_policy.snapshot()
+            self.free_initial_personal_model = self.personal_model.snapshot()
+            self.free_saved_events = 0
+            self.record('free_writing_start', path=str(self.free_path), text_before=self.editor.text())
+        return getattr(self, 'free_session', None)
+
+    def save_free_session(self, reason, *, finish=False):
+        """Write the free-writing report; finishing closes it for the next input."""
+        session = getattr(self, 'free_session', None)
+        if session is None or (not finish and len(session.events) == self.free_saved_events):
+            return
+        report = session.finish(self.editor.text()) if finish else session.summary(self.editor.text())
+        report['finish_reason'] = reason
+        report['in_progress'] = not finish
+        report['fuzzy_policy_initial'] = self.free_initial_fuzzy_policy
+        report['personal_model_initial'] = self.free_initial_personal_model
+        self.add_report_settings(report)
+        try:
+            write_report(self.free_path, report)
+        except OSError as exc:
+            self.record('free_writing_save_failed', path=str(self.free_path), error=str(exc))
+            return
+        self.free_saved_events = len(session.events)
+        if finish:
+            self.record('free_writing_end', path=str(self.free_path), reason=reason,
+                        summary={k: v for k, v in report.items() if k != 'events'})
+            self.free_session = None
+            self.show_free_status(saved=self.free_path)
+
+    def show_free_status(self, saved=None):
+        trial = getattr(self, 'trial', None)
+        if trial is not None and trial.active:
+            return
+        session = getattr(self, 'free_session', None)
+        if session is not None:
+            summary = session.summary(self.editor.text())
+            self.trial_hint.setText(f"自由书写记录中 · {summary['stroke_attempts']} 笔 / "
+                                    f"{summary['committed_characters']} 字 · 断开戒指或关闭程序时自动保存")
+        elif saved is not None:
+            self.trial_hint.setText(f'自由书写记录已保存：{saved.name}')
+        else:
+            return
+        self.trial_hint.setToolTip(str(saved or self.free_path))
 
     def trial_event(self, kind, **values):
-        trial = getattr(self, 'trial', None)
-        if trial is not None:
-            trial.event(kind, **values)
+        session = self.recording(start=kind in FREE_INPUT_KINDS)
+        if session is not None:
+            session.event(kind, **values)
 
     def commit(self, index):
         if self.batch_loading():
             return
-        trial = getattr(self, 'trial', None)
+        session = self.recording(start=True)
         position = len(self.editor.text())
         before = self.editor.text()
         character = self.candidates[index] if 0 <= index < len(self.candidates) else None
         phrase = getattr(self, 'llm_hints', {}).get(character)
         repair = next((row for row in self.matches if row['char'] == character and
-                       row.get('match_type') == 'whole_character'), None)
+                       row.get('match_type') in ('whole_character', 'tolerant')), None)
         code = self.code
         evidence = list(self.evidence)
         joined_match = next((row for row in self.matches if row['char'] == character and row.get('match_type') == 'joined_stroke'), None)
@@ -709,14 +827,25 @@ class Window(StrokeWindow):
                 detail = dict(profile=self.writing_profile, model=self.personal_model.snapshot())
                 self.record('personal_learning', **detail)
                 self.trial_event('personal_learning', **detail)
-        if trial is not None:
-            trial.commit(position, character, character is not None and self.editor.text() == before + character, code=code)
+        if isinstance(session, FreeWritingSession):
+            session.commit(position, character, character is not None and self.editor.text() == before + character,
+                           code=code, label=not repair and not joined_match)
+        elif session is not None:
+            session.commit(position, character, character is not None and self.editor.text() == before + character, code=code)
         if phrase:
             detail = dict(character=character, phrase=phrase, code=code,
                           delivered=self.editor.text() == before + character)
             self.record('llm_context_commit', **detail)
             self.trial_event('llm_context_commit', **detail)
-        if repair:
+        if repair and repair['match_type'] == 'tolerant':
+            # Page-filling guesses are logged apart from whole-character repairs.
+            detail = dict(character=character, code=code, guessed_code=repair.get('code', ''),
+                level=repair['tolerant_level'], prefix_length=repair.get('prefix_length'),
+                edits=repair.get('edits', []), cost=repair.get('cost'),
+                delivered=self.editor.text() == before + character)
+            self.record('candidate_fill_commit', **detail)
+            self.trial_event('candidate_fill_commit', **detail)
+        elif repair:
             detail = dict(character=character, code=code, corrected_code=repair['code'],
                 match_type=repair['match_type'], edits=repair['edits'],
                 correction_summary=repair['correction_summary'],
@@ -732,6 +861,7 @@ class Window(StrokeWindow):
         if character is not None and self.editor.text() == before + character:
             self.tap_guard.committed(getattr(self, '_commit_contact', None))
         self.check_trial_complete()
+        self.show_free_status()
 
     def check_trial_complete(self):
         self.update_trial() if hasattr(self, 'trial') else None
@@ -754,6 +884,7 @@ class Window(StrokeWindow):
         self.closing = True
         self.update_input_focus()
         self.finish_trial('window_closed')
+        self.save_free_session('window_closed', finish=True)
         if hasattr(self, 'correction'):
             self.correction.close()
         if hasattr(self, 'language'):
@@ -834,13 +965,30 @@ class Window(StrokeWindow):
                                  if generation == self.language.generation else 0)
             self.llm_status.setText(self.language.status)
             self.llm_status.setToolTip(self.language.status + '\n' + '、'.join(phrases))
+        self.fill_candidates()
         if hasattr(self, 'arrows'):
             self.render_candidates()
+
+    def fill_candidates(self):
+        # Strict mode stays a pure code lookup for comparison.
+        if (not hasattr(self, 'fill_toggle') or not self.fill_toggle.isChecked() or not self.code
+                or not self.fuzzy_toggle.isChecked()):
+            return
+        context = '' if self.editor.hasSelectedText() else self.editor.text()[:self.editor.cursorPosition()]
+        self.candidates, self.matches = fill_page(self.candidates, self.matches,
+            index=index_for(self.dictionary, self.allowed_characters), evidence=self.evidence,
+            predictor=self.predictor, context=context, allowed=self.allowed_characters,
+            priors=self.dictionary._fuzzy_priors, page_size=trial_menu.PAGE_SIZE)
+
+    def set_fill_enabled(self, enabled):
+        self.selected = 0
+        self.refresh()
+        self.record('candidate_fill_settings', enabled=enabled, policy=DEFAULT_TOLERANT_POLICY.snapshot())
 
     def render_candidates(self):
         if hasattr(self, 'arrows'):
             self.update_joined_status()
-            offset = self.selected//PAGE_SIZE*PAGE_SIZE
+            offset = self.selected//trial_menu.PAGE_SIZE*trial_menu.PAGE_SIZE
             visuals = trial_candidate_visuals(self)
             for index, button in enumerate(self.buttons):
                 absolute = offset+index
@@ -848,9 +996,9 @@ class Window(StrokeWindow):
                 button.set_loading(self.batch_loading())
                 button.setEnabled(absolute < len(self.candidates))
             self.page_label.setText('无常用字匹配' if self.code and not self.candidates and self.allowed_characters is not None
-                                   else f'第 {offset//PAGE_SIZE+1} / {max(1,(len(self.candidates)+PAGE_SIZE-1)//PAGE_SIZE)} 页')
+                                   else f'第 {offset//trial_menu.PAGE_SIZE+1} / {max(1,(len(self.candidates)+trial_menu.PAGE_SIZE-1)//trial_menu.PAGE_SIZE)} 页')
             self.previous_page_button.setEnabled(offset > 0)
-            self.next_page_button.setEnabled(len(self.candidates) > PAGE_SIZE)
+            self.next_page_button.setEnabled(len(self.candidates) > trial_menu.PAGE_SIZE)
             self.show_selection_state(self.selection_state)
 
     def batch_loading(self):
@@ -883,11 +1031,13 @@ class Window(StrokeWindow):
         # Ink and confidence can change even when the recognized code is equal.
         key = (self.code, json.dumps(self.evidence, sort_keys=True), context,
                id(self.dictionary), id(self.predictor), self.fuzzy_toggle.isChecked(),
-               self.fuzzy_policy.level, allowed, self.correction_toggle.isChecked(), self.joined_toggle.isChecked())
+               self.fuzzy_policy.level, allowed, self.correction_toggle.isChecked(), self.joined_toggle.isChecked(),
+               self.vector_toggle.isChecked(), self.fill_toggle.isChecked())
         self.batch.update(key, dict(code=self.code, evidence=self.evidence, context=context,
             dictionary=self.dictionary, predictor=self.predictor, allowed=allowed,
             fuzzy=self.fuzzy_toggle.isChecked(), policy=self.fuzzy_policy,
-            correction=self.correction_toggle.isChecked(), joined_enabled=self.joined_toggle.isChecked(), joined_model=self.joined_model))
+            correction=self.correction_toggle.isChecked(), joined_enabled=self.joined_toggle.isChecked(), joined_model=self.joined_model,
+            fill=self.fill_toggle.isChecked()))
         snapshot = self.batch.result
         self.candidates = list(snapshot['chars']) if snapshot else []
         self.matches = list(snapshot['rows']) if snapshot else []
@@ -966,11 +1116,14 @@ class Window(StrokeWindow):
         self.selection_state = state
         self.trace_view.set_selection_state(state)
         phase, direction = state['phase'], state.get('direction')
+        two_finger = state.get('source') == 'two-finger'
         self.selection_hint.setText(
+            ('双指左滑 · 抬手删除' if direction == 'left' else
+             '双指选字 · 抬手确认' if direction else '双指滑向目标格子 · 原地抬手取消') if two_finger else
             '选字模式 · 抬手确认' if phase == 'selecting' else
             f"保持不动 · {int(state['progress'])}%" if phase == 'holding' else
             '书写中 · 抬手结束' if phase == 'writing' else
-            '停留 0.333 秒进入选字')
+            self.idle_hint())
         if self.worker is not None and self._focus_since is None:
             self.selection_hint.setText('窗口未聚焦 · 戒指输入已暂停')
         elif self.batch_loading():
@@ -987,16 +1140,20 @@ class Window(StrokeWindow):
                 button.style().polish(button)
                 button.update()
 
+    @staticmethod
+    def idle_hint():
+        return '双指滑向格子选字 · 双指左滑删除' if trial_menu.TWO_FINGER else '停留 0.333 秒进入选字'
+
     def next_candidate_page(self):
-        if len(self.candidates) <= PAGE_SIZE:
+        if len(self.candidates) <= trial_menu.PAGE_SIZE:
             self.result.setText('只有一页候选，当前笔画已保留')
             return
-        self.selected = ((self.selected//PAGE_SIZE+1)*PAGE_SIZE) % (((len(self.candidates)+PAGE_SIZE-1)//PAGE_SIZE)*PAGE_SIZE)
+        self.selected = ((self.selected//trial_menu.PAGE_SIZE+1)*trial_menu.PAGE_SIZE) % (((len(self.candidates)+trial_menu.PAGE_SIZE-1)//trial_menu.PAGE_SIZE)*trial_menu.PAGE_SIZE)
         self.refresh()
-        self.result.setText('已翻页；触桌停留后继续选字')
+        self.result.setText('已翻页；双指滑动继续选字' if trial_menu.TWO_FINGER else '已翻页；触桌停留后继续选字')
 
     def accept_selection(self, value):
-        decision = trial_selection(value['decision'])
+        decision = trial_menu.trial_selection(value['decision'])
         blocked = self.batch_loading() or getattr(self, '_batch_contact', False)
         self._batch_contact = False
         self.record('hold_selection', **dict(value, decision=decision), source_decision=value['decision'], code=self.code)
@@ -1013,6 +1170,8 @@ class Window(StrokeWindow):
             self._commit_contact = None
 
     def disconnected(self):
+        self.free_armed = False
+        self.save_free_session('disconnected', finish=True)
         diagnostics = self.contact_diagnostics
         if diagnostics is not None:
             self.record('contact_diagnostics_end', path=str(diagnostics.path),
@@ -1063,6 +1222,7 @@ class Window(StrokeWindow):
         self.worker.finished.connect(self.disconnected)
         self.device.setEnabled(False)
         self.connect_button.setText('停止并断开')
+        self.free_armed = True
         self.worker.start()
 
     def show_stats(self, value):
@@ -1086,7 +1246,7 @@ class Window(StrokeWindow):
         contact = contact or {}
         decision = self.tap_guard.decide(contact, enabled=self.tap_guard_toggle.isChecked())
         self.record('tap_confirmation', **decision, points=contact.get('points', []), code=self.code,
-                    candidate=self.candidates[self.selected//PAGE_SIZE*PAGE_SIZE] if self.candidates else None)
+                    candidate=self.candidates[self.selected//trial_menu.PAGE_SIZE*trial_menu.PAGE_SIZE] if self.candidates else None)
         self.trial_event('tap_confirmation', **decision)
         if not decision['allowed']:
             self.trace_view.show_trace(contact.get('points') or [])
@@ -1094,7 +1254,8 @@ class Window(StrokeWindow):
                        if decision['reason'] == 'moving-contact' else
                        '刚刚已出字，本次连续点击未确认；请稍后轻触或用方向选字。'
                        if decision['reason'] == 'commit-cooldown' else
-                       '本次动作未能确定为点击，未选字；请重新轻触或停留选字。'
+                       ('本次动作未能确定为点击，未选字；请重新轻触或双指选字。' if trial_menu.TWO_FINGER else
+                        '本次动作未能确定为点击，未选字；请重新轻触或停留选字。')
                        if decision['reason'] == 'uncertain-motion' else '接触轨迹不完整或无效，未选字；当前笔序保留。')
             self.tap_guard_status.setText(message)
             self.tap_guard_status.setToolTip(message)
@@ -1104,7 +1265,7 @@ class Window(StrokeWindow):
         self.trace_view.show_trace([])
         self._commit_contact = contact
         try:
-            self.commit(self.selected//PAGE_SIZE*PAGE_SIZE)
+            self.commit(self.selected//trial_menu.PAGE_SIZE*trial_menu.PAGE_SIZE)
         finally:
             self._commit_contact = None
 
@@ -1126,11 +1287,11 @@ class Window(StrokeWindow):
             return
         action = decision['action']
         if action == 'select':
-            index = self.selected//PAGE_SIZE*PAGE_SIZE+decision['target']
+            index = self.selected//trial_menu.PAGE_SIZE*trial_menu.PAGE_SIZE+decision['target']
             if index >= len(self.candidates):
-                trial = getattr(self, 'trial', None)
-                if trial is not None:
-                    trial.commit(len(self.editor.text()), None, False, source='gesture', code=self.code)
+                session = self.recording(start=True)
+                if session is not None:
+                    session.commit(len(self.editor.text()), None, False, source='gesture', code=self.code)
                 self.result.setText('这个方向没有候选，当前笔画已保留')
             else:
                 self.commit(index)
@@ -1151,16 +1312,17 @@ class Window(StrokeWindow):
             if result and self.joined_model is not None:
                 result = dict(result, joined_options=self.joined_model.recognize(points))
             recognition_ms = (review['recognitionMs'] if reused else 0.) + (time.monotonic()-started)*1000
-            trial = getattr(self, 'trial', None)
-            if trial is not None:
+            session = self.recording(start=True)
+            if session is not None:
                 self._trial_joined_ambiguous = self._trial_joined_ambiguous or bool(
                     self.joined_toggle.isChecked() and result and result.get('joined_options'))
                 if self._trial_joined_ambiguous:
-                    trial.event('joined_contact_unscored', recognition_ms=recognition_ms,
+                    session.event('joined_contact_unscored', recognition_ms=recognition_ms,
                         reason='physical contact count differs from logical stroke count',
-                        options=result.get('joined_options', []) if result else [])
+                        options=result.get('joined_options', []) if result else [],
+                        stroke_index=len(self.code))
                 else:
-                    trial.stroke(len(self.editor.text()), len(self.code), result, recognition_ms)
+                    session.stroke(len(self.editor.text()), len(self.code), result, recognition_ms)
             if result:
                 super().accept_stroke(dict(points=points, result=result,
                     recognition_ms=recognition_ms, kinematics=kinematics))
@@ -1173,6 +1335,7 @@ class Window(StrokeWindow):
             elif review and review['protect']:
                 self.result.setText('这一笔识别不确定，当前笔画未清空；请重写这一笔')
         self.check_trial_complete()
+        self.show_free_status()
 
     def delete_one(self):
         had_code = bool(self.code)
@@ -1192,9 +1355,9 @@ class Window(StrokeWindow):
         self.editor.insert(symbol)
         if self.editor.text() == before + symbol:
             self.tap_guard.committed(getattr(self, '_commit_contact', None))
-        trial = getattr(self, 'trial', None)
-        if trial is not None:
-            trial.commit(len(before), symbol, self.editor.text() == before + symbol, source='punctuation')
+        session = self.recording(start=True)
+        if session is not None:
+            session.commit(len(before), symbol, self.editor.text() == before + symbol, source='punctuation')
         self._punctuating = False
         self.record('punctuation', symbol=symbol, discarded_code=discarded_code)
         self.result.setText('已输入'+symbol)
@@ -1202,12 +1365,12 @@ class Window(StrokeWindow):
         self.check_trial_complete()
 
     def page(self, shift):
-        index = self.selected//PAGE_SIZE*PAGE_SIZE+shift
+        index = self.selected//trial_menu.PAGE_SIZE*trial_menu.PAGE_SIZE+shift
         if 0 <= index < len(self.candidates): self.selected = index
         self.refresh()
 
     def add_manual(self, category):
-        self.trial_event('manual_stroke', category=category)
+        self.trial_event('manual_stroke', category=category, stroke_index=len(self.code))
         from proximic_ring.touchpad.stroke.stroke_fuzzy import stroke_evidence
         self.code += category
         self.evidence.append(stroke_evidence(category))
@@ -1223,15 +1386,25 @@ class Window(StrokeWindow):
         self.record('joined_stroke_settings', enabled=enabled,
             model=self.joined_model.snapshot() if self.joined_model else None)
 
+    def set_vectors_enabled(self, enabled):
+        self.dictionary.stroke_vectors = self.vector_model if enabled else None
+        self.selected = 0
+        if hasattr(self, 'batch'):
+            self.batch.reset()
+        self.refresh()
+        self.record('stroke_vector_settings', enabled=enabled, model=self.vector_model.snapshot())
+
     def update_joined_status(self):
         if not hasattr(self, 'joined_status'):
             return
         selected = self.candidates[self.selected] if self.candidates else None
         match = next((r for r in self.matches if r['char'] == selected), {})
-        text = self.joined_error if self.joined_model is None else '已关闭' if not self.joined_toggle.isChecked() else '连笔开启 · 保留单笔，按候选解释两笔'
+        text = self.joined_error if self.joined_model is None else '已关闭' if not self.joined_toggle.isChecked() else '连笔开启 · 保留原笔画，按部件展开'
         if match.get('match_type') == 'joined_stroke':
             text = f"当前候选按连笔解释 · {len(self.code)}次落笔 / {match['logical_entered']}笔"
         self.joined_status.setText(text)
+
+
 
 
 def main():
@@ -1242,9 +1415,23 @@ def main():
     parser.add_argument('--single-display', action='store_true', help='Show loading, then publish candidates once with a 400ms Qwen budget')
     parser.add_argument('--joined-model', type=Path, help='Path to the local experimental joined-stroke model')
     parser.add_argument('--no-joined', action='store_true', help='Disable joined-stroke interpretations for comparison')
+    parser.add_argument('--no-stroke-vectors', action='store_true', help='Rank by stroke codes and frequency only')
+    parser.add_argument('--stroke-vector-scope', choices=('prefix', 'complete'), default='prefix',
+                        help='prefix: score every candidate from the first stroke; complete: only same-code complete characters (v1)')
+    parser.add_argument('--no-stroke-components', action='store_true', help='Disable component encoding paths')
+    parser.add_argument('--no-candidate-fill', action='store_true', help='Do not top up a short first page with guesses')
+    parser.add_argument('--context-model', choices=('wanxiang', 'legacy'), default='wanxiang',
+                        help='wanxiang: rime-wanxiang-data grammar and dictionary; legacy: Tatoeba/Wikipedia top-8 followers')
     parser.add_argument('--writing-profile', default='默认', help='Local writer ID; use a different ID for each participant')
     parser.add_argument('--no-personal-learning', action='store_true', help='Use the unchanged generic recognizer')
+    parser.add_argument('--hold-select', action='store_true',
+                        help='Legacy touchpad link with the old six-candidate hold-then-slide menu (no two-finger)')
     args = parser.parse_args()
+    from ring_python_sdk.touchpad.raw2_model import raw2_platform_supported
+    two_finger = not args.hold_select and raw2_platform_supported()
+    if not args.hold_select and not two_finger:
+        print('当前环境不支持 Raw2 双指（需要 Windows x64 的 Raw2 依赖或 Apple Silicon），已改用停留选字。')
+    trial_menu.use('two-finger' if two_finger else 'hold')
     app = QApplication([])
     # Native Windows controls otherwise differ from the offscreen preview and
     # use more height on 200% displays. Keep the standalone trial consistent.
@@ -1252,8 +1439,14 @@ def main():
     window = Window(args.device, common_only=not args.all_characters, llm_context=args.llm_context,
                     writing_profile=args.writing_profile, personal_learning=not args.no_personal_learning,
                     joined_model_path=args.joined_model, joined_enabled=not args.no_joined,
+                    vectors_enabled=not args.no_stroke_vectors, vector_scope=args.stroke_vector_scope,
+                    fill_enabled=not args.no_candidate_fill, context_model=args.context_model,
+                    components_enabled=not args.no_stroke_components,
                     single_display=args.single_display)
+    window.status_log = StatusLogWindow(window)
     show_for_screen(window)
+    window.status_log.place_beside(window)
+    window.status_log.show()
     app.exec()
 
 

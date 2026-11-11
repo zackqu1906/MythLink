@@ -138,6 +138,10 @@ class FakeClient:
             self.callback(None, status())
             # The first token may arrive synchronously with the START ACK.
             self.callback(None, token())
+        elif command == b"\x3c\x03":  # 0.4.0 firmware query while input is quiet.
+            self.callback(None, status())
+        elif command == b"\x3c\x04":
+            self.callback(None, b"\x3c\x12\x02\x00" + struct.pack("<15I", 42, *[0] * 14))
         else:
             assert command in (b"\x26\x00", b"\x26\x01")
 

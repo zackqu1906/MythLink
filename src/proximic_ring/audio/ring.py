@@ -41,6 +41,14 @@ _DEFAULT_IMU_FRAMES_PER_PACKET = 10
 _BATTERY_REFRESH_INTERVAL_S = 60.0
 
 
+def _connection_backend() -> str:
+    """macOS, and Windows x64 with the Raw2 loader, use the provider SDK link."""
+    if sys.platform == 'darwin':
+        return 'sdk'
+    from ring_python_sdk.touchpad.raw2_model import windows_raw2_enabled
+    return 'sdk' if windows_raw2_enabled() else 'legacy'
+
+
 class RingAudioSource(AudioSource):
     """Real-time Ringo microphone source backed by ``ring-python-sdk``.
 
@@ -873,7 +881,7 @@ class RingAudioSource(AudioSource):
             data_root=self.data_root,
             auto_reconnect=False,
             battery_poll_enabled=False,
-            connection_backend='sdk' if sys.platform == 'darwin' else 'legacy',
+            connection_backend=_connection_backend(),
         )
         battery_refresh_task: asyncio.Task[None] | None = None
 
@@ -1242,6 +1250,20 @@ class RingAudioSource(AudioSource):
             result = Future()
             result.set_exception(ConnectionError("Ring 连接已结束"))
             return result
+
+    def connected_raw2_firmware(self) -> bool | None:
+        """Whether the connected ring runs a Raw2 touchpad firmware.
+
+        None while not connected through the provider SDK (no verified INFO).
+        Reads an immutable INFO snapshot; safe from the UI thread.
+        """
+        endpoint = self._touchpad_endpoint
+        transport = getattr(endpoint[1], '_sdk_transport', None) if endpoint else None
+        info = getattr(transport, 'device_info', None)
+        if info is None:
+            return None
+        from ring_python_sdk.touchpad.raw2_model import raw2_firmware
+        return raw2_firmware(info)
 
     def start_touchpad(self, **options):
         """Start touchpad dynamically on the existing connection; never block UI."""

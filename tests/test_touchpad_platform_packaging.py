@@ -28,11 +28,13 @@ def test_mnn_native_libraries_are_collected_only_for_windows(system, monkeypatch
     exec(compile(source, 'mythlink.spec', 'exec'), namespace)
     assert namespace['hiddenimports'].count('MNN') == 1
     assert namespace['hiddenimports'].count('_mnncengine') == 1
-    expected = ['MNN'] if system == 'Windows' else ['ring_mac_sdk', 'onnxruntime']
+    # Windows also bundles the delivered Raw2 SDK and its ONNX Runtime.
+    expected = ['MNN', 'onnxruntime', 'ring_windows_sdk'] if system == 'Windows' else ['ring_mac_sdk', 'onnxruntime']
     assert calls == expected
     for name in expected:
         assert (name+'-native', name) in namespace['binaries']
-    assert ('onnxruntime' in namespace['hiddenimports']) is (system == 'Darwin')
+    assert namespace['hiddenimports'].count('onnxruntime') == 1
+    assert ('ring_windows_sdk.model' in namespace['hiddenimports']) is (system == 'Windows')
 
 
 def test_mac_touchpad_dependencies_keep_existing_versions():

@@ -11,11 +11,10 @@ import logging
 import sys
 import time
 
-from ring_mac_sdk import protocol as p
-from ring_mac_sdk.errors import RingError
-from ring_mac_sdk.gesture import GestureClient
-from ring_mac_sdk.transport import Transport
 from ring_python_sdk.core.device_info import DeviceInfo, InfoComponent
+from ring_python_sdk.sdk_provider import GestureClient, RingError, Transport
+from ring_python_sdk.sdk_provider import protocol as p
+from .windows_link import request_throughput
 
 log = logging.getLogger(__name__)
 
@@ -35,8 +34,15 @@ class SessionTransport(Transport):
         self._connection_lost = asyncio.Event()
         self.stop_confirmed = False
         self.gesture = GestureClient(self)
+        self.link_preference = None
+
+    def release_link_preference(self):
+        preference, self.link_preference = self.link_preference, None
+        if preference is not None:
+            preference.release()
 
     def _disconnected(self):
+        self.release_link_preference()
         self._connection_lost.set()
         if self.session._sdk_transport is self and self.session._was_connected:
             self.session._on_ble_disconnected(self.session.client)
@@ -166,6 +172,8 @@ async def connect_session(session, target, *, client_factory=None):
     session.client = LegacyControlClient(transport)
     session.tx_uuid, session.rx_uuid = p.NOTIFY, p.REQUEST
     await transport.connect()
+    # Without this Windows keeps a 30 ms / latency-4 link and Raw2 stalls.
+    transport.link_preference = request_throughput(transport.client)
     session.reconnecting = False
     session._was_connected = True
-    log.info('[SDK_CONNECTION] ready backend=ring_mac_sdk mtu=%s', session.client.mtu_size)
+    log.info('[SDK_CONNECTION] ready backend=%s mtu=%s', Transport.__module__.split('.')[0], session.client.mtu_size)

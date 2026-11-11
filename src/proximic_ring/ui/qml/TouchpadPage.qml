@@ -13,13 +13,20 @@ ScrollView {
     readonly property bool windowActive: Window.window ? Window.window.active : false
     property string section: "stroke"
     readonly property bool narrow: availableWidth < 600
+    readonly property real scrollGutter: scrollBar.implicitWidth + 8
     signal homeRequested()
     FigmaTheme { id: theme }
     clip: true
     contentWidth: availableWidth
     contentHeight: viewport.contentHeight
     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+    ScrollBar.vertical: ScrollBar {
+        id: scrollBar
+        objectName: "touchpadScrollBar"
+        parent: page
+        anchors { top: page.top; right: page.right; bottom: page.bottom }
+        policy: ScrollBar.AsNeeded
+    }
     contentItem: Flickable {
         id: viewport
         objectName: "touchpadViewport"
@@ -30,7 +37,8 @@ ScrollView {
         contentHeight: content.implicitHeight + 24
         Column {
             id: content
-            width: viewport.width
+            // Leave a gutter so the overlay scrollbar never covers cards or buttons.
+            width: Math.max(0, viewport.width - page.scrollGutter)
             spacing: 24
             Rectangle {
                 width: parent.width; height: statusContent.implicitHeight + 32
@@ -109,6 +117,7 @@ ScrollView {
                 width: parent.width; height: implicitHeight
                 visible: page.section === "stroke"
                 inputVisible: visible && page.visible && page.windowActive
+                viewportHeight: viewport.height
                 controller: page.controller
                 onHomeRequested: page.homeRequested()
             }

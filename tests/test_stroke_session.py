@@ -75,10 +75,14 @@ def test_external_predictions_clear_on_caret_takeover_and_do_not_leak_to_next_se
 def test_external_unreadable_context_uses_only_acknowledged_characters(stroke):
     c, bridge, tp, _, session = stroke
     wake(stroke)
+    from proximic_ring.touchpad.stroke.stroke_common import common_characters
     tp.addStroke("h")
-    char = tp.strokeCandidates[0]
+    # Not every character has followers in the context model (一 has none).
+    index = next(i for i, c in enumerate(tp.strokeCandidates)
+                 if tp._context_model().suggestions(c, allowed_characters=common_characters()))
+    char = tp.strokeCandidates[index]
     for success in [False, True]:
-        tp.selectCandidate(0)
+        tp.selectCandidate(index)
         until(lambda: bool(tp._pending_stroke_commit))
         request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
         c._inline_input._accept(dict(type="stroke_result", epoch=c._inline_input._epoch,
@@ -130,15 +134,15 @@ def test_native_palette_gets_the_trial_menu_selection_and_punctuation(stroke):
     run = tp._run
     tp.addStroke("h")
     update = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_update")
-    assert len(update["candidates"]) == tp.candidatePageSize == 6 and len(update["glyphs"]) == 6
-    points = [(0., 0.), (-2., 0.), (-4., 0.)]
-    tp._receive(run, "selection_state", (run.output, dict(phase="selecting", progress=100, direction="left",
-        display=dict(origin=(0., 0.), points=points))))
+    assert len(update["candidates"]) == tp.candidatePageSize == 5 and len(update["glyphs"]) == 5
+    points = [(0., 0.), (4., 0.), (8., 0.)]
+    tp._receive(run, "selection_state", (run.output, dict(phase="selecting", progress=100, direction="right",
+        source="two-finger", display=dict(origin=(0., 0.), points=points))))
     state = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_selection")
-    assert state["phase"] == "selecting" and state["direction"] == "left"
-    assert state["origin"] == [0., 0.] and state["points"][-1] == [-4., 0.] and state["select_distance"] == 3.
+    assert state["phase"] == "selecting" and state["direction"] == "right"
+    assert state["origin"] == [0., 0.] and state["points"][-1] == [8., 0.] and state["select_distance"] == 6.
     chosen = tp.strokeCandidates[1]
-    tp._receive(run, "selection", (run.output, dict(decision=dict(phase="selecting", direction="left"))))
+    tp._receive(run, "selection", (run.output, dict(decision=dict(phase="selecting", direction="right"))))
     assert next(m for m in reversed(bridge.messages) if m["type"] == "stroke_selection")["phase"] == "idle"
     request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
     assert request["text"] == chosen

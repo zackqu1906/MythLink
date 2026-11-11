@@ -261,7 +261,7 @@ Apple Silicon Mac 的触摸板默认使用 `0x3C v2` 和配套 ONNX 接收端。
 
 旧 SDK 的音频、固件手势、PPG 等接口保留。触摸板启停不会主动关闭 Ring/电脑麦克风；仅实际笔画会话仍独占 IME。笔画输入沿用显式书写区入口，在同一 Raw2 流上使用每帧完整轨迹和原笔画接触/轻触判定，包含零位移帧，避免用稀疏指针事件拼接笔画。笔画准确率仍需真机验证。
 
-Windows/Intel 未获得供应方新版模型支持，继续走 legacy / MNN 兼容路径，新版专属开关在不支持的平台禁用。独立调用 `RingSession.touchpad_on()` 默认仍为 legacy；使用 `protocol="raw2"` 必须先通过 `connection_backend="sdk"` 建立新版连接，不再借用旧客户端伪造就绪。产品控制器在支持平台显式传 `protocol="raw2"`。旧固件不会被静默回退到另一模型，需升级配套固件后使用新版。
+Windows x64 自 2026-11-07 起通过供应方 mythring-sdk 1.18.0 的跨平台加载方式使用同一模型，见 [Windows Raw2 适配](RING_WINDOWS_RAW2.md)。Intel Mac 仍未获支持，继续走 legacy / MNN 兼容路径，新版专属开关在不支持的平台禁用。独立调用 `RingSession.touchpad_on()` 默认仍为 legacy；使用 `protocol="raw2"` 必须先通过 `connection_backend="sdk"` 建立新版连接，不再借用旧客户端伪造就绪。产品控制器在支持平台显式传 `protocol="raw2"`。旧固件不会被静默回退到另一模型，需升级配套固件后使用新版。
 
 项目 macOS 依赖与原交付对齐为 `bleak==1.1.1`、`onnxruntime==1.21.0`；Windows 保留原 Bleak 3.0.1 锁定。PyInstaller 配置已加入新版模型、原生库和 ONNX Runtime，包自检覆盖新旧模型。本次未重打 DMG、未替换 `/Applications` 中的应用。
 

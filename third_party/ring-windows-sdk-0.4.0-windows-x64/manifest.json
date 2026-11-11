@@ -1,0 +1,22 @@
+{
+  "version": "0.4.0",
+  "platform": "Windows 11 x64",
+  "python": "CPython 3.11 x64",
+  "firmware_frontend_included": false,
+  "backend_runtime_included": true,
+  "files": {
+    "README.md": "a9872aaaa7fa969740125e1363d9b0e8c8d411633fca5a223beb7bbb6bf64d17",
+    "THIRD_PARTY_NOTICES.md": "c335cb2ffc280d00212a40027324d74d2ed54abc63980341e775251474d06c25",
+    "constraints-windows-x64.txt": "3a10c6621ad2578ffa37a79f929eea283fe31fa5b978743d402bda3c459f6ef6",
+    "docs/CHANGES.md": "26e7f1ae0c07792e34372be238b39e585b45ffa86bc5bbaaf4d796688e56da2b",
+    "docs/INSTALL.md": "70c2e914fe3efc7ee148ee9b24215e9c36f132bfa6f77c8165a3579ad5d18fe8",
+    "docs/INTEGRATION.md": "e430af683b72ac7cceaa48a1fceca9a4687e90aed8e55f369d41d01855915ce8",
+    "docs/SYSTEM_CURSOR.md": "fbb1756212bc1209a2929d3481ba578d56aa113504c20b641aa7461faae941ea",
+    "examples/gestures.py": "3a16cc9e72d9886092ead2dfe3582f5aefd999f58b2c82210343a02e6c413bce",
+    "examples/touchpad.py": "0e6347acf0bc1b64d584ed360dd235eebf102de96d3ca7a9db9513c7ae37e9a8",
+    "install.cmd": "123ddcdd8cf736a9db84e411ff17d020bf8d9b86e7e5ec3e59d948392ec2a927",
+    "sdk/ring_windows_sdk-0.4.0-py3-none-win_amd64.whl": "92d1185c9e7969242ebcf53f3168952e2aaa06a6032a893c6427f43efde53d10",
+    "studio.cmd": "fea46c057977b0b0ef633e60866055852cb353e9149b0f7ef9ac4cda89da230c",
+    "tools/check_windows_install.py": "0b0041e36e0e3822a541b9edfcfa37a0557960f8161fdde79171eaa70833a6bf"
+  }
+}

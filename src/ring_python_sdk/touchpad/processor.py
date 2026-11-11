@@ -6,7 +6,8 @@ from dataclasses import replace
 from pathlib import Path
 import time
 from .core import Postprocessor, parse_tokens
-from .events import TouchpadMove, TouchpadClick, TouchpadContact, TouchpadClickVerdict, TouchpadStats
+from .events import (TouchpadMove, TouchpadClick, TouchpadContact, TouchpadClickVerdict, TouchpadStats,
+                     TouchpadTokens)
 from .model import TouchpadBackbone
 
 
@@ -18,6 +19,17 @@ class TouchpadProcessor:
         self.last_valid = None
         self.sequence = self.uptime = self.arrival = None
         self.contact_reset_pending = False
+        self.token_records = None
+
+    def enable_token_records(self):
+        """Opt in to raw token records; they never alter inference or events."""
+        self.token_records = []
+
+    def take_tokens(self):
+        if self.token_records is None:
+            return []
+        records, self.token_records = self.token_records, []
+        return records
 
     def enable_pointer_moves(self):
         """Opt in before feeding data; model inference is still performed once."""
@@ -65,10 +77,17 @@ class TouchpadProcessor:
                                          missing_packets=self.stats.missing_packets+max(0, delta-1))
                 self.reset()
         self.sequence, self.uptime, self.arrival = seq, uptime, arrival
+        steps, frame_times = [], []
         for index, token in enumerate(tokens):
             output = self.backbone.step(token)
             frame_time = arrival-(len(tokens)-1-index)*.005
             self.post.add(output, arrival, frame_time)
+            steps.append(self.post.n)
+            frame_times.append(frame_time)
+        if self.token_records is not None:
+            self.token_records.append(TouchpadTokens(
+                self.stats.resets, tuple(steps), tuple(frame_times),
+                tuple(tuple(float(v) for v in token) for token in tokens), arrival))
         self.last_valid = now
         self.stats = replace(self.stats, packets=self.stats.packets+1, tokens=self.stats.tokens+len(tokens))
 

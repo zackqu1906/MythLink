@@ -42,7 +42,7 @@ def raw_trials(path):
     return result
 
 
-def replay_cases(report, strokes, name):
+def replay_cases(report, strokes, name, *, max_strokes=3, vectors=False, points=False):
     """Replay committed text / edits and retain full observed per-stroke scores."""
     events = report['events']
     measured = [e for e in events if e['kind'] == 'stroke' and e.get('recognized')]
@@ -62,10 +62,15 @@ def replay_cases(report, strokes, name):
             policy = FuzzyPolicy(raw.get('fuzzy_policy', {}).get('level', 50))
             ink.append(stroke_evidence(event['recognized'], raw['result'], policy=policy,
                                        metrics=raw.get('kinematics')))
+            if vectors:
+                from proximic_ring.touchpad.stroke.stroke_vectors import stroke_vector
+                ink[-1]['vector'] = stroke_vector(raw.get('points') or [])
+            if points:
+                ink[-1]['points'] = raw.get('points') or []
             code = ''.join(e['category'] for e in ink)
             if raw['code'] != code or event['position'] != len(text):
                 raise ValueError('raw composition/text position mismatch')
-            if len(code) <= 3 and event.get('character'):
+            if len(code) <= max_strokes and event.get('character'):
                 samples.append(dict(trial=name, target=event['character'], context=text[-CONTEXT_CHARS:],
                     elapsed_s=event['elapsed_s'], context_at_s=context_at, code=code,
                     evidence=list(ink), level=policy.level, fuzzy=raw.get('fuzzy_matching', True)))
@@ -85,7 +90,7 @@ def replay_cases(report, strokes, name):
     return samples
 
 
-def load_cases(directory):
+def load_cases(directory, **options):
     cache, cases, trials, excluded = {}, [], [], []
     for path in sorted(directory.glob('*-trial-*.json')):
         report = json.loads(path.read_text(encoding='utf-8'))
@@ -103,7 +108,7 @@ def load_cases(directory):
             excluded.append(dict(file=path.name, reason='matching raw trial unavailable'))
             continue
         try:
-            samples = replay_cases(report, strokes, path.name)
+            samples = replay_cases(report, strokes, path.name, **options)
         except ValueError as exc:
             excluded.append(dict(file=path.name, reason=str(exc)))
             continue

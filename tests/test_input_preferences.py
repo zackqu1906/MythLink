@@ -315,7 +315,7 @@ def test_failed_auto_start_is_logged_without_retry_loop_or_erasing_preference(co
 
 
 def test_raw2_stream_failure_does_not_auto_restart_on_reconnect_but_manual_retry_works(controllers):
-    from ring_mac_sdk.errors import RingError
+    from ring_python_sdk.sdk_provider import RingError
     c = controllers()
     c._settings.setValue('touchpad/enabled', True)
     first = connect(c)

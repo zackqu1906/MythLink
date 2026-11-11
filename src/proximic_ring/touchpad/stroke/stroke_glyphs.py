@@ -58,7 +58,7 @@ def stroke_mapping(canonical, variant, heart_starts=()):
 
 
 @lru_cache(maxsize=512)
-def candidate_glyph(character, variant='', entered=0, fuzzy=(), prediction=False, corrections=()):
+def candidate_glyph(character, variant='', entered=0, fuzzy=(), prediction=False, corrections=(), stroke_indices=None):
     glyph = glyph_library().get(character)
     if not glyph:
         return dict(character=character, available=False, source='', states=[], total=0,
@@ -67,6 +67,11 @@ def candidate_glyph(character, variant='', entered=0, fuzzy=(), prediction=False
     mapping = (stroke_mapping(canonical, variant,
                _heart_components().get(character, ()) if canonical != variant else ())
                if canonical and variant else None)
+    if stroke_indices is not None:
+        mapping = (stroke_indices if len(stroke_indices) == len(canonical) == len(variant)
+                   and all(type(i) is int for i in stroke_indices)
+                   and sorted(stroke_indices) == list(range(len(canonical)))
+                   and ''.join(canonical[i] for i in stroke_indices) == variant else None)
     available = prediction or (mapping is not None and 0 <= entered <= len(mapping))
     states = ['entered' if prediction else 'remaining'] * len(paths)
     next_symbol = ''

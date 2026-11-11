@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ring_mac_sdk import protocol as p
-from ring_mac_sdk.errors import RingError
 from ring_python_sdk import RingSession
+from ring_python_sdk.sdk_provider import RingError
+from ring_python_sdk.sdk_provider import protocol as p
 from ring_python_sdk.session.sdk_transport import connect_session
 from test_ring_mac_sdk_delivery import FakeClient, FakeModel, status, token
 from test_public_sdk_integration import audio_packet, compact
@@ -167,12 +167,65 @@ def test_provider_disconnect_cleans_streams_and_stale_callbacks_cannot_touch_new
     asyncio.run(run())
 
 
+@pytest.mark.parametrize('platform', ['win32', 'darwin'])
+def test_windows_holds_a_throughput_link_request_for_the_connection(monkeypatch, tmp_path, platform):
+    import sys
+    import types
+    from ring_python_sdk.session import windows_link
+    monkeypatch.setattr(windows_link.sys, 'platform', platform)
+    params = types.ModuleType('winrt.windows.devices.bluetooth')
+    params.BluetoothLEPreferredConnectionParameters = SimpleNamespace(throughput_optimized='tp')
+    monkeypatch.setitem(sys.modules, 'winrt.windows.devices.bluetooth', params)
+    requests = []
+
+    class Request:
+        status, closed = 1, 0
+        def close(self):
+            self.closed += 1
+
+    class Device:
+        def request_preferred_connection_parameters(self, value):
+            assert value == 'tp'
+            requests.append(Request())
+            return requests[-1]
+
+    class LinkClient(Client):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._backend = SimpleNamespace(_requester=Device())
+
+    async def run():
+        session = RingSession('Ringo', 1, data_root=tmp_path)
+        await connect_session(session, 'old', client_factory=LinkClient)
+        if platform != 'win32':
+            assert not requests and session._sdk_transport.link_preference.status == 'unsupported'
+            return
+        assert len(requests) == 1 and session._sdk_transport.link_preference.status == 'success'
+        assert requests[0].closed == 0
+        await session._sdk_transport.client.disconnect()
+        assert requests[0].closed == 1 and session._sdk_transport.link_preference is None
+        await session._detach_client(send_stops=False)
+        await connect_session(session, 'new', client_factory=LinkClient)
+        assert len(requests) == 2 and requests[1].closed == 0
+        await session.disconnect()
+        assert requests[1].closed == 1
+    asyncio.run(run())
+
+
+def test_throughput_link_request_never_breaks_a_connection(monkeypatch):
+    from ring_python_sdk.session import windows_link
+    monkeypatch.setattr(windows_link.sys, 'platform', 'win32')
+    preference = windows_link.request_throughput(SimpleNamespace())  # no WinRT backend
+    assert preference.status == 'unsupported'
+    preference.release()
+
+
 def test_raw2_cannot_silently_borrow_a_legacy_ble_connection(tmp_path):
     async def run():
         session = RingSession('Ringo', 1, data_root=tmp_path)
         session.client = SimpleNamespace(is_connected=True)
         session.rx_uuid = p.REQUEST
-        with pytest.raises(Exception, match='validated ring_mac_sdk'):
+        with pytest.raises(Exception, match='validated Ring SDK'):
             await session.touchpad_on(protocol='raw2', on_event=lambda _: None)
         assert session.touchpad is None and not session.touchpad_active
     asyncio.run(run())
@@ -371,5 +424,75 @@ def test_queued_legacy_control_cannot_move_to_replacement_connection(tmp_path):
         assert current.commands == [p.INFO]
         await session.query_battery()
         assert session.battery_pct == 85
+        await session.disconnect()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('platform,unsupported,connects', [
+    ('win32', False, True), ('win32', True, False), ('darwin', False, False)])
+def test_windows_retries_a_transient_sdk_connect_failure_once(monkeypatch, tmp_path, platform, unsupported, connects):
+    import bleak
+    from ring_python_sdk.session import connection
+    clients = []
+    class Flaky(Client):
+        async def connect(self):
+            if len(clients) == 1:
+                raise (RingError('unsupported', 'NUS service unavailable') if unsupported
+                       else OSError('WinRT E_FAIL opening GATT'))
+            await super().connect()
+    def make(*args, **kwargs):
+        clients.append(Flaky(*args, **kwargs))
+        return clients[-1]
+    monkeypatch.setattr(bleak, 'BleakClient', make)
+    monkeypatch.setattr(connection, 'sys', SimpleNamespace(platform=platform))
+    async def no_wait(*a, **kw): pass
+    monkeypatch.setattr(RingSession, 'sync_time', no_wait)
+    monkeypatch.setattr(connection.asyncio, 'sleep', no_wait)
+
+    async def run():
+        session = RingSession('Ringo', 1, data_root=tmp_path, connection_backend='sdk', battery_poll_enabled=False)
+        target = SimpleNamespace(name='RingoTest', address='test')
+        if connects:
+            assert await session.connect_device(target)
+            assert len(clients) == 2 and session._sdk_transport.ready
+            await session.disconnect()
+        else:
+            with pytest.raises((RingError, OSError)):
+                await session.connect_device(target)
+            assert len(clients) == 1 and session._sdk_transport is None
+    asyncio.run(run())
+
+
+def test_legacy_touchpad_runs_over_the_provider_connection_for_public_firmware(monkeypatch, tmp_path):
+    """Windows keeps the MNN touchpad for public firmware on the SDK connection."""
+    from ring_python_sdk.touchpad import stream
+    from test_stroke_layout import Backbone, packet
+    from ring_python_sdk.touchpad.processor import TouchpadProcessor
+    from ring_python_sdk.touchpad.core import START, STOP
+    monkeypatch.setattr(stream, 'TouchpadProcessor', lambda _: TouchpadProcessor(backbone=Backbone()))
+    client = Client(disconnected_callback=lambda _: None)
+    original = client.write_gatt_char
+    async def write(uuid, command, *, response):
+        if command in (START, STOP):
+            client.commands.append(command)   # legacy touchpad has no business ACK
+        else:
+            await original(uuid, command, response=response)
+    client.write_gatt_char = write
+
+    async def run():
+        session = RingSession('offline', 1, data_root=tmp_path)
+        session.session_dir = tmp_path
+        await connect_session(session, 'offline', client_factory=lambda *a, **kw: client)
+        records = []
+        await session.touchpad_on(protocol='legacy', on_event=lambda e: None,
+                                  on_tokens=records.append, duration_s=None)
+        assert START in client.commands
+        for seq in range(5):
+            client.callback(None, packet(seq))  # through the provider notification demux
+        async with asyncio.timeout(2):
+            while sum(len(r.steps) for r in records) < 50:
+                await asyncio.sleep(.01)
+        await session.touchpad_off()
+        assert client.commands[-1] == STOP and client.is_connected
         await session.disconnect()
     asyncio.run(run())

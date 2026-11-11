@@ -6,7 +6,8 @@ import json
 
 import pytest
 
-from proximic_ring.touchpad.stroke.stroke_folds import FOLD_GROUPS, FOLD_NAMES, coarse_order, fold_orders
+from proximic_ring.touchpad.stroke.stroke_folds import (FOLD_GROUPS, FOLD_NAMES, FOLD_POLICY,
+    NEAR_FOLDS, NEAR_NEIGHBORS, coarse_order, fold_orders)
 from proximic_ring.touchpad.stroke.stroke_fuzzy import FuzzyPolicy, retune_evidence, stroke_evidence
 from proximic_ring.touchpad.stroke.stroke_input import StrokeDictionary
 
@@ -161,3 +162,35 @@ def test_dtw_trace_scores_reach_candidate_ranking_without_a_second_recognition()
     assert result['category'] == 'z'
     rows = d.fuzzy_candidates([stroke_evidence(result['category'], result)], allowed_characters={'女','乙','也'})
     assert rows[0]['char'] == '女' and rows[0]['fold_matches']
+
+
+def test_near_fold_pairs_share_evidence_and_keep_complete_priority():
+    # 撇点 ink is fair evidence for 撇折, but not as strong as the shape itself.
+    d = dictionary([['女','z',1], ['么','z',1], ['乙','z',1]], {'女':'m','么':'n','乙':'o'},
+                   {'女':30,'么':20,'乙':0})
+    rows = d.fuzzy_candidates([ink('撇点')])
+    assert [row['char'] for row in rows] == ['女','么','乙']
+    near = rows[1]['fold_matches'][0]
+    assert near['near'] == '撇点' and near['cost'] == pytest.approx(FOLD_POLICY['nearCost'])
+    assert rows[1]['fold_compatible'] and rows[1]['key'][0] == 0
+    assert not rows[2]['fold_tolerable'] and rows[2]['key'][0] == 3
+    # Unrelated shapes get no shortcut through a neighbor.
+    assert 'near' not in rows[0]['fold_matches'][0]
+
+
+def test_moderately_different_fold_yields_to_matching_fold_but_not_to_prefixes():
+    d = dictionary([['甲','zz',1], ['乙','zz',1], ['丙','zzh',1]], {'甲':'rr','乙':'cr','丙':'rrj'},
+                   {'甲':50,'乙':0,'丙':0})
+    # Ink is clearly 横折钩; 横折 is moderately close, as when a hook is short.
+    evidence = [ink('横折钩', {'横折钩':.001, '横折':.04, '撇点':.2}), ink('横折钩')]
+    rows = d.fuzzy_candidates(evidence)
+    assert [row['char'] for row in rows] == ['甲','乙','丙']
+    assert rows[0]['key'][0] == 0 and rows[1]['key'][0] == 2 and rows[2]['key'][0] == 3
+    assert not rows[1]['fold_compatible'] and rows[1]['fold_tolerable']
+
+
+def test_near_fold_table_uses_known_names_across_groups():
+    letter = {name: key for key, names in FOLD_GROUPS.items() for name in names}
+    for a, b in NEAR_FOLDS:
+        assert a in FOLD_NAMES and b in FOLD_NAMES and letter[a] != letter[b]
+        assert b in NEAR_NEIGHBORS[a] and a in NEAR_NEIGHBORS[b]

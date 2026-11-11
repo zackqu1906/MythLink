@@ -80,10 +80,13 @@ def test_recorded_complete_yong_reaches_second_slot_after_correction_merge(index
         return merge_candidates([r['char'] for r in normal],rows,
             reserved=1 if any(r.get('context_extra_slot') for r in normal) else 2)
     new=candidates()
-    assert new[1]==case['target'] and new[0]=='叶'
+    # The ink's 横折钩 matches 用, not 叶's 横折: fold ranking may lift 用 to
+    # first; otherwise the literal 叶 stays first and 用 takes slot two.
+    assert case['target'] in new[:2] and new[0] in ('叶',case['target'])
     with monkeypatch.context() as old:
         # Reproduce the historical baseline before fine fold ranking existed.
         old.setattr(dictionary,'_fold_orders',{})
+        old.setattr(dictionary,'components_enabled',False)  # Historical pool predates component recall.
         old.setattr(module,'FUZZY_LANGUAGE_WEIGHT',1.)
         old.setattr(module,'promote_completed_fuzzy',lambda rows,evidence,predictor,context,limit:rows[:limit])
         old.setattr(correction,'CORRECTION_LANGUAGE_WEIGHT',.35)
@@ -98,6 +101,8 @@ def test_live_trial_keeps_completed_fuzzy_candidate_on_first_page_and_commits_it
     case=fixture['cases'][0]
     app,window=load_window(tmp_path,monkeypatch)
     try:
+        # Every stroke below is the same synthetic horizontal line; its vector is not real ink.
+        window.vector_toggle.setChecked(False)
         window.editor.setText(case['context'])
         for item in case['evidence']:
             result=dict(item['result'],distance=next(row['distance'] for row in item['result']['category_scores']

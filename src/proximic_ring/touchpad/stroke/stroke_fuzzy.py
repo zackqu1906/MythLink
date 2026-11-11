@@ -13,11 +13,34 @@ SHORT_TAIL_RESCUES = {
     'p': ('撇点', '撇折'),
     'n': ('斜钩', '卧钩'),
 }
+# Hooks written without their hook (横钩→横, 斜钩/卧钩→捺 or 竖) get twice the
+# rescue gap, and a 竖 may also stand for 斜钩/卧钩. Only this direction is
+# added: a z read as 斜钩 still is not offered as 竖. In P01's committed
+# characters 斜钩/卧钩 read as 捺 50% and as 竖 18% of the time, while plain
+# 横/竖/捺 read as z under 0.5%. Replaying 1,938 trial states, this changed 22
+# states: 12 better, 10 worse, 3 entering and 1 leaving the first page;
+# admitting z for every such stroke instead made 60 worse.
+HOOK_RESCUES = {
+    'h': SHORT_TAIL_RESCUES['h'],
+    's': SHORT_TAIL_RESCUES['s'] + ('斜钩', '卧钩'),
+    'n': SHORT_TAIL_RESCUES['n'],
+}
+HOOK_RESCUE_FACTOR = 2.
+# Far classes: every class the near/rescue rules leave out stays possible at a
+# cost that grows with its distance gap to the recognized class, so one badly
+# misread stroke no longer removes the intended character. At most
+# maxPerCharacter such strokes per candidate; short strokes, whose class is
+# least reliable, pay shortFactor of it. Manual strokes stay locked. Only the
+# maxRows best far-corrected rows go on to vector/context scoring (speed). A
+# single stroke gains nothing (any character would match), so far classes
+# start from the second stroke.
+FAR_POLICY = dict(version=1, base=2.5, span=1.5, gapScale=.3, shortLength=60.,
+                  shortFactor=.7, maxPerCharacter=1, minLevel=20, maxRows=150, minStrokes=2)
 
 
 @dataclass(frozen=True)
 class FuzzyPolicy:
-    """0–100 tolerance; 50 exactly preserves the established default rules."""
+    """0–100 tolerance; 50 is the default (rules v2 widen hook rescues)."""
     level: int = 50
 
     def __post_init__(self):
@@ -31,14 +54,19 @@ class FuzzyPolicy:
     def max_rescues(self): return 2 if self.level >= 75 else 1
 
     @property
+    def max_far(self): return FAR_POLICY['maxPerCharacter'] if self.level >= FAR_POLICY['minLevel'] else 0
+
+    @property
     def left_dot_cost(self): return round(max(.05, LEFT_DOT_COST + .004*(50-self.level)), 4)
 
     def snapshot(self):
-        return dict(version=1, level=self.level, bestDistanceLimit=.08,
+        return dict(version=3, level=self.level, bestDistanceLimit=.08,
                     nearAbsoluteGap=round(.004*self.scale, 6),
                     nearRelativeGap=round(.5*self.scale, 6),
                     rescueGapLimit=round(.08*self.scale, 6),
-                    maxRescues=self.max_rescues, leftDotCost=self.left_dot_cost)
+                    hookRescueGapLimit=round(.08*HOOK_RESCUE_FACTOR*self.scale, 6),
+                    maxRescues=self.max_rescues, leftDotCost=self.left_dot_cost,
+                    farClasses=dict(FAR_POLICY, maxPerCharacter=self.max_far))
 
 
 DEFAULT_FUZZY_POLICY = FuzzyPolicy()
@@ -74,7 +102,8 @@ def adaptive_policy(policy, metrics):
 def retune_evidence(evidence, policy):
     """Rebuild automatic alternatives from retained scores, preserving manual ink."""
     return [dict(stroke_evidence(stroke['category'], stroke['recognition'], policy=policy,
-                            metrics=stroke.get('kinematics')), **({'ink': stroke['ink']} if 'ink' in stroke else {}))
+                            metrics=stroke.get('kinematics')),
+                 **{key: stroke[key] for key in ('ink', 'vector') if key in stroke})
             if not stroke.get('manual', True) and 'recognition' in stroke else stroke
             for stroke in evidence]
 
@@ -90,8 +119,29 @@ def _shape_distances(result):
     return values
 
 
+def _far_costs(evidence, scores, metrics):
+    """Continuous cost for each class not already near or rescued."""
+    category = evidence['category']
+    best = scores.get(category)
+    length = (metrics or {}).get('length')
+    short = (isinstance(length, (int, float)) and not isinstance(length, bool)
+             and 0 < length < FAR_POLICY['shortLength'])
+    factor = FAR_POLICY['shortFactor'] if short else 1.
+    far = {}
+    # Without the recognizer's own distance for a class there is no evidence
+    # for how far it is; that class stays locked as before.
+    for alternative in CATEGORIES:
+        if alternative in evidence['costs'] or best is None or alternative not in scores:
+            continue
+        ratio = min(1., max(0., scores[alternative]-best)/FAR_POLICY['gapScale'])
+        far[alternative] = round((FAR_POLICY['base'] + FAR_POLICY['span']*ratio)*factor, 4)
+    evidence['far'] = far
+    return evidence
+
+
 def stroke_evidence(category, result=None, *, policy=DEFAULT_FUZZY_POLICY, metrics=None):
-    """Keep close classes and one rescue; manual input remains locked."""
+    """Keep close classes and one rescue; other classes stay possible at a far
+    cost (see FAR_POLICY); manual input remains locked."""
     evidence = dict(category=category, costs={category: 0.}, rescues=[], ambiguous=False,
                     manual=not bool(result))
     if not result:
@@ -117,11 +167,11 @@ def stroke_evidence(category, result=None, *, policy=DEFAULT_FUZZY_POLICY, metri
                 and math.isfinite(distance) and distance >= 0):
             scores[item['category']] = distance
     if category not in scores:
-        return evidence
+        return _far_costs(evidence, scores, metrics)
     best = scores[category]
     # Poor matches must not turn into an unrestricted wildcard.
     if best > .08:
-        return evidence
+        return _far_costs(evidence, scores, metrics)
     shape_distances = _shape_distances(result)
     for alternative, distance in scores.items():
         if alternative == category:
@@ -137,22 +187,32 @@ def stroke_evidence(category, result=None, *, policy=DEFAULT_FUZZY_POLICY, metri
             elif alternative == 'z' and category in SHORT_TAIL_RESCUES:
                 # The nearest z template may be unrelated. Use only the named
                 # compatible shapes' own distances, not the class minimum.
-                paired_distance = min((shape_distances[shape] for shape in SHORT_TAIL_RESCUES[category]
+                paired_distance = min((shape_distances[shape] for shape in
+                                       HOOK_RESCUES.get(category, SHORT_TAIL_RESCUES[category])
                                        if shape in shape_distances), default=None)
                 if paired_distance is not None:
                     rescue_gap = max(0., paired_distance-best)
             elif category == 'z' and result.get('shape') in SHORT_TAIL_RESCUES.get(alternative, ()):
                 rescue_gap = gap
-            if rescue_gap is not None and rescue_gap <= .08*policy.scale:
+            limit = .08*policy.scale
+            if alternative == 'z' and category in HOOK_RESCUES:
+                limit *= HOOK_RESCUE_FACTOR
+            if rescue_gap is not None and rescue_gap <= limit:
                 evidence['costs'][alternative] = 1. + min(2., rescue_gap/(.04+best))
                 evidence['rescues'].append(alternative)
-    return evidence
+    return _far_costs(evidence, scores, metrics)
 
 
-def match_prefix(code, evidence, *, left_dots=(), policy=DEFAULT_FUZZY_POLICY):
+def far_budget(policy, evidence):
+    return policy.max_far if len(evidence) >= FAR_POLICY['minStrokes'] else 0
+
+
+def match_prefix(code, evidence, *, left_dots=(), policy=DEFAULT_FUZZY_POLICY, far_limit=None):
+    """``far_limit`` overrides the far-class budget (per-stroke callers keep their own total)."""
     if len(code) < len(evidence):
         return None
-    cost, rescues, corrections, left_dot_corrections = 0., 0, [], []
+    budget = far_budget(policy, evidence) if far_limit is None else far_limit
+    cost, rescues, corrections, left_dot_corrections, far = 0., 0, [], [], []
     for index, stroke in enumerate(evidence):
         letter = code[index]
         glyph_alternative = (index in left_dots and letter == 'n'
@@ -164,7 +224,11 @@ def match_prefix(code, evidence, *, left_dots=(), policy=DEFAULT_FUZZY_POLICY):
             cost += min(dot_cost, stroke['costs'].get(letter, math.inf))
             left_dot_corrections.append(index)
         elif letter not in stroke['costs']:
-            return None
+            far_cost = stroke.get('far', {}).get(letter)
+            if far_cost is None or len(far) >= budget:
+                return None
+            cost += far_cost
+            far.append(index)
         else:
             cost += stroke['costs'][letter]
         rescues += not glyph_alternative and letter in stroke['rescues']
@@ -172,8 +236,10 @@ def match_prefix(code, evidence, *, left_dots=(), policy=DEFAULT_FUZZY_POLICY):
             return None
         if letter != stroke['category']:
             corrections.append(index)
+    # Far strokes are shown like a single replacement (red, "第i笔 X → Y").
     return dict(cost=cost, rescues=rescues, corrections=corrections,
-                left_dot_corrections=left_dot_corrections)
+                left_dot_corrections=left_dot_corrections, far_corrections=far,
+                **({'replacement_corrections': list(far)} if far else {}))
 
 
 def replacement_options(stroke, *, policy=DEFAULT_FUZZY_POLICY):

@@ -10,8 +10,9 @@ from .processor import TouchpadProcessor
 
 class TouchpadStream:
     def __init__(self, on_event, *, on_stats=None, model_path=None, duration_s=90., on_end=None,
-                 on_pointer_move=None, on_discarded_event=None):
+                 on_pointer_move=None, on_discarded_event=None, on_tokens=None):
         self.on_event, self.on_stats, self.on_end = on_event, on_stats, on_end
+        self.on_tokens = on_tokens
         self.on_pointer_move = on_pointer_move
         self.on_discarded_event = on_discarded_event
         self.model_path, self.duration_s = model_path, duration_s
@@ -32,6 +33,8 @@ class TouchpadStream:
             processor = TouchpadProcessor(self.model_path)
             if self.on_pointer_move is not None:
                 processor.enable_pointer_moves()
+            if self.on_tokens is not None:
+                processor.enable_token_records()
             return processor
         self.processor = await asyncio.get_running_loop().run_in_executor(
             self.executor, prepare)
@@ -87,13 +90,14 @@ class TouchpadStream:
                     for packet, arrival in items:self.processor.feed(packet, arrival=arrival)
                     events = self.processor.poll()
                     pointer_events = self.processor.poll_pointer() if self.on_pointer_move is not None else []
+                    tokens = self.processor.take_tokens()
                     stats = replace(self.processor.stats,
                                     inference_batch_ms=(time.monotonic()-batch_start)*1000,
                                     inference_thread_cpu_ms=(time.thread_time()-cpu_start)*1000,
                                     inference_batch_packets=len(items),
                                     packet_queue_age_ms=max(0.,queue_age)*1000)
-                    return events, pointer_events, stats, self.processor.last_valid
-                events, pointer_events, stats, last_valid = await loop.run_in_executor(self.executor, advance)
+                    return events, pointer_events, tokens, stats, self.processor.last_valid
+                events, pointer_events, tokens, stats, last_valid = await loop.run_in_executor(self.executor, advance)
                 if not items:
                     stats = replace(stats, inference_batch_ms=self.stats.inference_batch_ms,
                                     inference_thread_cpu_ms=self.stats.inference_thread_cpu_ms,
@@ -109,6 +113,10 @@ class TouchpadStream:
                     break
                 if now-(self.started if last_valid is None else last_valid)>8:
                     raise TimeoutError('No valid touchpad tokens for 8 seconds')
+                # Raw records are complete logs, so they have no delivery expiry.
+                for record in tokens:
+                    if self.closed:break
+                    self.on_tokens(record)
                 for event in pointer_events:
                     if self.closed:break
                     if time.monotonic()-event.timestamp <= .1:self.on_pointer_move(event)

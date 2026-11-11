@@ -6,19 +6,24 @@ firmware gestures and all other sensors retain their existing session owner.
 import asyncio
 from dataclasses import dataclass, replace
 import logging
+import sys
 import threading
 import time
 
-from ring_mac_sdk.errors import RingError
-from ring_mac_sdk.interaction import Engine, delta
-from ring_mac_sdk.touchpad import Touchpad
-from ring_mac_sdk.types import Click, ContactUpdate, EventMeta, Motion
+from ring_python_sdk.sdk_provider import (Click, ContactUpdate, Engine, EventMeta, Motion, RingError, Touchpad,
+                                          clock_ns, delta, host_seconds)
 
 from .core import ClickDetector
 from .events import TouchpadClick, TouchpadClickVerdict, TouchpadContact, TouchpadMove, TouchpadStats
 from .events import Raw2PointerClick, Raw2PointerContact, Raw2PointerMove, Raw2Reset
 
 log = logging.getLogger(__name__)
+
+# Host adaptations validated on Windows only. macOS keeps the provider's own
+# behavior: no start budget, no timer change, a firmware stop ends quietly.
+WINDOWS = sys.platform == 'win32'
+# The SDK waits indefinitely for the first token, so the Windows host sets the budget.
+RAW2_START_TIMEOUT_S = 30.
 
 
 class FrameEngine(Engine):
@@ -80,7 +85,7 @@ class StrokeTouchpad(Touchpad):
 
     def _report(self, issue, message, severity='WARNING', **counts):
         if issue == 'INPUT_TIMEOUT' and self.status.stage == 'RUNNING':
-            self.output_after_ns = time.monotonic_ns()
+            self.output_after_ns = clock_ns()
             self.engine.stroke_clicks = ClickDetector()
             self.stream._queue_interrupt()
         super()._report(issue, message, severity, **counts)
@@ -111,9 +116,14 @@ class Raw2Stream:
         self.token_packets = 0
         self.transport = session._sdk_transport
         if self.transport is None or not self.transport.ready:
-            raise RingError('not_ready', 'Raw2 requires the validated ring_mac_sdk BLE connection')
+            raise RingError('not_ready', 'Raw2 requires the validated Ring SDK BLE connection')
         # Scope cleanup evidence to this stream, on the shared connection.
         self.transport.stop_confirmed = False
+        self._timer_release = None
+        if model_factory is None:
+            # None on macOS: the provider receiver loads its own model there.
+            from .raw2_model import default_model_factory
+            model_factory = default_model_factory()
         self.receiver = StrokeTouchpad(self, model_factory)
 
     def _deliver(self, callback, value):
@@ -149,7 +159,7 @@ class Raw2Stream:
     def _queue_interrupt(self):
         receiver = self.receiver
         key = (receiver.session, receiver.generation)
-        interrupted_at = receiver.output_after_ns/1e9
+        interrupted_at = host_seconds(receiver.output_after_ns)
 
         self._enqueue(self._reset, (key, interrupted_at))
 
@@ -181,23 +191,23 @@ class Raw2Stream:
                     sequence=event.meta.sequence)
         if isinstance(event, Motion):
             value = Raw2PointerMove(event.dx, event.dy, 0., event.frame_id+1,
-                                 event.meta.source_time_ns/1e9, mode=event.mode,
+                                 host_seconds(event.meta.source_time_ns), mode=event.mode,
                                  episode_id=event.episode_id, **meta)
         elif isinstance(event, ContactUpdate):
             if event.range.start_time_ns < self.receiver.output_after_ns:
                 return
             value = Raw2PointerContact(event.phase, event.mode, event.episode_id,
-                self.receiver.ordinal*2, event.meta.source_time_ns/1e9,
-                event.range.start_time_ns/1e9,
-                None if event.range.end_time_ns is None else event.range.end_time_ns/1e9, **meta)
+                self.receiver.ordinal*2, host_seconds(event.meta.source_time_ns),
+                host_seconds(event.range.start_time_ns),
+                None if event.range.end_time_ns is None else host_seconds(event.range.end_time_ns), **meta)
         elif isinstance(event, Click):
             # Pairing intentionally waits before confirming a single click.
             # Expiry starts at formal emission; retain source time for diagnostics.
             if event.meta.first_down_ns < self.receiver.output_after_ns:
                 return
-            value = Raw2PointerClick(self.receiver.ordinal*2, event.meta.emitted_ns/1e9,
+            value = Raw2PointerClick(self.receiver.ordinal*2, host_seconds(event.meta.emitted_ns),
                                   button=event.button.lower(), count=event.count,
-                                  click_id=event.click_id, source_timestamp=event.meta.source_time_ns/1e9,
+                                  click_id=event.click_id, source_timestamp=host_seconds(event.meta.source_time_ns),
                                   is_preview=event.is_preview, **meta)
         else:
             return
@@ -226,7 +236,7 @@ class Raw2Stream:
         # verdicts. It never feeds those legacy clicks into Raw2 mouse output.
         clicks = detector.probability(step, frame.touch)
         clicks += detector.movement(step, (frame.x, frame.y))
-        stamp = frame.source/1e9
+        stamp = host_seconds(frame.source)
         edges, verdicts = tuple(detector.contact_edges), tuple(detector.contact_verdicts)
         detector.contact_edges.clear()
         detector.contact_verdicts.clear()
@@ -245,7 +255,20 @@ class Raw2Stream:
     async def prepare(self):
         if self._callback_running.locked():
             raise RingError('busy', 'Previous Raw2 application callback is still running')
-        await self.receiver.start()
+        if WINDOWS and self._timer_release is None:
+            from .raw2_model import hold_windows_timer
+            self._timer_release = hold_windows_timer()
+        try:
+            async with asyncio.timeout(RAW2_START_TIMEOUT_S if WINDOWS else None):
+                await self.receiver.start()
+        except TimeoutError:
+            seconds = f'{RAW2_START_TIMEOUT_S:g}'
+            # The tracker exists once the ring acknowledged START.
+            if hasattr(self.receiver, 'tracker') and self.token_packets == 0:
+                self.error = RingError('input_timeout', f'戒指已确认触摸板 START，但 {seconds} 秒内未收到首个 Raw2 数据包')
+            else:
+                self.error = RingError('timeout', f'触摸板启动超过 {seconds} 秒')
+            raise self.error from None
         if self.closed:
             await self.receiver.stop()
             raise self.receiver.error or RingError('cancelled', 'Touchpad start cancelled')
@@ -263,6 +286,10 @@ class Raw2Stream:
                 except TimeoutError:
                     await self.receiver.stop()
             self.error = self.receiver.error
+            if (WINDOWS and self.error is None and not self.closed
+                    and 'DEVICE_STOPPED' in self.receiver.reporter.totals):
+                # Firmware ended the stream by itself: not a user stop.
+                self.error = RingError('device_error', '戒指固件已停止触摸板数据流，请重新开启触摸板')
         finally:
             if not self.closed and self.on_end:
                 self.on_end(self)
@@ -279,7 +306,12 @@ class Raw2Stream:
 
     async def close(self):
         self.stop_now()
-        await self.receiver.stop()
+        try:
+            await self.receiver.stop()
+        finally:
+            release, self._timer_release = self._timer_release, None
+            if release is not None:
+                release()
         self.error = self.error or self.receiver.error
         if self._watcher and self._watcher is not asyncio.current_task():
             await asyncio.gather(self._watcher, return_exceptions=True)

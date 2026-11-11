@@ -12,7 +12,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from selection_capture import ContactCapture, atomic_save, now
+from selection_capture import CharacterCapture, ContactCapture, atomic_save, now
 import eight_direction_selection as selection_profile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +64,7 @@ class RingWorker:
             await session.touchpad_on(
                 on_event=lambda e: self.post("event", asdict(e)),
                 on_stats=lambda s: self.post("stats", asdict(s)),
+                on_tokens=lambda t: self.post("tokens", asdict(t)),
                 on_stopped=stopped, duration_s=None)
             self.post("ready", {"name": session.target_name, "address": session.target_address})
             while not self.stop.is_set() and not ended.is_set():
@@ -79,9 +80,12 @@ class CollectionWindow:
         self.profile = profile
         self.prefix = getattr(profile, "FILE_PREFIX", "selection-eight")
         self.root, self.output_dir, self.sdk_root = root, Path(output_dir), Path(sdk_root)
-        self.session = self.path = self.raw_stream = self.worker = None
+        self.session = self.path = self.raw_stream = self.token_stream = self.worker = None
         self.messages = queue.Queue(maxsize=8192)
-        self.capture = ContactCapture()
+        # Multi-contact profiles record one written character per sample.
+        self.multi = getattr(profile, "MULTI_CONTACT", False)
+        self.unit = getattr(profile, "UNIT", "笔")
+        self.capture = CharacterCapture() if self.multi else ContactCapture()
         self.armed = self.connected = self.closing = False
         self.warm = self.worker_error = False
         self.storage_ok = True
@@ -249,6 +253,9 @@ class CollectionWindow:
             return "break"
 
     def next_sample(self):
+        if self.armed and self.multi:
+            self.finish_character()
+            return
         if self.armed or not self.connected or not self.warm or not self.storage_ok or self.closing:
             return
         if self.session and self.session["draft"]:
@@ -259,12 +266,15 @@ class CollectionWindow:
         self.render()
 
     def install(self, session):
-        if self.raw_stream:
-            self.raw_stream.close()
+        for stream in (self.raw_stream, self.token_stream):
+            if stream:
+                stream.close()
         self.session = session
         self.path = self.output_dir / f"{self.prefix}-{session['sessionId']}.json"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.raw_stream = self.path.with_suffix(".events.jsonl").open("a", encoding="utf-8")
+        # Raw accel/gyro model inputs, joined to events by token epoch and step.
+        self.token_stream = self.path.with_suffix(".tokens.jsonl").open("a", encoding="utf-8")
         self.capture.reset()
         self.armed = False
         self.persist()
@@ -311,8 +321,9 @@ class CollectionWindow:
             self.session["updatedAt"] = now()
             atomic_save(self.path, self.session)
             self.storage.set(f"已自动保存：{self.path}")
-            if self.raw_stream:
-                self.raw_stream.flush()
+            for stream in (self.raw_stream, self.token_stream):
+                if stream:
+                    stream.flush()
             self.storage_ok = True
             return True
         except Exception as error:
@@ -344,11 +355,27 @@ class CollectionWindow:
             return
         self.capture.reset()
         self.armed = True
-        self.status.set("已准备：抬手后开始提示动作，结束时抬手。")
+        self.status.set(getattr(self.profile, "ARMED_NOTE", "已准备：抬手后开始提示动作，结束时抬手。"))
         self.draw()
         self.render()
 
+    def finish_character(self):
+        result = self.capture.finish()
+        if result is None:
+            self.status.set("最后一笔还没抬手确认；抬手后再按 1 结束。")
+        elif isinstance(result, str):
+            self.status.set(result + "。继续写，或按 2 重写。")
+        else:
+            self.armed = False
+            self.session["draft"] = result
+            self.persist()
+            self.status.set(f"已采到 {len(result['contacts'])} 笔：按 1 确认保存并开始下一个字，按 2 重写。")
+        self.render()
+
     def save_sample(self):
+        if self.armed and self.multi:
+            self.finish_character()
+            return
         if not self.session or not self.session["draft"]:
             return
         index = len(self.session["samples"])
@@ -419,8 +446,9 @@ class CollectionWindow:
             if self.worker and self.worker.thread.is_alive():
                 self.root.after(50, self.poll)
                 return
-            if self.raw_stream:
-                self.raw_stream.close()
+            for stream in (self.raw_stream, self.token_stream):
+                if stream:
+                    stream.close()
             self.root.destroy()
             return
         if self.worker and self.worker.overflow.is_set():
@@ -456,11 +484,33 @@ class CollectionWindow:
                     self.status.set("数据流已停止，记录已保留。")
             elif kind == "event":
                 self.event(value)
+            elif kind == "tokens":
+                self.tokens(value)
         if self.worker and not self.worker.thread.is_alive():
             self.worker = None
         self.draw()
         self.render()
         self.root.after(25, self.poll)
+
+    def tokens(self, value):
+        if self.token_stream:
+            try:
+                self.token_stream.write(json.dumps({"receivedAt": now(), "armed": self.armed,
+                    "taskIndex": len(self.session["samples"]), "tokens": value}, ensure_ascii=False, allow_nan=False)+"\n")
+            except Exception as error:
+                self.disconnect()
+                self.status.set(f"原始 token 保存失败；已停止采集：{error}")
+                return
+        if self.armed and self.multi:
+            result = self.capture.feed_tokens(value)
+            if result:
+                self.interrupt(result)
+
+    def interrupt(self, reason):
+        self.session["interruptions"].append({"at": now(), "taskIndex": len(self.session["samples"]), "reason": reason})
+        self.armed = False
+        self.persist()
+        self.status.set(reason + "。按 1 重新开始。")
 
     def event(self, value):
         if self.raw_stream:
@@ -486,10 +536,7 @@ class CollectionWindow:
             return
         result = self.capture.feed(value)
         if isinstance(result, str):
-            self.session["interruptions"].append({"at": now(), "taskIndex": len(self.session["samples"]), "reason": result})
-            self.armed = False
-            self.persist()
-            self.status.set(result + "。按 1 重新开始。")
+            self.interrupt(result)
         elif isinstance(result, dict):
             self.armed = False
             self.session["draft"] = result
@@ -499,31 +546,45 @@ class CollectionWindow:
     def draw(self):
         self.canvas.delete("all")
         draft = self.session.get("draft") if self.session else None
-        points = [(p["x"], p["y"]) for p in draft["points"]] if draft else self.capture.preview() if self.armed else []
-        if not points:
+        if draft and "contacts" in draft:
+            strokes = [[(p["x"], p["y"]) for p in t["points"]] for t in draft["contacts"]]
+        elif draft:
+            strokes = [[(p["x"], p["y"]) for p in draft["points"]]]
+        elif self.armed:
+            strokes = self.capture.preview() if self.multi else [self.capture.preview()]
+        else:
+            strokes = []
+        strokes = [points for points in strokes if points]
+        if not strokes:
             self.canvas.create_text(20, 20, anchor="nw", text="等待采集 · 原始尺寸保存在数据中，画面仅缩放展示", fill="#778298")
             return
         width, height = max(100, self.canvas.winfo_width()), max(100, self.canvas.winfo_height())
-        xs, ys = [p[0] for p in points], [p[1] for p in points]
-        scale = min((width-70)/max(1, max(xs)-min(xs)), (height-60)/max(1, max(ys)-min(ys)))
-        coords = [(35+(x-min(xs))*scale, 30+(y-min(ys))*scale) for x, y in points]
-        if len(coords) > 1:
-            self.canvas.create_line(*[v for point in coords for v in point], fill="#0a31cc", width=3)
-        x, y = coords[0]
-        self.canvas.create_oval(x-5, y-5, x+5, y+5, fill="#248e5c", outline="")
-        x, y = coords[-1]
-        self.canvas.create_oval(x-4, y-4, x+4, y+4, fill="#dd6247", outline="")
+        # Lifted gaps are not observed by the SDK, so each contact gets its own cell.
+        cell = width / len(strokes)
+        for index, points in enumerate(strokes):
+            xs, ys = [p[0] for p in points], [p[1] for p in points]
+            scale = min((cell-70)/max(1, max(xs)-min(xs)), (height-60)/max(1, max(ys)-min(ys)))
+            left = index*cell
+            coords = [(left+35+(x-min(xs))*scale, 30+(y-min(ys))*scale) for x, y in points]
+            if len(strokes) > 1:
+                self.canvas.create_text(left+8, 8, anchor="nw", text=str(index+1), fill="#778298")
+            if len(coords) > 1:
+                self.canvas.create_line(*[v for point in coords for v in point], fill="#0a31cc", width=3)
+            x, y = coords[0]
+            self.canvas.create_oval(x-5, y-5, x+5, y+5, fill="#248e5c", outline="")
+            x, y = coords[-1]
+            self.canvas.create_oval(x-4, y-4, x+4, y+4, fill="#dd6247", outline="")
 
     def render(self):
         session = self.session
         plan_version = session.get("planVersion", session["version"]) if session else getattr(self.profile, "PLAN_VERSION", 2)
         plan_size = len(self.profile.inventory(plan_version))
-        self.plan_help.set(f"每轮 {plan_size} 笔。" + self.profile.PLAN_HELP)
+        self.plan_help.set(f"每轮 {plan_size} {self.unit}。" + self.profile.PLAN_HELP)
         count = len(session["samples"]) if session else 0
         total = len(session["tasks"]) if session else 0
         done = bool(session and count == total)
         task = session["tasks"][count] if session and not done else None
-        self.progress.set(f"已保存 {count} / {total} 笔" + (f" · 第 {task['round']} 轮 · {self.evaluation_phase if session['phase']=='evaluation' else self.train_phase}" if task else ""))
+        self.progress.set(f"已保存 {count} / {total} {self.unit}" + (f" · 第 {task['round']} 轮 · {self.evaluation_phase if session['phase']=='evaluation' else self.train_phase}" if task else ""))
         if hasattr(self.profile, "progress_note"):
             self.test_summary.set(self.profile.progress_note(session))
         self.bar["value"] = count / total * 100 if total else 0
@@ -546,14 +607,16 @@ class CollectionWindow:
             self.test_prediction.set(self.profile.footer_sample_prediction(draft, task))
         elif hasattr(self.profile, "footer_prediction"):
             self.test_prediction.set(self.profile.footer_prediction(draft))
-        if draft:
+        if draft and "contacts" in draft:
+            self.detail.set(f"{len(draft['contacts'])} 笔 · 窗口 {draft['durationMs']:.0f} ms · 路径 {draft['pathLength']:.3f} 原始单位 · 笔间位置由离线 token 分析")
+        elif draft:
             self.detail.set(f"{len(draft['points'])} 点 · {draft['durationMs']:.0f} ms · 路径 {draft['pathLength']:.3f} 原始单位 · 坐标未归一化")
             if hasattr(self.profile, "trace_details") and task:
                 self.detail.set(self.detail.get() + "\n" + self.profile.trace_details(draft, task))
         else:
-            self.detail.set("转弯时保持触桌，结束时抬手。1 开始／保存并下一笔，2 重写；Enter 同 1，空格仅保存。")
-        for button, enabled in [(self.arm_button, self.connected and self.warm and self.storage_ok and not self.armed and not done),
-                                (self.save_button, bool(draft)), (self.redraw_button, bool(session and not done)),
+            self.detail.set(getattr(self.profile, "IDLE_DETAIL", "转弯时保持触桌，结束时抬手。1 开始／保存并下一笔，2 重写；Enter 同 1，空格仅保存。"))
+        for button, enabled in [(self.arm_button, self.connected and self.warm and self.storage_ok and (self.multi or not self.armed) and not done),
+                                (self.save_button, bool(draft) or (self.multi and self.armed)), (self.redraw_button, bool(session and not done)),
                                 (self.export_button, bool(session)), (self.undo_button, count > 0 and not self.armed),
                                 (self.connect_button, bool(session) and not self.worker),
                                 (self.disconnect_button, bool(self.worker)),

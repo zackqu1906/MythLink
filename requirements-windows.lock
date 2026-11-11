@@ -12,10 +12,21 @@ PySide6==6.11.1
 PySide6-Addons==6.11.1
 PySide6-Essentials==6.11.1
 shiboken6==6.11.1
-bleak==3.0.1
+# Versions below match the ring_windows_sdk 0.4.0 delivery's constraints.
+bleak==1.1.1
+winrt-runtime==4.1.0
+winrt-Windows.Devices.Bluetooth==4!10.0.28000.2957
+winrt-Windows.Devices.Bluetooth.Advertisement==4!10.0.28000.2957
+winrt-Windows.Devices.Bluetooth.GenericAttributeProfile==4!10.0.28000.2957
+winrt-Windows.Devices.Enumeration==4!10.0.28000.2957
+winrt-Windows.Foundation==4!10.0.28000.2957
+winrt-Windows.Foundation.Collections==4!10.0.28000.2957
+winrt-Windows.Storage.Streams==4!10.0.28000.2957
 comtypes==1.4.16
 asr-decoder==0.1.2
 online-fbank==0.0.4
 websocket-client==1.9.0
 # Original-AAR touchpad inference, shared with macOS.
 MNN==3.6.1
+# Raw2 touchpad (ring_windows_sdk 0.4.0 requires exactly this runtime).
+onnxruntime==1.21.0

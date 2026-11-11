@@ -1,0 +1,2093 @@
+{
+  "reports": [],
+  "syncedAtUtcMs": null,
+  "schemaVersion": 2,
+  "capabilities": null,
+  "timeZone": "Asia/Shanghai",
+  "lossRanges": [],
+  "sync": {
+    "receivedBytes": 0,
+    "downloadedRecordCount": 0,
+    "totalBytes": 0,
+    "currentStepsUpdated": false,
+    "deferredRecordIds": []
+  },
+  "deviceAddress": "AA:BB:CC:DD:EE:01",
+  "vitalHistory": [],
+  "daily": [],
+  "temperature": {
+    "dayIntervalMinutes": 60,
+    "unit": "°C",
+    "minimumNightMinutes": 30,
+    "nightly": [],
+    "algorithmVersion": "skin-deviation-v2",
+    "baselineWindowDays": 7,
+    "minimumBaselineNights": 1,
+    "history": [],
+    "nightIntervalMinutes": 5
+  },
+  "accountScope": "demo-account",
+  "page": {
+    "generatedAtUtcMs": 1792209600000,
+    "bodyProfile": null,
+    "latestHeart": null,
+    "sleepLast7Days": {
+      "fromDate": "2026-10-11",
+      "averageOnsetMinutesAfterNoon": null,
+      "averageWakeMinutesAfterNoon": null,
+      "days": [
+        {
+          "date": "2026-10-11",
+          "score": {
+            "coverage": 0,
+            "isMock": false,
+            "algorithmVersion": "wellness-v1-experimental",
+            "missingInputs": [],
+            "maximum": 100,
+            "label": "实验评分",
+            "contributors": [],
+            "value": null,
+            "status": "INSUFFICIENT_DATA"
+          },
+          "night": null
+        },
+        {
+          "date": "2026-10-12",
+          "score": {
+            "coverage": 0,
+            "isMock": false,
+            "algorithmVersion": "wellness-v1-experimental",
+            "missingInputs": [],
+            "maximum": 100,
+            "label": "实验评分",
+            "contributors": [],
+            "value": null,
+            "status": "INSUFFICIENT_DATA"
+          },
+          "night": null
+        },
+        {
+          "date": "2026-10-13",
+          "score": {
+            "coverage": 0,
+            "isMock": false,
+            "algorithmVersion": "wellness-v1-experimental",
+            "missingInputs": [],
+            "maximum": 100,
+            "label": "实验评分",
+            "contributors": [],
+            "value": null,
+            "status": "INSUFFICIENT_DATA"
+          },
+          "night": null
+        },
+        {
+          "date": "2026-10-14",
+          "score": {
+            "coverage": 0,
+            "isMock": false,
+            "algorithmVersion": "wellness-v1-experimental",
+            "missingInputs": [],
+            "maximum": 100,
+            "label": "实验评分",
+            "contributors": [],
+            "value": null,
+            "status": "INSUFFICIENT_DATA"
+          },
+          "night": null
+        },
+        {
+          "date": "2026-10-15",
+          "score": {
+            "coverage": 0,
+            "isMock": false,
+            "algorithmVersion": "wellness-v1-experimental",
+            "missingInputs": [],
+            "maximum": 100,
+            "label": "实验评分",
+            "contributors": [],
+            "value": null,
+            "status": "INSUFFICIENT_DATA"
+          },
+          "night": null
+        },
+        {
+          "date": "2026-10-16",
+          "score": {
+            "coverage": 0,
+            "isMock": false,
+            "algorithmVersion": "wellness-v1-experimental",
+            "missingInputs": [],
+            "maximum": 100,
+            "label": "实验评分",
+            "contributors": [],
+            "value": null,
+            "status": "INSUFFICIENT_DATA"
+          },
+          "night": null
+        },
+        {
+          "date": "2026-10-17",
+          "score": {
+            "coverage": 0,
+            "isMock": false,
+            "algorithmVersion": "wellness-v1-experimental",
+            "missingInputs": [
+              "SLEEP_DURATION",
+              "SLEEP_TIMING",
+              "DEEP_SLEEP",
+              "SLEEP_EFFICIENCY",
+              "RESTING_HEART_RATE",
+              "HRV",
+              "TEMPERATURE_DEVIATION"
+            ],
+            "maximum": 100,
+            "label": "实验评分",
+            "contributors": [
+              {
+                "score": null,
+                "unit": "min",
+                "effectiveWeight": 0,
+                "inputValue": null,
+                "weight": 0.25,
+                "key": "SLEEP_DURATION",
+                "referenceValue": 480,
+                "status": "MISSING_INPUT_OR_BASELINE"
+              },
+              {
+                "score": null,
+                "unit": "minuteOfDay",
+                "effectiveWeight": 0,
+                "inputValue": null,
+                "weight": 0.1,
+                "key": "SLEEP_TIMING",
+                "referenceValue": 1380,
+                "status": "MISSING_INPUT_OR_BASELINE"
+              },
+              {
+                "score": null,
+                "unit": "min",
+                "effectiveWeight": 0,
+                "inputValue": null,
+                "weight": 0.15,
+                "key": "DEEP_SLEEP",
+                "referenceValue": null,
+                "status": "MISSING_INPUT_OR_BASELINE"
+              },
+              {
+                "score": null,
+                "unit": "ratio",
+                "effectiveWeight": 0,
+                "inputValue": null,
+                "weight": 0.1,
+                "key": "SLEEP_EFFICIENCY",
+                "referenceValue": 1,
+                "status": "MISSING_INPUT_OR_BASELINE"
+              },
+              {
+                "score": null,
+                "unit": "bpm",
+                "effectiveWeight": 0,
+                "inputValue": null,
+                "weight": 0.15,
+                "key": "RESTING_HEART_RATE",
+                "referenceValue": null,
+                "status": "MISSING_INPUT_OR_BASELINE"
+              },
+              {
+                "score": null,
+                "unit": "ms",
+                "effectiveWeight": 0,
+                "inputValue": null,
+                "weight": 0.15,
+                "key": "HRV",
+                "referenceValue": null,
+                "status": "MISSING_INPUT_OR_BASELINE"
+              },
+              {
+                "score": null,
+                "unit": "°C",
+                "effectiveWeight": 0,
+                "inputValue": null,
+                "weight": 0.1,
+                "key": "TEMPERATURE_DEVIATION",
+                "referenceValue": 0,
+                "status": "MISSING_INPUT_OR_BASELINE"
+              }
+            ],
+            "value": null,
+            "status": "INSUFFICIENT_DATA"
+          },
+          "night": null
+        }
+      ],
+      "throughDate": "2026-10-17",
+      "validNightCount": 0,
+      "averageSleepMinutes": null,
+      "averageScore": {
+        "coverage": 0,
+        "isMock": false,
+        "algorithmVersion": "wellness-v1-experimental",
+        "missingInputs": [],
+        "maximum": 100,
+        "label": "实验评分",
+        "contributors": [],
+        "value": null,
+        "status": "INSUFFICIENT_DATA"
+      }
+    },
+    "algorithmVersion": "health-page-v2",
+    "today": {
+      "date": "2026-10-17",
+      "todayScore": {
+        "coverage": 0,
+        "isMock": false,
+        "algorithmVersion": "wellness-v1-experimental",
+        "missingInputs": [
+          "SLEEP_SCORE",
+          "YESTERDAY_ACTIVITY",
+          "TWO_DAYS_AGO_ACTIVITY",
+          "RESTING_HEART_RATE",
+          "HRV",
+          "TEMPERATURE_DEVIATION"
+        ],
+        "maximum": 100,
+        "label": "实验评分",
+        "contributors": [
+          {
+            "score": null,
+            "unit": "score",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.5,
+            "key": "SLEEP_SCORE",
+            "referenceValue": 100,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "walkingLoad",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "YESTERDAY_ACTIVITY",
+            "referenceValue": 30,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "walkingLoad",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "TWO_DAYS_AGO_ACTIVITY",
+            "referenceValue": 30,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "bpm",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "RESTING_HEART_RATE",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "ms",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "HRV",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "°C",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.05,
+            "key": "TEMPERATURE_DEVIATION",
+            "referenceValue": 0,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          }
+        ],
+        "value": null,
+        "status": "INSUFFICIENT_DATA"
+      },
+      "walkingCalories": {
+        "kcal": null,
+        "status": "PROFILE_REQUIRED",
+        "excludedSteps": 0
+      },
+      "activityLoad": {
+        "minimumMinutes": 180,
+        "loadUnits": null,
+        "observedMinutes": 0
+      },
+      "night": null,
+      "hourlyActivity": [
+        {
+          "endUtcMs": 1792170000000,
+          "localHour": 0,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792166400000
+        },
+        {
+          "endUtcMs": 1792173600000,
+          "localHour": 1,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792170000000
+        },
+        {
+          "endUtcMs": 1792177200000,
+          "localHour": 2,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792173600000
+        },
+        {
+          "endUtcMs": 1792180800000,
+          "localHour": 3,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792177200000
+        },
+        {
+          "endUtcMs": 1792184400000,
+          "localHour": 4,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792180800000
+        },
+        {
+          "endUtcMs": 1792188000000,
+          "localHour": 5,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792184400000
+        },
+        {
+          "endUtcMs": 1792191600000,
+          "localHour": 6,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792188000000
+        },
+        {
+          "endUtcMs": 1792195200000,
+          "localHour": 7,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792191600000
+        },
+        {
+          "endUtcMs": 1792198800000,
+          "localHour": 8,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792195200000
+        },
+        {
+          "endUtcMs": 1792202400000,
+          "localHour": 9,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792198800000
+        },
+        {
+          "endUtcMs": 1792206000000,
+          "localHour": 10,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792202400000
+        },
+        {
+          "endUtcMs": 1792209600000,
+          "localHour": 11,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792206000000
+        },
+        {
+          "endUtcMs": 1792213200000,
+          "localHour": 12,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792209600000
+        },
+        {
+          "endUtcMs": 1792216800000,
+          "localHour": 13,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792213200000
+        },
+        {
+          "endUtcMs": 1792220400000,
+          "localHour": 14,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792216800000
+        },
+        {
+          "endUtcMs": 1792224000000,
+          "localHour": 15,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792220400000
+        },
+        {
+          "endUtcMs": 1792227600000,
+          "localHour": 16,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792224000000
+        },
+        {
+          "endUtcMs": 1792231200000,
+          "localHour": 17,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792227600000
+        },
+        {
+          "endUtcMs": 1792234800000,
+          "localHour": 18,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792231200000
+        },
+        {
+          "endUtcMs": 1792238400000,
+          "localHour": 19,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792234800000
+        },
+        {
+          "endUtcMs": 1792242000000,
+          "localHour": 20,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792238400000
+        },
+        {
+          "endUtcMs": 1792245600000,
+          "localHour": 21,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792242000000
+        },
+        {
+          "endUtcMs": 1792249200000,
+          "localHour": 22,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792245600000
+        },
+        {
+          "endUtcMs": 1792252800000,
+          "localHour": 23,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792249200000
+        }
+      ],
+      "sleepScore": {
+        "coverage": 0,
+        "isMock": false,
+        "algorithmVersion": "wellness-v1-experimental",
+        "missingInputs": [
+          "SLEEP_DURATION",
+          "SLEEP_TIMING",
+          "DEEP_SLEEP",
+          "SLEEP_EFFICIENCY",
+          "RESTING_HEART_RATE",
+          "HRV",
+          "TEMPERATURE_DEVIATION"
+        ],
+        "maximum": 100,
+        "label": "实验评分",
+        "contributors": [
+          {
+            "score": null,
+            "unit": "min",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.25,
+            "key": "SLEEP_DURATION",
+            "referenceValue": 480,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "minuteOfDay",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "SLEEP_TIMING",
+            "referenceValue": 1380,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "min",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "DEEP_SLEEP",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "ratio",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "SLEEP_EFFICIENCY",
+            "referenceValue": 1,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "bpm",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "RESTING_HEART_RATE",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "ms",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "HRV",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "°C",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "TEMPERATURE_DEVIATION",
+            "referenceValue": 0,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          }
+        ],
+        "value": null,
+        "status": "INSUFFICIENT_DATA"
+      },
+      "steps": null,
+      "hrv": {
+        "dayIntervalMinutes": 30,
+        "unit": "ms",
+        "algorithmVersion": "hrv-median-v1",
+        "nightIntervalMinutes": 5,
+        "points": [
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792168200000,
+            "startUtcMs": 1792166400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792170000000,
+            "startUtcMs": 1792168200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792171800000,
+            "startUtcMs": 1792170000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792173600000,
+            "startUtcMs": 1792171800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792175400000,
+            "startUtcMs": 1792173600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792177200000,
+            "startUtcMs": 1792175400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792179000000,
+            "startUtcMs": 1792177200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792180800000,
+            "startUtcMs": 1792179000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792182600000,
+            "startUtcMs": 1792180800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792184400000,
+            "startUtcMs": 1792182600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792186200000,
+            "startUtcMs": 1792184400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792188000000,
+            "startUtcMs": 1792186200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792189800000,
+            "startUtcMs": 1792188000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792191600000,
+            "startUtcMs": 1792189800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792193400000,
+            "startUtcMs": 1792191600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792195200000,
+            "startUtcMs": 1792193400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792197000000,
+            "startUtcMs": 1792195200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792198800000,
+            "startUtcMs": 1792197000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792200600000,
+            "startUtcMs": 1792198800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792202400000,
+            "startUtcMs": 1792200600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792204200000,
+            "startUtcMs": 1792202400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792206000000,
+            "startUtcMs": 1792204200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792207800000,
+            "startUtcMs": 1792206000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792209600000,
+            "startUtcMs": 1792207800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          }
+        ]
+      },
+      "heart": {
+        "minimumBpm": null,
+        "hourly": [
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792170000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792166400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792173600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792170000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792177200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792173600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792180800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792177200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792184400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792180800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792188000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792184400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792191600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792188000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792195200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792191600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792198800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792195200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792202400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792198800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792206000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792202400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792209600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792206000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792213200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792209600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792216800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792213200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792220400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792216800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792224000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792220400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792227600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792224000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792231200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792227600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792234800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792231200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792238400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792234800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792242000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792238400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792245600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792242000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792249200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792245600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792252800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792249200000,
+            "averageBpm": null
+          }
+        ],
+        "maximumBpm": null,
+        "latest": null
+      }
+    },
+    "scoringProfile": {
+      "preferredOnsetMinute": 1380,
+      "sleepGoalMinutes": 480
+    },
+    "timeZone": "Asia/Shanghai",
+    "days": [{
+      "date": "2026-10-17",
+      "todayScore": {
+        "coverage": 0,
+        "isMock": false,
+        "algorithmVersion": "wellness-v1-experimental",
+        "missingInputs": [
+          "SLEEP_SCORE",
+          "YESTERDAY_ACTIVITY",
+          "TWO_DAYS_AGO_ACTIVITY",
+          "RESTING_HEART_RATE",
+          "HRV",
+          "TEMPERATURE_DEVIATION"
+        ],
+        "maximum": 100,
+        "label": "实验评分",
+        "contributors": [
+          {
+            "score": null,
+            "unit": "score",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.5,
+            "key": "SLEEP_SCORE",
+            "referenceValue": 100,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "walkingLoad",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "YESTERDAY_ACTIVITY",
+            "referenceValue": 30,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "walkingLoad",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "TWO_DAYS_AGO_ACTIVITY",
+            "referenceValue": 30,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "bpm",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "RESTING_HEART_RATE",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "ms",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "HRV",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "°C",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.05,
+            "key": "TEMPERATURE_DEVIATION",
+            "referenceValue": 0,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          }
+        ],
+        "value": null,
+        "status": "INSUFFICIENT_DATA"
+      },
+      "walkingCalories": {
+        "kcal": null,
+        "status": "PROFILE_REQUIRED",
+        "excludedSteps": 0
+      },
+      "activityLoad": {
+        "minimumMinutes": 180,
+        "loadUnits": null,
+        "observedMinutes": 0
+      },
+      "night": null,
+      "hourlyActivity": [
+        {
+          "endUtcMs": 1792170000000,
+          "localHour": 0,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792166400000
+        },
+        {
+          "endUtcMs": 1792173600000,
+          "localHour": 1,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792170000000
+        },
+        {
+          "endUtcMs": 1792177200000,
+          "localHour": 2,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792173600000
+        },
+        {
+          "endUtcMs": 1792180800000,
+          "localHour": 3,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792177200000
+        },
+        {
+          "endUtcMs": 1792184400000,
+          "localHour": 4,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792180800000
+        },
+        {
+          "endUtcMs": 1792188000000,
+          "localHour": 5,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792184400000
+        },
+        {
+          "endUtcMs": 1792191600000,
+          "localHour": 6,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792188000000
+        },
+        {
+          "endUtcMs": 1792195200000,
+          "localHour": 7,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792191600000
+        },
+        {
+          "endUtcMs": 1792198800000,
+          "localHour": 8,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792195200000
+        },
+        {
+          "endUtcMs": 1792202400000,
+          "localHour": 9,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792198800000
+        },
+        {
+          "endUtcMs": 1792206000000,
+          "localHour": 10,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792202400000
+        },
+        {
+          "endUtcMs": 1792209600000,
+          "localHour": 11,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792206000000
+        },
+        {
+          "endUtcMs": 1792213200000,
+          "localHour": 12,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792209600000
+        },
+        {
+          "endUtcMs": 1792216800000,
+          "localHour": 13,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792213200000
+        },
+        {
+          "endUtcMs": 1792220400000,
+          "localHour": 14,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792216800000
+        },
+        {
+          "endUtcMs": 1792224000000,
+          "localHour": 15,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792220400000
+        },
+        {
+          "endUtcMs": 1792227600000,
+          "localHour": 16,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792224000000
+        },
+        {
+          "endUtcMs": 1792231200000,
+          "localHour": 17,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792227600000
+        },
+        {
+          "endUtcMs": 1792234800000,
+          "localHour": 18,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792231200000
+        },
+        {
+          "endUtcMs": 1792238400000,
+          "localHour": 19,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792234800000
+        },
+        {
+          "endUtcMs": 1792242000000,
+          "localHour": 20,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792238400000
+        },
+        {
+          "endUtcMs": 1792245600000,
+          "localHour": 21,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792242000000
+        },
+        {
+          "endUtcMs": 1792249200000,
+          "localHour": 22,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792245600000
+        },
+        {
+          "endUtcMs": 1792252800000,
+          "localHour": 23,
+          "calories": {
+            "kcal": null,
+            "status": "PROFILE_REQUIRED",
+            "excludedSteps": 0
+          },
+          "utcOffsetSeconds": 28800,
+          "steps": null,
+          "startUtcMs": 1792249200000
+        }
+      ],
+      "sleepScore": {
+        "coverage": 0,
+        "isMock": false,
+        "algorithmVersion": "wellness-v1-experimental",
+        "missingInputs": [
+          "SLEEP_DURATION",
+          "SLEEP_TIMING",
+          "DEEP_SLEEP",
+          "SLEEP_EFFICIENCY",
+          "RESTING_HEART_RATE",
+          "HRV",
+          "TEMPERATURE_DEVIATION"
+        ],
+        "maximum": 100,
+        "label": "实验评分",
+        "contributors": [
+          {
+            "score": null,
+            "unit": "min",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.25,
+            "key": "SLEEP_DURATION",
+            "referenceValue": 480,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "minuteOfDay",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "SLEEP_TIMING",
+            "referenceValue": 1380,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "min",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "DEEP_SLEEP",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "ratio",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "SLEEP_EFFICIENCY",
+            "referenceValue": 1,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "bpm",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "RESTING_HEART_RATE",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "ms",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.15,
+            "key": "HRV",
+            "referenceValue": null,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          },
+          {
+            "score": null,
+            "unit": "°C",
+            "effectiveWeight": 0,
+            "inputValue": null,
+            "weight": 0.1,
+            "key": "TEMPERATURE_DEVIATION",
+            "referenceValue": 0,
+            "status": "MISSING_INPUT_OR_BASELINE"
+          }
+        ],
+        "value": null,
+        "status": "INSUFFICIENT_DATA"
+      },
+      "steps": null,
+      "hrv": {
+        "dayIntervalMinutes": 30,
+        "unit": "ms",
+        "algorithmVersion": "hrv-median-v1",
+        "nightIntervalMinutes": 5,
+        "points": [
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792168200000,
+            "startUtcMs": 1792166400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792170000000,
+            "startUtcMs": 1792168200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792171800000,
+            "startUtcMs": 1792170000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792173600000,
+            "startUtcMs": 1792171800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792175400000,
+            "startUtcMs": 1792173600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792177200000,
+            "startUtcMs": 1792175400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792179000000,
+            "startUtcMs": 1792177200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792180800000,
+            "startUtcMs": 1792179000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792182600000,
+            "startUtcMs": 1792180800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792184400000,
+            "startUtcMs": 1792182600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792186200000,
+            "startUtcMs": 1792184400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792188000000,
+            "startUtcMs": 1792186200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792189800000,
+            "startUtcMs": 1792188000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792191600000,
+            "startUtcMs": 1792189800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792193400000,
+            "startUtcMs": 1792191600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792195200000,
+            "startUtcMs": 1792193400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792197000000,
+            "startUtcMs": 1792195200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792198800000,
+            "startUtcMs": 1792197000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792200600000,
+            "startUtcMs": 1792198800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792202400000,
+            "startUtcMs": 1792200600000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792204200000,
+            "startUtcMs": 1792202400000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792206000000,
+            "startUtcMs": 1792204200000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792207800000,
+            "startUtcMs": 1792206000000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          },
+          {
+            "sampleCount": 0,
+            "period": "DAY",
+            "endUtcMs": 1792209600000,
+            "startUtcMs": 1792207800000,
+            "intervalMinutes": 30,
+            "medianRmssdMs": null,
+            "validMinutes": 0,
+            "isComplete": true
+          }
+        ]
+      },
+      "heart": {
+        "minimumBpm": null,
+        "hourly": [
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792170000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792166400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792173600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792170000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792177200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792173600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792180800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792177200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792184400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792180800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792188000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792184400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792191600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792188000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792195200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792191600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792198800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792195200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792202400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792198800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792206000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792202400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792209600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792206000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792213200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792209600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792216800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792213200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792220400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792216800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792224000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792220400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792227600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792224000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792231200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792227600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792234800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792231200000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792238400000,
+            "maximumBpm": null,
+            "startUtcMs": 1792234800000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792242000000,
+            "maximumBpm": null,
+            "startUtcMs": 1792238400000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792245600000,
+            "maximumBpm": null,
+            "startUtcMs": 1792242000000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792249200000,
+            "maximumBpm": null,
+            "startUtcMs": 1792245600000,
+            "averageBpm": null
+          },
+          {
+            "sampleCount": 0,
+            "minimumBpm": null,
+            "endUtcMs": 1792252800000,
+            "maximumBpm": null,
+            "startUtcMs": 1792249200000,
+            "averageBpm": null
+          }
+        ],
+        "maximumBpm": null,
+        "latest": null
+      }
+    }],
+    "debugScoresEnabled": false
+  },
+  "deviceState": null,
+  "liveHeartSupported": false,
+  "errors": [],
+  "status": "CACHE_ONLY"
+}

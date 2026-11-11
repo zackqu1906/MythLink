@@ -1,8 +1,10 @@
-// Same 3×3 menu as tools/test_complete_stroke_input.py: punctuation on top,
-// six candidates below, handwriting and selection path drawn over the cells.
+// Same 3×3 menu as stroke_menu: punctuation on top, delete on the left, five
+// candidates; a two-finger swipe toward a cell selects it. Handwriting and the
+// two-finger selection path are drawn over the cells.
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
+import QtQuick.Shapes
 
 Rectangle {
     id: menu
@@ -11,16 +13,24 @@ Rectangle {
     readonly property var selection: touchpad.selectionState
     readonly property bool selecting: selection.phase === "selecting"
     readonly property string activeDirection: selecting ? (selection.direction || "center") : ""
-    // Same order as stroke_menu.CANDIDATE_CELLS / PUNCTUATION_CELLS.
+    // Briefly highlights the cell a two-finger swipe just confirmed.
+    property string committedDirection: ""
+    // Same order as stroke_menu.CANDIDATE_CELLS / PUNCTUATION_CELLS / ACTION_CELLS.
     readonly property var candidateCells: [
-        {direction: "center", row: 1, column: 1, arrow: "首选"}, {direction: "left", row: 1, column: 0, arrow: "←"},
-        {direction: "right", row: 1, column: 2, arrow: "→"}, {direction: "down-left", row: 2, column: 0, arrow: "↙"},
-        {direction: "down", row: 2, column: 1, arrow: "↓"}, {direction: "down-right", row: 2, column: 2, arrow: "↘"}]
+        {direction: "center", row: 1, column: 1, arrow: "首选"}, {direction: "right", row: 1, column: 2, arrow: "→"},
+        {direction: "down-left", row: 2, column: 0, arrow: "↙"}, {direction: "down", row: 2, column: 1, arrow: "↓"},
+        {direction: "down-right", row: 2, column: 2, arrow: "↘"}]
     readonly property var punctuationCells: [
-        {direction: "up-left", arrow: "↖", symbol: "，", title: "逗号"},
-        {direction: "up", arrow: "↑", symbol: "。", title: "句号"},
-        {direction: "up-right", arrow: "↗", symbol: "？", title: "问号"}]
+        {direction: "up-left", row: 0, column: 0, arrow: "↖", symbol: "，", title: "逗号"},
+        {direction: "up", row: 0, column: 1, arrow: "↑", symbol: "。", title: "句号"},
+        {direction: "up-right", row: 0, column: 2, arrow: "↗", symbol: "？", title: "问号"},
+        {direction: "left", row: 1, column: 0, arrow: "←", title: "删除", action: "delete"}]
     property var cells: ({})
+    Timer { id: commitFlash; interval: 280; onTriggered: menu.committedDirection = "" }
+    Connections {
+        target: menu.touchpad
+        function onSelectionCommitted(direction) { menu.committedDirection = direction; commitFlash.restart() }
+    }
     color: "#F3F6FC"; radius: 14
     border.color: "#DCE4F0"; border.width: 1
     FigmaTheme { id: theme }
@@ -35,50 +45,71 @@ Rectangle {
 
         Repeater {
             model: menu.punctuationCells
-            delegate: Button {
+            delegate: Basic.Button {
                 id: action
                 required property var modelData
                 required property int index
-                objectName: "strokePunctuation" + index
+                objectName: modelData.action === "delete" ? "strokeDeleteCell" : "strokePunctuation" + index
                 readonly property bool directionActive: menu.activeDirection === modelData.direction
-                Layout.row: 0; Layout.column: index
+                                                        || menu.committedDirection === modelData.direction
+                Layout.row: modelData.row; Layout.column: modelData.column
                 Layout.fillWidth: true; Layout.fillHeight: true
                 Layout.preferredWidth: 1; Layout.preferredHeight: 1
                 focusPolicy: Qt.NoFocus; hoverEnabled: enabled
-                topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0; padding: 0
-                Accessible.name: "输入标点 " + modelData.symbol
+                padding: 0; horizontalPadding: 0
+                Accessible.name: modelData.action === "delete" ? "删除一笔或一个字" : "输入标点 " + modelData.symbol
                 Component.onCompleted: menu.cells[modelData.direction] = action
                 background: Rectangle {
                     radius: 10
-                    color: action.directionActive ? "#234CDB" : action.down ? "#D8E3FA" : (action.enabled && action.hovered) ? "#E7EDFB" : "#EDF2FB"
+                    Behavior on color { ColorAnimation { duration: 120 } }
+                    color: action.directionActive ? (action.modelData.action === "delete" ? "#C2413B" : "#234CDB") : action.down ? "#D8E3FA" : (action.enabled && action.hovered) ? "#E7EDFB" : "#EDF2FB"
                     border.width: action.directionActive ? 2 : 1
-                    border.color: action.directionActive ? "#1739AC" : "#DCE4F0"
+                    border.color: action.directionActive ? (action.modelData.action === "delete" ? "#9C2F2A" : "#1739AC") : "#DCE4F0"
                 }
                 contentItem: Item {
                     readonly property color ink: action.directionActive ? "white" : "#647895"
                     readonly property bool large: action.height >= 115
-                    Text { x: 12; y: 7; text: action.modelData.arrow; color: parent.ink; font.pixelSize: parent.large ? 14 : 12 }
                     Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        y: 25; height: Math.max(22, parent.height - 54)
-                        verticalAlignment: Text.AlignVCenter
-                        text: action.modelData.symbol; color: parent.ink
-                        font.pixelSize: Math.min(46, Math.max(22, parent.height / 3))
+                        id: actionDirection
+                        x: 12; y: 7
+                        text: action.modelData.arrow; color: parent.ink; font.pixelSize: parent.large ? 14 : 12
                     }
                     Text {
+                        id: actionSymbol
+                        anchors { left: parent.left; right: parent.right; top: actionDirection.bottom; bottom: actionCaption.top
+                                  leftMargin: 8; rightMargin: 8; topMargin: 2; bottomMargin: 2 }
+                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                        text: action.modelData.symbol || ""; color: parent.ink
+                        font.pixelSize: Math.min(46, Math.round(parent.height / 3))
+                        fontSizeMode: Text.Fit; minimumPixelSize: 12
+                    }
+                    Shape {
+                        visible: action.modelData.action === "delete"
+                        anchors.centerIn: actionSymbol
+                        width: 32; height: 22
+                        scale: Math.min(1.35, actionSymbol.width / width, actionSymbol.height / height)
+                        ShapePath {
+                            strokeColor: actionSymbol.color; strokeWidth: 1.8
+                            fillColor: "transparent"; joinStyle: ShapePath.RoundJoin; capStyle: ShapePath.RoundCap
+                            PathSvg { path: "M 1,11 L 11,2 H 31 V 20 H 11 Z M 15,7 L 24,15 M 24,7 L 15,15" }
+                        }
+                    }
+                    Text {
+                        id: actionCaption
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom; anchors.bottomMargin: 7
                         text: action.modelData.title; color: parent.ink
                         font.pixelSize: parent.large ? 12 : 11
                     }
                 }
-                onClicked: menu.touchpad.insertPunctuation(modelData.symbol)
+                onClicked: modelData.action === "delete" ? menu.touchpad.deleteOne()
+                                                         : menu.touchpad.insertPunctuation(modelData.symbol)
             }
         }
 
         Repeater {
             model: menu.candidateCells
-            delegate: Button {
+            delegate: Basic.Button {
                 id: cell
                 required property var modelData
                 required property int index
@@ -86,6 +117,7 @@ Rectangle {
                 readonly property string character: index < menu.touchpad.strokeCandidates.length ? menu.touchpad.strokeCandidates[index] : ""
                 readonly property var visual: character.length && menu.candidateVisuals.length > index ? menu.candidateVisuals[index] : null
                 readonly property bool directionActive: menu.activeDirection === modelData.direction
+                                                        || (menu.committedDirection === modelData.direction && character.length > 0)
                 readonly property bool chosen: index === menu.touchpad.selectedCandidate && character.length > 0
                 readonly property bool compact: height < 130
                 Layout.row: modelData.row; Layout.column: modelData.column
@@ -93,11 +125,12 @@ Rectangle {
                 Layout.preferredWidth: 1; Layout.preferredHeight: 1
                 enabled: character.length > 0
                 focusPolicy: Qt.NoFocus; hoverEnabled: enabled
-                topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0; padding: 0
+                padding: 0; horizontalPadding: 0
                 Accessible.name: character.length ? "第" + (index + 1) + "候选 " + character + (visual ? "，" + visual.status : "") : "暂无候选"
                 Component.onCompleted: menu.cells[modelData.direction] = cell
                 background: Rectangle {
                     radius: 10
+                    Behavior on color { ColorAnimation { duration: 120 } }
                     color: cell.directionActive ? "#EDF2FF" : cell.hovered && cell.enabled ? "#F4F7FF"
                          : cell.index === 0 && cell.enabled ? "#F0F4FF" : "#FFFFFF"
                     border.width: cell.directionActive || cell.chosen || (cell.index === 0 && cell.enabled) ? 2 : 1
@@ -106,11 +139,16 @@ Rectangle {
                 }
                 contentItem: Item {
                     readonly property color ink: cell.directionActive ? "#345EE5" : cell.enabled ? "#71809A" : "#A7B0C0"
-                    readonly property real glyphTop: cell.compact ? 22 : 27
-                    readonly property real glyphBottom: height - (cell.compact ? 21 : 28)
-                    readonly property real side: Math.max(20, Math.min(112, width - 24, glyphBottom - glyphTop))
-                    Text { x: 12; y: 7; text: cell.modelData.arrow; color: parent.ink; font.pixelSize: cell.compact ? 12 : 14 }
+                    readonly property real glyphTop: 7 + Math.max(candidateDirection.height, candidateRank.height) + 2
+                    readonly property real glyphBottom: candidateStatus.y - 2
+                    readonly property real side: Math.max(1, Math.min(112, width - 24, glyphBottom - glyphTop))
                     Text {
+                        id: candidateDirection
+                        x: 12; y: 7
+                        text: cell.modelData.arrow; color: parent.ink; font.pixelSize: cell.compact ? 12 : 14
+                    }
+                    Text {
+                        id: candidateRank
                         anchors.right: parent.right; anchors.rightMargin: 12; y: 7
                         text: cell.index + 1; color: parent.ink; font.pixelSize: cell.compact ? 12 : 14
                     }
@@ -122,6 +160,8 @@ Rectangle {
                         sourceSize.width: 192; sourceSize.height: 192
                         fillMode: Image.PreserveAspectFit
                         visible: source.toString().length > 0
+                        // Guesses that only fill an otherwise short page are drawn lighter.
+                        opacity: cell.visual && cell.visual.guess ? .5 : 1
                     }
                     Text {
                         x: (parent.width - parent.side) / 2; y: parent.glyphTop + (parent.glyphBottom - parent.glyphTop - parent.side) / 2
@@ -130,12 +170,13 @@ Rectangle {
                         text: cell.character.length ? cell.character : "—"
                         visible: !cell.visual || !cell.visual.source
                         font.family: Qt.platform.os === "osx" ? "Kaiti SC" : "KaiTi"
-                        font.pixelSize: Math.round(parent.side * .82)
+                        font.pixelSize: Math.max(1, Math.round(parent.side * .82))
+                        fontSizeMode: Text.Fit; minimumPixelSize: 1
                         color: cell.enabled ? "#24334D" : "#C3CBD7"
                     }
                     Text {
-                        x: 6; width: parent.width - 12
-                        y: parent.height - (cell.compact ? 21 : 24); height: 18
+                        id: candidateStatus
+                        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 6 }
                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         text: cell.visual ? cell.visual.status + (cell.visual.next ? " · 下一笔 " + cell.visual.next : "")
                                           : cell.character.length ? "候选" : "等待输入"
@@ -157,7 +198,7 @@ Rectangle {
         StrokeTrail {
             id: trail
             // Handwriting is centered like the standalone trial; only the
-            // selection path below starts from the hold origin.
+            // two-finger selection path below starts from the centre cell.
             anchors.fill: parent
             centered: true
             opacity: .42
@@ -185,7 +226,7 @@ Rectangle {
                 const dx = point[0] - origin[0], dy = point[1] - origin[1]
                 const distance = Math.hypot(dx, dy)
                 const center = rect("center")
-                const threshold = menu.touchpad.selectionDistance
+                const threshold = menu.selection.threshold || menu.touchpad.selectionDistance
                 if (distance < threshold) {
                     const radius = Math.min(center.width, center.height) * .36
                     return {x: center.cx + dx / threshold * radius, y: center.cy + dy / threshold * radius}

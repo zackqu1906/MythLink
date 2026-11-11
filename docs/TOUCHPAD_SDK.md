@@ -86,6 +86,7 @@ async def use_existing_session(session: RingSession):
 | `on_stats` | 可选，约每 0.5 秒回调一次不可变 `TouchpadStats` |
 | `on_stopped` | 可选，停止后回调一次；正常停止/超时为 None，异常为 Exception |
 | `on_discarded_event` | 可选，接收 `(event, reason)`，用于观察回调前过期或流已关闭而未交付的事件；诊断回调异常不会中断输入 |
+| `on_tokens` | 可选，逐包接收 `TouchpadTokens`：模型输入原值（T1–T3 加速度、T4–T6 陀螺仪，token 单位）、与事件相同的帧 `steps` 及重置计数 `epoch`。不设交付时效，不改变推理和事件；未设置时不保留记录。用途见[笔画相对位置](STROKE_LAYOUT.md) |
 | `duration_s=90` | 从 START 成功后开始计时，只停止触摸板，不关闭应用/蓝牙/语音；传 None 可显式长期运行 |
 | `model_path=None` | 默认使用随 SDK 附带、校验哈希的原模型；自定义路径仍需满足相同输入输出约定 |
 

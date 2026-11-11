@@ -124,7 +124,8 @@ def load_window(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location('complete_trial',tools/'test_complete_stroke_input.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return app, module.Window('offline')
+    # Existing expectations were written against the legacy context counts.
+    return app, module.Window('offline', context_model='legacy')
 
 
 def test_live_trial_strength_changes_candidates_and_records_history(tmp_path, monkeypatch):
@@ -162,6 +163,8 @@ def prepare(window):
         category_scores=[dict(category='s',distance=.001),dict(category='p',distance=.002)])
     window.predictor = StrokeContext(dict(maxContext=4,total=100,unigrams={'小':50,'你':50},
         contexts={'爱':[100,'你',[100]]}))
+    # The toy dictionary pins exact lists; page filling has its own tests.
+    window.fill_toggle.setChecked(False)
 
 
 def test_expanded_default_scope_commits_ni_and_niao(tmp_path, monkeypatch):
@@ -309,6 +312,7 @@ def test_complete_window_reviews_clear_reuses_result_and_keeps_real_clear(tmp_pa
     calls=[]
     try:
         window.dictionary=StrokeDictionary(dict(templates=[],ranks={'九':0},entries=[['九','pz',1]]))
+        window.fill_toggle.setChecked(False)
         def recognize_once(points):
             calls.append(points)
             return dict(category='z',shape='横折弯钩',distance=.03,
@@ -766,6 +770,50 @@ def test_trial_recovers_nearby_wrong_stroke_and_renders_red_then_toggle_undo_com
         window.close(); app.processEvents()
 
 
+def test_status_log_shows_each_recognition_without_taking_input_focus(tmp_path, monkeypatch):
+    from PySide6.QtCore import Qt
+    app, window = load_window(tmp_path, monkeypatch)
+    from stroke_trial_status_log import StatusLogWindow
+    log = StatusLogWindow(window)
+    window.status_log = log
+    try:
+        # The trial pauses ring input when it loses focus, so the log must never take it.
+        assert log.windowFlags() & Qt.WindowDoesNotAcceptFocus
+        assert log.testAttribute(Qt.WA_ShowWithoutActivating)
+        window.record('stats', packets=1)
+        window.record('contact_samples', samples=[])
+        assert log.view.toPlainText() == ''
+        window.record('contact_intent', sdk_is_click=True, intent_decision=dict(
+            action='tap', reason='stationary-release', duration_ms=60., path_length=.4))
+        window.record('contact_intent', sdk_is_click=False, intent_decision=dict(
+            source='two-finger', phase='selecting', direction='right'))
+        window.record('contact_intent_state', phase='idle', progress=0, direction=None)
+        window.record('contact_intent_state', phase='writing', progress=0, direction=None)
+        window.record('stroke', result=dict(shape='横折', distance=.0123), recognition_ms=2.5, code='hz',
+                      fuzzy_candidates=[dict(char='口'), dict(char='日')])
+        window.record('contact_decision', decision=dict(action='delete-one'))
+        window.record('contact_decision', decision=dict(action='stroke', baselineAction='stroke'))
+        window.record('hold_selection', decision=dict(action='select', target=1, direction='right', source='two-finger'))
+        window.record('tap_confirmation', allowed=False, reason='commit-cooldown')
+        window.record('commit', character='我', code='hz')
+        lines = log.view.toPlainText().splitlines()
+        assert [line.split('  ', 1)[1] for line in lines] == [
+            '[接触] 单指 · 轻触 · 静止抬手 · 60 ms · 路径 0.4 · SDK点击',
+            '[接触] 双指 · 选字手势 · 右 · SDK非点击',
+            '[阶段] 单指 · 书写中',
+            '[笔画] 横折 · 距离 0.0123 · 2.5 ms · 笔序 横折 · 候选 口 日',
+            '[手势] 退一笔',
+            '[选字] 双指 · 选字 · 右 · 第2候选',
+            '[轻触] 已拦截 · 出字后冷却中',
+            '[出字] 「我」 · 笔序 横折',
+        ]
+        # A malformed event is shown; it must not interrupt the input flow calling record().
+        window.record('stroke', result=None)
+        assert '[错误] stroke 无法显示' in log.view.toPlainText().splitlines()[-1]
+    finally:
+        window.close(); app.processEvents()
+
+
 @pytest.mark.parametrize('original_dictionary', [False, True], ids=['filtered', 'original'])
 def test_synthetic_sdk_release_runs_complete_window_and_shutdown(tmp_path, monkeypatch, original_dictionary):
     import time
@@ -875,5 +923,47 @@ def test_trial_focus_blocks_background_and_stale_callbacks_preserving_compositio
         assert window._focus_since is None
     finally:
         other.close()
+        window.close()
+        app.processEvents()
+
+
+def test_short_first_page_is_filled_with_marked_guesses(tmp_path, monkeypatch):
+    app, window = load_window(tmp_path, monkeypatch)
+    try:
+        prepare(window)
+        window.fill_toggle.setChecked(True)
+        window.accept_stroke(dict(points=trace(*([(0,2)]*30))))
+        assert window.code == 's' and window.candidates[0] == '小' and len(window.candidates) >= 2
+        guesses = [r for r in window.matches if r.get('match_type') == 'tolerant']
+        assert all(r['char'] in window.candidates for r in guesses)
+        window.fuzzy_toggle.setChecked(False)
+        assert window.candidates == ['小']  # strict mode is never filled
+        window.fuzzy_toggle.setChecked(True)
+        window.fill_toggle.setChecked(False)
+        assert not any(r.get('match_type') == 'tolerant' for r in window.matches)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_guess_is_drawn_marked_and_not_learned(tmp_path, monkeypatch):
+    app, window = load_window(tmp_path, monkeypatch)
+    try:
+        window.dictionary.recognize = lambda points: dict(category='z', shape='横折', distance=.001,
+            category_scores=[dict(category='z', distance=.001), dict(category='h', distance=.5)])
+        for _ in range(9):
+            window.accept_stroke(dict(points=trace(*([(2,0)]*15+[(0,2)]*15))))
+        assert len(window.candidates) >= 6
+        guesses = {r['char'] for r in window.matches if r.get('match_type') == 'tolerant'}
+        assert guesses and guesses <= set(window.candidates)
+        index = next(i for i, c in enumerate(window.candidates[:6]) if c in guesses)
+        window.selected = index
+        window.render_candidates()
+        visual = window.buttons[index].visual
+        assert visual['guess'] and visual['status'].startswith('猜')
+        before = window.personal_model.snapshot()
+        window.commit(index)
+        assert window.personal_model.snapshot() == before
+    finally:
         window.close()
         app.processEvents()

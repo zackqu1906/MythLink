@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
-from functools import lru_cache
 import gzip
 import hashlib
 import json
@@ -16,91 +15,15 @@ from proximic_ring.touchpad.stroke.stroke_dtw import sequence
 from proximic_ring.touchpad.stroke.stroke_input import StrokeDictionary
 from proximic_ring.touchpad.stroke.stroke_common import common_characters
 from proximic_ring.touchpad.stroke.stroke_fuzzy import stroke_evidence
-from proximic_ring.touchpad.stroke.stroke_joined import FAMILIES, POLICY, JoinedStrokeModel, sample_family, merge_joined_candidates
+from proximic_ring.touchpad.stroke.stroke_joined import POLICY, JoinedStrokeModel, sample_family, merge_joined_candidates
+from proximic_ring.touchpad.stroke.stroke_joined_components import component_registry
 from selection_capture import integration_error, atomic_save
-from build_left_dot_annotations import parse_ids
+from build_joined_components import build as build_component_registry
 import joined_stroke_collection as profile
 
-SEEDS = {'反': (4, 'fan', 0), '白': (5, 'de', 0), '了': (2, 'le-zi', 0),
-         '子': (3, 'le-zi', 0), '衤': (5, 'yi-pie-dian', 3)}
 EXAMPLES = {'fan': ('反', 'ppzn', 0), 'de': ('的', 'pszhhpzn', 0),
             'le': ('了', 'zs', 0), 'zi': ('子', 'zsh', 0),
-            'yi-pie-dian': ('补', 'nzspnsn', 3)}
-
-
-def aligned_pair(base, variant, start):
-    """Keep only a consecutive pair with a unique optimal edit alignment."""
-    @lru_cache(None)
-    def walk(i, j):
-        if i == len(base): return len(variant)-j, {()}
-        if j == len(variant): return len(base)-i, {(None,)*(len(base)-i)}
-        candidates = []
-        cost, paths = walk(i+1, j+1)
-        candidates.append((cost+(base[i] != variant[j]), {(j,)+p for p in paths}))
-        cost, paths = walk(i+1, j)
-        candidates.append((cost+1, {(None,)+p for p in paths}))
-        cost, paths = walk(i, j+1)
-        candidates.append((cost+1, paths))
-        best = min(c[0] for c in candidates)
-        return best, set().union(*(paths for cost, paths in candidates if cost == best))
-    # Far variants are deliberately left on the unchanged single-stroke path.
-    if abs(len(base)-len(variant)) > 2: return None
-    cost, paths = walk(0, 0)
-    if cost > 2: return None
-    pairs = {(p[start], p[start+1]) for p in paths}
-    if len(pairs) != 1: return None
-    a, b = pairs.pop()
-    return a if a is not None and b == a+1 else None
-
-
-def build_positions(dictionary, cache):
-    orders = json.loads((cache/'cnchar-orders.json').read_text(encoding='utf-8'))
-    table = json.loads((cache/'cnchar-stroke-table.json').read_text(encoding='utf-8'))
-    if table.get('m', {}).get('name') != '撇点': raise ValueError('Unexpected fine-stroke data')
-    mapping = {letter: ('h' if letter in 'ji' else 's' if letter in 'fg' else 'p' if letter == 's'
-                        else 'n' if letter in 'dkl' else 'z') for letter in table}
-    decompositions = {}
-    for line in (cache/'dictionary.txt').read_text(encoding='utf-8').splitlines():
-        row = json.loads(line)
-        decompositions[row['character']] = row
-
-    @lru_cache(None)
-    def components(char, count, seen=()):
-        if char in seen: return ()
-        if char in SEEDS:
-            expected, family, start = SEEDS[char]
-            return ((family, start, start+1),) if count == expected else ()
-        data = decompositions.get(char, {})
-        matches = data.get('matches', [])
-        if len(matches) != count: return ()
-        found = []
-        for leaf, path in parse_ids(data.get('decomposition', '')):
-            indices = [i for i, match in enumerate(matches) if match is not None and tuple(match[:len(path)]) == path]
-            if not indices: continue
-            for family, a, b in components(leaf, len(indices), seen+(char,)):
-                if indices[b] == indices[a]+1:
-                    found.append((family, indices[a], indices[b]))
-        return tuple(found)
-
-    result = {}
-    for char, entries in dictionary.by_character.items():
-        order = orders.get(char)
-        if not order: continue
-        base = ''.join(mapping[t] for t in order)
-        if base not in {e[1] for e in entries}: continue
-        seeds = components(char, len(base))
-        if not seeds: continue
-        variants = {}
-        for _, code, _ in entries:
-            annotations = []
-            for family, a, b in seeds:
-                start = a if base == code else aligned_pair(base, code, a)
-                if start is not None and code[start:start+2] in FAMILIES[family]:
-                    value = dict(family=family, start=start)
-                    if value not in annotations: annotations.append(value)
-            if annotations: variants[code] = annotations
-        if variants: result[char] = variants
-    return result
+            'yi-pie-dian': ('补', 'nzspnsn', 3), 'walk': ('过', 'hsnnzn', 4)}
 
 
 def load_samples(paths):
@@ -133,8 +56,10 @@ def payload_for(samples, positions, source):
         points = [(p['x'], p['y']) for p in s['points']]
         templates.append(dict(family=sample_family(s), features=sequence(points).tolist(),
             sampleId=f"{s['sessionId']}:{s['taskIndex']}"))
-    return dict(schema='ring-joined-stroke-model', version=1, policy=POLICY,
-        source=source, templates=templates, positions=positions)
+    registry = component_registry()
+    return dict(schema='ring-joined-stroke-model', version=2, policy=POLICY,
+        source=source, templates=templates, positions=positions,
+        componentSource=registry['source'], referenceTemplates=registry['referenceTemplates'])
 
 
 def evaluate(samples, positions, dictionary):
@@ -155,7 +80,8 @@ def evaluate(samples, positions, dictionary):
                 original = sample['singleStrokeBaseline']
                 ink = stroke_evidence(original['category'], original)
                 ink['joined_options'] = options
-                evidence = [stroke_evidence(c) for c in code[:start]]+[ink]+[stroke_evidence(c) for c in code[start+2:]]
+                width = sample['task']['expectedLogicalStrokes']
+                evidence = [stroke_evidence(c) for c in code[:start]]+[ink]+[stroke_evidence(c) for c in code[start+width:]]
                 normal = dictionary.fuzzy_candidates(evidence, allowed_characters=common_characters())
                 chars = [r['char'] for r in normal]
                 merged, matches = merge_joined_candidates(dictionary,evidence,chars,normal,model,allowed=common_characters())
@@ -183,7 +109,7 @@ def main():
     paths = args.paths or sorted((ROOT/'data'/'recordings'/'joined-strokes').glob('*.json'))
     samples, sessions, duplicates = load_samples(paths)
     dictionary = StrokeDictionary()
-    positions = build_positions(dictionary, args.cache)
+    positions = build_component_registry(args.cache, dictionary)['positions']
     digest = hashlib.sha256(json.dumps(samples, sort_keys=True).encode()).hexdigest()
     source = dict(fingerprint=digest, sessions=list(sessions), rounds=len({(s['sessionId'],s['task']['round']) for s in samples}),
         sampleCount=len(samples), familyCounts=dict(Counter(sample_family(s) for s in samples)),

@@ -66,6 +66,26 @@ Mythlink integrates the following third-party components. Most downloaded ASR/LL
 - Apple Silicon Mac touchpad control uses this receiver through the existing
   `ring_python_sdk` BLE session; see `docs/RING_MAC_SDK.md`.
 
+## Ring Windows SDK 0.4.0 delivery (2026-11-09)
+
+- Location: `src/ring_windows_sdk` (the wheel's `ring_mac_sdk` package, files unchanged; only the
+  directory is renamed so it can coexist with the macOS delivery).
+- Original delivery: `third_party/ring-windows-sdk-0.4.0-windows-x64`, including its wheel,
+  documentation, constraints, hashes and provider notices.
+- The encrypted receiver asset and native DLL are supplied runtime components; no ring frontend
+  source or standalone frontend weights are included.
+- The native DLL includes Monocypher; its upstream notice is preserved in
+  `src/ring_windows_sdk/licenses/monocypher.md`. ONNX Runtime is installed with its own license.
+- See `docs/RING_WINDOWS_RAW2.md`.
+
+## mythring SDK 1.18.0 Windows x64 delivery (2026-11-07, superseded)
+
+- Original delivery kept for reference: `third_party/mythring-sdk-1.18.0-windows-x64` (wheel, README,
+  Windows guide, constraints, examples and tests), received from the SDK/device provider.
+- No longer used at runtime; Windows now uses Ring Windows SDK 0.4.0.
+- The provider states that Ring-specific code and model artifacts receive no open-source license;
+  see `docs/RING_WINDOWS_RAW2.md`.
+
 Third-party names and trademarks belong to their respective owners.
 
 ## Wails macOS window focus policy
@@ -125,11 +145,32 @@ are supplied by the existing PySide6 distribution and retain its Qt/Chromium lic
 
 ## Stroke glyph outlines and order
 
+- `assets/stroke-joined-components.json.gz` records verified component spans
+  from the cached Make Me a Hanzi `dictionary.txt` (LGPL-3.0-or-later) and
+  cnchar-order 3.2.6 labels (MIT). It also contains six normalized reference
+  trajectories for the second and third strokes of 辶, derived from the same
+  source's `graphics.txt` medians (Arphic Public License). These reference
+  trajectories are not participant recordings. Existing license texts are
+  bundled as `stroke-left-dots-source-notice.txt`, `stroke-left-dots-lgpl.txt`,
+  `stroke-left-dots-cnchar-license.txt`, and `stroke-glyphs-arphic-license.txt`.
+  Source hashes and license filenames are embedded; rebuild offline with
+  `tools/build_joined_components.py`.
+
+- `assets/stroke-components.json` derives component identities, enclosing scopes
+  and reference stroke indices from the same cached Make Me a Hanzi decomposition
+  data used for left-dot/grass annotations. It records the source SHA-256 and
+  glyph-asset SHA-256; rebuild offline with `tools/build_stroke_components.py`.
+  No glyph outlines or definitions are copied into this annotation file.
+
 - `assets/stroke-glyphs.json.gz` contains 9,574 offline Kaishu glyphs from
   [hanzi-writer-data 2.0.1](https://github.com/chanind/hanzi-writer-data), the
   data used by Hanzi Writer (the renderer underlying cnchar-draw). Original
   outlines derive from Make Me a Hanzi and Arphic PL KaitiM GB / PL UKai.
   The outlines are unchanged; medians and radical metadata are omitted.
+- `assets/stroke-vectors.json.gz` keeps, from the same hanzi-writer-data 2.0.1
+  medians, only each stroke's first-to-last point vector for 6,807 characters
+  whose glyph order aligns with the five-category labels below. Same source and
+  license as the outlines; rebuild with `tools/build_stroke_vectors.py`.
 - Outline license: Arphic Public License, included verbatim in
   `assets/stroke-glyphs-arphic-license.txt`. This data has a separate license
   from the Hanzi Writer and cnchar application code.
@@ -159,6 +200,20 @@ checksums are retained in `assets/stroke-context-sources.json.gz`; packaging
 does not change those counts. Original processing and attribution are described
 in `ring-stroke-ime-demo/THIRD_PARTY.md`. The generator is retained on the source `yyf`
 branch as `tools/build_stroke_context.py`; this integration includes the generated data.
+
+## Wanxiang context data
+
+`assets/stroke-context-wanxiang.json.gz` is derived from rime-wanxiang-data by
+amzxyz (https://github.com/amzxyz/rime-wanxiang-data), licensed under Creative
+Commons Attribution 4.0 International (CC BY 4.0,
+https://creativecommons.org/licenses/by/4.0/). It uses the grammar model
+`wanxiang-lts-zh-hans.gram` (release LTS) and the dictionaries in `dicts.zip`
+(release dict-nightly, `jichu` and `zi`). Changes: the word n-gram scores and
+dictionary weights were converted into next-character pseudo-counts, mixed,
+pruned and rescaled by `tools/build_stroke_context_wanxiang.py`; source file
+SHA-256 values are embedded in the asset. No Wanxiang program code is used; the
+`.gram` layout is read following librime-octagram (BSD-3-Clause,
+https://github.com/lotem/librime-octagram).
 
 ## Ringo touchpad model and MNN
 

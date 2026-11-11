@@ -77,18 +77,37 @@ def test_local_contact_actions_share_the_trial_menu_and_do_not_send_native_commi
     tp.setLocalStrokeInput(True)
     tp.setLocalStrokeFocus(True)
     tp.toggleLocalStrokeTrial(); QTest.qWait(20)
-    source.future.set_result(None); QTest.qWait(20)
+    source.future.set_result(None)
+    # Readiness passes through two queued callbacks as the output switches modes.
+    for _ in range(50):
+        if tp.strokeSession.phase == 'running':
+            break
+        QTest.qWait(20)
     assert tp.strokeSession.local and tp.strokeSession.phase == 'running'
     committed = []
     tp.localCharacterCommitted.connect(committed.append)
     try:
         tp._candidates = list('一二三四五六')
-        assert tp.candidatePageSize == 6
+        assert tp.candidatePageSize == 5
         run = tp._run
+        flashed = []
+        tp.selectionCommitted.connect(flashed.append)
         tp._receive(run, 'selection', (run.output, {'decision': {'phase': 'selecting', 'direction': 'down-right'}}))
-        assert committed == ['六']
+        assert committed == ['五'] and flashed == ['down-right']
         tp.insertPunctuation('。')
-        assert committed == ['六', '。']
+        assert committed == ['五', '。']
+        # Two-finger left deletes: a pending stroke first, then a typed character.
+        deleted = []
+        tp.localBackspaceRequested.connect(lambda: deleted.append(True))
+        tp.addStroke('h'); tp.addStroke('s')
+        tp._receive(run, 'selection', (run.output, {'decision': {'phase': 'selecting', 'direction': 'left'}}))
+        assert tp._code == 'h' and not deleted
+        tp.clearStrokes()
+        tp._receive(run, 'selection', (run.output, {'decision': {'phase': 'selecting', 'direction': 'left'}}))
+        assert deleted == [True] and flashed[-1] == 'left'
+        # Releasing in the centre cancels instead of committing.
+        tp._receive(run, 'selection', (run.output, {'decision': {'phase': 'selecting', 'direction': None}}))
+        assert committed == ['五', '。']
         assert not any(m['type'] == 'stroke_commit' for m in bridge.messages)
     finally:
         tp.close()
@@ -122,7 +141,7 @@ def test_local_trial_fades_real_ink_and_draws_hold_selection_from_sensor_tuples(
             direction='down-right', display=dict(origin=(0., 0.), points=points))))
         QTest.qWait(30)
         assert tp.selectionState['display']['points'][-1] == [8.8, 8.8]
-        assert window.findChild(QObject, 'strokeSelectionHint').property('text') == '选字模式 · 抬手确认'
+        assert window.findChild(QObject, 'strokeSelectionHint').property('text') == '双指选字 · 抬手确认'
         assert window.findChild(QObject, 'strokeSelectionMenu').property('activeDirection') == 'down-right'
     finally:
         tp.close()

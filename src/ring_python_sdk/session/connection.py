@@ -172,7 +172,20 @@ class ConnectionMixin:
             if self.connection_backend == 'sdk':
                 from .sdk_transport import connect_session
                 try:
-                    await connect_session(self, target)
+                    for attempt in range(2):
+                        try:
+                            await connect_session(self, target)
+                            break
+                        except Exception as exc:
+                            # Same single retry as the legacy Windows path: WinRT
+                            # can fail opening GATT right after discovery. Device
+                            # mismatches (unsupported/INFO) are never retried.
+                            if (attempt or sys.platform != 'win32'
+                                    or getattr(exc, 'reason', None) == 'unsupported'):
+                                raise
+                            print(f"Connect attempt failed: {exc}; retrying once ...")
+                            await self._detach_client(send_stops=False)
+                            await asyncio.sleep(0.75)
                     await self.sync_time(timeout_s=min(self.timeout_s, 2.0))
                     await self._ensure_button_capture()
                     await self._ensure_raise_to_wake_capture()

@@ -1,0 +1,33 @@
+{
+  "schema": "ring-joined-component-rules",
+  "version": 1,
+  "rules": [
+    {
+      "id": "slanted-roof", "family": "fan", "title": "厂形／双撇起笔",
+      "forms": [{"component": "厂", "strokeCount": 2, "indices": [0, 1]}],
+      "codes": ["pp", "hp"], "templateSource": "collected",
+      "examples": ["反", "斤", "听", "新", "近", "所", "质", "盾"]
+    },
+    {
+      "id": "white-head", "family": "de", "title": "白部件起笔",
+      "forms": [{"component": "白", "strokeCount": 5, "indices": [0, 1]}],
+      "codes": ["ps"], "templateSource": "collected", "examples": ["白", "的", "拍", "怕"]
+    },
+    {
+      "id": "hooked-head", "family": "le-zi", "title": "了／子部件起笔",
+      "forms": [{"component": "了", "strokeCount": 2, "indices": [0, 1]}, {"component": "子", "strokeCount": 3, "indices": [0, 1]}],
+      "codes": ["zs", "zz"], "templateSource": "collected", "examples": ["了", "子", "好", "字", "学"]
+    },
+    {
+      "id": "clothing-tail", "family": "yi-pie-dian", "title": "衣字旁末两笔",
+      "forms": [{"component": "衤", "strokeCount": 5, "indices": [3, 4]}],
+      "codes": ["pn"], "templateSource": "collected", "examples": ["补", "被", "初"]
+    },
+    {
+      "id": "walk-tail", "family": "walk", "title": "走之底第二、三笔连写",
+      "forms": [{"component": "辶", "strokeCount": 3, "indices": [1, 2]}],
+      "codes": ["zn"], "templateSource": "reference-component",
+      "examples": ["过", "近", "这", "进", "远", "返"]
+    }
+  ]
+}

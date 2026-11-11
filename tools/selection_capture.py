@@ -144,6 +144,77 @@ class ContactCapture:
         return points
 
 
+class CharacterCapture:
+    """Every complete contact of one written character, plus the lifted gaps.
+
+    Contacts use ContactCapture unchanged. The window keeps the first and last
+    frame step so lifted-hand tokens can be joined offline; one token epoch
+    is required because steps restart after an SDK reset.
+    """
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.contact = ContactCapture()
+        self.contacts = []
+        self.first_step = self.last_step = self.epoch = None
+        self.first_time = self.last_time = None
+
+    @property
+    def touching(self):
+        return self.contact.start is not None
+
+    def feed_tokens(self, record):
+        if self.epoch is None:
+            self.epoch = record["epoch"]
+        elif record["epoch"] != self.epoch:
+            self.reset()
+            return "信号重置；本字未保存"
+        return None
+
+    def feed(self, event):
+        if event.get("kind") == "move" and math.isfinite(event.get("timestamp", math.nan)):
+            if self.first_step is None:
+                self.first_step, self.first_time = event["step"], event["timestamp"]
+            self.last_step, self.last_time = max(self.last_step or 0, event["step"]), event["timestamp"]
+        result = self.contact.feed(event)
+        if isinstance(result, str):
+            self.reset()
+            return result.replace("本笔", "本字")
+        if isinstance(result, dict):
+            self.contacts.append(result)
+        return None
+
+    def finish(self):
+        """Return a draft, a reason string, or None while a contact is open."""
+        if self.touching:
+            return None
+        if not self.contacts:
+            return "还没有完整笔画"
+        if self.epoch is None:
+            return "未收到原始 token；本字未保存"
+        contacts, start = self.contacts, self.first_step
+        points, events = [], []
+        for index, trace in enumerate(contacts):
+            for p in trace["points"]:
+                points.append({**p, "t": (p["step"]-start)*SAMPLE_PERIOD_MS, "stroke": index})
+            events.extend(trace["rawEvents"])
+        draft = dict(contacts=contacts, points=points, rawEvents=events, tokenEpoch=self.epoch,
+                     windowStartStep=start, windowEndStep=self.last_step,
+                     windowStartTime=self.first_time, windowEndTime=self.last_time,
+                     startStep=contacts[0]["startStep"], endStep=contacts[-1]["endStep"],
+                     durationMs=(self.last_step-start)*SAMPLE_PERIOD_MS,
+                     pathLength=sum(t["pathLength"] for t in contacts), capturedAt=now())
+        self.reset()
+        return draft
+
+    def preview(self):
+        strokes = [[(p["x"], p["y"]) for p in t["points"]] for t in self.contacts]
+        if self.touching:
+            strokes.append(self.contact.preview())
+        return strokes
+
+
 def integration_error(trace):
     moves = [e for e in trace["rawEvents"] if e.get("kind") == "move"]
     if len(trace["points"]) != len(moves)+1:

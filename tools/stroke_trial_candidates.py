@@ -8,15 +8,15 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QPushButton, QStyle, QStyleOptionButton
 
 from proximic_ring.touchpad.stroke.stroke_glyphs import candidate_glyph, glyph_library
-from stroke_trial_menu import PAGE_SIZE
+import stroke_trial_menu as trial_menu
 
 
 def trial_candidate_visuals(window):
     """Use each candidate's accepted order and its own correction positions."""
     matches = {item['char']: item for item in window.matches}
     visuals = []
-    offset = window.selected // PAGE_SIZE * PAGE_SIZE
-    for character in window.candidates[offset:offset + PAGE_SIZE]:
+    offset = window.selected // trial_menu.PAGE_SIZE * trial_menu.PAGE_SIZE
+    for character in window.candidates[offset:offset + trial_menu.PAGE_SIZE]:
         match = matches.get(character, {})
         if match.get('match_type') == 'whole_character':
             # Repair indices belong to the expected order, not the observed
@@ -25,6 +25,25 @@ def trial_candidate_visuals(window):
                                          corrections=tuple(match['glyph_corrections'])))
             visual['status'] = ('整字纠错 · ' + match['correction_summary'] +
                                 (' · ' + visual['status'] if not visual['available'] else ''))
+            visuals.append(visual)
+            continue
+        if match.get('match_type') == 'tolerant':
+            if match.get('tolerant_level') == 3:
+                visual = dict(candidate_glyph(character, prediction=True), status='猜 · 补位联想')
+            else:
+                visual = dict(candidate_glyph(character, match['code'], match['prefix_length'],
+                                              corrections=tuple(match['glyph_corrections'])))
+                visual['status'] = '猜 · ' + (visual['status'] if visual['available'] else '笔顺版本不同')
+            visual['guess'] = True
+            visuals.append(visual)
+            continue
+        if match.get('match_type') == 'component':
+            fuzzy = tuple(index for index, ink in enumerate(window.evidence)
+                          if window.fuzzy_toggle.isChecked() and
+                          (ink['ambiguous'] or index in match['corrections']))
+            visual = dict(candidate_glyph(character, match['code'], len(window.code), fuzzy,
+                stroke_indices=tuple(match['observed_to_expected'])))
+            visual['status'] = '组件匹配 · '+visual['status']
             visuals.append(visual)
             continue
         prefix = match.get('logical_prefix', match.get('code', window.code))
@@ -38,10 +57,15 @@ def trial_candidate_visuals(window):
         fuzzy = (tuple(match.get('glyph_fuzzy', ())) if match.get('match_type') == 'joined_stroke' else
                  tuple(index for index, evidence in enumerate(window.evidence)
                        if window.fuzzy_toggle.isChecked() and (evidence['ambiguous'] or index in corrections)))
-        visual = candidate_glyph(character, variant, match.get('logical_entered', len(window.code)), fuzzy, not window.code,
-            corrections=tuple(match.get('replacement_corrections', ())) if window.fuzzy_toggle.isChecked() else ())
+        joined_mapping = match.get('observed_to_expected') if match.get('match_type') == 'joined_stroke' else None
+        visual = candidate_glyph(character, match['code'] if joined_mapping is not None else variant,
+            match.get('logical_entered', len(window.code)), fuzzy, not window.code,
+            # Far strokes are also listed as replacements; show each stroke once.
+            corrections=tuple(sorted({*match.get('replacement_corrections', ()), *match.get('far_corrections', ())}))
+            if window.fuzzy_toggle.isChecked() else (),
+            **({'stroke_indices': tuple(joined_mapping)} if joined_mapping is not None else {}))
         if match.get('match_type') == 'joined_stroke':
-            visual = dict(visual, status='连笔 1→2 · '+visual['status'])
+            visual = dict(visual, status=match.get('joined_label', '连笔 1→2')+' · '+visual['status'])
         if match.get('llm_phrase'):
             visual = dict(visual, status='联想「' + match['llm_phrase'] + '」 · ' + visual['status'])
         visuals.append(visual)
@@ -120,7 +144,10 @@ class GlyphCandidateButton(QPushButton):
             painter.setPen(QColor('#738099'))
             painter.drawText(QRectF(4, top, self.width() - 8, bottom - top), Qt.AlignCenter, '加载中…')
         elif self.visual and self._source and self.renderer.isValid():
+            # Guesses that only fill an otherwise short page are drawn lighter.
+            painter.setOpacity(.5 if self.visual.get('guess') else 1.)
             self.renderer.render(painter, glyph)
+            painter.setOpacity(1.)
         else:
             font = QFont('KaiTi' if sys.platform == 'win32' else 'Kaiti SC')
             font.setPixelSize(round(side * .82))

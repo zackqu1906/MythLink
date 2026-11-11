@@ -19,6 +19,8 @@ def configure(window, *, normal=False):
     entries = [['我', 'phshzpn', 1]] + ([['甲', 'phshhpn', 1]] if normal else [])
     window.dictionary = StrokeDictionary(dict(templates=[], ranks={'我': 1, '甲': 2}, entries=entries))
     window.fuzzy_toggle.setChecked(False)
+    # These tests pin the exact normal/repair lists; page filling is covered separately.
+    window.fill_toggle.setChecked(False)
 
 
 def enter(window, code):
@@ -198,6 +200,7 @@ def test_paging_and_gesture_commit_use_the_merged_candidate_order(tmp_path, monk
 def test_real_expanded_scope_keeps_exact_ji_and_adds_wo_repair(tmp_path, monkeypatch):
     app, window = load_window(tmp_path, monkeypatch)
     try:
+        window.fill_toggle.setChecked(False)  # '我' must arrive as a repair, not as a page-filling guess
         enter(window, 'phshhpn')
         assert '犄' in window.candidates and '我' not in window.candidates
         original_first = window.candidates[0]

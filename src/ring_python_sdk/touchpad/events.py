@@ -82,6 +82,21 @@ class Raw2Reset(TouchpadContact):
     session_id: str = ''
     generation: int = 0
 
+
+@dataclass(frozen=True)
+class TouchpadTokens:
+    """Model inputs of one packet: T1–T3 accel, T4–T6 gyro, in token units.
+
+    steps[i] is the frame index used by move/contact events of the same epoch;
+    epoch counts processor resets, after which steps restart.
+    """
+    epoch: int
+    steps: tuple[int, ...]
+    frame_times: tuple[float, ...]
+    values: tuple[tuple[float, ...], ...]
+    timestamp: float
+    kind: Literal['tokens'] = 'tokens'
+
 @dataclass(frozen=True)
 class TouchpadStats:
     packets: int = 0

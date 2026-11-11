@@ -11,9 +11,11 @@ def result(category='s', **distances):
 
 
 def test_default_level_preserves_thresholds_and_left_dot_penalty():
-    assert FuzzyPolicy().snapshot() == dict(version=1, level=50, bestDistanceLimit=.08,
-        nearAbsoluteGap=.004, nearRelativeGap=.5, rescueGapLimit=.08,
-        maxRescues=1, leftDotCost=.45)
+    from proximic_ring.touchpad.stroke.stroke_fuzzy import FAR_POLICY
+    assert FuzzyPolicy().snapshot() == dict(version=3, level=50, bestDistanceLimit=.08,
+        nearAbsoluteGap=.004, nearRelativeGap=.5, rescueGapLimit=.08, hookRescueGapLimit=.16,
+        maxRescues=1, leftDotCost=.45, farClasses=dict(FAR_POLICY, maxPerCharacter=1))
+    assert FuzzyPolicy(10).snapshot()['farClasses']['maxPerCharacter'] == 0
 
 
 @pytest.mark.parametrize('level', [-1, 101, 50.5, True])

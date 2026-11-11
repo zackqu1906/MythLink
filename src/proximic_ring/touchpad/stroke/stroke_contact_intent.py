@@ -17,13 +17,14 @@ CONTACT_INTENT = dict(policy='contact-intent-v2', sampleMs=5, holdMs=333,
     selectDistance=3.)
 
 
-def classify_contact(points, *, finished=False):
+def classify_contact(points, *, finished=False, hold_select=True):
     """Return a UI phase; only finished contacts have an action.
 
     Compact contacts favor tapping; larger motion needs a quiet release tail.
     A stationary pause anywhere in a contact may arm selection. Identical
     observations cannot reveal intent, so these limits remain explicit policy.
     The caller must verify continuity and trim at the confirmed release frame.
+    hold_select=False disables pause/hold arming: contacts only tap or write.
     """
     cfg = CONTACT_INTENT
     result = dict(policy=cfg['policy'], phase='idle', progress=0, direction=None)
@@ -76,7 +77,7 @@ def classify_contact(points, *, finished=False):
             anchor = index
         if distances[index] >= cfg['motionEpsilon']:
             last_motion = index
-        if (index-anchor)*sample_ms >= cfg['holdMs']:
+        if hold_select and (index-anchor)*sample_ms >= cfg['holdMs']:
             armed_at = index
             break
 
@@ -102,7 +103,7 @@ def classify_contact(points, *, finished=False):
     paused = quiet_ms >= cfg['tapQuietMs']
     result.update(phase='holding' if writing_at is None or paused else 'writing',
                   reason='awaiting-release-or-hold' if writing_at is None else 'motion-pause' if paused else 'sustained-motion', quiet_ms=quiet_ms,
-                  progress=min(100, (len(points)-1-anchor)*sample_ms*100/cfg['holdMs']))
+                  progress=min(100, (len(points)-1-anchor)*sample_ms*100/cfg['holdMs']) if hold_select else 0)
     if finished:
         path = cumulative[-1]
         compact = radius < cfg['tapCompactRadius']

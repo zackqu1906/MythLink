@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ring_python_sdk.touchpad import TouchpadEvent, TouchpadStats
+    from ring_python_sdk.touchpad import TouchpadEvent, TouchpadStats, TouchpadTokens
 
 
 class TouchpadMixin:
@@ -16,6 +16,7 @@ class TouchpadMixin:
                           on_stopped: Callable[[Exception | None], None] | None = None,
                           on_pointer_move: Callable[[TouchpadEvent], None] | None = None,
                           on_discarded_event: Callable[[TouchpadEvent, str], None] | None = None,
+                          on_tokens: Callable[[TouchpadTokens], None] | None = None,
                           model_path: Path | None = None, duration_s: float | None = 90.,
                           protocol: str = 'legacy'):
         """Start legacy or Raw2 touchpad inference, without posting OS input.
@@ -32,8 +33,10 @@ class TouchpadMixin:
         In that mode on_pointer_move also receives confirmed button/count
         events; on_event retains full-frame geometry and legacy stroke verdicts.
         Swipe/MIC stay active throughout; dev15 firmware owns their coexistence.
+        Optional on_tokens receives every legacy raw model input packet (accel/gyro
+        token units) with the frame steps used by events, for offline study.
         """
-        if not callable(on_event) or any(cb is not None and not callable(cb) for cb in (on_stats, on_stopped, on_pointer_move, on_discarded_event)):
+        if not callable(on_event) or any(cb is not None and not callable(cb) for cb in (on_stats, on_stopped, on_pointer_move, on_discarded_event, on_tokens)):
             raise TypeError('Touchpad callbacks must be callable')
         if duration_s is not None and (not math.isfinite(duration_s) or duration_s <= 0):
             raise ValueError('duration_s must be positive and finite, or None')
@@ -57,7 +60,8 @@ class TouchpadMixin:
             else:
                 stream = TouchpadStream(on_event, on_stats=on_stats, model_path=model_path,
                                     duration_s=duration_s, on_end=self._touchpad_finished,
-                                    on_pointer_move=on_pointer_move, on_discarded_event=on_discarded_event)
+                                    on_pointer_move=on_pointer_move, on_discarded_event=on_discarded_event,
+                                    on_tokens=on_tokens)
             self.touchpad, self.touchpad_active = stream, True
             self.touchpad_error = None
             self._touchpad_stopped_cb = on_stopped

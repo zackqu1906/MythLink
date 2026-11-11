@@ -18,7 +18,7 @@ class TouchpadStrokeOutput:
     def __init__(self, *, connection, on_ready, on_end, on_stroke, on_tap, on_trace=None,
                  on_double_click=None, on_gesture=None, on_diagnostic=None, on_tap_contact=None,
                  on_stroke_details=None, on_selection=None, on_selection_state=None,
-                 contact_classifier=None, on_contact_intent=None):
+                 contact_classifier=None, on_contact_intent=None, two_finger_classifier=None):
         self.connection = connection
         self.on_ready, self.on_end = on_ready, on_end
         self.on_stroke, self.on_tap = on_stroke, on_tap
@@ -28,9 +28,16 @@ class TouchpadStrokeOutput:
         self.on_selection = on_selection
         self.on_selection_state = on_selection_state
         self.contact_classifier = contact_classifier
+        # Optional: Raw2 pointer frames tag two-finger contacts, which this
+        # classifier turns into menu selections instead of ink or taps.
+        self.two_finger_classifier = two_finger_classifier
+        self.pointer_events = deque(maxlen=512)
+        self.two_finger_steps = deque(maxlen=4096)
+        self._two_finger_live = False
         self.on_contact_intent = on_contact_intent
         self._selection_time = 0.
         self._selection_state = None
+        self._selection_two = False
         self.on_double_click = on_double_click
         self.on_diagnostic = on_diagnostic
         self.clicks = TouchpadClicks(on_gesture=on_gesture, on_diagnostic=on_diagnostic) if on_double_click and contact_classifier is None else None
@@ -62,16 +69,26 @@ class TouchpadStrokeOutput:
 
     def _clear_pending(self):
         self._contact_epoch += 1
+        self.two_finger_steps.clear()
+        self._two_finger_live = self._selection_two = False
         self.pending_strokes.clear()
         self.pending_contact_details.clear()
         self.click_verdicts.clear()
         self.resolved_steps.clear()
         self._notify_selection_state([])
 
-    def _notify_selection_state(self, points):
+    def _two_finger(self, start_step, end_step=None):
+        """Did Raw2 classify any frame of this contact as two-finger?"""
+        if self.two_finger_classifier is None or start_step is None:
+            return False
+        return any(step >= start_step and (end_step is None or step < end_step)
+                   for step in self.two_finger_steps)
+
+    def _notify_selection_state(self, points, two_finger=False):
         if self.on_selection_state is None:
             return
-        state = (self.contact_classifier or hold_selection)(points)
+        state = (self.two_finger_classifier(points) if two_finger and points
+                 else (self.contact_classifier or hold_selection)(points))
         if state != self._selection_state and self._batch_epoch == self._reset_epoch:
             self._selection_state = state
             self.on_selection_state(state)
@@ -88,6 +105,15 @@ class TouchpadStrokeOutput:
                 contact = self.pending_contact_details.pop(end_step, {})
                 self.resolved_steps.append(end_step)
                 contact_size = len(contact.get('points', []))
+                if self.on_selection is not None and self._two_finger(contact.get('start_step'), end_step):
+                    # A two-finger contact never writes or taps; it selects.
+                    decision = self.two_finger_classifier(contact.get('points') or [], finished=True)
+                    value = dict(contact, end_step=end_step, sdk_is_click=is_click, intent_decision=decision)
+                    if self.on_contact_intent is not None:
+                        self.on_contact_intent({k: v for k, v in value.items() if k != 'points'})
+                    self._notify_trace([], True)
+                    self.on_selection(dict(value, decision=decision))
+                    continue
                 if self.contact_classifier is not None and self.clicks is None:
                     # Opt-in application policy consumes every complete contact,
                     # including SDK non-clicks. Shared SDK/mouse rules stay intact.
@@ -171,6 +197,15 @@ class TouchpadStrokeOutput:
     def activate(self):
         self.active = True
 
+    def submit_pointer(self, event):
+        """Raw2 pointer frames: only their two-finger mode tag is used."""
+        if (self.two_finger_classifier is None or self.stopped.is_set() or not self.active
+                or str(getattr(getattr(event, 'mode', ''), 'value', getattr(event, 'mode', ''))).upper() != 'TWO_FINGER'):
+            return
+        with self.lock:
+            self.pointer_events.append(event.step)
+        self.wake.set()
+
     def submit(self, event):
         trace = ClickTrace(event, mode='stroke') if event.kind == 'click' else None
         if self.stopped.is_set() or self.connection.is_set() or not self.active:
@@ -192,6 +227,7 @@ class TouchpadStrokeOutput:
                 for _, pending in self.events:
                     if pending: pending.finish('session_reset')
                 self.events.clear()
+                self.pointer_events.clear()
                 self.wake.set()
                 return
             if len(self.events) == self.events.maxlen:
@@ -253,6 +289,8 @@ class TouchpadStrokeOutput:
                 with self.lock:
                     events = list(self.events)
                     self.events.clear()
+                    two_finger_steps = list(self.pointer_events)
+                    self.pointer_events.clear()
                     reset = self._batch_epoch != self._reset_epoch
                     self._batch_epoch = self._reset_epoch
                     overflowed = self.overflowed
@@ -286,6 +324,7 @@ class TouchpadStrokeOutput:
                         elif trace:
                             trace.finish('stroke_focus_changed')
                     events = fresh
+                self.two_finger_steps.extend(two_finger_steps)
                 # Confirmed edges carry their original (earlier) frame index.
                 # Order this batch for the stroke consumer only; pointer and
                 # click delivery in the SDK keep their original ordering.
@@ -377,17 +416,28 @@ class TouchpadStrokeOutput:
                 if self.input_since is not None and self.input_since() != self.input_epoch:
                     continue
                 self._resolve_contacts()
+                two_finger = self.collector.touching and self._two_finger(self.collector.start_step)
+                if two_finger and not self._two_finger_live:
+                    self._notify_trace([])  # Two fingers draw the selection path, not ink.
+                self._two_finger_live = two_finger
                 if self.on_selection_state is not None:
                     if (self.collector.touching and self.collector.moves
                             and time.monotonic() - self.collector.moves[-1].timestamp > .15):
                         # A stopped stream is not evidence of a stationary finger.
                         self.collector.reset()
                         self._notify_trace([])
+                        two_finger = self._two_finger_live = False
                     if not self.collector.touching:
-                        self._notify_selection_state([])
-                    elif time.monotonic() - self._selection_time >= .033:
-                        self._notify_selection_state(self.collector.points)
-                if self.collector.touching and len(self.collector.points) > 1:
+                        # Keep a released two-finger path on screen until it resolves.
+                        if not (self._selection_two and self.pending_strokes):
+                            self._selection_two = False
+                            self._notify_selection_state([])
+                    elif time.monotonic() - self._selection_time >= .033 or two_finger != self._selection_two:
+                        self._selection_two = two_finger
+                        self._notify_selection_state(self.collector.points, two_finger)
+                if two_finger:
+                    pass  # The selection state above carries this contact's path.
+                elif self.collector.touching and len(self.collector.points) > 1:
                     if time.monotonic()-self._trace_time >= .033:
                         self._notify_trace(self.collector.points)
                 elif self._trace_visible and not self.pending_strokes:

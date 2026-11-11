@@ -38,11 +38,17 @@ def test_first_middle_and_last_stroke_can_be_replaced_without_changing_observati
     before = deepcopy(evidence)
     rows = d.fuzzy_candidates(evidence)
     assert rows[0]['char'] == '字' and rows[0]['code'] == 'zzzz'
-    assert rows[0]['corrections'] == rows[0]['replacement_corrections'] == [position]
-    assert rows[0]['match_type'] == 'single_replacement' and not rows[0]['exact_match']
+    # From the second stroke on, the far class covers what the empty-list fallback did.
+    assert rows[0]['corrections'] == rows[0]['replacement_corrections'] == rows[0]['far_corrections'] == [position]
+    assert not rows[0]['exact_match']
     assert evidence == before
     evidence[(position+1) % 4] = automatic('h', h=.001, z=.03)
     assert not d.fuzzy_candidates(evidence)  # Never replace two strokes.
+    # Below the far-class level the original single-replacement fallback still answers.
+    from proximic_ring.touchpad.stroke.stroke_fuzzy import FuzzyPolicy
+    evidence[(position+1) % 4] = stroke_evidence('z')
+    rows = d.fuzzy_candidates(evidence, policy=FuzzyPolicy(10))
+    assert rows[0]['match_type'] == 'single_replacement' and rows[0]['replacement_corrections'] == [position]
 
 
 def test_context_ranks_only_stroke_supported_replacements_before_truncation():
@@ -52,11 +58,13 @@ def test_context_ranks_only_stroke_supported_replacements_before_truncation():
         unigrams={'乙': 100, '人': 100, '十': 0}, contexts={'个': [200, '人十', [100, 100]]}))
     assert d.fuzzy_candidates(evidence)[0]['char'] == '乙'
     rows = d.fuzzy_candidates(evidence, predictor=predictor, context='个')
-    assert [row['char'] for row in rows] == ['人', '乙']
+    assert [row['char'] for row in rows][:1] == ['人'] and '乙' in [row['char'] for row in rows]
     assert d.fuzzy_candidates(evidence, 1, predictor=predictor, context='个')[0]['char'] == '人'
-    assert '十' not in [row['char'] for row in rows]  # Context cannot authorize a distant class.
+    # A distant class is never free: 十 only enters at its far cost, behind 人.
+    shi = next(row for row in rows if row['char'] == '十')
+    assert shi['far_corrections'] == [0] and shi['cost'] > 3
     assert len([row for row in rows if row['char'] == '乙']) == 1
-    assert not d.fuzzy_candidates(evidence, allowed_characters={'十'})
+    assert d.fuzzy_candidates(evidence, allowed_characters={'十'})[0]['far_corrections'] == [0]
 
 
 def test_normal_candidates_win_and_manual_input_stays_locked():

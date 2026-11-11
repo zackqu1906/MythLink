@@ -13,7 +13,8 @@ import heapq
 from importlib.resources import files
 
 from .stroke_structure import splits, compare_parts, nearly_straight
-from .stroke_context import FUZZY_LANGUAGE_WEIGHT, promote_completed_fuzzy
+from .stroke_context import FUZZY_LANGUAGE_WEIGHT, early_bonuses, promote_completed_fuzzy
+from .stroke_fuzzy import FAR_POLICY, far_budget
 
 SYMBOLS = {"h": "一", "s": "丨", "p": "丿", "n": "丶", "z": "𠃍"}
 NAMES = {"h": "横", "s": "竖", "p": "撇", "n": "点／捺", "z": "折"}
@@ -48,8 +49,10 @@ def _normalize(points, count=32):
 
 class StrokeDictionary:
     def __init__(self, data=None, *, sample_count=32, recognizer='structure', left_dots=None, personal_model=None,
-                 fold_orders=None):
+                 fold_orders=None, components=None):
         self.personal_model = personal_model
+        # Optional StrokeVectorModel; None keeps the five-class ranking unchanged.
+        self.stroke_vectors = None
         if recognizer not in ('structure', 'dtw'):
             raise ValueError('Unknown stroke recognizer')
         if recognizer == 'dtw' and sample_count != 32:
@@ -93,6 +96,30 @@ class StrokeDictionary:
                 self.by_initial[entry[1][0]].append(entry)
                 if 0 in self._left_dots.get((entry[0], entry[1]), ()):
                     self._left_dot_initial.append(entry)
+        from .stroke_component_decoder import ComponentDecoder, builtin_component_decoder
+        self.component_decoder = (builtin_component_decoder() if builtin and components is None else
+                                  ComponentDecoder(components) if components else None)
+        self.components_enabled = self.component_decoder is not None
+        self._component_initial_index = self.by_initial
+        self._component_characters = frozenset(char for char, graph in
+            (self.component_decoder.graphs.items() if self.component_decoder else ())
+            if any(entry[1] == graph.code for entry in self.by_character.get(char, ())))
+
+    def _scoped_groups(self, allowed):
+        """Dictionary groups filtered to the allowed scope, cached per view and scope."""
+        if allowed is None:
+            return self.by_initial, self._left_dot_initial
+        # Groups may be replaced in place (restricted views, tests): fingerprint them.
+        key = (tuple((k, id(v), len(v)) for k, v in self.by_initial.items()),
+               id(self._left_dot_initial), len(self._left_dot_initial), frozenset(allowed))
+        cache = self.__dict__.setdefault('_scope_cache', {})
+        if key not in cache:
+            if len(cache) > 8:
+                cache.clear()
+            scope = key[-1]
+            cache[key] = ({initial: [e for e in group if e[0] in scope] for initial, group in self.by_initial.items()},
+                          [e for e in self._left_dot_initial if e[0] in scope])
+        return cache[key]
 
     def recognize_template(self, points):
         """Original whole-path baseline, retained for comparison and rollback."""
@@ -146,6 +173,15 @@ class StrokeDictionary:
         return result
 
     def candidates(self, code, limit=30, *, allowed_characters=None):
+        if self.components_enabled:
+            from .stroke_fuzzy import stroke_evidence
+            if not code or any(letter not in SYMBOLS for letter in code):
+                return []
+            return [row['char'] for row in self.encoding_candidates([stroke_evidence(c) for c in code],
+                limit, fuzzy=False, allowed_characters=allowed_characters)]
+        return self._literal_candidates(code, limit, allowed_characters=allowed_characters)
+
+    def _literal_candidates(self, code, limit=30, *, allowed_characters=None):
         if not code or any(letter not in SYMBOLS for letter in code):
             return []
         rows = {}
@@ -165,6 +201,18 @@ class StrokeDictionary:
 
     def fuzzy_candidates(self, evidence, limit=30, *, predictor=None, context='', allowed_characters=None,
                          policy=None):
+        return self.encoding_candidates(evidence, limit, predictor=predictor, context=context,
+            allowed_characters=allowed_characters, policy=policy)
+
+    def encoding_candidates(self, evidence, limit=30, *, fuzzy=True, predictor=None, context='',
+                            allowed_characters=None, policy=None):
+        """Ordinary encoding paths, including components, independent of repair."""
+        from .stroke_component_ranking import encoding_candidates
+        return encoding_candidates(self, evidence, limit, fuzzy=fuzzy, predictor=predictor,
+            context=context, allowed_characters=allowed_characters, policy=policy)
+
+    def _stroke_candidates(self, evidence, limit=30, *, predictor=None, context='', allowed_characters=None,
+                           policy=None, defer_ranking=False):
         """Rescore the entire prefix; never discard an earlier interpretation."""
         from .stroke_fuzzy import match_prefix, DEFAULT_FUZZY_POLICY
         from .stroke_folds import fold_evidence, fold_adjustment
@@ -175,22 +223,28 @@ class StrokeDictionary:
         # Preserve the original ordering when every stroke was explicitly entered.
         use_left_dots = bool(self._left_dots) and any(
             stroke['category'] in 'ps' and not stroke.get('manual', True) for stroke in evidence)
-        if not folds and not use_left_dots and all(len(stroke['costs']) == 1 for stroke in evidence):
+        prefix_vectors = self.stroke_vectors is not None and self.stroke_vectors.scope == 'prefix'
+        # The literal shortcut truncates by frequency, so prefix vectors take the full path.
+        if (not defer_ranking and not prefix_vectors and not folds and not use_left_dots
+                and all(len(stroke['costs']) == 1 for stroke in evidence)
+                and not (far_budget(policy, evidence) and any(stroke.get('far') for stroke in evidence))):
             code = ''.join(stroke['category'] for stroke in evidence)
             exact_chars = {char for char, full_code, _ in self.by_initial[code[0]] if full_code == code}
             matches = [dict(char=char, code=code, cost=0., corrections=[], exact_match=char in exact_chars)
-                       for char in self.candidates(code, limit, allowed_characters=allowed_characters)]
+                       for char in self._literal_candidates(code, limit, allowed_characters=allowed_characters)]
+            if matches and self.stroke_vectors is not None:
+                matches = self.stroke_vectors.rerank(matches, evidence, self._fuzzy_priors)
             return matches or self._replacement_candidates(evidence, limit, predictor=predictor,
                 context=context, allowed_characters=allowed_characters, policy=policy)
         rows, prefix_matches = {}, {}
-        groups = [self.by_initial[initial] for initial in evidence[0]['costs']]
+        initials = set(evidence[0]['costs']) | (set(evidence[0].get('far', ())) if far_budget(policy, evidence) else set())
+        by_initial, left_dot_initial = self._scoped_groups(allowed_characters)
+        groups = [by_initial.get(initial, ()) for initial in sorted(initials)]
         if (use_left_dots and evidence[0]['category'] in 'ps'
                 and not evidence[0].get('manual', True) and 'n' not in evidence[0]['costs']):
-            groups.append(self._left_dot_initial)
+            groups.append(left_dot_initial)
         for group in groups:
             for char, code, sources in group:
-                if allowed_characters is not None and char not in allowed_characters:
-                    continue
                 prefix = code[:len(evidence)]
                 dots = tuple(index for index in self._left_dots.get((char, code), ()) if index < len(evidence))
                 cache_key = (prefix, dots)
@@ -208,23 +262,45 @@ class StrokeDictionary:
                 complete_variant = (len(code) == len(evidence) and bool(match['left_dot_corrections'])
                                     and match['corrections'] == match['left_dot_corrections'])
                 # A complete five-category code is insufficient when the ink
-                # clearly favors another fold (e.g. first 撇点 versus 乙).
-                compatible = fine.get('fold_compatible', True)
-                priority = 0 if exact_match and compatible else 1 if complete_variant and compatible else 2
+                # favors another fold (e.g. first 撇点 versus 乙). Only a clearly
+                # different fold also gives up the lead over unfinished prefixes.
+                complete = exact_match or complete_variant
+                if complete and fine.get('fold_compatible', True):
+                    priority = 0 if exact_match else 1
+                else:
+                    priority = 2 if complete and fine.get('fold_tolerable', True) else 3
                 key = (priority, score, -(sources & 1), len(code), code)
                 old = rows.get(char)
                 if old is None or key < old['key']:
                     rows[char] = dict(char=char, code=code, key=key, score=score,
                                       exact_match=exact_match, **match, **fine)
+        far_rows = [row for row in rows.values() if row.get('far_corrections')]
+        if len(far_rows) > FAR_POLICY['maxRows']:
+            for row in heapq.nsmallest(len(far_rows)-FAR_POLICY['maxRows'], far_rows,
+                                       key=lambda row: (-row['key'][0], -row['score'], row['char'])):
+                del rows[row['char']]
+        if defer_ranking:
+            return list(rows.values())
         if not rows:
             return self._replacement_candidates(evidence, limit, predictor=predictor,
                 context=context, allowed_characters=allowed_characters, policy=policy)
-        bonuses = predictor.stroke_bonuses(context, rows) if predictor else {}
+        bonuses = early_bonuses(predictor, predictor.stroke_bonuses(context, rows), len(evidence)) if predictor else {}
+        if prefix_vectors:
+            # Score the whole pool before truncation so unfinished characters can rise.
+            pool = [dict(item, language_bonus=bonuses.get(item['char'], 0.),
+                         final_score=item['score']-FUZZY_LANGUAGE_WEIGHT*bonuses.get(item['char'], 0.))
+                    for item in rows.values()]
+            self.stroke_vectors.score_rows(pool, evidence)
+            results = heapq.nsmallest(max(limit, 30), pool, key=lambda item: (
+                item['key'][0], item.get('vector_score', item['final_score']), *item['key'][2:], item['char']))
+            return promote_completed_fuzzy(results, evidence, predictor, context, limit)
         results = heapq.nsmallest(max(limit, 30), rows.values(), key=lambda item: (
             item['key'][0], item['score']-FUZZY_LANGUAGE_WEIGHT*bonuses.get(item['char'], 0.),
             *item['key'][2:], item['char']))
         results = [dict(item, language_bonus=bonuses.get(item['char'], 0.),
                      final_score=item['score']-FUZZY_LANGUAGE_WEIGHT*bonuses.get(item['char'], 0.)) for item in results]
+        if self.stroke_vectors is not None:
+            results = self.stroke_vectors.rerank(results, evidence, self._fuzzy_priors)
         return promote_completed_fuzzy(results, evidence, predictor, context, limit)
 
     def _replacement_candidates(self, evidence, limit, *, predictor, context, allowed_characters, policy):

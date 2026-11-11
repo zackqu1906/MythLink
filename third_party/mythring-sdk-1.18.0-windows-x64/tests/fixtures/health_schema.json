@@ -1,0 +1,2025 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ring SDK 健康同步结果",
+  "$ref": "#/$defs/AutomaticSyncResult",
+  "$defs": {
+    "HealthState": {
+      "type": "object",
+      "properties": {
+        "recording": {
+          "type": "boolean",
+          "description": "是否正在写健康记录；不是正在测量心率的充分条件。"
+        },
+        "recordingId": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "设备记录 ID；recording=false 时不视为活动记录。"
+        },
+        "opticalMode": {
+          "type": "integer",
+          "description": "光学模式：0 关闭、1 绿光、2 血氧，未知原码保留。"
+        },
+        "manual": {
+          "type": "boolean",
+          "description": "设备手动采集标志。"
+        },
+        "manualDone": {
+          "type": "boolean",
+          "description": "最近手动流程完成标志，可能保留；不等于测量成功。"
+        },
+        "deviceError": {
+          "type": "integer",
+          "description": "设备状态错误码，0 表示未报告错误。"
+        },
+        "monitoringState": {
+          "type": "integer",
+          "description": "0 未运行/暂停、1 日间、2 卧床候选、3 充电；不等于佩戴状态。"
+        },
+        "timeKnown": {
+          "type": "boolean",
+          "description": "设备是否已建立时间基准。"
+        },
+        "bootId": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "设备启动 ID，有符号十进制字符串，可以为负；不做 JS Number 运算。"
+        },
+        "uptimeMs": {
+          "type": "integer",
+          "description": "同一启动后的毫秒数。"
+        }
+      },
+      "required": [
+        "recording",
+        "recordingId",
+        "opticalMode",
+        "manual",
+        "manualDone",
+        "deviceError",
+        "monitoringState",
+        "timeKnown",
+        "bootId",
+        "uptimeMs"
+      ],
+      "additionalProperties": false
+    },
+    "SyncSummary": {
+      "type": "object",
+      "properties": {
+        "receivedBytes": {
+          "type": "integer",
+          "description": "本轮接收字节，续传前缀不重复计。"
+        },
+        "totalBytes": {
+          "type": "integer",
+          "description": "本轮待传字节；不是档案/JSON 大小。"
+        },
+        "downloadedRecordCount": {
+          "type": "integer",
+          "description": "本轮新完成下载的记录数，缓存命中不计。"
+        },
+        "currentStepsUpdated": {
+          "type": "boolean",
+          "description": "本轮是否刷新临时步数，结果仍在 reports/daily 内。"
+        },
+        "deferredRecordIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^-?[0-9]+$"
+          },
+          "description": "待下轮继续处理的记录 ID。"
+        }
+      },
+      "required": [
+        "receivedBytes",
+        "totalBytes",
+        "downloadedRecordCount",
+        "currentStepsUpdated",
+        "deferredRecordIds"
+      ],
+      "additionalProperties": false
+    },
+    "HealthRecording": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "记录 ID，JSON 字符串；不能单独作跨设备永久键。"
+        },
+        "status": {
+          "type": "integer",
+          "description": "0 正在写入、1 正常封存、2 中断封存、3 空间不足封存。"
+        },
+        "bytes": {
+          "type": "integer",
+          "description": "记录数据字节数。"
+        },
+        "startUtcMs": {
+          "type": "integer",
+          "description": "记录起点 UTC 毫秒；描述符时间未知可为 0。"
+        },
+        "durationMs": {
+          "type": "integer",
+          "description": "记录跨度毫秒，含缺口，不等于睡眠时长。"
+        },
+        "mode": {
+          "type": "integer",
+          "description": "记录模式标识，按实际返回保留。"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "bytes",
+        "startUtcMs",
+        "durationMs",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "HealthValue": {
+      "type": "object",
+      "properties": {
+        "timeUtcMs": {
+          "type": "integer",
+          "description": "采样 UTC 毫秒，不能用同步时间替代。"
+        },
+        "metric": {
+          "type": "string",
+          "description": "HEART_RATE/SPO2/HRV。"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有限测量值；缺测/无效为 null，不补 0。"
+        },
+        "unit": {
+          "type": "string",
+          "description": "bpm/%/ms。"
+        },
+        "quality": {
+          "type": "string",
+          "description": "VALID、INSUFFICIENT_DATA、NON_WEAR、GAP、PROVISIONAL；未知值保留。"
+        },
+        "source": {
+          "type": "string",
+          "description": "FIRMWARE 或 ANDROID，表示计算来源。"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "原始置信信息；跨指标量纲未统一，不当成健康评分。"
+        },
+        "measurementId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^-?[0-9]+$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "测量关联 ID，可空，不承诺跨重启全局唯一。"
+        },
+        "rejectionReason": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "固件心率质量拒绝位图；0 为通过，null 为旧数据或非心率。候选值保留 PROVISIONAL，不进入合格测量统计。"
+        }
+      },
+      "required": [
+        "timeUtcMs",
+        "metric",
+        "value",
+        "unit",
+        "quality",
+        "source",
+        "confidence",
+        "measurementId"
+      ],
+      "additionalProperties": false
+    },
+    "HealthActivity": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "活动窗口起点 UTC 毫秒。"
+        },
+        "durationMs": {
+          "type": "integer",
+          "description": "窗口时长毫秒，当前通常 20000。"
+        },
+        "candidateSteps": {
+          "type": "integer",
+          "description": "候选步数，不是最终计入值。"
+        },
+        "steps": {
+          "type": "integer",
+          "description": "最终窗口步数，结合 quality 判定有效零步；此字段本身不可空。"
+        },
+        "locomotionProbability": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有效窗口分类概率 0～1，缺失为 null。"
+        },
+        "quality": {
+          "type": "string",
+          "description": "有效与否；仅 VALID 参加步数汇总。"
+        },
+        "windowKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "活动窗口去重键；可能为空。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "durationMs",
+        "candidateSteps",
+        "steps",
+        "locomotionProbability",
+        "quality",
+        "windowKey"
+      ],
+      "additionalProperties": false
+    },
+    "HealthBedtime": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "卧床起点 UTC 毫秒，不保证睡着。"
+        },
+        "endUtcMs": {
+          "type": "integer",
+          "description": "卧床终点 UTC 毫秒；区间左闭右开。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "endUtcMs"
+      ],
+      "additionalProperties": false
+    },
+    "HealthSleepEpoch": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "分期起点 UTC 毫秒。"
+        },
+        "durationMs": {
+          "type": "integer",
+          "description": "实际片段时长毫秒，不能假设固定 5 分钟。"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "LIGHT 浅睡、DEEP 深睡、REM 快速眼动、AWAKE 清醒；null/未知留空。"
+        },
+        "estimated": {
+          "type": "boolean",
+          "description": "是否估计补齐；true 不计有效统计。"
+        },
+        "provisional": {
+          "type": "boolean",
+          "description": "是否暂定、待后续上下文确认。"
+        },
+        "quality": {
+          "type": "string",
+          "description": "质量枚举；有效统计需 VALID 且非 estimated/provisional。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "durationMs",
+        "stage",
+        "estimated",
+        "provisional",
+        "quality"
+      ],
+      "additionalProperties": false
+    },
+    "HealthWearEvent": {
+      "type": "object",
+      "properties": {
+        "timeUtcMs": {
+          "type": "integer",
+          "description": "光学接触事件 UTC 毫秒。"
+        },
+        "state": {
+          "type": "integer",
+          "description": "0 未知、1 有接触、2 离腕；不同于 wearStates.state。"
+        }
+      },
+      "required": [
+        "timeUtcMs",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "HealthWearStateEvent": {
+      "type": "object",
+      "properties": {
+        "timeUtcMs": {
+          "type": "integer",
+          "description": "佩戴状态事件 UTC 毫秒。"
+        },
+        "state": {
+          "type": "integer",
+          "description": "0 离腕、1 暂定佩戴、2 确认佩戴；不同于 wear.state。"
+        },
+        "retryLevel": {
+          "type": "integer",
+          "description": "设备重试等级原码 0～255；不是质量分。"
+        }
+      },
+      "required": [
+        "timeUtcMs",
+        "state",
+        "retryLevel"
+      ],
+      "additionalProperties": false
+    },
+    "PublicHealthReport": {
+      "type": "object",
+      "properties": {
+        "recording": {
+          "$ref": "#/$defs/HealthRecording",
+          "description": "记录描述符。"
+        },
+        "algorithmVersion": {
+          "type": "string",
+          "description": "分析器版本，可随算法升级变化。"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthValue"
+          },
+          "description": "报告健康值，包含 HRV；应同时检查质量状态和空值。"
+        },
+        "activity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthActivity"
+          },
+          "description": "报告活动窗口。"
+        },
+        "bedtimes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthBedtime"
+          },
+          "description": "分段卧床。"
+        },
+        "sleep": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthSleepEpoch"
+          },
+          "description": "分段分期，不公开 probabilities。"
+        },
+        "wear": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthWearEvent"
+          },
+          "description": "光学接触事件。"
+        },
+        "wearStates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthWearStateEvent"
+          },
+          "description": "确认/暂定/离腕状态事件。"
+        },
+        "wearStatesAvailable": {
+          "type": "boolean",
+          "description": "是否具备该项分析输出；true+[] 不表示未佩戴。"
+        },
+        "temperatureAvailable": {
+          "type": "boolean",
+          "description": "已由支持温度的分析器处理；不保证存在有效样本。"
+        },
+        "activityAvailable": {
+          "type": "boolean",
+          "description": "活动分析能力/上下文是否可用，不等于已有步数。"
+        },
+        "nightlyHrvAvailable": {
+          "type": "boolean",
+          "description": "报告夜间 HRV 分析能力标志；不代表已有夜间样本。"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "报告告警代码列表；可出现 FEATURE_GAP、BEDTIME_CONTEXT_PENDING 等，未知保留。"
+        }
+      },
+      "required": [
+        "recording",
+        "algorithmVersion",
+        "values",
+        "activity",
+        "bedtimes",
+        "sleep",
+        "wear",
+        "wearStates",
+        "wearStatesAvailable",
+        "temperatureAvailable",
+        "activityAvailable",
+        "nightlyHrvAvailable",
+        "warnings"
+      ],
+      "additionalProperties": false
+    },
+    "VitalHistoryValue": {
+      "type": "object",
+      "properties": {
+        "timeUtcMs": {
+          "type": "integer",
+          "description": "采样 UTC 毫秒，不能用同步时间替代。"
+        },
+        "metric": {
+          "type": "string",
+          "description": "HEART_RATE/SPO2/HRV。"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有限测量值；缺测/无效为 null，不补 0。"
+        },
+        "unit": {
+          "type": "string",
+          "description": "bpm/%/ms。"
+        },
+        "quality": {
+          "type": "string",
+          "description": "VALID、INSUFFICIENT_DATA、NON_WEAR、GAP、PROVISIONAL；未知值保留。"
+        },
+        "source": {
+          "type": "string",
+          "description": "FIRMWARE 或 ANDROID，表示计算来源。"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "原始置信信息；跨指标量纲未统一，不当成健康评分。"
+        },
+        "measurementId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^-?[0-9]+$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "测量关联 ID，可空，不承诺跨重启全局唯一。"
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "按请求时区得到的采样日期。"
+        },
+        "period": {
+          "type": "string",
+          "description": "day 或 night；night 只代表在卧床区间，不等于昨夜睡眠。"
+        },
+        "derivedFromRri": {
+          "type": "boolean",
+          "description": "是否由有效 RRI 推导心率或 RMSSD。"
+        },
+        "rejectionReason": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "固件心率质量拒绝位图；0 为通过，null 为旧数据或非心率。候选值保留 PROVISIONAL，不进入合格测量统计。"
+        }
+      },
+      "required": [
+        "timeUtcMs",
+        "metric",
+        "value",
+        "unit",
+        "quality",
+        "source",
+        "confidence",
+        "measurementId",
+        "date",
+        "period",
+        "derivedFromRri"
+      ],
+      "additionalProperties": false
+    },
+    "DailyHealthSummary": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "本地自然日，不是完整一夜的归属日。"
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "IANA 时区。"
+        },
+        "steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该自然日有效去重步数，无有效窗 null，有有效零步窗 0。"
+        },
+        "walkingSeconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有效正步数窗口时长和/1000，不是全部运动秒数。"
+        },
+        "activityAvailable": {
+          "type": "boolean",
+          "description": "当天是否有活动能力覆盖或有效窗。"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthValue"
+          },
+          "description": "该自然日的测量序列，不是日均值，可能含无效点。"
+        },
+        "bedtimes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthBedtime"
+          },
+          "description": "按本地午夜裁剪的卧床片段。"
+        },
+        "sleep": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthSleepEpoch"
+          },
+          "description": "按卧床/午夜裁剪及去重的分期。"
+        },
+        "validSleepMinutes": {
+          "type": "integer",
+          "description": "有效 LIGHT/DEEP/REM 毫秒和最后向下取整分钟，不是昨夜总时长。"
+        },
+        "hasValidSleep": {
+          "type": "boolean",
+          "description": "是否至少有一段有效睡眠，少于一分钟时也可为 true。"
+        }
+      },
+      "required": [
+        "date",
+        "timeZone",
+        "steps",
+        "walkingSeconds",
+        "activityAvailable",
+        "values",
+        "bedtimes",
+        "sleep",
+        "validSleepMinutes",
+        "hasValidSleep"
+      ],
+      "additionalProperties": false
+    },
+    "HealthLossRange": {
+      "type": "object",
+      "properties": {
+        "firstSequence": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "缺失设备记录创建序号起点，闭区间。"
+        },
+        "lastSequence": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "缺失序号终点，闭区间。"
+        },
+        "compacted": {
+          "type": "boolean",
+          "description": "true 为合并过的历史范围，不逐项推断可恢复记录。"
+        }
+      },
+      "required": [
+        "firstSequence",
+        "lastSequence",
+        "compacted"
+      ],
+      "additionalProperties": false
+    },
+    "SyncError": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "description": "发生错误的阶段，如 TRANSFER、STATUS、ANALYZE。"
+        },
+        "recordingId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^-?[0-9]+$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "关联记录 ID，无单条关联时 null。"
+        },
+        "code": {
+          "type": "string",
+          "description": "当前 DEVICE_ERROR 或 SYNC_ERROR。"
+        },
+        "deviceCode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "设备错误原码，如 -110；非设备异常通常 null。"
+        },
+        "message": {
+          "type": "string",
+          "description": "诊断文本，不作稳定业务枚举/直接 UI 文案。"
+        }
+      },
+      "required": [
+        "stage",
+        "recordingId",
+        "code",
+        "deviceCode",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "HealthTemperaturePointJSON": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "区间起点UTC毫秒。"
+        },
+        "endUtcMs": {
+          "type": "integer",
+          "description": "区间终点UTC毫秒。"
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "DAY自然日、NIGHT起床归属日。"
+        },
+        "deviationCelsius": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "相对个人睡眠基线的偏差°C，可正负；null缺失。"
+        },
+        "validMinutes": {
+          "type": "integer",
+          "description": "有效分钟数。"
+        },
+        "sampleCount": {
+          "type": "integer",
+          "description": "有效采样数。"
+        },
+        "baselineNights": {
+          "type": "integer",
+          "description": "近7日可用夜数；短基线实际仅用最近一夜。"
+        },
+        "baselineSource": {
+          "type": "string",
+          "description": "NONE/INITIAL_SLEEP/LATEST_SLEEP/ROLLING_7_NIGHTS。"
+        },
+        "baselineId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "参考标识，无绝对温度明文。"
+        },
+        "status": {
+          "type": "string",
+          "description": "READY/BASELINE_BUILDING/INITIAL_BASELINE/NO_BASELINE/INSUFFICIENT_DATA/PARTIAL。"
+        },
+        "period": {
+          "type": "string",
+          "description": "DAY或NIGHT。"
+        },
+        "expectedMinutes": {
+          "type": "integer",
+          "description": "区间相应期间的预期分钟数，仅用于描述覆盖情况，不作为出值门槛。"
+        },
+        "isComplete": {
+          "type": "boolean",
+          "description": "桶是否结束，与status共同判断。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "endUtcMs",
+        "date",
+        "deviationCelsius",
+        "validMinutes",
+        "sampleCount",
+        "baselineNights",
+        "baselineSource",
+        "baselineId",
+        "status",
+        "period",
+        "expectedMinutes",
+        "isComplete"
+      ],
+      "additionalProperties": false
+    },
+    "HealthTemperatureNight": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "区间起点UTC毫秒。"
+        },
+        "endUtcMs": {
+          "type": "integer",
+          "description": "区间终点UTC毫秒。"
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "主睡眠起床归属日。"
+        },
+        "deviationCelsius": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "相对个人睡眠基线的偏差°C，可正负；null缺失。"
+        },
+        "validMinutes": {
+          "type": "integer",
+          "description": "有效分钟数。"
+        },
+        "sampleCount": {
+          "type": "integer",
+          "description": "有效采样数。"
+        },
+        "baselineNights": {
+          "type": "integer",
+          "description": "近7日可用夜数；短基线实际仅用最近一夜。"
+        },
+        "baselineSource": {
+          "type": "string",
+          "description": "NONE/INITIAL_SLEEP/LATEST_SLEEP/ROLLING_7_NIGHTS。"
+        },
+        "baselineId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "参考标识，无绝对温度明文。"
+        },
+        "status": {
+          "type": "string",
+          "description": "READY/BASELINE_BUILDING/INITIAL_BASELINE/NO_BASELINE/INSUFFICIENT_DATA/PARTIAL。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "endUtcMs",
+        "date",
+        "deviationCelsius",
+        "validMinutes",
+        "sampleCount",
+        "baselineNights",
+        "baselineSource",
+        "baselineId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "HealthTemperatureResult": {
+      "type": "object",
+      "properties": {
+        "algorithmVersion": {
+          "type": "string",
+          "description": "skin-deviation-v4-independent-wear。"
+        },
+        "unit": {
+          "type": "string",
+          "description": "°C，仅偏差。"
+        },
+        "baselineWindowDays": {
+          "type": "integer",
+          "description": "7个日历日。"
+        },
+        "minimumBaselineNights": {
+          "type": "integer",
+          "description": "1；不足7夜使用最近睡眠参考。"
+        },
+        "minimumNightMinutes": {
+          "type": "integer",
+          "description": "30。"
+        },
+        "dayIntervalMinutes": {
+          "type": "integer",
+          "description": "60。"
+        },
+        "nightIntervalMinutes": {
+          "type": "integer",
+          "description": "5。"
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthTemperaturePointJSON"
+          },
+          "description": "昼夜分桶温差；不主动推送。"
+        },
+        "nightly": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthTemperatureNight"
+          },
+          "description": "有效睡眠内温差汇总；≥30有效分钟。"
+        }
+      },
+      "required": [
+        "algorithmVersion",
+        "unit",
+        "baselineWindowDays",
+        "minimumBaselineNights",
+        "minimumNightMinutes",
+        "dayIntervalMinutes",
+        "nightIntervalMinutes",
+        "history",
+        "nightly"
+      ],
+      "additionalProperties": false
+    },
+    "HealthBodyProfile": {
+      "type": "object",
+      "properties": {
+        "heightCm": {
+          "type": "number",
+          "description": "身高 cm，有限数 100～250；由 App 传入。"
+        },
+        "weightKg": {
+          "type": "number",
+          "description": "体重 kg，有限数 20～300；由 App 传入。"
+        }
+      },
+      "required": [
+        "heightCm",
+        "weightKg"
+      ],
+      "additionalProperties": false
+    },
+    "HealthScore": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "实算0–100整数，缺少核心数据为null。"
+        },
+        "maximum": {
+          "type": "integer",
+          "description": "100。"
+        },
+        "status": {
+          "type": "string",
+          "description": "READY/PARTIAL/INSUFFICIENT_DATA。"
+        },
+        "isMock": {
+          "type": "boolean",
+          "description": "false，无硬编码分数。"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "评分标签，按实际返回保留。"
+        },
+        "algorithmVersion": {
+          "type": "string",
+          "description": "wellness-v1-experimental。"
+        },
+        "coverage": {
+          "type": "number",
+          "description": "有效输入权重覆盖0–1，不是医学置信度。"
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthScoreContributor"
+          },
+          "description": "逐项输入、参考、子分和权重。"
+        },
+        "missingInputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "缺失因素key。"
+        }
+      },
+      "required": [
+        "value",
+        "maximum",
+        "status",
+        "isMock",
+        "label",
+        "algorithmVersion",
+        "coverage",
+        "contributors",
+        "missingInputs"
+      ],
+      "additionalProperties": false
+    },
+    "HealthCaloriesSummary": {
+      "type": "object",
+      "properties": {
+        "kcal": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "步行活动净热量估算 kcal，不含基础代谢/其他运动。"
+        },
+        "status": {
+          "type": "string",
+          "description": "PROFILE_REQUIRED、NO_DATA、READY、PARTIAL、OUT_OF_RANGE。"
+        },
+        "excludedSteps": {
+          "type": "integer",
+          "description": "超过步行估算速度/步频范围而排除的已结束窗步数。"
+        }
+      },
+      "required": [
+        "kcal",
+        "status",
+        "excludedSteps"
+      ],
+      "additionalProperties": false
+    },
+    "HealthActivityHour": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "小时桶起点 UTC 毫秒。"
+        },
+        "endUtcMs": {
+          "type": "integer",
+          "description": "小时桶终点 UTC 毫秒，左闭右开。"
+        },
+        "localHour": {
+          "type": "integer",
+          "description": "本地小时 0～23，夏令时可重复。"
+        },
+        "utcOffsetSeconds": {
+          "type": "integer",
+          "description": "本桶时区偏移秒数，用于区分重复小时。"
+        },
+        "steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "本小时有效去重步数，缺测 null，不补 0。"
+        },
+        "calories": {
+          "$ref": "#/$defs/HealthCaloriesSummary",
+          "description": "本小时步行热量。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "endUtcMs",
+        "localHour",
+        "utcOffsetSeconds",
+        "steps",
+        "calories"
+      ],
+      "additionalProperties": false
+    },
+    "HealthHeartHour": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "小时桶起点 UTC 毫秒。"
+        },
+        "endUtcMs": {
+          "type": "integer",
+          "description": "小时桶终点 UTC 毫秒。"
+        },
+        "sampleCount": {
+          "type": "integer",
+          "description": "本桶有效自动心率样本数。"
+        },
+        "minimumBpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "本桶最小心率 bpm。"
+        },
+        "maximumBpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "本桶最大心率 bpm。"
+        },
+        "averageBpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "本桶算术平均 bpm，无点 null。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "endUtcMs",
+        "sampleCount",
+        "minimumBpm",
+        "maximumBpm",
+        "averageBpm"
+      ],
+      "additionalProperties": false
+    },
+    "HealthHeartSummary": {
+      "type": "object",
+      "properties": {
+        "latest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该自然日最近有效自动心率。"
+        },
+        "minimumBpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该自然日有效自动心率最小值。"
+        },
+        "maximumBpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该自然日有效自动心率最大值。"
+        },
+        "hourly": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthHeartHour"
+          },
+          "description": "按时间排序的小时统计，常规 24 桶，DST 可 23/25。"
+        }
+      },
+      "required": [
+        "latest",
+        "minimumBpm",
+        "maximumBpm",
+        "hourly"
+      ],
+      "additionalProperties": false
+    },
+    "HealthNightSummary": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "起床归属日 D。"
+        },
+        "bedStartUtcMs": {
+          "type": "integer",
+          "description": "选中主睡眠卧床起点。"
+        },
+        "bedEndUtcMs": {
+          "type": "integer",
+          "description": "选中主睡眠卧床终点。"
+        },
+        "sleepDurationMs": {
+          "type": "integer",
+          "description": "有效 LIGHT/DEEP/REM 累计毫秒，不含 AWAKE/缺口。"
+        },
+        "sleepMinutes": {
+          "type": "integer",
+          "description": "累计毫秒最后整除 60000。"
+        },
+        "estimatedOnsetUtcMs": {
+          "type": "integer",
+          "description": "首个有效睡眠片段起点，估计入睡。"
+        },
+        "estimatedWakeUtcMs": {
+          "type": "integer",
+          "description": "最后有效睡眠片段终点，估计醒来。"
+        },
+        "isPartial": {
+          "type": "boolean",
+          "description": "上下文/记录边界不完整；true 时不纳入 7 日完整夜均值。"
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthSleepEpoch"
+          },
+          "description": "主会话内分期时间线，含清醒但不增加半梦半醒。"
+        },
+        "restingHeartRateBpm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "夜间静息参考：有效睡眠内心率按分钟均值取中位数，至少 30 分钟。"
+        },
+        "restingHeartRateMinutes": {
+          "type": "integer",
+          "description": "有效心率分钟数。"
+        },
+        "averageSpo2": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有效睡眠期间有效 SPO2 样本算术平均，%，不是最低/最近血氧。"
+        },
+        "spo2SampleCount": {
+          "type": "integer",
+          "description": "参与夜间血氧均值的有效去重样本数。"
+        },
+        "hrvRmssdMs": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "睡眠内每分钟RMSSD均值的中位数；至少5分钟。"
+        },
+        "hrvMinutes": {
+          "type": "integer",
+          "description": "参与的有效HRV分钟数。"
+        }
+      },
+      "required": [
+        "date",
+        "bedStartUtcMs",
+        "bedEndUtcMs",
+        "sleepDurationMs",
+        "sleepMinutes",
+        "estimatedOnsetUtcMs",
+        "estimatedWakeUtcMs",
+        "isPartial",
+        "stages",
+        "restingHeartRateBpm",
+        "restingHeartRateMinutes",
+        "averageSpo2",
+        "spo2SampleCount",
+        "hrvRmssdMs",
+        "hrvMinutes"
+      ],
+      "additionalProperties": false
+    },
+    "HealthDayPageSummary": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "本地自然日/睡眠归属日的页面索引。"
+        },
+        "steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有效日步数。"
+        },
+        "hourlyActivity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthActivityHour"
+          },
+          "description": "小时步数及热量。"
+        },
+        "walkingCalories": {
+          "$ref": "#/$defs/HealthCaloriesSummary",
+          "description": "当天步行热量估算。"
+        },
+        "heart": {
+          "$ref": "#/$defs/HealthHeartSummary",
+          "description": "当天自动心率汇总。"
+        },
+        "night": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthNightSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该日对应主睡眠；无有效主睡眠则 null。"
+        },
+        "todayScore": {
+          "$ref": "#/$defs/HealthScore",
+          "description": "当天恢复与活动准备度评分。"
+        },
+        "sleepScore": {
+          "$ref": "#/$defs/HealthScore",
+          "description": "该归属日睡眠评分。"
+        },
+        "activityLoad": {
+          "$ref": "#/$defs/HealthActivityLoad",
+          "description": "当日步行负荷，供后两日恢复评分。"
+        },
+        "hrv": {
+          "$ref": "#/$defs/HealthHrvTimeline",
+          "description": "全天HRV分时中位数折线；非整夜统计。"
+        }
+      },
+      "required": [
+        "date",
+        "steps",
+        "hourlyActivity",
+        "walkingCalories",
+        "heart",
+        "night",
+        "todayScore",
+        "sleepScore",
+        "activityLoad",
+        "hrv"
+      ],
+      "additionalProperties": false
+    },
+    "HealthSleepDay": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "近 7 日中某一天。"
+        },
+        "night": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthNightSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该日主睡眠，缺失为空但日期项保留。"
+        },
+        "score": {
+          "$ref": "#/$defs/HealthScore",
+          "description": "实际每日睡眠评分，不足数据null。"
+        }
+      },
+      "required": [
+        "date",
+        "night",
+        "score"
+      ],
+      "additionalProperties": false
+    },
+    "HealthSleepWeekSummary": {
+      "type": "object",
+      "properties": {
+        "fromDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "D-6，开始归属日。"
+        },
+        "throughDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "D，结束归属日。"
+        },
+        "days": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthSleepDay"
+          },
+          "description": "固定 7 日，日期升序；不是 7 个非空夜。"
+        },
+        "validNightCount": {
+          "type": "integer",
+          "description": "参与平均的非部分有效夜数，0～7。"
+        },
+        "averageSleepMinutes": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有效完整夜睡眠毫秒平均后转分钟；不固定除以 7。"
+        },
+        "averageOnsetMinutesAfterNoon": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "入睡平均相对各自前一日 12:00 的本地时钟分钟。"
+        },
+        "averageWakeMinutesAfterNoon": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "醒来平均，与入睡使用相同夜集与时钟原点。"
+        },
+        "averageScore": {
+          "$ref": "#/$defs/HealthScore",
+          "description": "非空睡眠分均值，覆盖率按7日，完整7日READY才READY。"
+        }
+      },
+      "required": [
+        "fromDate",
+        "throughDate",
+        "days",
+        "validNightCount",
+        "averageSleepMinutes",
+        "averageOnsetMinutesAfterNoon",
+        "averageWakeMinutesAfterNoon",
+        "averageScore"
+      ],
+      "additionalProperties": false
+    },
+    "HealthPageSummary": {
+      "type": "object",
+      "properties": {
+        "algorithmVersion": {
+          "type": "string",
+          "description": "health-page-v2。"
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "本次汇总时区。"
+        },
+        "generatedAtUtcMs": {
+          "type": "integer",
+          "description": "页面统计生成时间，不是采样时间。"
+        },
+        "bodyProfile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthBodyProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "本次输入身高体重回显，未传 null。"
+        },
+        "debugScoresEnabled": {
+          "type": "boolean",
+          "description": "兼容字段，恒为 false。"
+        },
+        "latestHeart": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "整个自动历史最新有效心率，不限今天。"
+        },
+        "today": {
+          "$ref": "#/$defs/HealthDayPageSummary",
+          "description": "今天对象始终存在，各指标可空。"
+        },
+        "days": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthDayPageSummary"
+          },
+          "description": "已有历史日期及今天；日期升序，不强制补满所有历史空日。"
+        },
+        "sleepLast7Days": {
+          "$ref": "#/$defs/HealthSleepWeekSummary",
+          "description": "近 7 日主睡眠统计。"
+        },
+        "scoringProfile": {
+          "$ref": "#/$defs/HealthScoringProfile",
+          "description": "睡眠目标/作息偏好回显。"
+        }
+      },
+      "required": [
+        "algorithmVersion",
+        "timeZone",
+        "generatedAtUtcMs",
+        "bodyProfile",
+        "debugScoresEnabled",
+        "latestHeart",
+        "today",
+        "days",
+        "sleepLast7Days",
+        "scoringProfile"
+      ],
+      "additionalProperties": false
+    },
+    "HealthCapabilities": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "type": "integer",
+          "description": "健康命令协议版本，当前 1。"
+        },
+        "mode": {
+          "type": "integer",
+          "description": "采集模式标识，按实际返回保留。"
+        },
+        "featureRevision": {
+          "type": "integer",
+          "description": "特征版本标识；无可用值时为 0。"
+        },
+        "flags": {
+          "type": "integer",
+          "description": "能力标识；业务功能判断使用命名能力字段。"
+        },
+        "accelerometerHz": {
+          "type": "integer",
+          "description": "整数采样率；精确值使用 effectiveAccelerometerHz。"
+        },
+        "greenHz": {
+          "type": "integer",
+          "description": "整数采样率；精确值使用 effectiveGreenHz。"
+        },
+        "recordingDurationMs": {
+          "type": "integer",
+          "description": "记录段时长，单位毫秒。"
+        },
+        "maxReadBytes": {
+          "type": "integer",
+          "description": "单次读取能力上限字节。"
+        },
+        "accelerometerPeriodMs": {
+          "type": "integer",
+          "description": "加速度采样间隔毫秒。"
+        },
+        "greenPeriodMs": {
+          "type": "integer",
+          "description": "绿光采样间隔毫秒。"
+        },
+        "automatic": {
+          "type": "boolean",
+          "description": "mode=7 且自动能力位存在。"
+        },
+        "swipeDayConcurrent": {
+          "type": "boolean",
+          "description": "是否支持手势与日间健康同时工作。"
+        },
+        "swipeSleepConcurrent": {
+          "type": "boolean",
+          "description": "是否支持手势与睡眠监测同时工作。"
+        },
+        "retainedHistory": {
+          "type": "boolean",
+          "description": "是否支持历史保留；确认删除策略须单独查询。"
+        },
+        "ackPolicySupported": {
+          "type": "boolean",
+          "description": "是否支持查询与设置确认删除策略。"
+        },
+        "effectiveAccelerometerHz": {
+          "type": "number",
+          "description": "1000 / accelerometerPeriodMs。"
+        },
+        "effectiveGreenHz": {
+          "type": "number",
+          "description": "1000 / greenPeriodMs。"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "mode",
+        "featureRevision",
+        "flags",
+        "accelerometerHz",
+        "greenHz",
+        "recordingDurationMs",
+        "maxReadBytes",
+        "accelerometerPeriodMs",
+        "greenPeriodMs",
+        "automatic",
+        "swipeDayConcurrent",
+        "swipeSleepConcurrent",
+        "retainedHistory",
+        "ackPolicySupported",
+        "effectiveAccelerometerHz",
+        "effectiveGreenHz"
+      ],
+      "additionalProperties": false
+    },
+    "AutomaticSyncResult": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "description": "协议版本 2。"
+        },
+        "accountScope": {
+          "type": "string",
+          "description": "稳定账户标识，不传密码/token。"
+        },
+        "deviceAddress": {
+          "type": "string",
+          "description": "戒指设备地址，不是眼镜/手机地址。"
+        },
+        "timeZone": {
+          "type": "string",
+          "description": "汇总采用的 IANA 时区。"
+        },
+        "syncedAtUtcMs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "最近成功在线同步时间，未成功过可空，不是每条采样时间。"
+        },
+        "status": {
+          "type": "string",
+          "description": "SUCCESS、PARTIAL、CACHE_ONLY、FAILED；独立离线示例为DEMO；同步成功不代表有数据。"
+        },
+        "liveHeartSupported": {
+          "type": "boolean",
+          "description": "是否支持实时心率；不表示已有心率值。"
+        },
+        "deviceState": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "设备状态，未取得时 null。"
+        },
+        "sync": {
+          "$ref": "#/$defs/SyncSummary",
+          "description": "本轮同步摘要。"
+        },
+        "reports": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PublicHealthReport"
+          },
+          "description": "公开报告快照，不能与 daily 再相加。"
+        },
+        "vitalHistory": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VitalHistoryValue"
+          },
+          "description": "有效自动测量历史，JSON 展平 measurement。"
+        },
+        "daily": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DailyHealthSummary"
+          },
+          "description": "本地自然日统计。"
+        },
+        "lossRanges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthLossRange"
+          },
+          "description": "设备报告的缺失记录范围。"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SyncError"
+          },
+          "description": "本次结构化错误；成功可为空数组。"
+        },
+        "temperature": {
+          "$ref": "#/$defs/HealthTemperatureResult",
+          "description": "1.11.0 新增；无温度也应输出包含空数组的对象。"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthPageSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "SDK 页面汇总。syncAutomatic 返回已汇总对象；手动构建 DTO 未调用 withPageSummary 时可空。"
+        },
+        "capabilities": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HealthCapabilities"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "本客户端当前连接已读取的能力快照；断连清除，离线新客户端为 null，不从历史记录伪造。"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "accountScope",
+        "deviceAddress",
+        "timeZone",
+        "syncedAtUtcMs",
+        "status",
+        "liveHeartSupported",
+        "deviceState",
+        "sync",
+        "reports",
+        "vitalHistory",
+        "daily",
+        "lossRanges",
+        "errors",
+        "temperature",
+        "page",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "HealthScoreContributor": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "评分因素稳定key，见评分算法。"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该因素0–100子分；缺失null。"
+        },
+        "weight": {
+          "type": "number",
+          "description": "原始权重。"
+        },
+        "effectiveWeight": {
+          "type": "number",
+          "description": "可用项归一化权重，缺失为0。"
+        },
+        "inputValue": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "实际输入，单位见unit；温度只含偏差。"
+        },
+        "referenceValue": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "参考/目标；温差参考0。"
+        },
+        "unit": {
+          "type": "string",
+          "description": "min/minuteOfDay/ratio/bpm/ms/°C/score/walkingLoad/days。"
+        },
+        "status": {
+          "type": "string",
+          "description": "AVAILABLE/SHORT_BASELINE/DEFAULT_REFERENCE/MISSING_INPUT_OR_BASELINE或嵌套评分状态。"
+        }
+      },
+      "required": [
+        "key",
+        "score",
+        "weight",
+        "effectiveWeight",
+        "inputValue",
+        "referenceValue",
+        "unit",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "HealthScoringProfile": {
+      "type": "object",
+      "properties": {
+        "sleepGoalMinutes": {
+          "type": "integer",
+          "description": "360–600，默认480。"
+        },
+        "preferredOnsetMinute": {
+          "type": "integer",
+          "description": "本地日内分钟0–1439，默认1380。"
+        }
+      },
+      "required": [
+        "sleepGoalMinutes",
+        "preferredOnsetMinute"
+      ],
+      "additionalProperties": false
+    },
+    "HealthActivityLoad": {
+      "type": "object",
+      "properties": {
+        "loadUnits": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "步频平方加权步行负荷，≥180有效观察分钟才有值。"
+        },
+        "observedMinutes": {
+          "type": "number",
+          "description": "有效去重且已结束窗口分钟和。"
+        },
+        "minimumMinutes": {
+          "type": "integer",
+          "description": "180。"
+        }
+      },
+      "required": [
+        "loadUnits",
+        "observedMinutes",
+        "minimumMinutes"
+      ],
+      "additionalProperties": false
+    },
+    "HealthHrvPoint": {
+      "type": "object",
+      "properties": {
+        "startUtcMs": {
+          "type": "integer",
+          "description": "窗口起点UTC毫秒，含。"
+        },
+        "endUtcMs": {
+          "type": "integer",
+          "description": "窗口终点UTC毫秒，不含。"
+        },
+        "period": {
+          "type": "string",
+          "description": "NIGHT卧床区间、DAY其他时段。"
+        },
+        "intervalMinutes": {
+          "type": "integer",
+          "description": "标准间隔：日间60分钟、夜间10分钟；交界截断。"
+        },
+        "medianRmssdMs": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "有效非负RMSSD采样中位数ms，缺测null；不输出范围。"
+        },
+        "sampleCount": {
+          "type": "integer",
+          "description": "同时间戳去重后的有效点数。"
+        },
+        "validMinutes": {
+          "type": "integer",
+          "description": "覆盖的不同UTC分钟数。"
+        },
+        "isComplete": {
+          "type": "boolean",
+          "description": "窗口是否已结束；不表示采样完整。"
+        }
+      },
+      "required": [
+        "startUtcMs",
+        "endUtcMs",
+        "period",
+        "intervalMinutes",
+        "medianRmssdMs",
+        "sampleCount",
+        "validMinutes",
+        "isComplete"
+      ],
+      "additionalProperties": false
+    },
+    "HealthHrvTimeline": {
+      "type": "object",
+      "properties": {
+        "algorithmVersion": {
+          "type": "string",
+          "description": "hrv-median-v3-day60-night10。"
+        },
+        "unit": {
+          "type": "string",
+          "description": "ms。"
+        },
+        "dayIntervalMinutes": {
+          "type": "integer",
+          "description": "60。"
+        },
+        "nightIntervalMinutes": {
+          "type": "integer",
+          "description": "10。"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HealthHrvPoint"
+          },
+          "description": "本地自然日已开始窗口；排序，缺测保留null，未来窗省略。"
+        }
+      },
+      "required": [
+        "algorithmVersion",
+        "unit",
+        "dayIntervalMinutes",
+        "nightIntervalMinutes",
+        "points"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

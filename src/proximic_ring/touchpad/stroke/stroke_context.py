@@ -9,17 +9,30 @@ import re
 FUZZY_LANGUAGE_WEIGHT = 1.
 COMPLETED_FUZZY_LANGUAGE_WEIGHT = 1.6
 CORRECTION_LANGUAGE_WEIGHT = .35
+# Over the first strokes the ink says little, so a well-covered context model
+# may count for more. Only the Wanxiang model sets a factor (trial replay:
+# 1.5 helped strokes 1–3 and slightly hurt 4–5, so it stops after three).
+EARLY_STROKES = 3
+EARLY_LANGUAGE_FACTOR = {'wanxiang': 1.5}
 
 
 def ranking_snapshot():
-    from .stroke_folds import FOLD_POLICY
-    return dict(version=4, fuzzyLanguageWeight=FUZZY_LANGUAGE_WEIGHT,
-                foldRanking=dict(FOLD_POLICY),
+    from .stroke_folds import FOLD_POLICY, NEAR_FOLDS
+    return dict(version=6, fuzzyLanguageWeight=FUZZY_LANGUAGE_WEIGHT,
+                foldRanking=dict(FOLD_POLICY, nearFolds=[list(pair) for pair in NEAR_FOLDS]),
                 completedFuzzyLanguageWeight=COMPLETED_FUZZY_LANGUAGE_WEIGHT,
                 correctionLanguageWeight=CORRECTION_LANGUAGE_WEIGHT,
                 completedFuzzySlot=2, completedFuzzyMinStrokes=5,
                 completedFuzzyMaxCost=2.5, completedFuzzyMaxCorrections=1,
-                completedFuzzyMinLanguageBonus=.5)
+                completedFuzzyMinLanguageBonus=.5, earlyStrokes=EARLY_STROKES,
+                earlyLanguageFactor=dict(EARLY_LANGUAGE_FACTOR))
+
+
+def early_bonuses(predictor, bonuses, strokes):
+    factor = getattr(predictor, 'early_language_factor', 1.)
+    if factor == 1. or strokes > EARLY_STROKES:
+        return bonuses
+    return {char: factor*value for char, value in bonuses.items()}
 
 
 def promote_completed_fuzzy(rows, evidence, predictor, context, limit):
@@ -50,10 +63,17 @@ No new character or stroke interpretation is introduced by this step.
     return ([rows[0], promoted] + [row for row in rows[1:] if row is not preferred])[:limit]
 
 
+# Legacy: Tatoeba + a Wikipedia sample, top 8 followers per context.
+# Wanxiang: rime-wanxiang-data grammar and dictionary (tools/build_stroke_context_wanxiang.py).
+CONTEXT_ASSETS = {'legacy': 'stroke-context.json.gz', 'wanxiang': 'stroke-context-wanxiang.json.gz'}
+
+
 class StrokeContext:
-    def __init__(self, data=None):
+    def __init__(self, data=None, *, model='legacy'):
+        self.model = model if data is None else 'custom'
+        self.early_language_factor = EARLY_LANGUAGE_FACTOR.get(self.model, 1.)
         if data is None:
-            with gzip.open(files('proximic_ring').joinpath('assets/stroke-context.json.gz'), 'rt', encoding='utf-8') as stream:
+            with gzip.open(files('proximic_ring').joinpath('assets/' + CONTEXT_ASSETS[model]), 'rt', encoding='utf-8') as stream:
                 data = json.load(stream)
         self.data = data
 

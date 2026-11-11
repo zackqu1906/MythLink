@@ -15,20 +15,20 @@ def study(monkeypatch):
 
 def test_plan_is_balanced_and_preserves_valid_code_variants(study):
     tasks = study.inventory()
-    assert len(tasks) == 35
+    assert len(tasks) == 13
     joined = [t for t in tasks if t['kind'] == 'joined']
-    assert len(joined) == 15
-    assert {t['target'] for t in joined} == {'fan', 'de', 'le', 'zi', 'yi-pie-dian'}
+    assert len(joined) == 9
+    assert {t['target'] for t in joined} == {'walk'}
     for task in tasks:
         assert all(len(code) == task['expectedLogicalStrokes'] for code in task['expectedCodes'])
-    assert next(t for t in joined if t['target'] == 'fan')['expectedCodes'] == ['pp', 'hp']
-    assert next(t for t in joined if t['target'] == 'le')['expectedCodes'] == ['zs', 'zz']
+    assert all(t['expectedCodes']==['zn'] and t['expectedLogicalStrokes']==2 for t in joined)
+    assert {t['contextCharacter'] for t in joined} == {'过','近','这'}
     for phase in ('train', 'evaluation'):
         session = study.new_session('P01', phase=phase)
-        assert session['version'] == 1 and session['planVersion'] == 2
-        assert len(session['tasks']) == 70
-        for offset in (0, 35):
-            assert {t['label'] for t in session['tasks'][offset:offset+35]} == {t['label'] for t in tasks}
+        assert session['version'] == 1 and session['planVersion'] == 3
+        assert len(session['tasks']) == 26
+        for offset in (0, 13):
+            assert {t['label'] for t in session['tasks'][offset:offset+13]} == {t['label'] for t in tasks}
         assert study.validate_session(session) is session
     for rounds in (0, 31, True, 1.5):
         with pytest.raises(ValueError):
@@ -37,7 +37,7 @@ def test_plan_is_balanced_and_preserves_valid_code_variants(study):
 
 def test_pie_dian_keeps_one_and_two_stroke_labels_and_legacy_resume(study):
     from check_selection_capture import trace
-    tasks = study.inventory()
+    tasks = study.inventory(2)
     yi = [t for t in tasks if t.get('target') == 'yi-pie-dian']
     assert len(yi) == 3 and all(t['expectedCodes'] == ['pn'] for t in yi)
     assert next(t for t in tasks if t.get('target') == 'zi')['expectedCodes'] == ['zs', 'zz']
@@ -61,6 +61,10 @@ def test_pie_dian_keeps_one_and_two_stroke_labels_and_legacy_resume(study):
     changed['planVersion'] = 2
     with pytest.raises(ValueError):
         study.validate_session(changed)
+    legacy['planVersion']=2
+    legacy['tasks']=[{**t,'round':1} for t in study.inventory(2)]
+    legacy['samples']=[]
+    assert len(study.validate_session(legacy)['tasks'])==35
 
 
 def test_resume_rejects_relabeling_repetition_and_wrong_samples(study):

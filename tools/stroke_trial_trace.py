@@ -13,7 +13,7 @@ SELECTION_DISPLAY = dict(mode='menu-relative', origin='hold-arming-frame',
     projection='bounded-direction-cells-v1', opacity=.42)
 
 
-def selection_point(point, origin, cells, direction=None):
+def selection_point(point, origin, cells, direction=None, threshold=None):
     """Project one raw sample independently, with no path-dependent recentering.
 
     The selection policy is categorical: crossing a sector changes its target.
@@ -24,7 +24,7 @@ def selection_point(point, origin, cells, direction=None):
     dx, dy = point[0] - origin[0], point[1] - origin[1]
     distance = math.hypot(dx, dy)
     center = cells['center'].center()
-    threshold = CONTACT_INTENT['selectDistance']
+    threshold = threshold or CONTACT_INTENT['selectDistance']
     if distance < threshold:
         radius = min(cells['center'].width(), cells['center'].height()) * .36
         return center + QPointF(dx / threshold * radius, dy / threshold * radius)
@@ -66,12 +66,14 @@ class TrialTraceView(TraceView):
         cells = {name: QRectF(self.mapFromGlobal(button.mapToGlobal(button.rect().topLeft())), button.size())
                  for name, button in self.direction_buttons.items()}
         origin = display['origin']
-        path = [selection_point(point, origin, cells) for point in display['points']]
+        # Two-finger states carry their own (longer) recognition threshold.
+        threshold = self.selection_state.get('threshold')
+        path = [selection_point(point, origin, cells, threshold=threshold) for point in display['points']]
         # Both the endpoint and the highlighted button use this state packet,
         # independent of the separate (potentially downsampled) handwriting ink.
         if path:
             path[-1] = selection_point(display['points'][-1], origin, cells,
-                                       self.selection_state.get('direction'))
+                                       self.selection_state.get('direction'), threshold)
         return path, cells['center'].center()
 
     def paintEvent(self, event):

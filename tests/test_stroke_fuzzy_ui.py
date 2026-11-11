@@ -23,6 +23,11 @@ RESULT = dict(category='s', shape='竖', distance=.001, category_scores=[
     dict(category='s', distance=.001), dict(category='p', distance=.002)])
 
 
+def written(tp):
+    """Candidates matched by the strokes, without the guesses that fill a short page."""
+    return [char for char, visual in zip(tp.strokeCandidates, tp.strokeCandidateVisuals) if not visual.get('guess')]
+
+
 def dictionary(tp):
     tp.fuzzyMatching = True
     tp._dictionary = StrokeDictionary(dict(templates=[], ranks={'小': 0, '你': 0},
@@ -66,25 +71,25 @@ def test_fuzzy_mark_toggle_recognition_undo_and_local_commit(inline_ui, tmp_path
         tp._run.output.options['on_stroke']([(0, 0), (-20, 100)])
         until(lambda: bool(tp.strokeTokens))
         assert tp.strokeTokens == [dict(symbol='丨', fuzzy=True)]
-        assert tp.strokeCandidates == ['小', '你']
+        assert written(tp) == ['小', '你']
         mark = visual_child(root.contentItem(), 'strokeFuzzyMark_0')
         assert mark.isVisible() and mark.property('text') == '?'
         assert mark.property('font').pixelSize() == 9
         assert mark.mapToItem(mark.parentItem(), QPointF()).x() > 0
         assert root.grabWindow().save(str(tmp_path/'stroke-fuzzy-main.png'))
         tp.addStroke('s')
-        assert tp.strokeCandidates == ['你'] and not tp.strokeTokens[1]['fuzzy']
+        assert written(tp) == ['你'] and not tp.strokeTokens[1]['fuzzy']
         tp.fuzzyMatching = False
-        assert not tp.strokeCandidates and not any(t['fuzzy'] for t in tp.strokeTokens)
+        assert not written(tp) and not any(t['fuzzy'] for t in tp.strokeTokens)
         assert c._settings.value('touchpad/fuzzyMatching', type=bool) is False
         tp.fuzzyMatching = True
-        assert tp.strokeCandidates == ['你']
+        assert written(tp) == ['你']
         tp.undoStroke()
-        assert len(tp._stroke_evidence) == 1 and tp.strokeCandidates == ['小', '你']
+        assert len(tp._stroke_evidence) == 1 and written(tp) == ['小', '你']
         tp.clearStrokes()
         assert not tp._stroke_evidence and not tp.strokeTokens
         tp.addStroke('s')
-        assert not tp.strokeTokens[0]['fuzzy'] and tp.strokeCandidates == ['小']
+        assert not tp.strokeTokens[0]['fuzzy'] and written(tp) == ['小']
         tp.selectCandidate(0)
         assert root.findChild(QObject, 'strokeTestEditor').property('text') == '小'
         assert not tp._stroke_evidence and not tp.strokeTokens
@@ -116,13 +121,13 @@ def test_single_replacement_renders_red_and_clears_after_local_commit(inline_ui)
         dict(category='h', distance=.001), dict(category='z', shape='横折', distance=.03)]))
     for letter in 'pn':
         tp.addStroke(letter)
-    assert tp.strokeCandidates == ['我'] and tp._code == 'phshhpn'
+    assert written(tp) == ['我'] and tp._code == 'phshhpn'
     assert tp.strokeTokens[4]['correction']
     assert tp.strokeCandidateVisuals[0]['states'][4] == 'correction'
     tp.fuzzyMatching = False
-    assert not tp.strokeCandidates and not any(token.get('correction') for token in tp.strokeTokens)
+    assert not written(tp) and not any(token.get('correction') for token in tp.strokeTokens)
     tp.fuzzyMatching = True
-    assert tp.strokeCandidates == ['我']
+    assert written(tp) == ['我']
     tp.selectCandidate(0)
     assert root.findChild(QObject, 'strokeTestEditor').property('text') == '我'
     assert not tp.strokeTokens and not tp._stroke_evidence
@@ -136,18 +141,18 @@ def test_local_left_dot_input_retains_ink_toggles_and_respects_manual_lock(inlin
     tp._predictor = StrokeContext(dict(maxContext=1, total=1, unigrams={'心': 1}, contexts={}))
     for category in 'pznn':
         tp._append_stroke(category, '撇', dict(category=category, shape='撇', distance=.001))
-    assert tp._code == 'pznn' and tp.strokeCandidates == ['心']
+    assert tp._code == 'pznn' and written(tp) == ['心']
     assert tp.strokeTokens[0] == dict(symbol='丿', fuzzy=True)
     assert tp._candidate_matches[0]['left_dot_corrections'] == [0]
     tp.fuzzyMatching = False
-    assert not tp.strokeCandidates and not any(token['fuzzy'] for token in tp.strokeTokens)
+    assert not written(tp) and not any(token['fuzzy'] for token in tp.strokeTokens)
     tp.fuzzyMatching = True
-    assert tp.strokeCandidates == ['心']
+    assert written(tp) == ['心']
     tp.selectCandidate(0)
     assert root.findChild(QObject, 'strokeTestEditor').property('text') == '心'
     assert not tp._stroke_evidence and not tp.strokeTokens
     tp.addStroke('p')
-    assert not tp.strokeCandidates and not tp.strokeTokens[0]['fuzzy']
+    assert not written(tp) and not tp.strokeTokens[0]['fuzzy']
     tp.clearStrokes()
 
 
@@ -157,7 +162,7 @@ def test_strength_slider_retunes_ink_persists_and_blocks_during_commit(inline_ui
     tp._append_stroke('s','竖',dict(category='s',shape='竖',distance=.001,
         category_scores=[dict(category='s',distance=.001),dict(category='p',distance=.071)]))
     tp.fuzzyStrength=0
-    assert tp._code=='s' and tp.strokeCandidates==['小']
+    assert tp._code=='s' and written(tp) == ['小']
     slider=root.findChild(QObject,'strokeFuzzyStrengthSlider')
     assert slider.property('value')==0 and slider.property('enabled')
     slider.setProperty('value',100)
@@ -172,10 +177,10 @@ def test_strength_slider_retunes_ink_persists_and_blocks_during_commit(inline_ui
     tp.fuzzyStrength=50
     assert slider.property('value')==50
     tp.fuzzyMatching=False
-    assert not slider.property('enabled') and tp.strokeCandidates==['小']
+    assert not slider.property('enabled') and written(tp) == ['小']
     tp.fuzzyMatching=True
     tp.clearStrokes(); tp.addStroke('s'); tp.fuzzyStrength=100
-    assert tp.strokeCandidates==['小'] and tp._stroke_evidence[0]['manual']
+    assert written(tp) == ['小'] and tp._stroke_evidence[0]['manual']
 
 
 def test_enriched_callback_applies_physical_speed_and_slider_rebuilds(inline_ui):
@@ -194,7 +199,7 @@ def test_enriched_callback_applies_physical_speed_and_slider_rebuilds(inline_ui)
         status = root.findChild(QObject, 'strokeAdaptiveFuzzyStatus')
         assert '50 → 65' in status.property('text')
         tp.fuzzyStrength = 0
-        assert tp.strokeCandidates == ['小'] and '0 → 15' in tp.adaptiveFuzzyStatus
+        assert written(tp) == ['小'] and '0 → 15' in tp.adaptiveFuzzyStatus
         tp.fuzzyStrength = 50
         assert '你' in tp.strokeCandidates
         tp.undoStroke()
@@ -233,7 +238,7 @@ def test_external_context_and_caret_clear_do_not_leak_evidence(stroke):
     until(lambda: tp._run.output_ready)
     wake(stroke)
     tp.addStroke('s')
-    assert tp.strokeCandidates == ['小'] and not tp.strokeTokens[0]['fuzzy']
+    assert written(tp) == ['小'] and not tp.strokeTokens[0]['fuzzy']
 
 
 @pytest.mark.parametrize('success', [False, True])

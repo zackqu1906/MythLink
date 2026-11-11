@@ -9,15 +9,15 @@ import uuid
 from selection_capture import SAMPLE_PERIOD_MS, now, validate_trace
 
 SCHEMA = 'ring-joined-stroke-collection'
-PLAN_VERSION = 2
+PLAN_VERSION = 3
 FILE_PREFIX = 'joined-strokes'
-TITLE = '连笔适配 · 反／的／了／子／衤专项采集'
+TITLE = '连笔补采 · 走之底第二、三笔连写（旧记录可续采）'
 INTRO = '按提示写连笔或单笔对照；动作符合提示就保存，屏幕轨迹或现有预测不准也保留。'
 HIDE_CANDIDATES = True
 TRAIN_ROUNDS = EVALUATION_ROUNDS = 2
 SETUP_NOTES_LABEL = '佩戴／实际写法'
-DEFAULT_SETUP_NOTES = '请记录佩戴手指、模块朝向；反首笔习惯横还是撇、了末笔写法；验证时是否重新佩戴'
-PLAN_HELP = '默认2轮，新计划共70条，可设1轮35条。旧记录保持原计划续采。1开始／保存下一条，2重采；一条提示只做一次接触。连笔中途不抬手；单笔对照只写指定一笔。'
+DEFAULT_SETUP_NOTES = '请记录佩戴手指、模块朝向及走之末两笔实际连写方式；走之第一点仍单独写，验证时注明是否重新佩戴'
+PLAN_HELP = '新建v3只补走之：默认2轮26条，可先设1轮13条，不必重采之前70条。v1/v2记录保持原计划续采。1开始／保存下一条，2重采；整段中途不抬手，结束再抬手。'
 COMPLETION_NOTE = '已自动保存。请另建“独立验证”记录，稍后或重新佩戴后再采；保留两份JSON及旁边的events.jsonl。'
 
 
@@ -61,8 +61,10 @@ def _inventory_v1():
 
 
 def inventory(plan_version=PLAN_VERSION):
-    if plan_version not in (1, 2):
+    if plan_version not in (1, 2, 3):
         raise ValueError('不支持的连笔采集计划。')
+    if plan_version == 3:
+        return walk_inventory()
     tasks = _inventory_v1()
     if plan_version == 1:
         return tasks
@@ -91,6 +93,31 @@ def inventory(plan_version=PLAN_VERSION):
     tasks.append(dict(label='fold-撇点-small', kind='fold-control', title='单笔对照 · 小幅撇点',
         note='只写“女”的第一笔撇点，缩小到平时偏旁中短笔画的幅度，仍是一笔正常撇点。完成后抬手，不写整个女。',
         shape='撇点', variant='small', expectedCodes=['z'], expectedLogicalStrokes=1))
+    return tasks
+
+
+def walk_inventory():
+    tasks = []
+    for context in ('过', '近', '这'):
+        for variant, title, style in (
+            ('natural', '自然写法', '按日常幅度与速度写。'),
+            ('small', '小幅写法', '自然缩小整段，不刻意省掉点。'),
+            ('fast', '自然快写', '按日常较快速度写，不刻意夸张。'),
+        ):
+            tasks.append(dict(label=f'joined-walk-{context}-{variant}', kind='joined', target='walk',
+                contextCharacter=context, variant=variant, title=f'{context}的走之底 · 第二、三笔连写 · {title}',
+                note=f'想象“{context}”的内部和走之第一点已经写好，本条只将第二笔折与第三笔末捺连成一笔；不写第一点，也不写内部部件。'+style+
+                     '中途保持触桌，全部完成后抬手；按实际动作是否符合提示保存，不跟屏幕纠正。',
+                expectedCodes=['zn'], expectedLogicalStrokes=2))
+    for shape, code, note in (
+        ('捺', 'n', '只写人的第二笔捺，舒展向右下，不加前面的点和折。'),
+        ('横折折撇', 'z', '只写及的第二笔横折折撇，这是一个正常笔画，不是整个走之底。'),
+        ('横撇弯钩', 'z', '只写队左耳旁第一笔横撇弯钩，不写整个字。'),
+        ('撇点', 'z', '只写女的第一笔撇点，按日常幅度。'),
+    ):
+        tasks.append(dict(label='walk-control-'+shape, kind='fold-control', shape=shape,
+            title='单笔对照 · '+shape, note=note+' 写完这一笔就抬手。',
+            expectedCodes=[code], expectedLogicalStrokes=1))
     return tasks
 
 
@@ -129,7 +156,7 @@ def new_session(participant, phase='train', rounds=TRAIN_ROUNDS, device=''):
 
 def validate_session(data):
     if (not isinstance(data, dict) or data.get('schema') != SCHEMA or data.get('version') != 1
-            or data.get('planVersion') not in (1, 2) or data.get('phase') not in ('train', 'evaluation')
+            or data.get('planVersion') not in (1, 2, 3) or data.get('phase') not in ('train', 'evaluation')
             or not isinstance(data.get('participant'), str) or not data['participant'].strip()
             or not isinstance(data.get('sessionId'), str) or not isinstance(data.get('setupNotes'), str)):
         raise ValueError('不是兼容的连笔采集记录。')

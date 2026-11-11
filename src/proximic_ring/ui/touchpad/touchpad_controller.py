@@ -1,13 +1,17 @@
 """GUI lifecycle for the existing Ring session; high-rate events never enter Qt."""
 from __future__ import annotations
 
+import gc
 import math
 import platform
 import sys
 import time
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, Property, QSettings, Qt, Signal, Slot
+import html
+from pathlib import Path
+
+from PySide6.QtCore import QObject, Property, QSettings, QStandardPaths, Qt, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 
 from ...touchpad.touchpad_mouse import TouchpadMouseOutput
@@ -22,19 +26,31 @@ from ...platforms.macos.mac_permissions import MacPermissionError
 from ...touchpad.stroke.stroke_fuzzy import stroke_evidence, FuzzyPolicy, retune_evidence, ADAPTIVE_SETTINGS
 from ...touchpad.stroke.stroke_personal import PersonalStrokeModel, TextLearningHistory, capture_ink, profile_key, qt_text_index
 from ...touchpad.stroke.stroke_context import ranking_snapshot
-from ...touchpad.stroke.stroke_menu import PAGE_SIZE, PUNCTUATION_CELLS, trial_contact, trial_selection
+from ...touchpad.stroke.stroke_menu import (PAGE_SIZE, PUNCTUATION_CELLS, TRIAL_SELECTION, TWO_FINGER_SELECTION, trial_contact,
+                                             trial_selection, two_finger_selection)
 from ...touchpad.stroke.stroke_contact_intent import CONTACT_INTENT
 
 PUNCTUATION = tuple(symbol for _, _, _, symbol, _ in PUNCTUATION_CELLS)
 from ...touchpad.stroke.stroke_test_gestures import recognize as contact_gesture
 from ...touchpad.stroke.stroke_tap_guard import TapConfirmationGuard
+from ...touchpad.stroke.stroke_experiment import SentenceTrial, write_report
+from ...touchpad.stroke.stroke_tolerant import fill_page, index_for
+from ...touchpad.stroke.stroke_vectors import StrokeVectorModel, stroke_vector
+from ...touchpad.stroke.stroke_word_correction import merge_candidates
+from .stroke_correction import StrokeCorrection
+
+REPAIRS = ('whole_character', 'tolerant')  # Suggested by repair, not by the written strokes.
+TRIAL_IDLE_HINT = '连接并预热后即可自由书写。点击“开始实验”清空并计时；文本完全一致时自动结束。'
 
 
 class TouchpadController(QObject):
     changed = Signal()
     selectionChanged = Signal()
+    tutorialChanged = Signal()
+    selectionCommitted = Signal(str)  # Menu direction a two-finger swipe just confirmed.
     localCharacterCommitted = Signal(str)
     localBackspaceRequested = Signal()
+    localEditorClearRequested = Signal()
     strokeTraceChanged = Signal(list, bool)
     sourceReady = Signal(object, object)
     _event = Signal(object, str, object)
@@ -81,6 +97,7 @@ class TouchpadController(QObject):
         self._stroke_evidence = []
         self._candidate_matches = []
         self._fuzzy_matching = owner._settings.value("touchpad/fuzzyMatching", True, type=bool)
+        self._tutorial_open = owner._settings.value("touchpad/strokeTutorialOpen", True, type=bool)
         self._fuzzy_policy = FuzzyPolicy(round(self._number('fuzzyStrength', 50, 0, 100)))
         self._candidates = []
         self._selected = self._page = 0
@@ -96,6 +113,13 @@ class TouchpadController(QObject):
         self._local_input_since = None
         self._selection_state = {}
         self._tap_guard = TapConfirmationGuard()
+        self._correction = StrokeCorrection(self._can_apply_correction, self)
+        self._correction.changed.connect(lambda _: self._refresh_candidates())
+        self._commit_repair = False
+        self._trial = None
+        self._trial_hint = ''
+        self._trial_target = str(owner._settings.value('touchpad/trialTarget', '今天我用戒指输入一句话。'))
+        self.trial_report_dir = None  # Defaults to the app data folder.
         self._visibility_epoch = 0
         app = QGuiApplication.instance()
         # A headless QCoreApplication has no application state to follow.
@@ -144,8 +168,17 @@ class TouchpadController(QObject):
     @Property(bool, constant=True)
     def macPermissionsRequired(self): return sys.platform == "darwin"
 
-    @Property(bool, constant=True)
-    def raw2Supported(self): return sys.platform == 'darwin' and platform.machine() == 'arm64'
+    @Property(bool, notify=changed)
+    def raw2Supported(self):
+        if sys.platform == 'darwin':
+            return platform.machine() == 'arm64'
+        from ring_python_sdk.touchpad.raw2_model import windows_raw2_enabled
+        if sys.platform != 'win32' or not windows_raw2_enabled():
+            return False
+        # Windows keeps the legacy touchpad for public firmware (1.2.133,
+        # 2.0.2 ...) instead of failing Raw2 START; macOS policy is unchanged.
+        probe = getattr(self._source, 'connected_raw2_firmware', None)
+        return probe is None or probe() is not False
 
     @Property(bool, notify=changed)
     def available(self):
@@ -211,12 +244,27 @@ class TouchpadController(QObject):
         self.owner._settings.setValue("touchpad/fuzzyMatching", self._fuzzy_matching)
         self._refresh_candidates()
 
+    @Property(bool, notify=tutorialChanged)
+    def strokeTutorialOpen(self): return self._tutorial_open
+
+    @strokeTutorialOpen.setter
+    def strokeTutorialOpen(self, value):
+        if bool(value) == self._tutorial_open:
+            return
+        self._tutorial_open = bool(value)
+        self.owner._settings.setValue("touchpad/strokeTutorialOpen", self._tutorial_open)
+        self.tutorialChanged.emit()
+
     @Property(list, notify=changed)
     def strokeTokens(self):
-        corrected = {index for item in self._candidate_matches[self._page*self.candidatePageSize:self._page*self.candidatePageSize+self.candidatePageSize]
-                     for index in item['corrections']} if self._fuzzy_matching else set()
-        replacements = set(self._candidate_matches[self._page*self.candidatePageSize].get('replacement_corrections', ())) \
-            if self._fuzzy_matching and self._candidate_matches[self._page*self.candidatePageSize:] else set()
+        # Repairs are merged into the candidate list, so rows are found by character.
+        rows = {item['char']: item for item in self._candidate_matches}
+        visible = [rows[char] for char in self.strokeCandidates if char in rows]
+        corrected = {index for item in visible if item.get('match_type') not in REPAIRS
+                     for index in item.get('corrections', ())} if self._fuzzy_matching else set()
+        first = visible[0] if visible else {}
+        replacements = set(first.get('corrections', ()) if first.get('match_type') == 'whole_character'
+                           else first.get('replacement_corrections', ()) if self._fuzzy_matching else ())
         return [dict(symbol=SYMBOLS[letter].replace('𠃍', '乛'), fuzzy=self._fuzzy_matching and
                      ((index < len(self._stroke_evidence) and self._stroke_evidence[index]['ambiguous'])
                       or index in corrected), **({'correction': True} if index in replacements else {}))
@@ -329,10 +377,13 @@ class TouchpadController(QObject):
 
     @Slot(str, int)
     def observeStrokeEditor(self, text, cursor):
+        changed = text != self._personal_text
         self._personal_text, self._personal_cursor = text, qt_text_index(text, cursor)
         if self._personal_model is not None and self._personal_history.reconcile(self._personal_model, text):
             self._save_writer()
             self.changed.emit()
+        elif changed and self._trial is not None and self._trial.active:
+            self.changed.emit()  # Target progress follows the editor.
 
     def _learn_writer(self, char, evidence):
         if not self._personal_enabled:
@@ -359,8 +410,15 @@ class TouchpadController(QObject):
             return
         if self._speech_busy():
             return
+        before = self._personal_text
         if self._commit_character(symbol):
+            if self._local_stroke_input:
+                self._tap_guard.committed()
+                trial = self._active_trial()
+                if trial is not None:
+                    trial.commit(len(before), symbol, self._personal_text == before + symbol, source='punctuation')
             self.clearStrokes()
+            self._check_trial_complete()
 
     @Property(list, notify=changed)
     def strokeCandidates(self): return self._candidates[self._page * self.candidatePageSize:self._page * self.candidatePageSize + self.candidatePageSize]
@@ -372,6 +430,31 @@ class TouchpadController(QObject):
         visuals = []
         for character in self.strokeCandidates:
             match = matches.get(character, {})
+            if match.get('match_type') == 'whole_character':
+                # Repair indices belong to the expected order, not the observed count.
+                visual = dict(candidate_glyph(character, match['code'], len(match['code']),
+                                              corrections=tuple(match['glyph_corrections'])))
+                visual['status'] = ('整字纠错 · ' + match['correction_summary'] +
+                                    (' · ' + visual['status'] if not visual['available'] else ''))
+                visuals.append(visual)
+                continue
+            if match.get('match_type') == 'tolerant':
+                if match.get('tolerant_level') == 3:
+                    visual = dict(candidate_glyph(character, prediction=True), status='猜 · 补位联想')
+                else:
+                    visual = dict(candidate_glyph(character, match['code'], match['prefix_length'],
+                                                  corrections=tuple(match['glyph_corrections'])))
+                    visual['status'] = '猜 · ' + (visual['status'] if visual['available'] else '笔顺版本不同')
+                visual['guess'] = True  # Page-filling guesses are drawn lighter.
+                visuals.append(visual)
+                continue
+            if match.get('match_type') == 'component':
+                fuzzy = tuple(index for index, ink in enumerate(self._stroke_evidence)
+                              if self._fuzzy_matching and
+                              (ink['ambiguous'] or index in match['corrections']))
+                visuals.append(candidate_glyph(character, match['code'], len(self._code), fuzzy,
+                    stroke_indices=tuple(match['observed_to_expected'])))
+                continue
             # Some strict/manual matches store only the entered prefix. Recover
             # a complete accepted code; never use another candidate's corrections.
             prefix = match.get('code', self._code)
@@ -385,7 +468,9 @@ class TouchpadController(QObject):
             fuzzy = tuple(index for index, evidence in enumerate(self._stroke_evidence)
                           if self._fuzzy_matching and (evidence['ambiguous'] or index in corrected))
             visuals.append(candidate_glyph(character, variant, len(self._code), fuzzy, self._prediction_mode,
-                corrections=tuple(match.get('replacement_corrections', ())) if self._fuzzy_matching else ()))
+                # Far strokes are also listed as replacements; show each stroke once.
+                corrections=tuple(sorted({*match.get('replacement_corrections', ()), *match.get('far_corrections', ())}))
+                if self._fuzzy_matching else ()))
         return visuals
 
     @Property(bool, notify=changed)
@@ -395,7 +480,7 @@ class TouchpadController(QObject):
     def setStrokeContext(self, text):
         if not self._local_stroke_input:
             return
-        text = text[-4:]
+        text = text[-32:]
         if text != self._stroke_context:
             self._stroke_context = text
             if not self._pending_stroke_commit and (not self._code or self._fuzzy_matching):
@@ -411,7 +496,7 @@ class TouchpadController(QObject):
     def candidatePageCount(self): return max(1, -(-len(self._candidates) // self.candidatePageSize))
 
     @Property(float, constant=True)
-    def selectionDistance(self): return float(CONTACT_INTENT['selectDistance'])
+    def selectionDistance(self): return float(TWO_FINGER_SELECTION['selectDistance'])
 
     @Property(int, notify=changed)
     def selectedCandidate(self): return self._selected
@@ -690,20 +775,34 @@ class TouchpadController(QObject):
             self._commit_message = "请先完成或取消当前语音输入／改写，再输入笔画。"
             self.changed.emit()
             return
+        self._trial_event('manual_stroke', category=category, stroke_index=len(self._code))
         self._append_stroke(category, NAMES[category])
 
     @Slot()
     def undoStroke(self):
         if self._pending_stroke_commit: return
         if self._code:
+            self._trial_event('undo_stroke', code=self._code)
             self._code = self._code[:-1]
             self._stroke_evidence = self._stroke_evidence[:len(self._code)]
             self.strokeTraceChanged.emit([], False)
             self._refresh_candidates()
 
     @Slot()
+    def deleteOne(self):
+        """Delete one pending stroke; with none pending, one typed character."""
+        if self._pending_stroke_commit: return
+        if self._code:
+            self.undoStroke()
+        elif self._local_stroke_input and self.strokeSession.allow_input():
+            self._trial_event('delete_character')
+            self.localBackspaceRequested.emit()
+
+    @Slot()
     def clearStrokes(self):
         if self._pending_stroke_commit: return
+        if self._code:
+            self._trial_event('clear_strokes', code=self._code)
         self._code = ""
         self._clear_stroke_evidence()
         self.strokeTraceChanged.emit([], False)
@@ -712,8 +811,9 @@ class TouchpadController(QObject):
     @Slot()
     def nextCandidates(self):
         if self._pending_stroke_commit: return
-        if self.moreCandidates:
-            self._page += 1
+        if self.moreCandidates or (self._local_stroke_input and self._page):
+            # The local menu's next page wraps to the first, as in the standalone trial.
+            self._page = self._page + 1 if self.moreCandidates else 0
             self._selected = 0
             self._sync_external_composition()
             self.changed.emit()
@@ -750,26 +850,44 @@ class TouchpadController(QObject):
             self.changed.emit()
             return
         absolute = self._page * self.candidatePageSize + index
+        trial = self._active_trial() if self._local_stroke_input else None
+        before, code = self._personal_text, self._code
+        if trial is not None and 0 <= index < self.candidatePageSize and absolute >= len(self._candidates):
+            trial.commit(len(before), None, False, source='gesture', code=code)
         if 0 <= index < self.candidatePageSize and absolute < len(self._candidates):
             char = self._candidates[absolute]
             evidence = list(self._stroke_evidence)
+            match = next((row for row in self._candidate_matches if row['char'] == char), {})
+            # A repaired or page-filling guess says nothing about how the user writes.
+            repair = match.get('match_type') in REPAIRS
             try:
                 inserted = self._commit_character(char)
             except Exception as exc:
                 self._commit_message = "输入失败：" + str(exc)
                 self.changed.emit()
                 return
+            if trial is not None:
+                trial.commit(len(before), char, self._personal_text == before + char, code=code)
+                if repair:
+                    trial.event('candidate_fill_commit' if match['match_type'] == 'tolerant' else 'whole_correction_commit',
+                                character=char, code=code, corrected_code=match.get('code', ''),
+                                match_type=match['match_type'], edits=match.get('edits', []),
+                                correction_summary=match.get('correction_summary', ''),
+                                delivered=self._personal_text == before + char)
             if inserted is None:
+                self._commit_repair = repair
                 self._commit_message = "正在输入「" + char + "」…"
                 self.changed.emit()
             elif inserted:
                 self._tap_guard.committed()
-                self._learn_writer(char, evidence)
+                if not repair:
+                    self._learn_writer(char, evidence)
                 self._commit_message = "已输入「" + char + "」"
                 self._code = ""
                 self._clear_stroke_evidence()
                 self.strokeTraceChanged.emit([], False)
                 self._refresh_candidates()
+                self._check_trial_complete()
             else:
                 self._commit_message = "请将光标放入目标文本框后轻触确认；候选字已保留。"
                 self.changed.emit()
@@ -791,8 +909,9 @@ class TouchpadController(QObject):
         if char != self._pending_stroke_commit:
             return
         self._pending_stroke_commit = ""
+        repair, self._commit_repair = self._commit_repair, False
         if success:
-            if char not in PUNCTUATION:
+            if char not in PUNCTUATION and not repair:
                 self._learn_writer(char, self._stroke_evidence)
             self._code = ""
             self._clear_stroke_evidence()
@@ -825,40 +944,67 @@ class TouchpadController(QObject):
     def _sync_external_selection(self):
         if self._mode != "stroke" or self._local_stroke_input or sys.platform != "darwin":
             return
-        self.owner._inline_input.stroke_selection(self._selection_state, CONTACT_INTENT['selectDistance'])
+        self.owner._inline_input.stroke_selection(self._selection_state, TWO_FINGER_SELECTION['selectDistance'])
 
     def _stroke_dictionary(self):
         if self._dictionary is None:
             self._dictionary = StrokeDictionary(recognizer='dtw',
                 personal_model=self._writer_model() if self._personal_enabled else None)
+            # Every candidate is also scored by its strokes' length and direction.
+            self._dictionary.stroke_vectors = StrokeVectorModel(scope='prefix')
         return self._dictionary
 
+    def _context_model(self):
+        if self._predictor is None:
+            from ...touchpad.stroke.stroke_context import StrokeContext
+            self._predictor = StrokeContext(model='wanxiang')
+        return self._predictor
+
+    def _can_apply_correction(self):
+        # Aiming at a candidate, paging or a pending commit freezes positions.
+        return (not self._closed and not self._pending_stroke_commit and self._page == 0
+                and self._selection_state.get('phase', 'idle') == 'idle')
+
     def _refresh_candidates(self):
+        """Same pipeline as the standalone trial's defaults: strict/fuzzy codes,
+        whole-character repair, then guesses that fill a short first page."""
         try:
             self._prediction_mode = False
             self._candidate_matches = []
+            dictionary = repairs = None
             if self._code:
                 if len(self._stroke_evidence) != len(self._code):
                     self._stroke_evidence = [stroke_evidence(letter) for letter in self._code]
+                dictionary, allowed = self._stroke_dictionary(), common_characters()
                 if self._fuzzy_matching:
-                    if self._predictor is None:
-                        from ...touchpad.stroke.stroke_context import StrokeContext
-                        self._predictor = StrokeContext()
-                    self._candidate_matches = self._stroke_dictionary().fuzzy_candidates(
-                        self._stroke_evidence, limit=30, predictor=self._predictor, context=self._stroke_context,
-                        policy=self._fuzzy_policy, allowed_characters=common_characters())
-                    self._candidates = [item['char'] for item in self._candidate_matches]
+                    self._candidate_matches = dictionary.fuzzy_candidates(
+                        self._stroke_evidence, limit=30, predictor=self._context_model(), context=self._stroke_context,
+                        policy=self._fuzzy_policy, allowed_characters=allowed)
                 else:
-                    self._candidates = self._stroke_dictionary().candidates(self._code, limit=30,
-                                                                          allowed_characters=common_characters())
+                    self._candidate_matches = dictionary.encoding_candidates(
+                        self._stroke_evidence, limit=30, fuzzy=False, allowed_characters=allowed)
+                self._candidates = [item['char'] for item in self._candidate_matches]
+                repairs = self._correction.update(enabled=True, code=self._code, evidence=self._stroke_evidence,
+                    context=self._stroke_context, dictionary=dictionary, predictor=self._context_model(),
+                    allowed=allowed, normal=self._candidates)
+                if repairs:
+                    # A promoted complete hypothesis already supplies one recovery choice.
+                    reserved = 1 if any(row.get('context_extra_slot') for row in self._candidate_matches) else 2
+                    self._candidates = merge_candidates(self._candidates, repairs, reserved=reserved)
+                    self._candidate_matches = self._candidate_matches + repairs
+                if self._fuzzy_matching:  # Strict mode stays a pure code lookup.
+                    self._candidates, self._candidate_matches = fill_page(
+                        self._candidates, self._candidate_matches, index=index_for(dictionary, allowed),
+                        evidence=self._stroke_evidence, predictor=self._context_model(), context=self._stroke_context,
+                        allowed=allowed, priors=dictionary._fuzzy_priors, page_size=PAGE_SIZE)
             elif self._stroke_context and (self._local_stroke_input or self.strokeSession.phase == "running"):
-                if self._predictor is None:
-                    from ...touchpad.stroke.stroke_context import StrokeContext
-                    self._predictor = StrokeContext()
-                self._candidates = self._predictor.suggestions(self._stroke_context, allowed_characters=common_characters())
+                self._candidates = self._context_model().suggestions(self._stroke_context, allowed_characters=common_characters())
                 self._prediction_mode = bool(self._candidates)
             else:
                 self._candidates = []
+            if dictionary is None:  # Drop any repair still pending for removed strokes.
+                self._correction.update(enabled=False, code='', evidence=(), context='', dictionary=None,
+                                        predictor=None, allowed=None, normal=())
         except Exception as exc:
             self._candidates = []
             self._commit_message = "笔画字库加载失败：" + str(exc)
@@ -875,6 +1021,9 @@ class TouchpadController(QObject):
         ink = capture_ink(points) if result and points is not None else None
         if ink is not None:
             self._stroke_evidence[-1]['ink'] = ink
+        vector = stroke_vector(points) if result and points is not None else None
+        if vector is not None:
+            self._stroke_evidence[-1]['vector'] = vector
         self._last_stroke = shape
         self._commit_message = ""
         self._refresh_candidates()
@@ -905,9 +1054,10 @@ class TouchpadController(QObject):
                 on_stroke_details=lambda value: self._post(run, "stroke", (output, value)),
                 on_tap=lambda: None,  # Firmware tap owns confirmation; SDK click only separates ink.
                 on_double_click=double_click,
-                # Both the local trial and the macOS palette use hold-to-select.
-                # External taps stay with firmware confirmation (on_tap above).
+                # Both the local trial and the macOS palette select with a
+                # two-finger swipe. External taps stay with firmware confirmation.
                 contact_classifier=trial_contact,
+                two_finger_classifier=two_finger_selection,
                 on_tap_contact=(lambda value: self._post(run, 'contact_tap', (output, value))) if local else None,
                 on_selection=lambda value: self._post(run, 'selection', (output, value)),
                 on_selection_state=lambda value: self._post(run, 'selection_state', (output, value)),
@@ -964,7 +1114,25 @@ class TouchpadController(QObject):
         run.output = self._new_output(run, "ready")
         self._sync_voice_gate()
         self.changed.emit()
+        if run.protocol == 'raw2':
+            self._prepare_raw2_heap()
         run.output.start()
+
+    def _prepare_raw2_heap(self):
+        """Do GIL-heavy work before Raw2 streams, not during it.
+
+        Raw2 fails the stream once a token waits 200 ms. Loading the stroke
+        dictionary/context lazily on the first stroke (~0.9 s on the GUI
+        thread) or a full GC over them (~80-200 ms, every thread paused)
+        exceeds that, so load them now and move them out of collection.
+        """
+        try:
+            self._context_model()
+            index_for(self._stroke_dictionary(), common_characters())
+        except Exception:
+            pass  # _refresh_candidates reports load failures where they matter.
+        gc.collect()
+        gc.freeze()
 
     def _post(self, run, kind, value):
         try:
@@ -1061,7 +1229,12 @@ class TouchpadController(QObject):
                         ClickTrace(event, mode=run.mode).finish(reason, sdk_limit_ms=100)
                         run.diagnostics.note(reason)
                 def pointer_moved(event):
-                    if run is self._run and run.mode == 'pointer':
+                    if run is self._run and run.mode == 'stroke':
+                        # Stroke mode only reads the Raw2 two-finger tag.
+                        submit = getattr(run.output, 'submit_pointer', None)
+                        if submit is not None and event.kind == 'move':
+                            submit(event)
+                    elif run is self._run and run.mode == 'pointer':
                         output = run.output
                         if event.kind in {'click', 'pointer_contact'} or event.step > output.pointer_after_step:
                             run.diagnostics.note('pointer_frame')
@@ -1141,13 +1314,18 @@ class TouchpadController(QObject):
                     self._selection_state = {}
                     self._sync_external_selection()
                     decision = trial_selection(payload['decision'])
+                    self._trial_event('gesture', action=decision['action'], target=decision.get('target'))
                     if decision['action'] == 'select':
                         self.selectCandidate(decision['target'])
                     elif decision['action'] == 'punctuation':
                         self.insertPunctuation(decision['target'])
+                    elif decision['action'] == 'delete-one':
+                        self.deleteOne()
+                    if decision['action'] != 'cancel-selection' and decision.get('direction'):
+                        self.selectionCommitted.emit(decision['direction'])
                     self.selectionChanged.emit()
                     self.changed.emit()
-                elif self._tap_guard.decide(payload)['allowed']:
+                elif self._tap_allowed(payload):
                     committed = self._tap_guard.last_commit
                     self.selectCandidate(0)
                     if self._tap_guard.last_commit != committed:
@@ -1172,11 +1350,10 @@ class TouchpadController(QObject):
                     if self._local_stroke_input:
                         decision = contact_gesture(points, stroke_dictionary=self._stroke_dictionary(), legacy_selection=False)
                         action = decision['action']
+                        if action != 'stroke':
+                            self._trial_event('gesture', action=action, target=decision.get('target'))
                         if action == 'delete-one':
-                            if self._code:
-                                self.undoStroke()
-                            elif self.strokeSession.allow_input():
-                                self.localBackspaceRequested.emit()
+                            self.deleteOne()
                             return
                         if action == 'clear-all':
                             self.clearStrokes()
@@ -1185,6 +1362,10 @@ class TouchpadController(QObject):
                             return
                     recognition_start = time.monotonic()
                     result = self._stroke_dictionary().recognize(points)
+                    trial = self._active_trial() if self._local_stroke_input else None
+                    if trial is not None:
+                        trial.stroke(len(self._personal_text), len(self._code), result,
+                                     (time.monotonic()-recognition_start)*1000)
                     if result is not None:
                         run.diagnostics.note('stroke_recognized')
                         if self.strokeSession.allow_input():
@@ -1202,13 +1383,14 @@ class TouchpadController(QObject):
                                 base_category_scores=result.get('base_category_scores'),
                                 fuzzy_policy=self._fuzzy_policy.snapshot(),
                                 context_ranking=ranking_snapshot(),
-                                fuzzy_candidates=[dict(char=item['char'], code=item['code'], cost=item['cost'],
+                                fuzzy_candidates=[dict(char=item['char'], code=item.get('code', ''), cost=item.get('cost'),
+                                    match_type=item.get('match_type'),
                                     context_promoted=item.get('context_promoted', False),
                                     language_bonus=item.get('language_bonus', 0.), final_score=item.get('final_score'),
                                     fold_score=item.get('fold_score', 0.),
                                     fold_matches=item.get('fold_matches', []),
                                     fold_corrections=item.get('fold_corrections', []),
-                                    corrections=item['corrections'],
+                                    corrections=item.get('corrections', []),
                                     left_dot_corrections=item.get('left_dot_corrections', []))
                                     for item in self._candidate_matches[:5]],
                                 recognition_and_candidates_ms=round((time.monotonic()-recognition_start)*1000, 1))
@@ -1260,8 +1442,149 @@ class TouchpadController(QObject):
                 run.output_error = error
                 self.stop(reason or str(error or "鼠标控制已停止"))
 
+    def _tap_allowed(self, contact):
+        decision = self._tap_guard.decide(contact)
+        self._trial_event('tap_confirmation', **decision)
+        return decision['allowed']
+
+    # Sentence trial: the standalone program's input task, timed from Start.
+    def _active_trial(self):
+        return self._trial if self._trial is not None and self._trial.active else None
+
+    def _trial_event(self, kind, **values):
+        trial = self._active_trial() if self._local_stroke_input else None
+        if trial is not None:
+            trial.event(kind, **values)
+
+    @Property(str, notify=changed)
+    def trialTarget(self): return self._trial_target
+
+    @Slot(str)
+    def setTrialTarget(self, text):
+        if self._active_trial() is None and text != self._trial_target:
+            self._trial_target = text
+            self.owner._settings.setValue('touchpad/trialTarget', text)
+            self.changed.emit()
+
+    @Property(bool, notify=changed)
+    def trialActive(self): return self._active_trial() is not None
+
+    @Property(bool, notify=changed)
+    def trialFinished(self): return self._trial is not None and not self._trial.active
+
+    @Property(str, notify=changed)
+    def trialPreview(self):
+        trial = self._trial
+        if trial is None:
+            return '自由书写中；开始实验后显示目标进度。'
+        actual = self._personal_text if trial.active else trial.actual
+        parts = []
+        for index, char in enumerate(trial.target):
+            color = ('#1a936f' if index < len(actual) and actual[index] == char
+                     else '#d64550' if index < len(actual) else '#8b94a5')
+            background = 'background-color:#dbe5ff;' if index == len(actual) else ''
+            parts.append(f'<span style="color:{color};{background}">{html.escape(char)}</span>')
+        if len(actual) > len(trial.target):
+            parts.append('<span style="color:#d64550">' + html.escape(actual[len(trial.target):]) + '</span>')
+        return ''.join(parts)
+
+    @Property(int, notify=changed)
+    def trialProgress(self):
+        trial = self._trial
+        if trial is None:
+            return 0
+        actual = self._personal_text if trial.active else trial.actual
+        return round(sum(a == b for a, b in zip(actual, trial.target)) * 100 / len(trial.target))
+
+    @Property(float, notify=changed)
+    def trialPosition(self):
+        """How far through the target the typed text is, 0..1."""
+        trial = self._trial
+        if trial is None:
+            return 0.
+        actual = self._personal_text if trial.active else trial.actual
+        return min(1., len(actual) / len(trial.target))
+
+    @Property(str, notify=changed)
+    def trialHint(self):
+        trial = self._active_trial()
+        if trial is None:
+            return self._trial_hint or TRIAL_IDLE_HINT
+        actual = self._personal_text
+        char = trial.target[len(actual)] if len(actual) < len(trial.target) else None
+        code = trial.codes.get(char, '')
+        expected = NAMES.get(code[len(self._code)], '—') if len(self._code) < len(code) else '请选字 / 退笔'
+        unsupported = ''.join(dict.fromkeys(c for c in trial.target if c not in trial.codes and c not in PUNCTUATION))
+        return (f'当前第 {len(actual)+1} 字：{char or "已超出原文"} · 下一笔：{expected} · '
+                '仅戒指识别计入笔画准确率；按钮输入单独记录。' +
+                (f'\n原文含未支持字符：{unsupported}。可结束保存未完成结果，或重新编辑原文。' if unsupported else ''))
+
+    @Slot()
+    def startTrial(self):
+        target = ' '.join(self._trial_target.splitlines()).strip()
+        if self._active_trial() is not None or self._pending_stroke_commit or not self._local_stroke_input:
+            return
+        if not target:
+            self._trial_hint = '请先输入待测试文本。'
+            self.changed.emit()
+            return
+        self._code = ''
+        self._clear_stroke_evidence()
+        self._personal_history = TextLearningHistory()  # A new task is not a correction of earlier text.
+        self._tap_guard.reset()
+        self.localEditorClearRequested.emit()
+        self._personal_text, self._personal_cursor = '', 0
+        self._stroke_context = ''
+        self._trial = SentenceTrial(target, self._stroke_dictionary().entries)
+        self._trial_hint = ''
+        self.owner._event_log('STROKE_TRIAL', _live_message='', phase='start', characters=len(target))
+        self.strokeTraceChanged.emit([], False)
+        self._refresh_candidates()
+
+    @Slot()
+    def finishTrial(self): self._finish_trial('manual')
+
+    def _check_trial_complete(self):
+        trial = self._active_trial()
+        if trial is not None and self._local_stroke_input and self._personal_text == trial.target:
+            self._finish_trial('completed')
+
+    def _finish_trial(self, reason):
+        trial = self._active_trial()
+        if trial is None:
+            return
+        report = trial.finish(self._personal_text)
+        report.update(finish_reason=reason, source='mythlink-app', recognizer='dtw',
+            fuzzy_matching=self._fuzzy_matching, fuzzy_policy=self._fuzzy_policy.snapshot(),
+            adaptive_fuzzy_policy=dict(ADAPTIVE_SETTINGS), context_ranking=ranking_snapshot(),
+            context_model=getattr(self._predictor, 'model', 'wanxiang'), common_only=True,
+            personal_learning=self._personal_enabled, writing_profile=self._personal_name,
+            whole_correction_enabled=True, candidate_fill_enabled=self._fuzzy_matching,
+            stroke_vector_enabled=True, tap_guard_enabled=True, tap_guard_policy=self._tap_guard.snapshot(),
+            selection_policy=dict(TRIAL_SELECTION))
+        percent = lambda value: '—' if value is None else f'{value:.1%}'
+        summary = (('完成' if report['completed'] else '已结束（未完成）') +
+                   f" · 用时 {report['elapsed_s']:.1f} 秒 · {report['characters_per_minute']:.1f} 字/分"
+                   f" · 文本准确率 {percent(report['text_accuracy'])} · 笔画准确率 {percent(report['stroke_accuracy'])}")
+        try:
+            folder = Path(self.trial_report_dir or Path(QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.AppDataLocation)) / 'stroke-trials')
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f'trial-{time.time_ns()}.json'
+            write_report(path, report)
+            self._trial_hint = summary + f'\n报告：{path}'
+        except OSError as exc:
+            self._trial_hint = summary + f'\n报告保存失败：{exc}'
+        if report['contains_manual_strokes']:
+            self._trial_hint += ' · 本轮含手动笔画，请勿作为纯戒指实验数据。'
+        self.owner._event_log('STROKE_TRIAL', _live_message='', phase='end', reason=reason,
+                              completed=report['completed'], elapsed_s=round(report['elapsed_s'], 1))
+        self.changed.emit()
+
     def close(self):
         self._closed = True
+        self._finish_trial('window_closed')
+        self._correction.close()
         self.strokeSession.close()
         self.stop("鼠标控制已关闭")
         self._clear_external_composition()
