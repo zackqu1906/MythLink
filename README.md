@@ -673,9 +673,13 @@ third_party/               外部源码快照与 Ringo 原始交付包
 tools/                     LLM、增益、设备和现场诊断工具
 tests/                     自动化测试
 docs/                      详细设计、接入与验证文档
-experiments/               可复现实验脚本和结果
+experiments/               复用实验代码与合成样例；本地实验结果不提交
 scripts/                   安装、GPU 切换和启动脚本
 ```
+
+Agent 工作报告、录音和用户历史留在本地，不随源码上传。新克隆请执行
+`git config --local core.hooksPath .githooks` 启用提交检查；目录规则与说明见
+[仓库内容与本地数据](docs/REPOSITORY_CONTENTS.md)。
 
 业务实现按功能归组，UI 控制器留在 `ui/` 的对应功能目录；共享桌面能力放在
 `desktop/`，操作系统边界放在 `platforms/`。新增模块应放入对应目录，避免重新平铺到包根目录。

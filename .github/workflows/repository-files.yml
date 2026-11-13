@@ -1,0 +1,19 @@
+name: Repository file policy
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Reject local logs, reports and user data
+        run: python tools/check_repository_files.py
+      - name: Verify ignore rules and commit checks
+        run: python -m unittest discover -s tests -p test_repository_files.py

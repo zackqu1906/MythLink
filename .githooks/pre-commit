@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+for python_bin in python3 python; do
+    if command -v "$python_bin" >/dev/null 2>&1; then
+        exec "$python_bin" tools/check_repository_files.py
+    fi
+done
+echo "Python 3 is required for the repository file check." >&2
+exit 1

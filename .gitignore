@@ -49,6 +49,69 @@ Thumbs.db
 /outputs/
 /tmp/
 
+# Agent work products and private captures stay on the developer's machine.
+# Keep reusable product code, tests, build inputs and synthetic fixtures tracked.
+/.local/
+/.codex/
+/.agents/
+/skills/
+/docs/reports/
+/docs/research/
+/docs/*HANDOFF*.md
+/reports/
+/tools/results/
+/audio_tests/
+/recordings/
+/records/
+/exports/
+/captures/
+/screenshots/
+/user-data/
+/local-data/
+*.log
+*.log.*
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+
+# One-off experiments contain recordings, copied user history and raw outputs.
+# Only the reusable source/fixture directories below belong in the repository.
+/experiments/*
+!/experiments/compose_asr_comparison.py
+!/experiments/paraformer_streaming/
+/experiments/paraformer_streaming/*
+!/experiments/paraformer_streaming/compare_wavs.py
+!/experiments/whisper_streaming/
+/experiments/whisper_streaming/*
+!/experiments/whisper_streaming/compare_wavs.py
+!/experiments/ring_desktop_agent/
+/experiments/ring_desktop_agent/*
+!/experiments/ring_desktop_agent/*.py
+!/experiments/ring_desktop_agent/Console.swift
+!/experiments/ring_desktop_agent/README.md
+!/experiments/workflow_recommendations/
+/experiments/workflow_recommendations/*
+!/experiments/workflow_recommendations/*.py
+!/experiments/workflow_recommendations/README.md
+!/experiments/workflow_recommendations/embedding_cases.json
+!/experiments/workflow_recommendations/contexts/
+/experiments/workflow_recommendations/contexts/*
+!/experiments/workflow_recommendations/contexts/music.json
+!/experiments/workflow_recommendations/contexts/notes.json
+!/experiments/workflow_recommendations/contexts/safari.json
+!/experiments/workflow_trials/
+/experiments/workflow_trials/*
+!/experiments/workflow_trials/README.md
+!/experiments/workflow_trials/cases/
+!/experiments/workflow_trials/legacy-inputs/
+!/experiments/workflow_trials/tasks/
+
 # Public synthetic Clef fixtures; other local data stays private.
 !tools/data/
 tools/data/*
