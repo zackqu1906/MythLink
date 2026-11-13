@@ -102,6 +102,23 @@ final class LocalClient: NSObject, IMKTextInput {
     func uniqueClientIdentifierString() -> String! { UUID().uuidString }
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
 }
+// Use the real controller and transport without consulting another app's AX tree.
+final class LocalPrefixSelection: PrefixSelectionDriver {
+    let editor: LocalClient
+    init(_ editor: LocalClient) { self.editor = editor }
+    var metadata: [String: Any] { [:] }
+    func begin(_ operation: String) {}
+    func record(_ event: [String: Any]) {}
+    func validateTarget(current: () -> Bool) -> Bool { current() }
+    func readSelection(current: () -> Bool) -> NSRange? { current() ? editor.selection : nil }
+    func select(_ range: NSRange, from caret: NSRange, current: () -> Bool) -> PrefixSelectionAttempt {
+        guard current(), editor.selection == caret,
+              isValidRange(range, length: editor.text.utf16.count) else { return .uncertain("target_changed") }
+        editor.selection = range
+        print("SELECTED_RANGE=\(range.location),\(range.length)")
+        return .submitted
+    }
+}
 func check(_ condition: @autoclosure () -> Bool, _ message: String) { if !condition() { fputs("FAIL: \(message)\n", stderr); exit(1) } }
 func currentClientID(_ controller: ProxiMicInputController) -> String {
     Mirror(reflecting: controller).children.first { $0.label == "currentClientID" }!.value as! String
@@ -130,6 +147,7 @@ func suspendSentence(_ controller: ProxiMicInputController, token: String = "ret
 if CommandLine.arguments.contains("--return-ipc") {
     var editor = LocalClient()
     let controller = ProxiMicInputController(), service = IMEService.shared
+    controller.makeSelectionDriver = { _, _, _ in LocalPrefixSelection(editor) }
     let receive = service.transport.onMessage
     service.transport.onMessage = { message in
         switch message["type"] as? String {
@@ -147,11 +165,16 @@ if CommandLine.arguments.contains("--return-ipc") {
             }
             controller.activateServer(editor)
         case "test_local_key":
+            print("LOCAL_KEY=" + (message["command"] as? String ?? ""))
             if message["command"] as? String == "select_all" {
                 editor.selection = NSRange(location: 0, length: editor.text.utf16.count)
             } else if message["command"] as? String == "caret_from_end", let count = message["count"] as? Int {
                 let prefix = String(editor.text.dropLast(count))
                 editor.selection = NSRange(location: prefix.utf16.count, length: 0)
+            } else if message["command"] as? String == "caret_backward", let count = message["count"] as? Int {
+                let before = (editor.text as NSString).substring(to: editor.selection.location)
+                check(count <= before.count, "unexpected local caret movement")
+                editor.selection = NSRange(location: String(before.dropLast(count)).utf16.count, length: 0)
             } else if message["command"] as? String == "select_previous", let count = message["count"] as? Int {
                 let end = editor.selection.location
                 check(count <= end, "unexpected local selection")

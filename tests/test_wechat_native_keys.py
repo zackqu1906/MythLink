@@ -42,6 +42,33 @@ def test_commands_are_tagged_and_target_wechat_pid(desktop, command, count):
         assert all(event["code"] == 123 and event["flags"] == 128 for _, event in state.sent)
 
 
+@pytest.mark.parametrize("command,count,codes,flags", [
+    ("select_to_start", 0, [126, 126], 384),
+    ("caret_backward", 2, [123] * 4, 0),
+    ("caret_forward", 6, [124] * 12, 0),
+])
+def test_wechat_prefix_edit_commands_reach_targeted_delivery(desktop, command, count, codes, flags):
+    state, _ = desktop
+    # Exercise the dedicated public entry, not just the generic/direct sender.
+    send_wechat_key(command, count, 456)
+    assert [event["code"] for _, event in state.sent] == codes
+    assert all(pid == 42 and event["flags"] == flags and event["tag"] == 456
+               for pid, event in state.sent)
+
+
+@pytest.mark.parametrize("command,count", [("select_to_start", 0), ("caret_backward", 2), ("caret_forward", 6)])
+def test_wechat_prefix_commands_keep_foreground_and_permission_guards(desktop, command, count):
+    state, _ = desktop
+    state.bundle = "com.openai.codex"
+    with pytest.raises(RuntimeError):
+        send_wechat_key(command, count, 456)
+    state.bundle = "com.tencent.xinWeChat"
+    state.permission = False
+    with pytest.raises(RuntimeError):
+        send_wechat_key(command, count, 456)
+    assert not state.sent
+
+
 @pytest.mark.parametrize("bundle", ["com.openai.codex", "com.apple.TextEdit", ""])
 def test_never_posts_to_other_applications(desktop, bundle):
     state, _ = desktop

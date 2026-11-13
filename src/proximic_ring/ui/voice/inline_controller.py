@@ -675,7 +675,7 @@ class InlineInputController(QObject):
 
     def _diagnose(self, kind, *, characters=None, error=None, reason=None):
         """Publish an explicit metadata allowlist, never editor or ASR text."""
-        from ...voice.ime.edit_diagnostics import edit_readback_metadata, edit_request_metadata, snapshot_metadata
+        from ...voice.ime.edit_diagnostics import body_read_metadata, edit_readback_metadata, edit_request_metadata, snapshot_metadata
         readback = self._view.get("readback_diagnostics", {})
         safe_readback = edit_readback_metadata(readback)
         client_read = self._view.get("client_read_diagnostics", {})
@@ -694,6 +694,7 @@ class InlineInputController(QObject):
                 if isinstance(value, list) and len(value) == 2 and all(type(item) is int for item in value):
                     safe_client_read[key] = value
         safe_client_read.update(snapshot_metadata(client_read))
+        safe_client_read.update(body_read_metadata(client_read))
         handoff = self._view.get("handoff_diagnostics", {})
         safe_handoff = {}
         if isinstance(handoff, dict):

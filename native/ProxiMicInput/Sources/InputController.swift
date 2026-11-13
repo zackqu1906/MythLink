@@ -130,6 +130,11 @@ final class IMEService {
 
 @objc(ProxiMicInputController)
 final class ProxiMicInputController: IMKInputController {
+    // Keep OS selection behind the same driver boundary as text readback;
+    // local controller/IPC tests supply a driver bound to their local editor.
+    var makeSelectionDriver: (pid_t, String, @escaping () -> [String: Any]) -> PrefixSelectionDriver = {
+        NativePrefixSelection(pid: $0, bundle: $1, context: $2)
+    }
     private var adapter: NativeInputClient?
     private let sessionLifetime = CompositionSessionLifetime()
     private var resumedInputToken: String?
@@ -294,13 +299,18 @@ final class ProxiMicInputController: IMKInputController {
         guard service.activation.owns(self, lease) else { return }
         // Source-launched Qt clients have no bundle identifier. They still
         // need native selection/deletion; the host pins their begin-time PID.
-        nextAdapter.configureKeyDelivery { [weak self] command, count, tag, reply in
+        let selectionDriver = makeSelectionDriver(
+            NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0, bundle,
+            { [weak self] in
+                ["client_id": self?.currentClientID ?? "", "utterance_id": self?.session?.utteranceID ?? ""]
+            })
+        nextAdapter.configureKeyDelivery({ [weak self] command, count, tag, reply in
             guard let self, self.activated, self.ownsActivation, self.session?.active == true else { reply("输入会话已结束"); return }
             let id = UUID().uuidString
             self.compatibilityKeyReply = (id, reply)
             self.sendEvent("wechat_key", extra: ["request_id": id, "command": command, "count": count,
                                                  "event_tag": tag, "application": bundle])
-        }
+        }, selectionDriver: selectionDriver)
         guard service.activation.owns(self, lease) else { return }
         adapter = nextAdapter
         currentClientID = UUID().uuidString

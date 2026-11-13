@@ -354,20 +354,22 @@ def test_first_tap_ignores_previous_window_state_and_keeps_same_audio(component,
     assert c._utterance_id == utterance
 
 
-def test_wechat_keys_require_current_transaction_and_are_not_replayed(component, monkeypatch):
+@pytest.mark.parametrize("command,count", [("select_all", 0), ("select_to_start", 0), ("caret_backward", 2)])
+def test_wechat_keys_require_current_transaction_and_are_not_replayed(component, monkeypatch, command, count):
     from proximic_ring.platforms.macos import wechat_native_keys
     controller, _ = component
     calls = []
-    monkeypatch.setattr(wechat_native_keys, "send_wechat_key", lambda *args: calls.append(args))
+    # Keep the real WeChat entry whitelist in the IPC integration path.
+    monkeypatch.setattr(wechat_native_keys, "_send_key", lambda *args: calls.append(args))
     assert controller.begin()
     receive(controller, phase="editing", ready=True, application="com.tencent.xinWeChat")
-    fields = dict(request_id="key-one", command="select_all", count=0, event_tag=123,
+    fields = dict(request_id="key-one", command=command, count=count, event_tag=123,
                   application="com.tencent.xinWeChat")
     receive(controller, "wechat_key", **fields)
     receive(controller, "wechat_key", **fields)
     receive(controller, "wechat_key", **{**fields, "request_id": "stale", "epoch": "old"})
     receive(controller, "wechat_key", **{**fields, "request_id": "stale-client", "client_id": "other"})
-    assert calls == [("select_all", 0, 123)]
+    assert calls == [(command, count, 123, "com.tencent.xinWeChat")]
     replies = [m for m in controller._bridge.messages if m["type"] == "wechat_key_result"]
     assert len(replies) == 1 and replies[0]["error"] == ""
 
@@ -866,6 +868,69 @@ def test_mail_edit_evidence_survives_native_state_sanitizing_and_disk_rendering(
     assert 'edit_original_selection="[1, 0]"' in line
     assert 'edit_verification_observed_characters=32770' in line
     assert "private" not in line
+
+
+@pytest.mark.parametrize("phase,failure", [("edited", None), ("error", "postwrite_baseline_unavailable"),
+                                          ("error", "postwrite_caret_not_aligned")])
+def test_prefix_undo_evidence_survives_to_disk_without_body_text(component, tmp_path, phase, failure):
+    from proximic_ring.diagnostics.diagnostic_log import RotatingDiagnosticLog
+    from proximic_ring.ui.controller import AppController
+
+    c, events = component
+    assert c.begin()
+    body_read = {"query": "range", "read_source": "ax", "ax_attempted": True,
+                 "read_selection_stable": True, "requested_range": [0, 300], "returned_characters": 300,
+                 "imk_read": {"read_source": "imk", "returned_characters": -1, "actual_range": [-1, -1],
+                              "text": "private IMK text"}, "text": "private AX text"}
+    verification = {"operation_stage": "postwrite_baseline", "undo_baseline_source": "post_caret_ax",
+                    "baseline_read_method": "ax", "baseline_read": body_read, "baseline_range": [0, 300],
+                    "baseline_caret": [300, 0], "baseline_stable": True, "baseline_characters": 300,
+                    "selection_method": "host_keyboard", "ax_fallback_reason": "ax_range_not_writable",
+                    "postwrite_caret_delta": 6, "postwrite_key_command": "caret_forward", "postwrite_key_count": 6,
+                    "postwrite_imk_after_move": [300, 0], "postwrite_ax_after_move": [300, 0],
+                    "postwrite_caret_status": "moved_and_verified", "replacement_text_matches": False,
+                    "write_sent": True, "text": "private model text"}
+    if failure:
+        verification["failure_code"] = failure
+    receive(c, phase=phase, ready=True, native_build="73", client_read_diagnostics=body_read,
+            readback_diagnostics=verification, edit_diagnostics={"verification": verification})
+    event = events[-1]
+    assert event["client_read_diagnostics"]["imk_returned_characters"] == -1
+    assert event["readback_diagnostics"]["baseline_read_read_source"] == "ax"
+    assert event["edit_diagnostics"]["verification_undo_baseline_source"] == "post_caret_ax"
+    assert "private" not in json.dumps(event)
+
+    class DiskLogger:
+        _diagnostic_run_id = "prefix-undo-test"
+        _diagnostic_field = staticmethod(AppController._diagnostic_field)
+        _event_log = AppController._event_log
+        _log_inline_diagnostic = AppController._log_inline_diagnostic
+        _append_background_diagnostic = AppController._append_background_diagnostic
+        _diagnostic_log = RotatingDiagnosticLog(tmp_path / "diagnostic.log")
+
+    DiskLogger()._log_inline_diagnostic(event)
+    line = (tmp_path / "diagnostic.log").read_text()
+    assert 'readback_undo_baseline_source="post_caret_ax"' in line
+    assert 'readback_baseline_read_imk_returned_characters=-1' in line
+    assert 'readback_postwrite_imk_after_move="[300, 0]"' in line
+    assert 'readback_postwrite_ax_after_move="[300, 0]"' in line
+    assert 'readback_replacement_text_matches=false' in line
+    if failure:
+        assert f'readback_failure_code="{failure}"' in line
+    assert "private" not in line
+
+
+def test_prefix_undo_diagnostics_reject_untyped_and_unknown_metadata(component):
+    c, events = component
+    assert c.begin()
+    receive(c, phase="error", ready=True,
+            client_read_diagnostics={"read_source": "private", "ax_attempted": "private",
+                                     "imk_read": {"returned_characters": "private", "text": "private"}},
+            readback_diagnostics={"undo_baseline_source": "private", "baseline_caret": [0, "private"],
+                                  "baseline_read": {"read_source": "private", "imk_read": {"text": "private"}},
+                                  "postwrite_key_count": True, "postwrite_caret_status": ["private"]})
+    assert events[-1]["client_read_diagnostics"] == {}
+    assert events[-1]["readback_diagnostics"] == {}
 
 
 def test_edit_diagnostics_reject_text_in_typed_metadata_and_keep_interruption_evidence(component):

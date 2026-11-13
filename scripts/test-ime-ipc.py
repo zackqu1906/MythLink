@@ -104,11 +104,8 @@ def verify_history(bridge, expect, scenario):
         resumed = expect("input_resumed", token=token, success=True)
         assert resumed["state"]["can_redo"]
         command("redo")
-        keys = ("select_all", "caret_from_end") if scenario == "history-edited" else ("select_all",)
-        for key in keys:
-            request = expect("wechat_key", utterance_id=utterance, command=key)
-            assert bridge.send(dict(type="test_local_key", command=key, count=request["count"]))
-            command("wechat_key_result", request_id=request["request_id"], error="")
+        # Redo replaces only the owned prefix. The local AX driver handles
+        # selection; an empty prefix needs no selection key at all.
         settled = expect("settled", phase="dictated", utterance_id=utterance)
         assert bridge.send(dict(type="test_record_redo"))
         if index + 1 < len(redo_docs):
@@ -207,6 +204,8 @@ def verify_return_undo(binary, change):
                     bridge.send(dict(type="test_exit"))
                     stdout, _ = process.communicate(timeout=3)
                     if expected_docs is not None:
+                        assert "LOCAL_KEY=select_all" not in stdout.splitlines(), stdout
+                        assert "LOCAL_KEY=caret_from_end" not in stdout.splitlines(), stdout
                         assert [line.removeprefix("AFTER_UNDO=") for line in stdout.splitlines()
                                 if line.startswith("AFTER_UNDO=")] == expected_docs, stdout
                         assert [line.removeprefix("AFTER_REDO=") for line in stdout.splitlines()

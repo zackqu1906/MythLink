@@ -17,7 +17,10 @@ def _refresh_workspace() -> None:
 
 
 def send_wechat_key(command: str, count: int, event_tag: int) -> None:
-    if command not in {"select_all", "select_previous", "delete", "caret_from_end"}:
+    # Prefix edits select to the caret, then may restore an original selection
+    # boundary by moving left within the replacement. Keep the dedicated target.
+    if command not in {"select_all", "select_to_start", "select_previous", "delete",
+                       "caret_from_end", "caret_backward", "caret_forward"}:
         raise ValueError("微信兼容命令无效")
     _send_key(command, count, event_tag, "com.tencent.xinWeChat")
 

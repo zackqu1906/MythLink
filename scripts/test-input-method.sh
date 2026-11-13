@@ -54,6 +54,7 @@ xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CompositionCommitDelivery.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CommittedReplacementDelivery.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/WeChatCompatibility.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/NativePrefixSelection.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/EditorContextReader.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CaretDiagnostics.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/InputClient.swift" \

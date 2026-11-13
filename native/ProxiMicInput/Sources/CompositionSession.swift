@@ -13,9 +13,12 @@ func isValidRange(_ range: NSRange, length: Int? = nil) -> Bool {
     return length.map { NSMaxRange(range) <= $0 } ?? true
 }
 
+enum EditorTextSource: String { case imk, ax }
+
 struct EditorTextRange: Equatable {
     let text: String
     let range: NSRange
+    var source: EditorTextSource = .imk
 }
 
 struct PreparedEditContext {
@@ -99,6 +102,7 @@ protocol CompositionClient: AnyObject {
     func replace(_ range: NSRange, with text: String)
     func replaceEditing(_ range: NSRange, with text: String, restoringCaret: Int?)
     func replaceEditing(_ range: NSRange, with text: String, restoringCaret: Int?, expected: String)
+    var editsPrefixOnly: Bool { get }
     var preparesEditContext: Bool { get }
     func prepareEditContext(instruction: String, selectedText: String, source: EditorTextRange?, candidate: String)
     func discardEditCandidate()
@@ -109,14 +113,19 @@ protocol CompositionClient: AnyObject {
     var clientOperationPending: Bool { get }
     var clientOperationFailure: String? { get }
     var clientOperationDiagnostics: [String: Any] { get }
+    var lastTextReadDiagnostics: [String: Any] { get }
+    var terminalTextReadFailure: String? { get }
+    func clearTextReadFailure()
     var compositionTextReadbackReliable: Bool { get }
     func cancelClientOperation()
     /// Exact document-relative read. Nil never means an empty string.
     func readText(in range: NSRange) -> String?
+    func readIMKText(in range: NSRange) -> String?
     func discardContextHint()
 }
 
 extension CompositionClient {
+    func readIMKText(in range: NSRange) -> String? { readText(in: range) }
     func snapshotForBeginning() throws -> EditorSnapshot {
         let value = try snapshot()
         return EditorSnapshot(text: value.text, selection: value.selection,
@@ -124,6 +133,7 @@ extension CompositionClient {
             documentAccess: value.documentAccess, readableContext: value.readableContext)
     }
     func discardContextHint() {}
+    var editsPrefixOnly: Bool { false }
     var preparesEditContext: Bool { false }
     func prepareEditContext(instruction: String, selectedText: String, source: EditorTextRange?, candidate: String) {}
     func discardEditCandidate() {}
@@ -137,6 +147,9 @@ extension CompositionClient {
     var clientOperationPending: Bool { false }
     var clientOperationFailure: String? { nil }
     var clientOperationDiagnostics: [String: Any] { [:] }
+    var lastTextReadDiagnostics: [String: Any] { [:] }
+    var terminalTextReadFailure: String? { nil }
+    func clearTextReadFailure() {}
     var compositionTextReadbackReliable: Bool { true }
     func cancelClientOperation() {}
     func undo(_ range: NSRange, with text: String, preferNative: Bool) { replace(range, with: text) }
@@ -482,7 +495,10 @@ final class CompositionSession {
                                    length: record.original.selection.length)
             guard isValidRange(relative, length: context.text.utf16.count) else { return nil }
             location = context.range.location
-            before = (context.text as NSString).replacingCharacters(in: relative, with: record.raw)
+            if client.editsPrefixOnly {
+                guard let actual = expectedEditText else { return nil }
+                before = actual
+            } else { before = (context.text as NSString).replacingCharacters(in: relative, with: record.raw) }
             result = edited
         } else {
             location = record.committedRange?.location ?? record.original.selection.location
@@ -530,14 +546,21 @@ final class CompositionSession {
             awaitReadback("replace", check: { [unowned self] in
                 let probe = client.probe()
                 let receipt = client.verifiedReplacement
-                guard probe.selection == record.result.selection,
+                let native = client.editsPrefixOnly ? receipt : nil
+                let caret = native != nil ? client.verifiedReplacementCaret : record.result.selection
+                guard probe.selection == caret,
                       !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
-                      (receipt?.range == range && receipt?.text == record.text) || client.readText(in: range) == record.text else {
+                      (native != nil && native!.range.location == range.location && native!.range.length == native!.text.utf16.count) ||
+                      (!client.editsPrefixOnly && ((receipt?.range == range && receipt?.text == record.text) || client.readText(in: range) == record.text)) else {
                     throw CompositionError.unconfirmed("输入框尚未确认重做结果")
                 }
             }, then: { [unowned self] in
                 restoringHistory = false
-                expectedSelection = record.result.selection
+                expectedSelection = client.verifiedReplacementCaret ?? record.result.selection
+                if client.editsPrefixOnly, let receipt = client.verifiedReplacement {
+                    expectedEditText = receipt.text
+                    if record.result.editedText != nil { lastAppliedText = receipt.text }
+                }
                 onSettled?(phase.rawValue, lastAppliedText ?? raw)
                 onChanged?()
             })
@@ -550,6 +573,15 @@ final class CompositionSession {
             [.listening, .finishing].contains(phase) && !editRequested
     }
     var editOriginal: EditorTextRange? {
+        if client.editsPrefixOnly {
+            let end = NSMaxRange(original.selection)
+            let source = original.complete ? original.text : original.readableContext.flatMap {
+                $0.range.location == 0 ? $0.text : nil
+            }
+            guard isValidRange(original.selection), let source, end <= source.utf16.count else { return nil }
+            return EditorTextRange(text: (source as NSString).substring(to: end),
+                                   range: NSRange(location: 0, length: end))
+        }
         if original.complete, let text = original.text {
             return EditorTextRange(text: text, range: NSRange(location: 0, length: (text as NSString).length))
         }
@@ -567,6 +599,7 @@ final class CompositionSession {
     }
     private func editResult(_ text: String) -> String? {
         guard let context = editOriginal, context.range.location == 0 else { return nil }
+        if client.editsPrefixOnly { return text + (original.selectedText ?? "") }
         return text + (context.text as NSString).substring(from: original.selection.location)
     }
     var editScope: String { editRequestText == nil ? "unavailable" : "before_caret" }
@@ -755,6 +788,11 @@ final class CompositionSession {
         guard !isValidRange(now.markedRange) || now.markedRange.length == 0 else {
             throw CompositionError.unconfirmed("输入框尚未确认文字已定稿")
         }
+        // A required full-body failure must stay terminal before an optional
+        // sentence read can overwrite that read's diagnostic failure.
+        if !allowUnverifiedDocument, let expected, now.text != expected {
+            throw CompositionError.unconfirmed("输入框未确认本次文字更新，已停止后续写入")
+        }
         let length = (text as NSString).length
         let requireCaret = !allowUnverifiedDocument || client.compositionTextReadbackReliable
         let usableCaret = isValidRange(now.selection) && now.selection.length == 0 && now.selection.location >= length
@@ -773,13 +811,10 @@ final class CompositionSession {
         if originChanged && !text.isEmpty {
             // An earlier identical sentence under a moved caret is ambiguous
             // when the just-written span is still readable at its old address.
-            confirmedRange = confirmedRange && draftRange.map { client.readText(in: $0) == nil } == true
+            confirmedRange = confirmedRange && draftRange.map { client.readIMKText(in: $0) == nil } == true
             if requireCaret && !confirmedRange {
                 throw CompositionError.unconfirmed("输入框尚未确认定稿文字的位置")
             }
-        }
-        if !allowUnverifiedDocument, let expected, now.text != expected {
-            throw CompositionError.unconfirmed("输入框未确认本次文字更新，已停止后续写入")
         }
         let live = client.probe()
         guard active, workGeneration == generation, (!requireCaret || live.selection == now.selection),
@@ -822,6 +857,7 @@ final class CompositionSession {
         let generation = workGeneration
         let clientOperation = ["replace", "undo_replace", "edit_context"].contains(stage)
         let checked = { [unowned self] in
+            client.clearTextReadFailure()
             if clientOperation {
                 if !client.clientOperationDiagnostics.isEmpty { readbackDiagnostics = client.clientOperationDiagnostics }
                 if stage == "edit_context" {
@@ -840,6 +876,9 @@ final class CompositionSession {
             continuation()
         } catch {
             guard workGeneration == generation, active || (phase == .error && stage == "recovery") else { return }
+            if let failure = client.terminalTextReadFailure {
+                stopOnError(CompositionError.interrupted(failure)); return
+            }
             let liveGeometry = !client.compositionTextReadbackReliable &&
                 ["mark", "composition_ownership", "selection_ownership"].contains(stage)
             let timeout = client.clientOperationPending ? 3.0 : (liveGeometry ? 1.0 : 0.5)
@@ -878,6 +917,9 @@ final class CompositionSession {
             drainDeferredCommands()
         } catch {
             guard workGeneration == generation else { return }
+            if let failure = client.terminalTextReadFailure {
+                pendingReadback = nil; stopOnError(CompositionError.interrupted(failure)); return
+            }
             pending.failure = error
             pendingReadback = pending
         }
@@ -1218,18 +1260,20 @@ final class CompositionSession {
             committedRangeVerified = true
         }, then: { [unowned self] in
             guard editRequested, revision == requestedRevision else { drainDeferredCommands(); return }
-            // The native selection may omit IMK's synthetic trailing paragraph
-            // markers. Join the model's prefix to that freshly read suffix.
+            // The selected context ends at the instruction. Only an original
+            // explicit selection can need restoring; untouched suffix stays in place.
             guard let result = editResult(candidate) else { return }
             let resultRange = NSRange(location: 0, length: (result as NSString).length)
-            if client.verifiedReplacement?.range == resultRange,
-               client.verifiedReplacement?.text == result,
+            if let receipt = client.verifiedReplacement,
+               (client.editsPrefixOnly ?
+                    (receipt.range.location == resultRange.location && receipt.range.length == receipt.text.utf16.count) :
+                    (receipt.range == resultRange && receipt.text == result)),
                let caret = client.verifiedReplacementCaret {
-                expectedEditText = result
+                expectedEditText = receipt.text
                 expectedSelection = caret
                 committedRangeVerified = false
                 replacementVerified = true
-                completeEdit(result)
+                completeEdit(receipt.text)
             } else if cancelPending {
                 drainDeferredCommands()
             } else {
@@ -1310,27 +1354,30 @@ final class CompositionSession {
                 // Re-reading the full document after caret motion can see a new
                 // IMK context window, rather than the document just edited.
                 let receipt = client.verifiedReplacement
+                let native = client.editsPrefixOnly ? receipt : nil
                 let verified = receipt?.range == result && receipt?.text == text
-                let observed = verified ? text : client.readText(in: result)
+                let observed = native?.text ?? (verified ? text : client.readText(in: result))
                 let caret = NSRange(location: restoredCaret ?? NSMaxRange(result), length: 0)
                 let positioned = client.verifiedReplacementCaret
                 recordReadback(expected: text, observed: observed, selection: probe.selection,
                                marked: probe.markedRange, desiredSelection: positioned ?? caret, desiredMarked: unspecifiedRange)
-                guard observed == text,
+                guard (client.editsPrefixOnly ?
+                       (native != nil && native!.range.location == result.location &&
+                        native!.range.length == native!.text.utf16.count) : observed == text),
                       probe.selection == caret || positioned == probe.selection || suffix.map({ probe.selection == NSRange(location: $0, length: 0) }) == true,
                       !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else {
                     throw CompositionError.unconfirmed("输入框尚未确认编辑结果")
                 }
-                if original.complete && !verified {
+                if original.complete && !client.editsPrefixOnly && !verified {
                     guard try client.snapshot().text == text else {
                         throw CompositionError.unconfirmed("输入框尚未确认完整编辑结果")
                     }
                 }
-                expectedEditText = text
-                expectedText = original.complete ? text : nil
+                expectedEditText = observed
+                expectedText = original.complete && !client.editsPrefixOnly ? text : nil
                 expectedSelection = probe.selection
                 expectedMarked = unspecifiedRange
-                documentVerified = original.complete && original.documentAccess
+                documentVerified = original.complete && original.documentAccess && !client.editsPrefixOnly
                 committedRangeVerified = false
                 replacementVerified = true
             }, then: continuation)
@@ -1382,6 +1429,7 @@ final class CompositionSession {
             error = message
             let range = NSRange(location: original.selection.location, length: (raw as NSString).length)
             committedRangeVerified = original.documentAccess && original.selectedText != nil && client.readText(in: range) == raw
+            if let failure = client.terminalTextReadFailure { stopOnError(CompositionError.interrupted(failure)); return }
             if !cancelPending { onSettled?(phase.rawValue, raw) }
             onChanged?()
             drainDeferredCommands()
@@ -1534,7 +1582,7 @@ final class CompositionSession {
         let apply = { [unowned self] in
             guard let result = editResult(text) else { return }
             replaceEditScope(with: result, caret: (text as NSString).length) { [unowned self] in
-                completeEdit(result)
+                completeEdit(expectedEditText ?? result)
             }
         }
         if retryingEdit { apply(); return }

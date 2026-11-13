@@ -6,6 +6,8 @@ final class NativeInputClient: HandoffClient {
     let client: IMKTextInput
     private(set) var activeRead = ""
     private(set) var lastReadDiagnostics: [String: Any] = [:]
+    private(set) var terminalTextReadFailure: String?
+    func clearTextReadFailure() { terminalTextReadFailure = nil }
     // Model context only, never write authorization. Keep our own confirmed
     // document and subsequent IME changes out of a client's stale suffix cache.
     // Native selection still verifies every candidate before replacement.
@@ -26,9 +28,11 @@ final class NativeInputClient: HandoffClient {
     var nativeCompatibility: WeChatCompatibility?
     var pendingCompatibility: WeChatCompatibility? { compatibility ?? nativeCompatibility }
     func configureKeyDelivery(_ sendKey: @escaping WeChatCompatibility.SendKey,
-                              clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+                              clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+                              selectionDriver: PrefixSelectionDriver? = nil, prefixOnly: Bool = true) {
         let helper = WeChatCompatibility(client: self, sendKey: sendKey, clock: clock,
-                                        selectBeforeReplacing: client.bundleIdentifier() != "com.tencent.xinWeChat")
+                                        selectBeforeReplacing: client.bundleIdentifier() != "com.tencent.xinWeChat",
+                                        prefixOnly: prefixOnly, selectionDriver: selectionDriver, current: isCurrent)
         if client.bundleIdentifier() == "com.tencent.xinWeChat" { compatibility = helper }
         else { nativeCompatibility = helper }
     }
@@ -40,8 +44,10 @@ final class NativeInputClient: HandoffClient {
     var clientOperationPending: Bool { pendingCompatibility?.pending ?? false }
     var clientOperationFailure: String? { pendingCompatibility?.failure }
     var clientOperationDiagnostics: [String: Any] { pendingCompatibility?.readbackDiagnostics ?? [:] }
+    var lastTextReadDiagnostics: [String: Any] { lastReadDiagnostics }
     var verifiedReplacementCaret: NSRange? { pendingCompatibility?.verifiedReplacementCaret }
     var verifiedReplacement: EditorTextRange? { pendingCompatibility?.verifiedReplacement }
+    var editsPrefixOnly: Bool { pendingCompatibility?.prefixOnly ?? false }
     var preparesEditContext: Bool { nativeCompatibility?.selectBeforeReplacing ?? false }
     var preparedEditContext: PreparedEditContext? { nativeCompatibility?.preparedEditContext }
     func prepareEditContext(instruction: String, selectedText: String, source: EditorTextRange?, candidate: String) {
@@ -69,7 +75,7 @@ final class NativeInputClient: HandoffClient {
         pendingCompatibility?.advance()
         if wasPending, !clientOperationPending, nativeCompatibility != nil {
             if clientOperationFailure != nil { discardContextHint() }
-            else if let document = nativeCompatibility?.verifiedDocument {
+            else if !editsPrefixOnly, let document = nativeCompatibility?.verifiedDocument {
                 modelContextHint = document; hintedMarkedRange = nil; hintAfterUndo = nil
             } else if let document = hintAfterUndo {
                 modelContextHint = document; hintedMarkedRange = nil; hintAfterUndo = nil
@@ -122,6 +128,25 @@ final class NativeInputClient: HandoffClient {
         guard isCurrent() else { throw CompositionError.interrupted("输入连接已更新，已丢弃旧读取") }
     }
 
+    private func readAXSnapshot(in range: NSRange, selection expected: NSRange, whole: Bool) throws -> String? {
+        try validateReadLease()
+        let before = probe()
+        guard before.selection == expected, !isValidRange(before.markedRange) || before.markedRange.length == 0 else {
+            terminalTextReadFailure = "[\(InputMethodDiagnostics.buildLabel)/body_read/geometry_changed] 读取 AX 正文前光标或组合已变化"
+            throw CompositionError.interrupted(terminalTextReadFailure!)
+        }
+        let text = pendingCompatibility?.readAXText(in: range, selection: expected, whole: whole)
+        try validateReadLease()
+        let after = probe()
+        try validateReadLease()
+        guard after.selection == before.selection, !isValidRange(after.markedRange) || after.markedRange.length == 0 else {
+            terminalTextReadFailure = "[\(InputMethodDiagnostics.buildLabel)/body_read/geometry_changed] 读取 AX 正文期间光标或组合已变化"
+            throw CompositionError.interrupted(terminalTextReadFailure!)
+        }
+        if text == nil { terminalTextReadFailure = "[\(InputMethodDiagnostics.buildLabel)/body_read/imk_ax_unavailable] IMK 和 AX 未提供完整正文" }
+        return text
+    }
+
     private func readSnapshot(includeComposition: Bool) throws -> EditorSnapshot {
         let readStartedAt = ProcessInfo.processInfo.systemUptime
         try validateReadLease()
@@ -164,6 +189,10 @@ final class NativeInputClient: HandoffClient {
             lastReadDiagnostics["actual_range"] = rangeNumbers(actual)
             if let value, actual == desired, (value as NSString).length == length {
                 whole = value
+            } else if !isValidRange(marked) || marked.length == 0 {
+                whole = try readAXSnapshot(in: desired, selection: selected, whole: true)
+                try validateReadLease()
+                lastReadDiagnostics["snapshot_body_source"] = whole == nil ? "unavailable" : "ax"
             }
         }
         if whole == nil, let hint = modelContextHint, isValidRange(selected, length: (hint as NSString).length) {
@@ -224,6 +253,10 @@ final class NativeInputClient: HandoffClient {
             activeRead = "snapshot.selectedString"
             if let value = client.string(from: selected, actualRange: &actual), actual == selected,
                (value as NSString).length == selected.length { selectedText = value }
+            else if !isValidRange(marked) || marked.length == 0 {
+                try validateReadLease()
+                selectedText = try readAXSnapshot(in: selected, selection: selected, whole: false)
+            }
         }
         try validateReadLease()
         lastReadDiagnostics["context_origin"] = whole != nil ? "document" :
@@ -258,14 +291,45 @@ final class NativeInputClient: HandoffClient {
     }
 
     func selection() -> NSRange { documentSelection(client.selectedRange(), marked: client.markedRange()) }
+    /// Each exact body read independently prefers IMK. A complete but different
+    /// IMK body is returned unchanged, so callers cannot bypass a mismatch via AX.
     func readText(in range: NSRange) -> String? {
+        clearTextReadFailure()
+        guard isCurrent(), isValidRange(range), range.length <= 512 * 1024 else { return nil }
+        let imkText = readIMKText(in: range)
+        let imkRead = lastReadDiagnostics
+        guard isCurrent() else { return nil }
+        if let imkText { return imkText }
+        // Keep arbitrary context/EOF probing on readIMKText. This entry point
+        // is for exact known ranges and never infers a document length from AX.
+        let before = probe()
+        guard isCurrent(), isValidRange(before.selection),
+              !isValidRange(before.markedRange) || before.markedRange.length == 0 else { return nil }
+        let text = pendingCompatibility?.readAXText(in: range, selection: before.selection)
+        guard isCurrent() else { return nil }
+        let after = probe()
+        let stable = isCurrent() && before.selection == after.selection &&
+            (!isValidRange(after.markedRange) || after.markedRange.length == 0)
+        lastReadDiagnostics = ["query": "range", "read_source": text != nil && stable ? "ax" : "unavailable",
+            "text_queried": true, "requested_range": rangeNumbers(range),
+            "returned_characters": stable ? (text?.utf16.count ?? -1) : -1,
+            "imk_read": imkRead, "ax_attempted": true, "read_selection_stable": stable]
+        if !stable || text == nil {
+            terminalTextReadFailure = "[\(InputMethodDiagnostics.buildLabel)/body_read/imk_ax_unavailable] IMK 和 AX 未提供完整且位置稳定的正文，已停止本次操作"
+        }
+        return stable ? text : nil
+    }
+    func readIMKText(in range: NSRange) -> String? {
         guard isValidRange(range), range.length <= 512 * 1024 else { return nil }
         // An empty replacement is checked by its caret and cleared marked
         // range; IMK may legitimately return nil for a zero-length substring.
-        if range.length == 0 { return "" }
+        if range.length == 0 {
+            lastReadDiagnostics = ["query": "range", "read_source": "imk", "returned_characters": 0, "text_queried": false]
+            return ""
+        }
         var actual = unspecifiedRange
         let text = client.string(from: range, actualRange: &actual)
-        lastReadDiagnostics = ["query": "range", "text_queried": true,
+        lastReadDiagnostics = ["query": "range", "read_source": "imk", "text_queried": true,
                                "requested_range": rangeNumbers(range), "actual_range": rangeNumbers(actual),
                                "returned_characters": text.map { ($0 as NSString).length } ?? -1]
         guard let text, actual == range, (text as NSString).length == range.length else { return nil }

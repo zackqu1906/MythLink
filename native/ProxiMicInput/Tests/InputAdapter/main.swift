@@ -37,6 +37,8 @@ final class StrictIMKClient: NSObject, IMKTextInput {
     var insertCount = 0
     var lastMarkedPayload: NSAttributedString?
     var onInsert: (() -> Void)?
+    var onTextRead: ((NSRange) -> Void)?
+    var textReadOverride: ((NSRange) -> (String?, NSRange)?)?
     var candidateRectAtIndex: ((Int) -> NSRect)?
     var candidateRect = NSRect.zero
     var candidateQueries: [Int] = []
@@ -97,6 +99,11 @@ final class StrictIMKClient: NSObject, IMKTextInput {
     func length() -> Int { reportedLength }
     func string(from range: NSRange, actualRange: NSRangePointer!) -> String! {
         reads += 1
+        onTextRead?(range)
+        if let overridden = textReadOverride?(range) {
+            actualRange?.pointee = overridden.1
+            return overridden.0
+        }
         if unavailableDocumentRead { actualRange?.pointee = NSRange(location: 0, length: 0); return nil }
         if !unselectedCachedSuffix.isEmpty && view.selectedRange().length == 0 && !view.hasMarkedText() {
             let cached = (view.string + unselectedCachedSuffix) as NSString
@@ -158,6 +165,7 @@ func check(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
 }
 func test(_ name: String, _ work: () throws -> Void) {
+    if let filter = ProcessInfo.processInfo.environment["TEST_FILTER"], !name.contains(filter) { return }
     do { try work(); passed += 1; print("PASS \(name)") }
     catch { fatalError("\(name): \(error)") }
 }
@@ -857,7 +865,11 @@ final class WeChatFixture {
     var dropSentenceSelection = false
     var dropCaretMovement = false
     var reportedEndOffset = 0
-    init(_ text: String, caret: Int? = nil, codex: Bool = false, application: String? = nil, directRange: Bool = true) {
+    var keyCounts: [Int] = []
+    var afterKey: ((String, Int) -> Void)?
+    var deferKeyAck = false
+    var pendingKeyAck: ((String?) -> Void)?
+    init(_ text: String, caret: Int? = nil, codex: Bool = false, application: String? = nil, directRange: Bool = true, prefixOnly: Bool = false, selectionDriver: PrefixSelectionDriver? = nil) {
         proxy = StrictIMKClient(text, selection: caret.map { NSRange(location: $0, length: 0) })
         proxy.ignoreReplacementRange = !codex
         if codex {
@@ -869,7 +881,7 @@ final class WeChatFixture {
         proxy.bundle = application ?? (codex ? "com.openai.codex" : "com.tencent.xinWeChat")
         adapter = NativeInputClient(proxy)
         let deliver: WeChatCompatibility.SendKey = { [unowned self] command, count, _, done in
-            keys.append(command)
+            keys.append(command); keyCounts.append(count)
             if let keyError { done(keyError); return }
             switch command {
             case "select_to_start":
@@ -899,9 +911,10 @@ final class WeChatFixture {
                 if !dropCaretMovement { for _ in 0..<count { proxy.view.moveRight(nil) } }
             default: fatalError("unexpected command")
             }
-            done(nil)
+            afterKey?(command, count)
+            if deferKeyAck { pendingKeyAck = done } else { done(nil) }
         }
-        adapter.configureKeyDelivery(deliver, clock: { [unowned self] in now })
+        adapter.configureKeyDelivery(deliver, clock: { [unowned self] in now }, selectionDriver: selectionDriver, prefixOnly: prefixOnly)
         // Exercise the former direct-range strategy independently. Production
         // factory cases below use directRange:false and native selection.
         if codex && directRange {
@@ -2026,4 +2039,867 @@ test("Production adapters retry restored instructions with original prefix and p
     }
 }
 
-print("\(passed) production input adapter tests passed")
+final class MainPrefixDriver: PrefixSelectionDriver {
+    weak var proxy: StrictIMKClient?
+    var metadata: [String: Any] = [:]
+    var attempt: PrefixSelectionAttempt = .submitted
+    var drop = false
+    var wrong = false
+    var valid = true
+    var calls: [NSRange] = []
+    var events: [[String: Any]] = []
+    var afterSelect: (() -> Void)?
+    var axOverride: NSRange?
+    var caretMoves: [NSRange] = []
+    var dropCaretMove = false
+    var caretMoveAttempt: PrefixSelectionAttempt = .submitted
+    var onCaretMove: (() -> Void)?
+    func moveCaret(to target: NSRange, from before: NSRange, current: () -> Bool) -> PrefixSelectionAttempt {
+        caretMoves.append(target)
+        if case .submitted = caretMoveAttempt, !dropCaretMove { axOverride = target }
+        onCaretMove?()
+        return caretMoveAttempt
+    }
+    var readCount = 0
+    var readUnavailable = false
+    var onRead: ((Int) -> Void)?
+    func readSelection(current: () -> Bool) -> NSRange? {
+        readCount += 1; onRead?(readCount)
+        return valid && current() && !readUnavailable ? (axOverride ?? proxy?.view.selectedRange()) : nil
+    }
+    func readDocument(in range: NSRange, selection expected: NSRange, current: () -> Bool) -> String? {
+        guard range.location == 0, let proxy, range.length == proxy.view.string.utf16.count else { return nil }
+        return readText(in: range, selection: expected, current: current)
+    }
+    var textEnabled = false
+    var textReadCount = 0
+    var textOverride: ((NSRange) -> String?)?
+    var onTextRead: (() -> Void)?
+    func readText(in range: NSRange, selection expected: NSRange, current: () -> Bool) -> String? {
+        textReadCount += 1
+        guard textEnabled, valid, current(), !readUnavailable,
+              (axOverride ?? proxy?.view.selectedRange()) == expected,
+              let proxy, isValidRange(range, length: proxy.view.string.utf16.count) else { return nil }
+        let text = textOverride.map { $0(range) } ?? (proxy.view.string as NSString).substring(with: range)
+        onTextRead?()
+        guard valid, current(), (axOverride ?? proxy.view.selectedRange()) == expected else { return nil }
+        return text
+    }
+    var validationCount = 0
+    var onValidate: ((Int) -> Void)?
+    func begin(_ operation: String) {}
+    func validateTarget(current: () -> Bool) -> Bool {
+        validationCount += 1; onValidate?(validationCount)
+        return valid && current()
+    }
+    func record(_ event: [String: Any]) { events.append(event) }
+    func select(_ range: NSRange, from caret: NSRange, current: () -> Bool) -> PrefixSelectionAttempt {
+        calls.append(range)
+        if case .submitted = attempt, !drop {
+            axOverride = nil
+            proxy?.view.setSelectedRange(wrong ? NSRange(location: 1, length: max(0, range.length - 1)) : range)
+        }
+        afterSelect?()
+        return attempt
+    }
+}
+func prefixFixture(_ app: String = "com.openai.codex", text: String = "前文后文", caret: Int = 2,
+                   keyboard: Bool = false) -> (WeChatFixture, MainPrefixDriver) {
+    let driver = MainPrefixDriver()
+    if keyboard { driver.attempt = .unavailable("ax_test_unavailable") }
+    let f = WeChatFixture(text, caret: caret, codex: app != "com.tencent.xinWeChat",
+                          application: app, directRange: false, prefixOnly: true, selectionDriver: driver)
+    driver.proxy = f.proxy
+    return (f, driver)
+}
+func prefixEdit(_ f: WeChatFixture, candidate: String = "新文", instruction: String = "改写") throws -> CompositionSession {
+    let s = try f.session()
+    s.update(instruction, final: false); s.convert(); s.update(instruction, final: true)
+    s.applyEdit(text: candidate, revision: s.revision, error: nil); f.drain(s)
+    return s
+}
+
+test("B70 main prefix selects AX or host shortcut and keeps rich suffix in place") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat", "com.microsoft.VSCode", "test.editor"] {
+        for keyboard in [false, true] {
+            let (f, driver) = prefixFixture(app, keyboard: keyboard)
+            let attributes: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.red, .link: URL(string: "https://example.org")!]
+            f.proxy.view.textStorage!.addAttributes(attributes, range: NSRange(location: 2, length: 2))
+            var payloads: [String] = []
+            f.proxy.onInsert = { payloads.append(f.proxy.view.string) }
+            let s = try prefixEdit(f, candidate: "新文😀\n第二行")
+            check(s.phase == .edited && f.proxy.view.string == "新文😀\n第二行后文", "B70 edit failed in \(app): \(s.error)")
+            let end = "新文😀\n第二行".utf16.count
+            check(f.proxy.view.selectedRange() == NSRange(location: end, length: 0), "caret crossed suffix")
+            let attrs = f.proxy.view.textStorage!.attributes(at: end, effectiveRange: nil)
+            check((attrs[.foregroundColor] as? NSColor) == .red && attrs[.link] != nil, "suffix formatting was replaced")
+            check(driver.calls == [NSRange(location: 0, length: app == "com.tencent.xinWeChat" ? 2 : 4)], "AX did not select prefix+instruction")
+            check(f.keys == (keyboard ? ["select_to_start"] : []), "unexpected full selection/caret key")
+            check(f.proxy.insertCount == 2, "candidate not a single commit")
+        }
+    }
+}
+test("B70 ordinary dictation undo retains main sentence selection and delete") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, driver) = prefixFixture(app)
+        f.proxy.acceptsEmptyInsert = false
+        let s = try f.session(); s.update("听写", final: true); s.cancel(); f.drain(s)
+        check(s.phase == .undone && f.proxy.view.string == "前文后文", "main dictation undo regressed")
+        check(driver.calls.isEmpty && f.keys == ["select_previous", "delete"], "dictation undo entered AX edit path")
+    }
+}
+test("B70 edit undo redo retry preserve suffix and require only prefix source") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        for keyboard in [false, true] {
+            let (f, _) = prefixFixture(app, keyboard: keyboard)
+            let s = try prefixEdit(f, candidate: "扩写新文")
+            check(s.phase == .edited, "edit failed")
+            s.cancel(); f.drain(s)
+            check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "edit undo failed: \(s.error)")
+            s.retryEdit(); f.drain(s)
+            check(s.phase == .editing && s.editRequestText == "前文", "retry included suffix")
+            s.applyEdit(text: "再改", revision: s.revision, error: nil); f.drain(s)
+            check(s.phase == .edited && f.proxy.view.string == "再改后文", "retry failed: \(s.error)")
+            s.cancel(); f.drain(s); s.cancel(); f.drain(s)
+            check(s.phase == .undone && f.proxy.view.string == "前文后文", "double undo failed: \(s.error)")
+            check(!f.keys.contains("select_all") && !f.keys.contains("caret_from_end"), "undo rewrote suffix")
+        }
+    }
+}
+test("B70 prefix is independent of a very long trailing document") {
+    for n in [513, 32769] {
+        let suffix = String(repeating: "尾", count: n)
+        let (f, _) = prefixFixture(text: "前文" + suffix)
+        let s = try prefixEdit(f)
+        check(s.phase == .edited && f.proxy.view.string == "新文" + suffix && f.keys.isEmpty, "long suffix blocked or moved edit")
+    }
+}
+test("B70 swallowed shortcut never writes or retries") {
+    let (f, _) = prefixFixture(keyboard: true); f.dropSelectToStart = true
+    let s = try prefixEdit(f)
+    check(s.phase == .error && f.proxy.view.string == "前文改写后文" && f.proxy.insertCount == 1, "swallowed shortcut authorized write")
+    check(f.keys == ["select_to_start"] && s.error.contains("\(InputMethodDiagnostics.buildLabel)/"), "missing error provenance or repeated key")
+}
+test("B70 uncertain AX outcome does not stack a keyboard fallback") {
+    let (f, d) = prefixFixture(); d.attempt = .uncertain("ax_set_outcome_unknown")
+    let s = try prefixEdit(f)
+    check(s.phase == .error && f.proxy.insertCount == 1 && f.keys.isEmpty && s.error.contains("ax_set_outcome_unknown"), "uncertain AX retried")
+}
+test("B70 AX wrong or absent range cannot authorize a candidate") {
+    for wrong in [false, true] {
+        let (f, d) = prefixFixture(); d.wrong = wrong; d.drop = !wrong
+        let s = try prefixEdit(f)
+        check(s.phase == .error && f.proxy.insertCount == 1 && f.keys.isEmpty, "bad AX selection authorized write")
+    }
+}
+test("B70 stale prefix and unavailable selected text stop before candidate write") {
+    for missing in [false, true] {
+        let (f, d) = prefixFixture()
+        d.afterSelect = { if missing { f.proxy.unavailableDocumentRead = true } else { f.proxy.staleDocumentRead = true } }
+        let s = try prefixEdit(f)
+        check(s.phase == .error && f.proxy.insertCount == 1, "unverified source authorized replacement")
+    }
+}
+test("B71 missing postwrite body cannot create a model-backed undo record") {
+    let (f, d) = prefixFixture()
+    f.proxy.onInsert = { if f.proxy.view.string == "新文后文" { f.proxy.unavailableDocumentRead = true } }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && f.proxy.view.string == "新文后文" && s.undoRecord() == nil, "missing body created history")
+    check(s.error.contains("postwrite_baseline_unavailable") && d.events.last?["native_text_verified"] as? Bool == false, "missing-body failure mislabeled")
+}
+test("B71 dropped commit cannot create a baseline from the old selection") {
+    let (f, _) = prefixFixture()
+    f.proxy.onInsert = { if f.proxy.view.string == "前文改写后文" { f.proxy.dropNonemptyInsert = true } }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.undoRecord() == nil && f.proxy.insertCount == 2, "dropped write accepted or retried")
+}
+
+test("B70 empty edit deletes selected prefix with main key path and preserves suffix") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, _) = prefixFixture(app); f.proxy.acceptsEmptyInsert = false
+        let s = try prefixEdit(f, candidate: "")
+        check(s.phase == .edited && f.proxy.view.string == "后文", "empty edit failed: \(s.error)")
+        check(f.keys == ["delete"] && f.proxy.emptyInserts == (app == "com.tencent.xinWeChat" ? 1 : 0), "empty insert used instead of delete")
+        s.cancel(); f.drain(s)
+        check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "empty edit undo failed: \(s.error)")
+    }
+}
+test("B70 explicit original selection is restored without rewriting following suffix") {
+    let (f, _) = prefixFixture(text: "前文选中后文")
+    f.proxy.view.setSelectedRange(NSRange(location: 2, length: 2))
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && f.proxy.view.string == "新文选中后文", "original selected text lost: \(s.error)")
+    s.cancel(); f.drain(s); s.cancel(); f.drain(s)
+    check(s.phase == .undone && f.proxy.view.string == "前文选中后文", "selection undo failed: \(s.error)")
+}
+test("B70 arbitrary range uses exact AX or rejects an overbroad shortcut") {
+    for keyboard in [false, true] {
+        let (f, _) = prefixFixture(text: "前文目标后文", caret: 4, keyboard: keyboard)
+        f.adapter.replaceEditing(NSRange(location: 2, length: 2), with: "新目标", restoringCaret: nil, expected: "目标")
+        for _ in 0..<50 { f.now += 0.06; f.adapter.advanceClientOperation() }
+        check(f.proxy.view.string == (keyboard ? "前文目标后文" : "前文新目标后文"), "range replacement damaged suffix")
+        check(f.keys.isEmpty && (f.adapter.clientOperationFailure != nil) == keyboard, "unsupported fallback sent keys")
+    }
+}
+test("B70 changed target stops after selection before candidate commit") {
+    let (f, d) = prefixFixture(); d.afterSelect = { d.valid = false }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && f.proxy.insertCount == 1 && f.keys.isEmpty, "changed target was written")
+}
+test("B70 cancellation ignores a late selection acknowledgement") {
+    let (f, d) = prefixFixture()
+    d.afterSelect = { f.adapter.cancelClientOperation() }
+    let s = try prefixEdit(f)
+    check(s.phase != .edited && f.proxy.insertCount == 1, "cancelled selection wrote a result")
+}
+test("B70 complete snapshots keep prefix ownership through edit undo and retry") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, _) = prefixFixture(app)
+        f.proxy.reportedLength = f.proxy.view.string.utf16.count
+        f.proxy.onInsert = { f.proxy.reportedLength = f.proxy.view.string.utf16.count }
+        let s = try prefixEdit(f)
+        check(s.phase == .edited && f.proxy.view.string == "新文后文", "full snapshot edit failed: \(s.error)")
+        s.cancel(); f.drain(s)
+        check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "full snapshot undo failed: \(s.error)")
+        s.retryEdit(); f.drain(s)
+        check(s.phase == .editing, "full snapshot retry failed: \(s.error)")
+        s.applyEdit(text: "再次", revision: s.revision, error: nil); f.drain(s)
+        check(s.phase == .edited && f.proxy.view.string == "再次后文", "full snapshot retry write failed: \(s.error)")
+    }
+}
+test("B70 history undo and redo preserve prefix scope and rich suffix") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, _) = prefixFixture(app)
+        let history = CompositionUndoHistory(); history.configure(enabled: true)
+        let s = try f.session(); history.begin(s.original)
+        s.onSettled = { _, _ in history.settled(s) }
+        s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+        s.applyEdit(text: "新的前文", revision: s.revision, error: nil); f.drain(s)
+        history.undo(s); f.drain(s)
+        check(f.proxy.view.string == "前文改写后文", "history edit undo lost suffix: \(s.error)")
+        guard let redo = history.prepareRedo(s) else { fatalError("missing redo") }
+        let next = CompositionSession(client: f.adapter, undo: redo.result,
+            utteranceID: s.utteranceID, sequence: s.lastSequence, revision: s.revision + 1, clock: { f.now })
+        next.onSettled = { _, _ in history.settled(next) }
+        next.restoreRedo(redo); f.drain(next)
+        check(f.proxy.view.string == "新的前文后文", "history redo lost suffix: \(next.error)")
+    }
+}
+test("B70 cancelled model result and duplicate result cannot write twice") {
+    let (f, _) = prefixFixture(); let s = try f.session()
+    s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+    let revision = s.revision
+    s.cancel(); f.drain(s); let writes = f.proxy.insertCount
+    s.applyEdit(text: "迟到", revision: revision, error: nil); f.drain(s)
+    check(f.proxy.insertCount == writes && f.proxy.view.string == "前文改写后文", "late candidate wrote")
+    let (f2, _) = prefixFixture(); let s2 = try prefixEdit(f2); let written = f2.proxy.insertCount
+    s2.applyEdit(text: "再写", revision: s2.revision, error: nil); f2.drain(s2)
+    check(f2.proxy.insertCount == written && f2.proxy.view.string == "新文后文", "duplicate candidate wrote")
+}
+
+test("B70 cancellation during final AX target validation cannot write") {
+    let (f, d) = prefixFixture()
+    d.onValidate = { if $0 == 2 { f.adapter.cancelClientOperation() } }
+    let s = try prefixEdit(f)
+    check(d.validationCount >= 2 && s.phase != .edited && f.proxy.insertCount == 1 &&
+          f.proxy.view.string == "前文改写后文", "AX reentry cancellation still wrote a result")
+}
+
+test("B70 AX readback accepts the selected range while IMK still reports old caret") {
+    let (f, d) = prefixFixture()
+    d.afterSelect = { f.proxy.fixedReportedSelection = NSRange(location: 4, length: 0) }
+    f.proxy.onInsert = { if f.proxy.view.string == "新文后文" { f.proxy.fixedReportedSelection = nil } }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && f.proxy.view.string == "新文后文" && f.keys.isEmpty,
+          "AX selection was blocked by stale IMK geometry: \(s.error)")
+}
+test("B70 empty WeChat prefix inserts without AX selection or shortcut") {
+    let (f, d) = prefixFixture("com.tencent.xinWeChat", text: "后文", caret: 0, keyboard: true)
+    f.adapter.replaceEditing(NSRange(location: 0, length: 0), with: "新文", restoringCaret: nil, expected: "")
+    for _ in 0..<50 { f.now += 0.06; f.adapter.advanceClientOperation() }
+    check(f.adapter.clientOperationFailure == nil && f.proxy.view.string == "新文后文", "empty prefix insert failed")
+    check(d.calls.isEmpty && f.keys.isEmpty, "empty caret unnecessarily selected through AX or shortcut")
+}
+
+test("B70 AX readback unavailable never trusts IMK selection or stacks fallback") {
+    let (f, d) = prefixFixture(); d.readUnavailable = true
+    let s = try prefixEdit(f)
+    check(s.phase == .error && f.proxy.insertCount == 1 && f.keys.isEmpty, "missing AX readback was accepted")
+    check(d.events.last?["selection_read_available"] as? Bool == false, "missing AX evidence not logged")
+}
+test("B70 prewrite AX changes and readback cancellation cannot commit") {
+    for cancel in [false, true] {
+        let (f, d) = prefixFixture()
+        d.onRead = { if $0 == 2 {
+            if cancel { f.adapter.cancelClientOperation() }
+            else { f.proxy.view.setSelectedRange(NSRange(location: 4, length: 0)) }
+        } }
+        let s = try prefixEdit(f)
+        check(d.readCount == 2 && s.phase != .edited && f.proxy.insertCount == 1,
+              "AX change or cancellation during readback still wrote")
+    }
+}
+test("B70 empty replacement at empty range never deletes outside ownership") {
+    let (f, d) = prefixFixture("com.tencent.xinWeChat")
+    f.adapter.replaceEditing(NSRange(location: 2, length: 0), with: "", restoringCaret: nil, expected: "")
+    for _ in 0..<50 { f.now += 0.06; f.adapter.advanceClientOperation() }
+    check(f.adapter.clientOperationFailure == nil && f.proxy.view.string == "前文后文" &&
+          f.proxy.insertCount == 0 && f.keys.isEmpty && d.calls.isEmpty, "empty no-op deleted neighboring content")
+    check(d.events.last?["write_sent"] as? Bool == false, "no-op claimed write delivery")
+}
+test("B70 WeChat fallback cannot write when shortcut delivery is rejected or swallowed") {
+    for reject in [false, true] {
+        let (f, _) = prefixFixture("com.tencent.xinWeChat", keyboard: true)
+        if reject { f.keyError = "host delivery rejected" } else { f.dropSelectToStart = true }
+        let s = try prefixEdit(f)
+        check(s.phase == .error && f.proxy.view.string == "前文后文" &&
+              f.keys == ["select_to_start"] && f.proxy.insertCount == 1, "failed WeChat key authorized a write")
+    }
+}
+
+// The bridge values are replayed; key movement uses an actual local NSTextView.
+func prepareRightRepair(_ f: WeChatFixture, _ d: MainPrefixDriver,
+                        candidate: String, before: Int) {
+    f.proxy.onTextRead = { _ in
+        if !f.keys.isEmpty { f.proxy.unavailableDocumentRead = false }
+    }
+    f.proxy.onInsert = {
+        if f.proxy.view.string.hasPrefix(candidate) {
+            f.proxy.view.setSelectedRange(NSRange(location: before, length: 0))
+            f.proxy.fixedReportedSelection = NSRange(location: candidate.utf16.count, length: 0)
+            f.proxy.unavailableDocumentRead = true
+        }
+    }
+}
+
+test("B70 replay 363 IMK 357 AX and 361 reported length sends six right keys") {
+    let (f, d) = prefixFixture()
+    let candidate = String(repeating: "字", count: 363)
+    d.metadata["postwrite_ax_text_length"] = 361
+    d.caretMoveAttempt = .unavailable("postwrite_caret_out_of_bounds")
+    prepareRightRepair(f, d, candidate: candidate, before: 357)
+    let s = try prefixEdit(f, candidate: candidate)
+    check(s.phase == .edited && f.keys == ["caret_forward"] && f.keyCounts == [6],
+          "363/357 replay did not send exactly six right keys: \(s.error), keys=\(f.keys)")
+    check(d.caretMoves.isEmpty && f.proxy.view.selectedRange() == NSRange(location: 363, length: 0),
+          "relative repair used AX setter or failed to reach the fixed target")
+    check(f.proxy.insertCount == 2 && f.proxy.view.string == candidate + "后文", "repair rewrote candidate")
+    check(d.events.last?["native_text_verified"] as? Bool == true &&
+          d.events.last?["undo_baseline_source"] as? String == "post_caret_imk" &&
+          d.events.last?["postwrite_caret_status"] as? String == "moved_and_verified",
+          "missing post-key body baseline")
+}
+
+test("B70 matching or unavailable AX retains the existing write without keys") {
+    for unavailable in [false, true] {
+        let (f, d) = prefixFixture()
+        if unavailable { f.proxy.onInsert = { if f.proxy.view.string == "新文后文" { d.readUnavailable = true } } }
+        let s = try prefixEdit(f)
+        check(s.phase == .edited && f.keys.isEmpty && d.caretMoves.isEmpty, "unneeded repair")
+    }
+}
+
+test("B70 swallowed right movement never repeats or rewrites") {
+    let (f, d) = prefixFixture(); f.dropCaretMovement = true
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.error.contains("postwrite_caret_not_aligned") &&
+          f.keys == ["caret_forward"] && f.keyCounts == [1] && f.proxy.insertCount == 2,
+          "dropped movement accepted or retried: \(s.error)")
+    check(d.events.last?["postwrite_ax_after_move"] as? [Int] == [1, 0], "missing post-key AX read")
+}
+
+test("B70 a changed IMK position after right movement is recorded without chasing") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    f.afterKey = { _, _ in f.proxy.fixedReportedSelection = NSRange(location: 3, length: 0) }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.error.contains("postwrite_caret_not_aligned") && f.keys == ["caret_forward"],
+          "changed position was followed with additional movement")
+    check(d.events.last?["postwrite_imk_after_move"] as? [Int] == [3, 0], "missing post-key IMK position")
+}
+
+test("B70 right delivery rejection and missing acknowledgement have separate errors") {
+    for missing in [false, true] {
+        let (f, d) = prefixFixture()
+        prepareRightRepair(f, d, candidate: "新文", before: 1)
+        if missing { f.deferKeyAck = true } else { f.keyError = "test delivery rejected" }
+        let s = try prefixEdit(f)
+        check(s.phase == .error && s.error.contains(missing ? "postwrite_key_ack_timeout" : "key_delivery_failed") &&
+              f.keys == ["caret_forward"] && f.proxy.insertCount == 2, "delivery failure was lost: \(s.error)")
+        f.pendingKeyAck?(nil)
+        check(s.phase == .error, "late acknowledgement settled failed edit")
+    }
+}
+
+test("B70 cancellation during AX read or right dispatch cannot confirm an edit") {
+    for duringKey in [false, true] {
+        let (f, d) = prefixFixture()
+        prepareRightRepair(f, d, candidate: "新文", before: 1)
+        if duringKey { f.afterKey = { _, _ in f.adapter.cancelClientOperation() } }
+        else { d.onRead = { if $0 == 3 { f.adapter.cancelClientOperation() } } }
+        let s = try prefixEdit(f)
+        check(s.phase != .edited && f.keys.count == (duringKey ? 1 : 0) && f.proxy.insertCount == 2,
+              "cancelled repair completed or sent extra keys")
+    }
+}
+
+test("B70 nonempty AX selection waits and never receives unshifted right keys") {
+    let (f, d) = prefixFixture()
+    f.proxy.onInsert = { if f.proxy.view.string == "新文后文" { d.axOverride = NSRange(location: 0, length: 2) } }
+    d.onRead = { if $0 == 5 { d.axOverride = NSRange(location: 2, length: 0) } }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && f.keys.isEmpty, "nonempty selection received movement")
+}
+
+test("B70 stable 300 to 312 relative repair preserves rich suffix and edit undo") {
+    let (f, d) = prefixFixture(); let candidate = String(repeating: "字", count: 312)
+    f.proxy.view.textStorage!.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 2, length: 2))
+    prepareRightRepair(f, d, candidate: candidate, before: 300)
+    let s = try prefixEdit(f, candidate: candidate)
+    check(s.phase == .edited && f.keys == ["caret_forward"] && f.keyCounts == [12], "300 to 312 failed")
+    check(f.proxy.view.string == candidate + "后文" &&
+          f.proxy.view.textStorage!.attribute(.foregroundColor, at: 312, effectiveRange: nil) as? NSColor == .red,
+          "relative repair changed suffix formatting")
+    f.proxy.onInsert = nil; f.proxy.fixedReportedSelection = nil; f.proxy.unavailableDocumentRead = false
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "repair broke undo: \(s.error)")
+}
+
+test("B70 invalid right displacement never produces an unbounded key burst") {
+    for delta in [-513, 513] {
+        let (f, d) = prefixFixture(text: "前文" + String(repeating: "尾", count: 600))
+        let candidate = String(repeating: "字", count: 514)
+        prepareRightRepair(f, d, candidate: candidate, before: candidate.utf16.count - delta)
+        let s = try prefixEdit(f, candidate: candidate)
+        check(s.phase == .error && s.error.contains("postwrite_caret_delta_invalid") && f.keys.isEmpty,
+              "invalid right displacement generated keys")
+    }
+}
+
+test("B70 target change before right dispatch stops without keys") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    d.onRead = { if $0 == 3 { d.valid = false } }
+    let s = try prefixEdit(f)
+    check(s.phase != .edited && f.keys.isEmpty, "changed target received right keys")
+}
+
+test("B70 AX disappearing after right dispatch is not a successful skip") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    f.afterKey = { _, _ in d.readUnavailable = true }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.error.contains("postwrite_caret_read_unavailable") && f.keys == ["caret_forward"],
+          "unreadable post-key AX accepted or repeated")
+}
+
+test("B70 character steps differing from UTF16 offsets cannot claim alignment") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "字😀", before: 0)
+    let s = try prefixEdit(f, candidate: "字😀")
+    check(s.phase == .error && s.error.contains("postwrite_caret_not_aligned") &&
+          f.keyCounts == [3] && f.proxy.insertCount == 2, "overshoot was confirmed or retried")
+}
+
+
+test("B70 AX ahead of IMK sends one left batch and confirms agreement") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "新文", before: 3)
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && f.keys == ["caret_backward"] && f.keyCounts == [1],
+          "AX ahead did not move left once: \(s.error)")
+    check(f.proxy.view.selectedRange() == NSRange(location: 2, length: 0), "left movement missed target")
+}
+
+test("B70 agreement on a refreshed position completes without requiring old IMK target") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    f.afterKey = { _, _ in
+        f.proxy.view.setSelectedRange(NSRange(location: 3, length: 0))
+        f.proxy.fixedReportedSelection = NSRange(location: 3, length: 0)
+    }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && f.keys == ["caret_forward"] && f.keyCounts == [1],
+          "agreed refreshed position rejected: \(s.error)")
+    check(d.events.last?["postwrite_imk_target"] as? [Int] == [2, 0] &&
+          d.events.last?["postwrite_imk_after_move"] as? [Int] == [3, 0] &&
+          d.events.last?["postwrite_ax_after_move"] as? [Int] == [3, 0], "before/after positions not distinct")
+}
+
+test("B71 native-normalized result becomes undo baseline after caret confirmation") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, _) = prefixFixture(app)
+        f.proxy.onInsert = {
+            if f.proxy.view.string == "新\n文后文" {
+                f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 3), with: "新文")
+                f.proxy.view.setSelectedRange(NSRange(location: 2, length: 0))
+            }
+        }
+        let s = try prefixEdit(f, candidate: "新\n文")
+        check(s.phase == .edited, "normalized edit rejected: \(s.error)")
+        check(s.undoRecord()?.editedText == "新文", "undo saved model output instead of IMK body")
+        s.cancel(); f.drain(s)
+        check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "normalized undo failed: \(s.error)")
+    }
+}
+
+
+test("B71 normalized native text preserves rich suffix and repeated undo redo") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, _) = prefixFixture(app)
+        f.proxy.view.textStorage!.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 2, length: 2))
+        f.proxy.onInsert = {
+            if f.proxy.view.string == "新\n文后文" {
+                f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 3), with: "新文")
+                f.proxy.view.setSelectedRange(NSRange(location: 2, length: 0))
+            }
+        }
+        let h = CompositionUndoHistory()
+        var s = try f.session()
+        func wire() { s.onSettled = { _, _ in h.settled(s) }; s.onInterrupted = { _ in h.clear() } }
+        wire(); s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+        s.applyEdit(text: "新\n文", revision: s.revision, error: nil); f.drain(s)
+        for _ in 0..<3 {
+            check(s.phase == .edited && s.undoRecord()?.editedText == "新文", "model-backed edit record")
+            h.undo(s); f.drain(s)
+            check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "undo failed: \(s.error)")
+            guard let redo = h.prepareRedo(s) else { fatalError("missing normalized redo") }
+            s = CompositionSession(client: f.adapter, undo: redo.result, utteranceID: "redo", sequence: 1,
+                                   revision: s.revision + 1, clock: { f.now })
+            wire(); s.restoreRedo(redo); f.drain(s)
+            check(f.proxy.view.string == "新文后文", "redo replayed pre-normalized output")
+            check(f.proxy.view.textStorage!.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? NSColor == .red,
+                  "redo replaced suffix formatting")
+        }
+    }
+}
+
+test("B71 same-length control conversion is accepted without model equality") {
+    let (f, d) = prefixFixture()
+    f.proxy.onInsert = {
+        if f.proxy.view.string == "新\r文后文" {
+            f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 1, length: 1), with: "\n")
+            f.proxy.view.setSelectedRange(NSRange(location: 3, length: 0))
+        }
+    }
+    let s = try prefixEdit(f, candidate: "新\r文")
+    check(s.phase == .edited && s.undoRecord()?.editedText == "新\n文", "same-length conversion rejected")
+    check(d.events.last?["replacement_text_matches"] as? Bool == false, "model difference not logged")
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "converted body undo failed")
+}
+
+test("B71 explicit restored selection uses actual prefix length and keeps suffix") {
+    let (f, _) = prefixFixture(text: "前文选😀后文")
+    f.proxy.view.setSelectedRange(NSRange(location: 2, length: 3))
+    f.proxy.onInsert = {
+        if f.proxy.view.string == "新\n文选😀后文" {
+            f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 3), with: "新文")
+            f.proxy.view.setSelectedRange(NSRange(location: 5, length: 0))
+        }
+    }
+    let s = try prefixEdit(f, candidate: "新\n文")
+    check(s.phase == .edited && s.undoRecord()?.editedText == "新文选😀", "explicit selection baseline wrong: \(s.error)")
+    check(f.proxy.view.selectedRange() == NSRange(location: 2, length: 0), "caret did not restore before selection")
+    s.cancel(); f.drain(s); s.cancel(); f.drain(s)
+    check(s.phase == .undone && f.proxy.view.string == "前文选😀后文", "explicit selection double undo failed")
+}
+
+test("B71 baseline reads only after relative keys and uses refreshed IMK coordinate") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    var postwriteReads = 0
+    f.proxy.onTextRead = { _ in
+        if f.proxy.insertCount >= 2 {
+            check(f.keys == ["caret_forward"], "body read before caret correction")
+            postwriteReads += 1; f.proxy.unavailableDocumentRead = false
+        }
+    }
+    f.afterKey = { _, _ in
+        // Reproduce an editor whose IMK representation expands when refreshed.
+        f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 2), with: "新\n文")
+        f.proxy.view.setSelectedRange(NSRange(location: 3, length: 0))
+        f.proxy.fixedReportedSelection = NSRange(location: 3, length: 0)
+    }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && s.undoRecord()?.editedText == "新\n文" && postwriteReads >= 2,
+          "baseline used old target or model: \(s.error)")
+    check(d.events.last?["baseline_range"] as? [Int] == [0, 3] &&
+          d.events.last?["postwrite_imk_target"] as? [Int] == [2, 0], "final baseline lost refreshed range")
+    f.afterKey = nil; f.proxy.onInsert = nil; f.proxy.onTextRead = nil; f.proxy.fixedReportedSelection = nil
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "refreshed baseline could not undo")
+}
+
+test("B71 partial or wrong-range postwrite reads never create an undo record") {
+    for wrongRange in [false, true] {
+        let (f, _) = prefixFixture()
+        f.proxy.textReadOverride = { range in
+            guard f.proxy.insertCount >= 2 else { return nil }
+            return wrongRange ? ("新文", NSRange(location: 1, length: 2)) : ("新", NSRange(location: 0, length: 1))
+        }
+        let s = try prefixEdit(f)
+        check(s.phase == .error && s.error.contains("postwrite_baseline_unavailable") && s.undoRecord() == nil,
+              "partial read became baseline")
+        check(f.proxy.view.string == "新文后文" && f.proxy.insertCount == 2, "read failure retried write")
+    }
+}
+
+test("B71 changing postwrite body times out without trusting the last sample") {
+    let (f, _) = prefixFixture(); var reads = 0
+    f.proxy.textReadOverride = { range in
+        guard f.proxy.insertCount >= 2 else { return nil }
+        reads += 1
+        return (reads % 2 == 0 ? "新文" : "另一", range)
+    }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.error.contains("postwrite_baseline_unstable") && s.undoRecord() == nil,
+          "unstable body became baseline")
+}
+
+test("B71 external same-length change is rejected against the native baseline") {
+    let (f, _) = prefixFixture()
+    let s = try prefixEdit(f)
+    f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 2), with: "外改")
+    f.proxy.view.setSelectedRange(NSRange(location: 2, length: 0))
+    let writes = f.proxy.insertCount
+    s.cancel(); f.drain(s)
+    check(s.error.contains("replacement_source_mismatch") && f.proxy.insertCount == writes &&
+          f.proxy.view.string == "外改后文", "external edit was overwritten")
+}
+
+test("B71 cancellation or target change during baseline read cannot publish history") {
+    for cancel in [false, true] {
+        let (f, d) = prefixFixture(); var reads = 0
+        f.proxy.onTextRead = { _ in
+            guard f.proxy.insertCount >= 2 else { return }
+            reads += 1
+            if reads == 2 {
+                if cancel { f.adapter.cancelClientOperation() } else { d.valid = false }
+            }
+        }
+        let s = try prefixEdit(f)
+        check(s.phase != .edited && s.undoRecord() == nil && f.proxy.insertCount == 2,
+              "retired baseline published")
+    }
+}
+
+
+test("B71 redo refreshes its undo baseline when the control transforms again") {
+    let (f, _) = prefixFixture()
+    var s = try prefixEdit(f)
+    guard let record = s.undoRecord() else { fatalError("missing edit record") }
+    s.cancel(); f.drain(s)
+    guard let redo = s.redoRecord(afterUndoing: record) else { fatalError("missing redo record") }
+    f.proxy.onInsert = {
+        if f.proxy.view.string == "新文后文" {
+            f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 2), with: "新!文")
+            f.proxy.view.setSelectedRange(NSRange(location: 3, length: 0))
+        }
+    }
+    s = CompositionSession(client: f.adapter, undo: redo.result, utteranceID: "redo", sequence: 1,
+                           revision: s.revision + 1, clock: { f.now })
+    s.restoreRedo(redo); f.drain(s)
+    check(s.phase == .edited && s.undoRecord()?.editedText == "新!文", "redo retained previous body")
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "undo after transformed redo failed")
+}
+
+test("B71 interior restoration cannot split a combined character") {
+    let (f, _) = prefixFixture(text: "前文目标后文", caret: 4)
+    f.adapter.replaceEditing(NSRange(location: 2, length: 2), with: "e\u{301}",
+                             restoringCaret: 3, expected: "目标")
+    for _ in 0..<50 { f.now += 0.06; f.adapter.advanceClientOperation() }
+    check(f.adapter.clientOperationFailure != nil &&
+          f.keys.isEmpty, "restoration split a composed character")
+}
+
+// B72 reproduces the Codex trace: current AX/IMK caret, nil full IMK body.
+test("B72 nil IMK postwrite read uses stable AX body and preserves rich suffix") {
+    let (f, driver) = prefixFixture()
+    driver.textEnabled = true
+    f.proxy.view.textStorage!.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 2, length: 2))
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited, "nil IMK plus valid AX did not finish: \(s.error)")
+    check(s.undoRecord()?.editedText == "新文", "AX baseline not saved")
+    check(driver.events.contains { $0["undo_baseline_source"] as? String == "post_caret_ax" && $0["event"] as? String == "confirmed" }, "AX provenance missing")
+    check(driver.textReadCount >= 2, "AX baseline was not stabilized")
+    check(f.proxy.view.textStorage!.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? NSColor == .red, "suffix formatting changed")
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "AX-backed undo failed: \(s.error)")
+}
+
+test("B72 healthy IMK baseline does not read AX body") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && driver.textReadCount == 0, "AX replaced healthy IMK")
+    check(f.adapter.verifiedReplacement?.source == .imk, "IMK source not retained")
+}
+
+test("B72 partial IMK read falls back to a complete UTF16 AX snapshot") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = {
+        if f.proxy.view.string.hasPrefix("新😀") {
+            f.proxy.textReadOverride = { range in ("新", NSRange(location: range.location, length: 1)) }
+        }
+    }
+    let s = try prefixEdit(f, candidate: "新😀\n文")
+    check(s.phase == .edited && s.undoRecord()?.editedText == "新😀\n文", "partial IMK did not fall back: \(s.error)")
+    check(f.adapter.verifiedReplacement?.source == .ax, "AX source missing")
+}
+
+test("B72 AX unavailable partial and moving selection cannot establish baseline") {
+    for fault in ["unavailable", "partial", "caret"] {
+        let (f, driver) = prefixFixture(); driver.textEnabled = true
+        f.proxy.onInsert = {
+            if f.proxy.view.string.hasPrefix("新文") {
+                f.proxy.unavailableDocumentRead = true
+                if fault == "unavailable" { driver.textEnabled = false }
+                if fault == "partial" { driver.textOverride = { _ in "新" } }
+                if fault == "caret" { driver.onTextRead = { driver.axOverride = NSRange(location: 1, length: 0) } }
+            }
+        }
+        let s = try prefixEdit(f)
+        check(s.phase == .error && s.undoRecord() == nil, "unsafe AX baseline: \(fault)")
+        check(f.proxy.view.string == "新文后文", "failed baseline rewrote text")
+    }
+}
+
+test("B72 AX changing text needs two equal observations") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    driver.textOverride = { _ in driver.textReadCount % 2 == 0 ? "甲乙" : "丙丁" }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.undoRecord() == nil, "unstable AX accepted")
+    check(s.error.contains("postwrite_baseline_unstable"), "unstable AX error lost: \(s.error)")
+}
+
+test("B72 target change or cancellation inside AX read cannot publish history") {
+    for cancel in [false, true] {
+        let (f, driver) = prefixFixture(); driver.textEnabled = true
+        let s = try f.session()
+        f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+        driver.onTextRead = { if cancel { s.interrupt("test AX cancellation") } else { driver.valid = false } }
+        s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+        s.applyEdit(text: "新文", revision: s.revision, error: nil); f.drain(s)
+        check(s.phase != .edited && s.undoRecord() == nil, "retired AX read published history")
+        check(f.proxy.view.string == "新文后文", "target change caused extra write")
+    }
+}
+
+test("B72 complete IMK mismatch never falls back to matching AX") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited, "edit failed")
+    f.proxy.unavailableDocumentRead = false
+    f.proxy.textReadOverride = { range in (String(repeating: "旧", count: range.length), range) }
+    let writes = f.proxy.insertCount
+    s.cancel(); f.drain(s)
+    check(s.phase == .error && f.proxy.insertCount == writes, "mismatched complete IMK text was bypassed via AX")
+}
+
+test("B72 external same-length AX change refuses undo before write") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited, "edit failed")
+    let writes = f.proxy.insertCount
+    f.proxy.view.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 2), with: "别人")
+    s.cancel(); f.drain(s)
+    check(s.phase == .error && f.proxy.insertCount == writes, "changed AX body overwritten")
+    check(f.proxy.view.string == "别人后文", "external text lost")
+}
+
+test("B72 AX baseline survives saved history repeated undo and redo") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, driver) = prefixFixture(app); driver.textEnabled = true
+        f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+        let h = CompositionUndoHistory()
+        var s = try f.session()
+        func wire() { s.onSettled = { _, _ in h.settled(s) }; s.onInterrupted = { _ in h.clear() } }
+        wire(); s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+        s.applyEdit(text: "新文", revision: s.revision, error: nil); f.drain(s)
+        for _ in 0..<3 {
+            check(s.phase == .edited && f.adapter.verifiedReplacement?.source == .ax, "lost AX baseline: \(s.error)")
+            h.undo(s); f.drain(s)
+            check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "AX history undo failed: \(s.error)")
+            guard let redo = h.prepareRedo(s) else { fatalError("AX redo unavailable") }
+            s = CompositionSession(client: f.adapter, undo: redo.result, utteranceID: "ax-redo", sequence: 1,
+                                   revision: s.revision + 1, clock: { f.now })
+            wire(); s.restoreRedo(redo); f.drain(s)
+            check(f.proxy.view.string == "新文后文", "AX redo failed: \(s.error)")
+        }
+    }
+}
+
+test("B72 AX baseline supports suspension and restored undo") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    let s = try prefixEdit(f)
+    let saved = try s.suspension()
+    let resumed = try CompositionSession(client: f.adapter, resuming: saved, sequence: 100, clock: { f.now })
+    resumed.cancel(); f.drain(resumed)
+    check(resumed.phase == .dictated && f.proxy.view.string == "前文改写后文", "AX suspension source lost: \(resumed.error)")
+}
+
+
+test("B72 recovered IMK is preferred on each later validation read") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && driver.textReadCount > 0, "AX baseline failed")
+    f.proxy.unavailableDocumentRead = false; f.proxy.onInsert = nil
+    let axReads = driver.textReadCount
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && driver.textReadCount == axReads, "recovered IMK was not preferred")
+}
+
+test("B72 AX supports second sentence undo and redo after edit undo") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    let s = try prefixEdit(f)
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated, "first undo failed")
+    check(s.undoRecord() != nil, "restored sentence lost its history")
+    s.cancel(); f.drain(s)
+    check(s.phase == .undone && f.proxy.view.string == "前文后文", "second AX-backed undo failed: \(s.error)")
+}
+
+
+test("B72 double read failure is terminal even if a later read would recover") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    driver.textOverride = { range in driver.textReadCount == 1 ? nil : (f.proxy.view.string as NSString).substring(with: range) }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && driver.textReadCount == 1, "double failure was retried")
+    check(s.undoRecord() == nil, "failed read created history")
+}
+
+test("B72 undo ownership double failure does not retry a recovered reader") {
+    let (f, driver) = prefixFixture("com.tencent.xinWeChat"); driver.textEnabled = true
+    let s = try prefixEdit(f)
+    f.proxy.unavailableDocumentRead = true
+    let writes = f.proxy.insertCount
+    driver.textOverride = { range in driver.textReadCount == 1 ? nil : (f.proxy.view.string as NSString).substring(with: range) }
+    s.cancel(); f.drain(s)
+    check(s.phase == .error && driver.textReadCount == 1 && f.proxy.insertCount == writes, "ownership double failure retried/wrote phase=\(s.phase) reads=\(driver.textReadCount) writes=\(f.proxy.insertCount)/\(writes) error=\(s.error)")
+}
+
+test("B72 AX prefix cannot be promoted to a full snapshot") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.reportedLength = 2; f.proxy.unavailableDocumentRead = true
+    let snapshot = try f.adapter.snapshot()
+    check(snapshot.text == nil && !snapshot.complete, "AX prefix became complete document")
+}
+
+test("B72 full AX snapshot checks IMK geometry after the remote read") {
+    let (f, driver) = prefixFixture(); driver.textEnabled = true
+    f.proxy.reportedLength = 4; f.proxy.unavailableDocumentRead = true
+    driver.onTextRead = { f.proxy.fixedReportedSelection = NSRange(location: 1, length: 0) }
+    var rejected = false
+    do { _ = try f.adapter.snapshot() } catch { rejected = true }
+    check(rejected, "AX snapshot retained stale IMK geometry")
+}
