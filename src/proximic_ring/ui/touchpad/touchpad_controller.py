@@ -53,6 +53,7 @@ class TouchpadController(QObject):
     selectionCommitted = Signal(str)  # Menu direction a two-finger swipe just confirmed.
     localCharacterCommitted = Signal(str)
     localBackspaceRequested = Signal()
+    localDeleteBeforeRequested = Signal()
     localEditorClearRequested = Signal()
     strokeTraceChanged = Signal(list, bool)
     sourceReady = Signal(object, object)
@@ -858,19 +859,32 @@ class TouchpadController(QObject):
         if self._pending_stroke_commit or not self.strokeSession.allow_input(): return
         if self._code:
             self.undoStroke()
-        elif self._local_stroke_input:
-            self._trial_event('delete_character')
-            self.localBackspaceRequested.emit()
+        else:
+            self._delete_editor()
+
+    def clearStrokesOrDeleteBefore(self):
+        """A long left pull clears pending ink, or the editor's prefix when empty."""
+        if self._pending_stroke_commit or not self.strokeSession.allow_input(): return
+        if self._code:
+            self.clearStrokes()
+        else:
+            self._delete_editor(to_start=True)
+
+    def _delete_editor(self, *, to_start=False):
+        if self._local_stroke_input:
+            self._trial_event('delete_before' if to_start else 'delete_character')
+            (self.localDeleteBeforeRequested if to_start else self.localBackspaceRequested).emit()
         elif self.strokeSession.phase == 'running':
+            action = '删除前文' if to_start else '退格'
             try:
-                if not self.owner._inline_input.stroke_backspace(self.strokeSession._origin):
-                    self._commit_message = '输入焦点已变化，未执行退格'
+                if not self.owner._inline_input.stroke_backspace(self.strokeSession._origin, to_start=to_start):
+                    self._commit_message = '输入焦点已变化，未执行' + action
                 else:
                     self._stroke_context = ''
                     self._refresh_candidates()
-                    self._commit_message = '已退格'
+                    self._commit_message = '已' + action
             except Exception as exc:
-                self._commit_message = '退格失败：' + str(exc)
+                self._commit_message = action + '失败：' + str(exc)
             self.changed.emit()
 
     @Slot()
@@ -1433,7 +1447,7 @@ class TouchpadController(QObject):
                     elif decision['action'] == 'delete-one':
                         self.deleteOne()
                     elif decision['action'] == 'clear-all':
-                        self.clearStrokes()
+                        self.clearStrokesOrDeleteBefore()
                     if decision['action'] != 'cancel-selection' and decision.get('direction'):
                         self.selectionCommitted.emit(decision['direction'])
                     self.selectionChanged.emit()

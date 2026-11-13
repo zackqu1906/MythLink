@@ -611,18 +611,41 @@ class InlineInputController(QObject):
                                 clear_distance=float(state.get('clear_distance') or 30.),
                                 clear_progress=float(state.get('clear_progress') or 0.))
 
-    def stroke_backspace(self, origin):
+    def stroke_backspace(self, origin, *, to_start=False):
         """Send the editor's own Backspace only with fresh proof of this stroke target."""
         from ...voice.ime.focus_probe import valid_selection
         target = self.stroke_target
         if (self._installing or not self.stroke_mode or not target or not self._bridge
                 or self._stroke_request or not origin or self._foreground_identity() != origin):
             return False
-        state = self._bridge.focus_state(timeout=.2)
-        if (not state or not state.get('ready') or not valid_selection(state.get('selection'))
-                or target != self.stroke_target or target[:2] != (state.get('epoch'), state.get('client_id'))
-                or state.get('application') != origin[0] or self._foreground_identity() != origin):
+        def selection():
+            state = self._bridge.focus_state(timeout=.2)
+            if (not state or not state.get('ready') or not valid_selection(state.get('selection'))
+                    or target != self.stroke_target or target[:2] != (state.get('epoch'), state.get('client_id'))
+                    or state.get('application') != origin[0] or self._foreground_identity() != origin):
+                return None
+            return tuple(state['selection'])
+
+        before = selection()
+        if before is None:
             return False
+        if to_start:
+            end = sum(before)
+            if end == 0:
+                return True
+            expected = (0, end)
+            if before != expected:
+                from ...platforms.macos.wechat_native_keys import send_stroke_select_to_start
+                send_stroke_select_to_start(*origin)
+                deadline = time.monotonic() + .5
+                while True:
+                    observed = selection()
+                    if observed == expected:
+                        break
+                    if observed is None or observed != before or time.monotonic() >= deadline:
+                        raise RuntimeError('未能确认前文选区，未执行删除')
+                    # Posting a key is not delivery; wait for this client's exact range.
+                    time.sleep(.02)
         from ...platforms.macos.wechat_native_keys import send_stroke_backspace
         send_stroke_backspace(*origin)
         return True

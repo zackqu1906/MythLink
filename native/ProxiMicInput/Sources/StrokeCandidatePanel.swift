@@ -185,14 +185,15 @@ private final class StrokeClearPullView: FlippedView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func update(progress: Double, armed: Bool) {
+    func update(progress: Double, armed: Bool, deleteBefore: Bool = false) {
         self.progress = armed ? 1 : progress.isFinite ? min(1, max(0, progress)) : 0
         fill.layer?.backgroundColor = NSColor(hex: armed ? 0x9C2F2A : 0xEDABA5).cgColor
         layer?.shadowOpacity = armed ? 0.28 : 0
         let ink = armed ? NSColor.white : NSColor(hex: 0xA6322C)
         arrow.contentTintColor = ink
         label.textColor = ink
-        setAccessibilityLabel(armed ? "抬手清空笔画" : "继续向左外拉清空笔画")
+        label.stringValue = deleteBefore ? "删除前文" : "清空"
+        setAccessibilityLabel((armed ? "抬手" : "继续向左外拉") + (deleteBefore ? "删除前文" : "清空笔画"))
         needsLayout = true
     }
 
@@ -245,10 +246,11 @@ private final class StrokeMenuCell: FlippedView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func setClearing(_ clearing: Bool) {
+    func setClearing(_ clearing: Bool, deleteBefore: Bool) {
         guard direction == "left" else { return }
-        status.stringValue = clearing ? "清空笔画" : "删除"
-        setAccessibilityLabel(clearing ? "清空笔画" : "删除一笔或退格")
+        let action = deleteBefore ? "删除前文" : "清空笔画"
+        status.stringValue = clearing ? action : "删除"
+        setAccessibilityLabel(clearing ? action : "删除一笔或退格")
         if self.clearing != clearing { self.clearing = clearing; refresh() }
     }
 
@@ -436,9 +438,9 @@ final class StrokeCandidatePanel {
         clearing = selecting && direction == "left" && clearArmed
         choices.interactionColor = selecting ? NSColor(hex: clearing ? 0x9C2F2A : direction == "left" ? 0xC2413B : 0x345EE5) : nil
         let target = selecting ? (direction.isEmpty ? "center" : direction) : ""
-        cells.forEach { $0.set(active: $0.direction == target); $0.setClearing(clearing) }
+        cells.forEach { $0.set(active: $0.direction == target); $0.setClearing(clearing, deleteBefore: code.isEmpty) }
         clearPull.isHidden = !selecting || direction != "left"
-        clearPull.update(progress: clearProgress, armed: clearing)
+        clearPull.update(progress: clearProgress, armed: clearing, deleteBefore: code.isEmpty)
         trail.isHidden = selecting
         selectionPath.isHidden = !selecting
         selectionPath.update(origin: origin, points: selecting ? points : [], direction: direction,
@@ -449,7 +451,8 @@ final class StrokeCandidatePanel {
     private func refreshHint() {
         switch phase {
         case "selecting":
-            hint.stringValue = clearing ? "抬手清空 · 拉回取消" : selectionDirection == "left" ? "抬手删除 · 继续外拉可清空"
+            hint.stringValue = clearing ? (code.isEmpty ? "抬手删除前文 · 拉回取消" : "抬手清空 · 拉回取消")
+                : selectionDirection == "left" ? (code.isEmpty ? "抬手退格 · 外拉删除前文" : "抬手删除 · 继续外拉可清空")
                 : selectionDirection.isEmpty ? "已识别双指 · 滑动选字" : "双指选字 · 抬手确认"
         case "holding": hint.stringValue = "保持不动 · \(Int(progress.rounded()))%"
         case "writing": hint.stringValue = "书写中 · 抬手结束"

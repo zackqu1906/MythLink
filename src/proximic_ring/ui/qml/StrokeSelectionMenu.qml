@@ -14,6 +14,7 @@ Rectangle {
     readonly property var selection: touchpad.selectionState
     readonly property bool selecting: selection.phase === "selecting"
     readonly property bool clearing: selecting && selection.direction === "left" && selection.clear_armed === true
+    readonly property string longPullAction: touchpad.strokeCode.length ? "清空笔画" : "删除前文"
     readonly property real clearPullGutter: 60
     readonly property real clearProgress: clearing ? 1 : Math.max(0, Math.min(1, selection.clear_progress || 0))
     property var deleteCell: null
@@ -64,7 +65,7 @@ Rectangle {
                 Layout.preferredWidth: 1; Layout.preferredHeight: 1
                 focusPolicy: Qt.NoFocus; hoverEnabled: enabled
                 padding: 0; horizontalPadding: 0
-                Accessible.name: modelData.action === "delete" ? (menu.clearing ? "清空笔画" : "删除一笔或退格") : "输入标点 " + modelData.symbol
+                Accessible.name: modelData.action === "delete" ? (menu.clearing ? menu.longPullAction : "删除一笔或退格") : "输入标点 " + modelData.symbol
                 Component.onCompleted: {
                     menu.cells[modelData.direction] = action
                     if (modelData.action === "delete") menu.deleteCell = action
@@ -108,7 +109,7 @@ Rectangle {
                         id: actionCaption
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom; anchors.bottomMargin: 7
-                        text: menu.clearing && action.modelData.action === "delete" ? "清空笔画" : action.modelData.title; color: parent.ink
+                        text: menu.clearing && action.modelData.action === "delete" ? menu.longPullAction : action.modelData.title; color: parent.ink
                         font.pixelSize: parent.large ? 12 : 11
                     }
                 }
@@ -208,7 +209,7 @@ Rectangle {
         visible: menu.selecting && menu.activeDirection === "left"
         enabled: false
         Accessible.role: Accessible.StaticText
-        Accessible.name: menu.clearing ? "抬手清空笔画" : "继续向左外拉清空笔画"
+        Accessible.name: (menu.clearing ? "抬手" : "继续向左外拉") + menu.longPullAction
         layer.enabled: menu.clearing
         layer.effect: MultiEffect {
             shadowEnabled: true; shadowBlur: .4; shadowOpacity: .28
@@ -243,7 +244,7 @@ Rectangle {
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            y: 32; text: "清空"; font.pixelSize: 12; font.weight: Font.Medium
+            y: 32; text: menu.touchpad.strokeCode.length ? "清空" : "删除前文"; font.pixelSize: 12; font.weight: Font.Medium
             color: menu.clearing ? "white" : "#A6322C"
         }
     }

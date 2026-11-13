@@ -130,6 +130,32 @@ def test_local_backspace_continues_before_inserted_text_and_removes_selection(in
         QTest.qWait(20)
 
 
+def test_local_long_pull_clears_ink_then_deletes_prefix_preserving_suffix(inline_ui):
+    from PySide6.QtCore import Q_ARG, QMetaObject
+    window, tp = start(inline_ui)
+    editor = window.findChild(QObject, 'strokeTestEditor')
+    menu = window.findChild(QObject, 'strokeSelectionMenu')
+    try:
+        editor.setProperty('text', '前🙂文后面')
+        editor.setProperty('cursorPosition', 4)
+        tp.addStroke('h')
+        assert menu.property('longPullAction') == '清空笔画'
+        tp.clearStrokesOrDeleteBefore()
+        assert editor.property('text') == '前🙂文后面' and not tp._code
+        assert menu.property('longPullAction') == '删除前文'
+        tp.clearStrokesOrDeleteBefore()
+        assert editor.property('text') == '后面' and editor.property('cursorPosition') == 0
+        tp.clearStrokesOrDeleteBefore()
+        assert editor.property('text') == '后面'
+        editor.setProperty('text', '前选中后')
+        QMetaObject.invokeMethod(editor, 'select', Q_ARG(int, 1), Q_ARG(int, 3))
+        tp.clearStrokesOrDeleteBefore()
+        assert editor.property('text') == '后'
+    finally:
+        tp.close()
+        QTest.qWait(20)
+
+
 def test_sentence_trial_clears_the_editor_tracks_progress_and_saves_a_report(inline_ui, tmp_path):
     window, tp = start(inline_ui)
     editor = window.findChild(QObject, 'strokeTestEditor')

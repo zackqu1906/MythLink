@@ -19,11 +19,20 @@ from .events import Raw2PointerClick, Raw2PointerContact, Raw2PointerMove, Raw2R
 
 log = logging.getLogger(__name__)
 
-# Host adaptations validated on Windows only. macOS keeps the provider's own
-# behavior: no start budget, no timer change, a firmware stop ends quietly.
+# The initial start budget and timer change remain Windows-only.
 WINDOWS = sys.platform == 'win32'
 # The SDK waits indefinitely for the first token, so the Windows host sets the budget.
 RAW2_START_TIMEOUT_S = 30.
+RAW2_BUSY_RETRY_DELAYS = (.4, .8)
+RAW2_RECOVERY_DELAY_S = .5
+RAW2_RECOVERY_TIMEOUT_S = 10.
+
+
+def _busy_start(error):
+    state = getattr(error, 'response', None)
+    return (isinstance(error, RingError) and error.reason == 'device_error'
+            and error.phase == 'ack' and error.device_code == -16
+            and getattr(state, 'state', None) == 0 and state.result == -16 and state.deadline == 0)
 
 
 class FrameEngine(Engine):
@@ -107,6 +116,7 @@ class Raw2Stream:
         self.on_discarded_event = on_discarded_event
         self.duration_s = duration_s
         self.closed = False
+        self._stopping = asyncio.Event()
         self.error = None
         self.stats = TouchpadStats()
         self._last_stats = self._last_data = 0.
@@ -117,6 +127,8 @@ class Raw2Stream:
         self.transport = session._sdk_transport
         if self.transport is None or not self.transport.ready:
             raise RingError('not_ready', 'Raw2 requires the validated Ring SDK BLE connection')
+        self._session = session
+        self._transport_generation = self.transport.generation
         # Scope cleanup evidence to this stream, on the shared connection.
         self.transport.stop_confirmed = False
         self._timer_release = None
@@ -130,7 +142,8 @@ class Raw2Stream:
         # RingCallbacks is shared by all connections. A stuck application callback
         # must release the actual worker before another session starts.
         with self._callback_running:
-            if (not self.closed and self.receiver.accepting
+            # A reset also releases held output while the failed receiver is stopped.
+            if (not self.closed and (self.receiver.accepting or isinstance(value, Raw2Reset))
                     and self._key == (self.receiver.session, self.receiver.generation)):
                 callback(value)
 
@@ -172,9 +185,9 @@ class Raw2Stream:
     async def _diagnostics(self, value):
         if value.issue:
             level = getattr(logging, value.severity)
-            log.log(level, '[RAW2_DIAGNOSTICS] generation=%d issue=%s active=%s recovered=%s counters=%s message=%s',
+            log.log(level, '[RAW2_DIAGNOSTICS] generation=%d issue=%s active=%s recovered=%s counters=%s device=%s message=%s',
                     value.generation, value.issue, value.active_issues, value.recovered_issues,
-                    value.counters, value.message)
+                    value.counters, value.device, value.message)
 
     def _report(self, *, force=False):
         now = time.monotonic()
@@ -255,6 +268,60 @@ class Raw2Stream:
                              contact_probability=frame.touch)
         self._report()
 
+    def _compute_fault(self):
+        device = self.receiver.reporter.device or {}
+        return (getattr(self.receiver.error, 'reason', None) == 'stream_failed'
+                and device.get('state') == 2 and device.get('fault_kind') == 5
+                and device.get('session') == getattr(getattr(self.receiver, 'tracker', None), 'session', None))
+
+    def _explain_error(self, error):
+        if _busy_start(error):
+            return RingError(error.reason, '戒指暂忙，未能启动触摸板（-16）。请稍后重新开启；若正在充电，请先取下戒指。',
+                             device_code=error.device_code, response=error.response, phase=error.phase)
+        if error is not None and error is self.receiver.error and self._compute_fault():
+            device = dict(self.receiver.reporter.device)
+            return RingError('stream_failed', '戒指触控计算异常，已停止触摸板。请重新开启；若再次出现，请重连戒指。',
+                             device_code=device.get('result'), response=device, phase='stream')
+        return error
+
+    def _retry_ready(self):
+        pending = self.receiver.model_pending
+        return (not self.closed and self.transport.ready and self.transport.connected
+                and not self.transport.closing and self.transport.stop_confirmed
+                and self._session._sdk_transport is self.transport
+                and self.transport.generation == self._transport_generation
+                and (pending is None or pending.done()) and not self._callback_running.locked())
+
+    async def _retry_after(self, delay):
+        if not self._retry_ready():
+            return False
+        packets = self.token_packets
+        delivery = self.receiver.delivery.task
+        if delivery is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(delivery), 1.)
+            except TimeoutError:
+                return False
+        try:
+            await asyncio.wait_for(self._stopping.wait(), delay)
+        except TimeoutError:
+            return self._retry_ready() and self.token_packets == packets
+        return False
+
+    async def _start_receiver(self):
+        for attempt in range(len(RAW2_BUSY_RETRY_DELAYS) + 1):
+            packets = self.token_packets
+            try:
+                await self.receiver.start()
+                return
+            except RingError as exc:
+                # Only an explicit idle/busy ACK plus confirmed cleanup permits another START.
+                if (not _busy_start(exc) or self.token_packets != packets
+                        or attempt == len(RAW2_BUSY_RETRY_DELAYS)
+                        or not await self._retry_after(RAW2_BUSY_RETRY_DELAYS[attempt])):
+                    raise
+                log.info('[RAW2_RECOVERY] reason=start_busy retry=%d', attempt + 1)
+
     async def prepare(self):
         if self._callback_running.locked():
             raise RingError('busy', 'Previous Raw2 application callback is still running')
@@ -263,7 +330,7 @@ class Raw2Stream:
             self._timer_release = hold_windows_timer()
         try:
             async with asyncio.timeout(RAW2_START_TIMEOUT_S if WINDOWS else None):
-                await self.receiver.start()
+                await self._start_receiver()
         except TimeoutError:
             seconds = f'{RAW2_START_TIMEOUT_S:g}'
             # The tracker exists once the ring acknowledged START.
@@ -272,6 +339,11 @@ class Raw2Stream:
             else:
                 self.error = RingError('timeout', f'触摸板启动超过 {seconds} 秒')
             raise self.error from None
+        except RingError as exc:
+            self.error = self._explain_error(exc)
+            if self.error is exc:
+                raise
+            raise self.error from exc
         if self.closed:
             await self.receiver.stop()
             raise self.receiver.error or RingError('cancelled', 'Touchpad start cancelled')
@@ -281,14 +353,35 @@ class Raw2Stream:
 
     async def _watch(self):
         try:
-            if self.duration_s is None:
-                await asyncio.shield(self.receiver.task)
-            else:
-                try:
-                    await asyncio.wait_for(asyncio.shield(self.receiver.task), self.duration_s)
-                except TimeoutError:
-                    await self.receiver.stop()
-            self.error = self.receiver.error
+            try:
+                async with asyncio.timeout(self.duration_s):
+                    recovered = False
+                    while True:
+                        await asyncio.shield(self.receiver.task)
+                        if recovered or not self._compute_fault() or not self._retry_ready():
+                            break
+                        # Drop unfinished gestures before waiting or accepting a fresh session.
+                        if self._key is not None:
+                            await self.receiver.delivery.invoke(self._reset, (self._key, time.monotonic()))
+                        if not await self._retry_after(RAW2_RECOVERY_DELAY_S):
+                            break
+                        recovered = True
+                        log.warning('[RAW2_RECOVERY] reason=frontend_compute retry=1 device=%s',
+                                    self.receiver.reporter.device)
+                        try:
+                            async with asyncio.timeout(RAW2_RECOVERY_TIMEOUT_S):
+                                await self.prepare()
+                        except TimeoutError:
+                            self.error = RingError('input_timeout', '触摸板恢复超时，请重新开启或重连戒指。')
+                            await self.receiver.stop()
+                            break
+                        log.info('[RAW2_RECOVERY] stage=recovered session=%s', self.receiver.session)
+            except TimeoutError:
+                await self.receiver.stop()
+            except Exception as exc:
+                self.error = (None if self.closed and getattr(exc, 'reason', None) == 'cancelled'
+                              else self._explain_error(exc))
+            self.error = self.error or self._explain_error(self.receiver.error)
             if (WINDOWS and self.error is None and not self.closed
                     and 'DEVICE_STOPPED' in self.receiver.reporter.totals):
                 # Firmware ended the stream by itself: not a user stop.
@@ -299,6 +392,7 @@ class Raw2Stream:
 
     def stop_now(self):
         self.closed = True
+        self._stopping.set()
         self.receiver._clear()
         # Never cancel the receiver a second time while its finally block is
         # awaiting the device STOP ACK. touchpad_off/close can both call here.
