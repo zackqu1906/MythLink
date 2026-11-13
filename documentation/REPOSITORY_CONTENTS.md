@@ -1,6 +1,7 @@
 # 仓库内容与本地数据
 
-GitHub 保存应用源码、原生组件、产品资源、依赖清单、构建脚本、使用文档和可复用测试。
+GitHub 保存应用源码、原生组件、产品资源、依赖清单、构建脚本、`documentation/` 中的项目说明和可复用测试。
+原 `docs/` 整体只留本地，包含的 Agent 记忆、交接与工作记录不对外发布。
 固件 ZIP、SDK 动态库、随应用发布的模型和词典都是构建输入，继续纳入版本管理。
 测试中明确列出的合成样例可以提交；真实语音、屏幕内容和用户历史不能作为样例上传。
 
@@ -9,7 +10,7 @@ GitHub 保存应用源码、原生组件、产品资源、依赖清单、构建�
 | 内容 | 本地位置 |
 | --- | --- |
 | Agent 工作日志、交接、临时分析 | `.local/` 或 `.runtime/` |
-| 评测报告与原始响应 | `docs/reports/`、`docs/research/`、`reports/`、`tools/results/` |
+| 旧文档、Agent 记忆、评测报告与原始响应 | `docs/`、`reports/`、`tools/results/` |
 | 一次性实验及录音 | `experiments/<实验名>/`、`audio_tests/` |
 | 用户记录、诊断及导出 | `data/`、`logs/`、`agent-experience/`、`records/`、`exports/` |
 | 手动保存的图片、录音 | `captures/`、`screenshots/`、`recordings/` |
@@ -41,7 +42,7 @@ GitHub Actions 在 push 和 PR 时执行相同检查。CI 会报告失败，但�
 
 安装包从 `src/`、`native/`、`packaging/`、`scripts/` 和指定的第三方依赖构建，
 不依赖本机的报告、实验录音或用户历史。`.runtime/` 中的构建工具由安装脚本准备。
-具体构建步骤见 [桌面安装包](PACKAGING.md)。
+具体构建步骤见 [桌面安装包](BUILDING.md)。
 
 已打包的应用把用户记录保存在各自账户的数据目录：macOS 为
 `~/Library/Application Support/ProxiMic Voice`，Windows 为

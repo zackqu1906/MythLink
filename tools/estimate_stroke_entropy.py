@@ -20,7 +20,7 @@ Evidence layers, all simulated from hanzi-writer-data medians:
 - context: one preceding character, a bigram rebuilt from the context asset
   (see Universe.context_prior).
 
-Noise defaults come from the P01 stroke-layout recordings (docs/STROKE_LAYOUT.md);
+Noise defaults come from offline stroke-layout evaluation;
 sigma_v is re-measured here from those recordings. Context targets are drawn
 from the same bigram that scores them (no held-out text in the repository), so
 that row is optimistic about a one-character context and ignores longer ones.

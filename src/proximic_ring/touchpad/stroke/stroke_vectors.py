@@ -11,7 +11,7 @@ vector then also acts as a soft check on each stroke's class.
 
 Scope 'complete' (v1) reorders only exact complete matches, among their own list positions.
 Weight 1.75 against the fuzzy frequency prior corresponds to the cost +
-0.2·log(rank) setting chosen across two P01 sessions (docs/STROKE_LAYOUT.md).
+0.2·log(rank) setting chosen during offline stroke-layout evaluation.
 Scores are engineering distances, not probabilities.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ from importlib.resources import files
 DEFAULT_WEIGHT = 1.75
 MIN_STROKES = 2
 # Prefix scope: weight per written stroke on the mean cost. 1.0 was best on the
-# 2026-10 sentence-trial replay among .25/.5/1/2 (docs/STROKE_LAYOUT.md).
+# Sentence-trial replay compared .25/.5/1/2 during offline evaluation.
 PREFIX_WEIGHT = 1.
 SCOPES = ('prefix', 'complete')
 # Optionally leave folds out: their start→end chord depends on how far each leg

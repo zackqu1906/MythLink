@@ -48,15 +48,12 @@ def test_retired_package_is_absent_and_production_entries_do_not_reference_it():
 
 
 @pytest.mark.posix_only
-def test_source_paths_packaging_and_documented_file_inventory():
+def test_source_paths_and_packaged_ui_resources():
     from proximic_ring.agent_workflow.execution import workflow_trial_cli
     assert workflow_trial_cli.REPO == ROOT
     assert workflow_trial_cli.TASKS == ROOT/'experiments/workflow_trials/tasks'
     data = tomllib.loads((ROOT/'pyproject.toml').read_text())['tool']['setuptools']['package-data']['proximic_ring']
     assert 'agent_workflow/ui/qml/*.qml' in data
-    guide = (ROOT/'docs/AGENT_WORKFLOW_PIPELINE.md').read_text()
-    for path in (ROOT/'src/proximic_ring/agent_workflow').rglob('*.py'):
-        if path.name != '__init__.py': assert path.name in guide, path.name
 
 
 def test_old_qml_entry_is_still_loadable(inline_ui):

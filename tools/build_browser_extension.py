@@ -34,7 +34,7 @@ def build(destination, identity="-", *, safari=True):
     with zipfile.ZipFile(destination / "Mythlink-Chrome-0.1.0.zip", "w", zipfile.ZIP_DEFLATED) as archive:
         for file in sorted(store.iterdir()):
             archive.write(file, file.name)
-    shutil.copy2(ROOT / "docs/BROWSER_EXTENSION.md", destination / "安装与发布说明.md")
+    shutil.copy2(ROOT / "documentation/BROWSER_EXTENSION.md", destination / "安装与发布说明.md")
     report = {"chrome_development_id": chrome_id(), "chrome_submission": "Mythlink-Chrome-0.1.0.zip",
               "safari_signed_release": identity != "-", "version": "0.1.0"}
     if safari:

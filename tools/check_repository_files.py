@@ -31,7 +31,7 @@ def main() -> int:
             "Unstage newly added files, or use git rm --cached to stop tracking "
             "existing files while keeping local copies.\n"
             "Product assets and synthetic test fixtures need a specific reviewed "
-            ".gitignore exception. See docs/REPOSITORY_CONTENTS.md.",
+            ".gitignore exception. See documentation/REPOSITORY_CONTENTS.md.",
             file=sys.stderr,
         )
         return 1

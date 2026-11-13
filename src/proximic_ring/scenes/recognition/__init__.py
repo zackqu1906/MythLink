@@ -2,7 +2,7 @@
 
 Runtime callers use ``scenes.recognition.engine.detect_scene``. Leaf detectors
 share SceneResult, focus validation and document metadata; they never send keys
-or read/write gesture bindings. See docs/SCENE_DEFAULTS.md.
+or read/write gesture bindings. See documentation/DEVELOPMENT.md.
 """
 from ..models import SceneResult
 

@@ -37,6 +37,7 @@ class RepositoryFilesTests(unittest.TestCase):
 
     def test_private_files_do_not_enter_normal_add(self):
         paths = ["docs/reports/my report.json", "docs/research/notes.md",
+                 "docs/arbitrary-agent-memory.md",
                  ".local/agent-handoff.md", "docs/IME_DEBUG_HANDOFF_2026-11-12.md",
                  "docs/INPUT_SOURCE_DEACTIVATION_DIAGNOSIS.md",
                  "docs/report-source.md",
@@ -75,6 +76,7 @@ class RepositoryFilesTests(unittest.TestCase):
                  "src/ring_mac_sdk/native/libring.dylib",
                  "native/ProxiMicInput/Sources/InputController.swift",
                  "packaging/mythlink.spec", "scripts/build-macos.sh",
+                 "documentation/BUILDING.md", "documentation/BROWSER_EXTENSION.md",
                  "tools/data/automatic_voice_routing_cases.json",
                  "experiments/workflow_trials/cases/music-direct.case.json",
                  "experiments/workflow_recommendations/contexts/music.json",

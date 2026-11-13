@@ -8,7 +8,7 @@ import uuid
 class TouchpadDrag:
     # SDK pixels, independent of pointer speed, axis inversion and screen DPI.
     # Initial single-user calibration: stationary 600 ms radius/path < 4.8 px;
-    # stationary 100 ms drift < 4.6 px. See docs/RING_MAC_SDK.md.
+    # stationary 100 ms drift < 4.6 px in the offline SDK evaluation.
     radius = 6.
     path_limit = 8.
     movement_window = .1
