@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gc
+from functools import cached_property
 import math
 import platform
 import sys
@@ -121,7 +122,7 @@ class TouchpadController(QObject):
         self._tap_guard = TapConfirmationGuard()
         self._correction = StrokeCorrection(self._can_apply_correction, self)
         self._correction.changed.connect(lambda _: self._refresh_candidates())
-        self._commit_repair = False
+        self._skip_commit_learning = False
         self._trial = None
         self._trial_hint = ''
         self._trial_target = str(owner._settings.value('touchpad/trialTarget', '今天我用戒指输入一句话。'))
@@ -345,6 +346,7 @@ class TouchpadController(QObject):
     def _clear_stroke_evidence(self):
         self._stroke_evidence = []
         self._candidate_matches = []
+        self._skip_commit_learning = False
 
     def _writer_model(self):
         if self._personal_model is None:
@@ -505,13 +507,22 @@ class TouchpadController(QObject):
                 continue
             # Some strict/manual matches store only the entered prefix. Recover
             # a complete accepted code; never use another candidate's corrections.
-            prefix = match.get('code', self._code)
+            joined = match.get('match_type') == 'joined_stroke'
+            prefix = match.get('logical_prefix', match.get('code', self._code))
             variants = [row for row in self._stroke_dictionary().by_character.get(character, [])
                         if row[1].startswith(prefix)] if prefix else []
             canonical = glyph_library().get(character, {}).get('code', '')
             variants.sort(key=lambda row: (row[1] != canonical, row[1] != prefix,
                                           -(row[2] & 1), len(row[1]), row[1]))
             variant = variants[0][1] if variants else prefix
+            if joined:
+                mapping = match.get('observed_to_expected')
+                visual = candidate_glyph(character, match['code'] if mapping is not None else variant,
+                    match['logical_entered'], tuple(match['glyph_fuzzy']),
+                    corrections=tuple(match.get('far_corrections', ())),
+                    stroke_indices=tuple(mapping) if mapping is not None else None)
+                visuals.append(dict(visual, status=match['joined_label'] + ' · ' + visual['status']))
+                continue
             corrected = set(match.get('corrections', ()))
             fuzzy = tuple(index for index, evidence in enumerate(self._stroke_evidence)
                           if self._fuzzy_matching and (evidence['ambiguous'] or index in corrected))
@@ -925,6 +936,8 @@ class TouchpadController(QObject):
             match = next((row for row in self._candidate_matches if row['char'] == char), {})
             # A repaired or page-filling guess says nothing about how the user writes.
             repair = match.get('match_type') in REPAIRS
+            joined = match.get('match_type') == 'joined_stroke'
+            skip_learning = repair or joined
             try:
                 inserted = self._commit_character(text)
             except Exception as exc:
@@ -932,20 +945,25 @@ class TouchpadController(QObject):
                 self.changed.emit()
                 return
             if trial is not None:
-                trial.commit(len(before), text, self._personal_text == before + text, code=code)
+                delivered = self._personal_text == before + text
+                trial.commit(len(before), text, delivered, code=code)
                 if repair:
                     trial.event('candidate_fill_commit' if match['match_type'] == 'tolerant' else 'whole_correction_commit',
                                 character=char, code=code, corrected_code=match.get('code', ''),
                                 match_type=match['match_type'], edits=match.get('edits', []),
                                 correction_summary=match.get('correction_summary', ''),
-                                delivered=self._personal_text == before + text)
+                                delivered=delivered)
+                if joined:
+                    trial.event('joined_stroke_commit', character=char, physical_code=code,
+                                logical_prefix=match['logical_prefix'], contacts=match['joined_contacts'],
+                                groups=match['joined_groups'], delivered=delivered)
             if inserted is None:
-                self._commit_repair = repair
+                self._skip_commit_learning = skip_learning
                 self._commit_message = "正在输入「" + char + "」…"
                 self.changed.emit()
             elif inserted:
                 self._tap_guard.committed()
-                if not repair:
+                if not skip_learning:
                     self._learn_writer(char, evidence)
                 self._commit_message = "已输入「" + char + "」"
                 self._code = ""
@@ -974,11 +992,11 @@ class TouchpadController(QObject):
         if char != self._pending_stroke_commit:
             return
         self._pending_stroke_commit = ""
-        repair, self._commit_repair = self._commit_repair, False
+        skip_learning, self._skip_commit_learning = self._skip_commit_learning, False
         if success:
             self._tap_guard.committed()
             candidate = char.removesuffix(' ')
-            if candidate and candidate not in PUNCTUATION and not repair:
+            if candidate and candidate not in PUNCTUATION and not skip_learning:
                 self._learn_writer(candidate, self._stroke_evidence)
             self._code = ""
             self._clear_stroke_evidence()
@@ -1021,6 +1039,15 @@ class TouchpadController(QObject):
             self._dictionary.stroke_vectors = StrokeVectorModel(scope='prefix')
         return self._dictionary
 
+    @cached_property
+    def _joined_model(self):
+        try:
+            from ...touchpad.stroke.stroke_joined import JoinedStrokeModel
+            return JoinedStrokeModel.load()
+        except (OSError, EOFError, ValueError, KeyError, TypeError) as error:
+            self.owner._event_log('STROKE_JOINED_MODEL_UNAVAILABLE', _live_message='', error=str(error))
+            return None
+
     def _context_model(self):
         if self._predictor is None:
             from ...touchpad.stroke.stroke_context import StrokeContext
@@ -1033,8 +1060,7 @@ class TouchpadController(QObject):
                 and self._selection_state.get('phase', 'idle') == 'idle')
 
     def _refresh_candidates(self):
-        """Same pipeline as the standalone trial's defaults: strict/fuzzy codes,
-        whole-character repair, then guesses that fill a short first page."""
+        """Rank ordinary and joined strokes, then offer repair and page-filling guesses."""
         try:
             self._prediction_mode = False
             self._candidate_matches = []
@@ -1051,6 +1077,13 @@ class TouchpadController(QObject):
                     self._candidate_matches = dictionary.encoding_candidates(
                         self._stroke_evidence, limit=30, fuzzy=False, allowed_characters=allowed)
                 self._candidates = [item['char'] for item in self._candidate_matches]
+                if any(stroke.get('joined_options') for stroke in self._stroke_evidence):
+                    from ...touchpad.stroke.stroke_joined import merge_joined_candidates
+                    self._candidates, self._candidate_matches = merge_joined_candidates(
+                        dictionary, self._stroke_evidence, self._candidates, self._candidate_matches,
+                        self._joined_model, fuzzy=self._fuzzy_matching, context=self._stroke_context,
+                        predictor=self._context_model() if self._fuzzy_matching else None,
+                        policy=self._fuzzy_policy, allowed=allowed)
                 repairs = self._correction.update(enabled=True, code=self._code, evidence=self._stroke_evidence,
                     context=self._stroke_context, dictionary=dictionary, predictor=self._context_model(),
                     allowed=allowed, normal=self._candidates)
@@ -1059,7 +1092,7 @@ class TouchpadController(QObject):
                     reserved = 1 if any(row.get('context_extra_slot') for row in self._candidate_matches) else 2
                     self._candidates = merge_candidates(self._candidates, repairs, reserved=reserved)
                     self._candidate_matches = self._candidate_matches + repairs
-                if self._fuzzy_matching:  # Strict mode stays a pure code lookup.
+                if self._fuzzy_matching:
                     self._candidates, self._candidate_matches = fill_page(
                         self._candidates, self._candidate_matches, index=index_for(dictionary, allowed),
                         evidence=self._stroke_evidence, predictor=self._context_model(), context=self._stroke_context,
@@ -1200,6 +1233,7 @@ class TouchpadController(QObject):
         try:
             self._context_model()
             index_for(self._stroke_dictionary(), common_characters())
+            self._joined_model
         except Exception:
             pass  # _refresh_candidates reports load failures where they matter.
         gc.collect()
@@ -1442,10 +1476,19 @@ class TouchpadController(QObject):
                             return
                     recognition_start = time.monotonic()
                     result = self._stroke_dictionary().recognize(points)
+                    if result is not None and self._joined_model is not None:
+                        options = self._joined_model.recognize(points)
+                        if options:
+                            result = dict(result, joined_options=options)
                     trial = self._active_trial() if self._local_stroke_input else None
                     if trial is not None:
-                        trial.stroke(len(self._personal_text), len(self._code), result,
-                                     (time.monotonic()-recognition_start)*1000)
+                        recognition_ms = (time.monotonic()-recognition_start)*1000
+                        options = result.get('joined_options', []) if result else []
+                        if options or any(stroke.get('joined_options') for stroke in self._stroke_evidence):
+                            trial.event('joined_contact_unscored', recognition_ms=recognition_ms,
+                                        options=options, stroke_index=len(self._code))
+                        else:
+                            trial.stroke(len(self._personal_text), len(self._code), result, recognition_ms)
                     if result is not None:
                         run.diagnostics.note('stroke_recognized')
                         if self.strokeSession.allow_input():
@@ -1459,6 +1502,7 @@ class TouchpadController(QObject):
                                 template_profile=result.get('template_profile', 'none'),
                                 category_alternatives=result.get('category_alternatives', []),
                                 category_scores=result.get('category_scores', []), fuzzy_matching=self._fuzzy_matching,
+                                joined_options=result.get('joined_options', []),
                                 personal_adaptation=result.get('personal_adaptation'),
                                 base_category_scores=result.get('base_category_scores'),
                                 fuzzy_policy=self._fuzzy_policy.snapshot(),
@@ -1593,10 +1637,13 @@ class TouchpadController(QObject):
         actual = self._personal_text
         char = trial.target[len(actual)] if len(actual) < len(trial.target) else None
         code = trial.codes.get(char, '')
-        expected = NAMES.get(code[len(self._code)], '—') if len(self._code) < len(code) else '请选字 / 退笔'
+        joined = next((match for match in self._candidate_matches
+                       if match['char'] == char and match.get('match_type') == 'joined_stroke'), {})
+        entered = joined.get('logical_entered', len(self._code))
+        expected = NAMES.get(code[entered], '—') if entered < len(code) else '请选字 / 退笔'
         unsupported = ''.join(dict.fromkeys(c for c in trial.target if c not in trial.codes and c not in PUNCTUATION))
         return (f'当前第 {len(actual)+1} 字：{char or "已超出原文"} · 下一笔：{expected} · '
-                '仅戒指识别计入笔画准确率；按钮输入单独记录。' +
+                '按钮输入和存在连笔歧义的接触单独记录。' +
                 (f'\n原文含未支持字符：{unsupported}。可结束保存未完成结果，或重新编辑原文。' if unsupported else ''))
 
     @Slot()
@@ -1639,6 +1686,8 @@ class TouchpadController(QObject):
             adaptive_fuzzy_policy=dict(ADAPTIVE_SETTINGS), context_ranking=ranking_snapshot(),
             context_model=getattr(self._predictor, 'model', 'wanxiang'), common_only=True,
             personal_learning=self._personal_enabled, writing_profile=self._personal_name,
+            joined_stroke_enabled=self._joined_model is not None,
+            joined_contacts_unscored=report['counts'].get('joined_contact_unscored', 0),
             whole_correction_enabled=True, candidate_fill_enabled=self._fuzzy_matching,
             stroke_vector_enabled=True, tap_guard_enabled=True, tap_guard_policy=self._tap_guard.snapshot(),
             selection_policy=dict(TRIAL_SELECTION))

@@ -5,6 +5,7 @@ from PySide6.QtCore import QObject, QPointF, Qt
 from PySide6.QtTest import QTest
 
 from test_inline_ui import inline_ui
+from test_stroke_session import until
 from test_touchpad_page_layout import open_trial
 
 
@@ -180,6 +181,55 @@ def test_manual_finish_saves_an_incomplete_trial(inline_ui, tmp_path):
         assert not report['completed'] and report['finish_reason'] == 'manual'
         assert [e['kind'] for e in report['events']] == ['manual_stroke', 'undo_stroke']
         assert '已结束（未完成）' in tp.trialHint
+    finally:
+        tp.close()
+        QTest.qWait(20)
+
+
+def test_joined_fan_is_three_contacts_and_four_strokes_in_the_app(inline_ui, monkeypatch, tmp_path):
+    c, _, window, tp, source = open_trial(inline_ui, (1280, 900))
+    editor = window.findChild(QObject, 'strokeTestEditor')
+    tp.setLocalStrokeInput(True)
+    editor.forceActiveFocus()
+    tp.setLocalStrokeFocus(True)
+    tp.setInputMode('stroke')
+    tp.start()
+    until(lambda: bool(source.starts))
+    source.future.set_result(None)
+    until(lambda: tp.state == 'running')
+    learn_calls = []
+    monkeypatch.setattr(tp, '_learn_writer', lambda *args: learn_calls.append(args))
+    try:
+        tp.trial_report_dir = tmp_path
+        tp.setTrialTarget('反')
+        tp.startTrial()
+        model = tp._joined_model
+        index = model.labels.index('fan')
+        points = (model.bank[index, :2].T * 40).tolist()
+
+        def draw_joined():
+            tp._run.output.options['on_stroke'](points)
+            until(lambda: bool(tp._stroke_evidence))
+            assert len(tp._stroke_evidence) == 1
+            assert any(option['family'] == 'fan' for option in tp._stroke_evidence[0]['joined_options'])
+
+        draw_joined()
+        tp.undoStroke()
+        assert not tp.strokeTokens and not tp._stroke_evidence
+        draw_joined()
+        tp.addStroke('z')
+        tp.addStroke('n')
+        assert len(tp.strokeTokens) == 3 and '反' in tp.strokeCandidates
+        visual = next(v for v in tp.strokeCandidateVisuals if v['character'] == '反')
+        assert visual['entered'] == 4 and visual['available']
+        assert visual['states'][:2] == ['fuzzy', 'fuzzy'] and '连笔 1→2' in visual['status']
+        tp.selectCandidate(tp.strokeCandidates.index('反'))
+        assert editor.property('text') == '反' and not tp.strokeTokens and not learn_calls
+        report = json.loads(next(tmp_path.glob('trial-*.json')).read_text(encoding='utf-8'))
+        assert report['completed'] and report['joined_contacts_unscored'] == 2
+        assert report['scored_strokes'] == 0
+        event = next(e for e in report['events'] if e['kind'] == 'joined_stroke_commit')
+        assert event['contacts'] == [0] and event['logical_prefix'] == 'ppzn'
     finally:
         tp.close()
         QTest.qWait(20)

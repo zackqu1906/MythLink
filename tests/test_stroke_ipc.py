@@ -142,6 +142,18 @@ def test_two_finger_double_shows_native_palette_commits_and_returns_to_mouse(str
                   and not tp._pending_stroke_commit)
             assert [m for m in sent if m['type'] == 'stroke_commit'][-1]['text'] == prefix[-2:]
             assert not mouse.calls
+            joined = tp._joined_model
+            points = (joined.bank[joined.labels.index('fan'), :2].T * 40).tolist()
+            tp._receive(run, 'stroke', (run.output, points))
+            tp.addStroke('z')
+            tp.addStroke('n')
+            update = next(m for m in reversed(sent) if m['type'] == 'stroke_update')
+            index = update['candidates'].index('反')
+            assert update['glyphs'][index]['status'] == '连笔 1→2 · 已写完'
+            tp.selectCandidate(index)
+            until(lambda: sum(m.get('type') == 'stroke_result' and bool(m.get('success')) for m in received) == 6
+                  and not tp._pending_stroke_commit)
+            prefix += '反'
             # The production host proves the real IMK focus. Only the final OS
             # key post is replaced with Backspace in this process's NSTextView.
             def backspace(application, pid):

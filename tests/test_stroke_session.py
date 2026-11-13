@@ -128,6 +128,36 @@ def test_confirm_keeps_stroke_mode_and_does_not_show_canonical_shape(stroke):
     assert session.phase == "running" and tp.active and tp._code == "" and tp.blocksVoice
 
 
+def test_external_joined_candidate_renders_and_skips_learning_after_ack(stroke, monkeypatch):
+    c, bridge, tp, _, session = stroke
+    wake(stroke)
+    tp.fuzzyMatching = False
+    model = tp._joined_model
+    points = (model.bank[model.labels.index('fan'), :2].T * 40).tolist()
+    learned = []
+    monkeypatch.setattr(tp, '_learn_writer', lambda *args: learned.append(args))
+    tp._run.output.options['on_stroke'](points)
+    until(lambda: bool(tp._stroke_evidence))
+    tp.addStroke('z')
+    tp.addStroke('n')
+    update = next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_update')
+    assert len(update['code'].split()) == 3
+    index = update['candidates'].index('反')
+    glyph = update['glyphs'][index]
+    assert glyph['png'] and not glyph['next'] and glyph['status'] == '连笔 1→2 · 已写完'
+
+    for success in (False, True):
+        tp.selectCandidate(index)
+        assert tp._pending_stroke_commit == '反' and len(tp.strokeTokens) == 3
+        request = next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_commit')
+        assert request['text'] == '反'
+        c._inline_input._accept(dict(type='stroke_result', epoch=c._inline_input._epoch,
+            client_id=request['client_id'], request_id=request['request_id'], success=success))
+        assert not tp._pending_stroke_commit and not learned
+        assert bool(tp.strokeTokens) is not success
+    assert session.phase == 'running'
+
+
 def test_native_palette_gets_the_trial_menu_selection_and_punctuation(stroke):
     c, bridge, tp, _, session = stroke
     wake(stroke)

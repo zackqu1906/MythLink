@@ -105,6 +105,8 @@ def main():
     parser.add_argument('--cache', type=Path, default=ROOT/'tmp'/'left-dot-research')
     parser.add_argument('--output', type=Path, default=ROOT/'data'/'models'/'joined-strokes'/'model.json.gz')
     parser.add_argument('--report', type=Path, default=ROOT/'data'/'diagnostics'/'joined-strokes'/'model-review.json')
+    parser.add_argument('--bundled-output', type=Path,
+                        help='Also export normalized templates without session metadata or sample identifiers')
     args = parser.parse_args()
     paths = args.paths or sorted((ROOT/'data'/'recordings'/'joined-strokes').glob('*.json'))
     samples, sessions, duplicates = load_samples(paths)
@@ -122,7 +124,15 @@ def main():
             interruptions=sum(len(s['interruptions']) for s in sessions.values())),
         annotatedCharacters=len(positions), evaluation=evaluate(samples, positions, dictionary))
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(gzip.compress(json.dumps(payload_for(samples, positions, source),ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8'),mtime=0))
+    payload = payload_for(samples, positions, source)
+    args.output.write_bytes(gzip.compress(json.dumps(payload,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8'),mtime=0))
+    if args.bundled_output is not None:
+        bundled = {key: payload[key] for key in ('schema', 'version', 'policy')}
+        bundled['source'] = dict(kind='bundled', sampleCount=len(samples), familyCounts=source['familyCounts'])
+        bundled['templates'] = [dict(family=row['family'], features=row['features']) for row in payload['templates']]
+        args.bundled_output.parent.mkdir(parents=True, exist_ok=True)
+        args.bundled_output.write_bytes(gzip.compress(json.dumps(bundled, separators=(',', ':'),
+            allow_nan=False).encode('utf-8'), mtime=0))
     atomic_save(args.report, report)
     print(json.dumps(dict(source=source, quality=report['quality'], annotatedCharacters=len(positions),
         evaluation={k:v for k,v in report['evaluation'].items() if k != 'details'}), ensure_ascii=True))

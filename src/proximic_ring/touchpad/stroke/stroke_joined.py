@@ -1,9 +1,10 @@
-"""Opt-in joined-contact hypotheses for the standalone input trial only."""
+"""Optional joined-contact hypotheses alongside ordinary stroke recognition."""
 from __future__ import annotations
 
 from copy import copy, deepcopy
 from collections import defaultdict
 import gzip
+from importlib.resources import files
 import json
 import math
 from pathlib import Path
@@ -57,11 +58,13 @@ class JoinedStrokeModel:
                     self.entries_by_pair[(row['family'], row['start'], full[row['start']:row['start']+width])].append((char, full))
 
     @classmethod
-    def load(cls, path):
-        with gzip.open(Path(path), 'rt', encoding='utf-8') as stream:
-            payload = json.load(stream)
+    def load(cls, path=None):
+        resource = (Path(path) if path is not None else
+                    files('proximic_ring').joinpath('assets/stroke-joined-model.json.gz'))
+        with resource.open('rb') as stream:
+            payload = json.loads(gzip.decompress(stream.read()))
         # Component coverage must update independently of a wearer's old model.
-        # Loading the existing 70-sample model now also covers 斤 and 辶.
+        # The bundled templates and older local models use the same registry.
         registry = component_registry()
         payload.update(positions=registry['positions'], referenceTemplates=registry['referenceTemplates'],
                        componentSource=registry['source'])
@@ -158,6 +161,7 @@ class JoinedStrokeModel:
     def view_for_entries(dictionary, entries):
         view = copy(dictionary)
         view.by_initial = defaultdict(list)
+        view._scope_cache = {}
         for char, full in sorted(entries):
             for entry in dictionary.by_character.get(char, []):
                 if entry[1] == full:
@@ -216,13 +220,9 @@ def merge_joined_candidates(dictionary, evidence, normal_chars, normal_rows, mod
     for path in component_paths(dictionary, evidence, model, allowed):
         expanded, groups = path['expanded'], path['groups']
         view = model.view_for_entries(dictionary, path['eligible'])
-        if fuzzy:
-            rows = view.fuzzy_candidates(expanded, limit=limit, predictor=predictor, context=context,
-                allowed_characters=allowed, **({'policy': policy} if policy is not None else {}))
-        else:
-            prefix = ''.join(s['category'] for s in expanded)
-            rows = [dict(char=c, code=prefix, cost=0., corrections=[], exact_match=False)
-                    for c in view.candidates(prefix, limit, allowed_characters=allowed)]
+        rows = view.encoding_candidates(expanded, limit=limit, fuzzy=fuzzy,
+            predictor=predictor if fuzzy else None, context=context,
+            allowed_characters=allowed, policy=policy)
         for row in rows:
             prefix = row['code'][:len(expanded)]
             mapping = row.get('observed_to_expected')
