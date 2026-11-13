@@ -12,8 +12,10 @@ class RoutedEditVoiceMixin:
 
     def _routed_inline_edit_options(self, key):
         capture = getattr(self, "_voice_capture", None)
-        context = capture["model_context"] if capture and capture.get("key") == tuple(key[:3]) else {}
-        return {"routing_mode": INPUT_ROUTING_ROUTED_EDIT, "screen_context": context, "force_llm": True}
+        capture = capture if capture and capture.get("key") == tuple(key[:3]) else {}
+        return {"routing_mode": INPUT_ROUTING_ROUTED_EDIT,
+                "screen_context": capture.get("model_context", {}), "force_llm": True,
+                "routed_edit_variant": capture.get("routed_edit_variant", self._routed_edit_variant)}
 
     def _submit_routed_voice(self, text, session_id, mode, target):
         # Desktop adapter fallback; the native input method already owns the
@@ -34,7 +36,8 @@ class RoutedEditVoiceMixin:
             self._reject_edit_request(f"原文读取不可用，未发送编辑请求：{exc}")
             return
         capture = getattr(self, "_voice_capture", None)
-        context = capture["model_context"] if capture and capture.get("session_id") == session_id else {}
+        capture = capture if capture and capture.get("session_id") == session_id else {}
         self._submit_text_processing(text, session_id, INPUT_MODE_EDIT, target=target,
-            snapshot=snapshot, target_text=snapshot.text, screen_context=context,
-            routing_mode=INPUT_ROUTING_ROUTED_EDIT, force_llm=True)
+            snapshot=snapshot, target_text=snapshot.text, screen_context=capture.get("model_context", {}),
+            routing_mode=INPUT_ROUTING_ROUTED_EDIT, force_llm=True,
+            routed_edit_variant=capture.get("routed_edit_variant", self._routed_edit_variant))

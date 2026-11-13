@@ -59,6 +59,7 @@ class VoiceCaptureMixin:
             "bound": False,
             "routing": self._inline_input.session_routing_mode if inline else self._input_routing_mode,
             "requested_mode": self._input_mode,
+            "routed_edit_variant": self._routed_edit_variant,
             "input_context": self._voice_input_context(inline=inline, verified=verified, target=target),
         }
 

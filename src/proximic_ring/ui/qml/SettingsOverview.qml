@@ -14,6 +14,7 @@ ColumnLayout {
     signal advancedSettingsRequested()
     signal gpuSetupRequested()
     signal logRequested()
+    signal voiceHistoryRequested()
     signal browserSetupRequested(string browser)
     readonly property real advancedTextPosition: advancedServices.y + advancedServices.textServicesPosition
     spacing: 18
@@ -35,10 +36,18 @@ ColumnLayout {
         onAudioRequested: pane.expandedSection = "audio"
         onGesturesRequested: pane.detailRequested(12)
         onGeneralRequested: pane.expandedSection = "general"
+        onFirmwareRequested: pane.expandedSection = "firmware"
         onAgentRequested: pane.expandedSection = "agent"
         onBrowserRequested: pane.expandedSection = "browser"
         onAdvancedRequested: pane.advancedSettingsRequested()
         onLogRequested: pane.logRequested()
+        onVoiceHistoryRequested: pane.voiceHistoryRequested()
+    }
+
+    FirmwareUpdateSettings {
+        Layout.fillWidth: true
+        visible: pane.expandedSection === "firmware"
+        updater: pane.controller.firmwareUpdate
     }
 
     FigmaFormGroup {
@@ -178,7 +187,7 @@ ColumnLayout {
             description: pane.controller.inputRoutingMode === "auto"
                 ? "开始后说话，再结束即可自动判断听写或编辑。请先在服务设置中配置自动路由服务器。"
                 : pane.controller.inputRoutingMode === "manual_routed_edit"
-                  ? "手势明确选择听写或编辑；编辑由火山 DeepSeek 一次返回六类任务和完整正文。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
+                  ? "手势明确选择听写或编辑；编辑由火山 DeepSeek 一次完成，可在下方选择编辑版本。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
                   : "先听写，通过转换操作将本句作为编辑指令。"
             FigmaSelect {
                 objectName: "inputRoutingModeCombo"
@@ -187,6 +196,23 @@ ColumnLayout {
                 model: ["自动判断", "手动转换", "手动＋编辑路由"]
                 currentIndex: pane.controller.inputRoutingMode === "auto" ? 0 : pane.controller.inputRoutingMode === "manual_routed_edit" ? 2 : 1
                 onActivated: pane.controller.inputRoutingMode = ["auto", "manual", "manual_routed_edit"][currentIndex]
+            }
+        }
+        FigmaFormRow {
+            preferenceStyle: true
+            objectName: "routedEditVariantRow"
+            visible: pane.controller.inputRoutingMode === "manual_routed_edit"
+            title: "手动编辑版本"
+            description: pane.controller.routedEditVariant === "boundary_only_v1"
+                ? "按完整边界直接生成正文，由模型自行组合编辑要求，不输出分类。下次录音生效。"
+                : "保留原来的六分类版本，在一次请求中返回任务类别和完整正文。下次录音生效。"
+            FigmaSelect {
+                objectName: "routedEditVariantCombo"
+                Layout.fillWidth: true
+                Accessible.name: "手动编辑版本"
+                model: ["六分类 v5", "无分类边界 v1"]
+                currentIndex: pane.controller.routedEditVariant === "boundary_only_v1" ? 1 : 0
+                onActivated: pane.controller.routedEditVariant = ["six_class_v5", "boundary_only_v1"][currentIndex]
             }
         }
         FigmaFormRow {

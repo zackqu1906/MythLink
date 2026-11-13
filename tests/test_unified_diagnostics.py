@@ -189,15 +189,20 @@ def test_controller_view_and_export_show_background_scene_details(tmp_path, monk
     from PySide6.QtTest import QTest
     from zipfile import ZipFile
     import time
+    from proximic_ring.diagnostics.export_scope import ExportScope
+    from proximic_ring.diagnostics.log_export import LogRange
+    monkeypatch.setattr('proximic_ring.ui.diagnostic_export_controller.choose_export_scope',
+                        lambda **kwargs: kwargs["on_selected"]((ExportScope(frozenset({'test-app'})), LogRange.create('all'), tmp_path)))
+    monkeypatch.setattr('proximic_ring.ui.diagnostic_export_controller.suggested_filename', lambda selection: 'report.zip')
     controller = _controller(tmp_path, monkeypatch)
     controller.diagnosticExport._ime_root = tmp_path / 'ime'
     destination = tmp_path / 'report.zip'
     monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **k: (str(destination), ''))
     try:
-        controller._append_log('visible event')
-        controller._append_background_diagnostic('background event')
+        controller._append_log('visible event', attribution={'application': 'test-app'})
+        controller._append_background_diagnostic('background event', attribution={'application': 'test-app'})
         controller.appGestures._diagnostics.record('trace-unified', 'capture', 'recognition_timeout',
-                                                   elapsed_ms=301, scanned_nodes=1200)
+                                                   app='test-app', elapsed_ms=301, scanned_nodes=1200)
         text = controller.readDiagnosticLog()
         assert 'visible event' in text and 'background event' in text and 'trace-unified' in text
         assert controller.appGestures._diagnostics.path == controller._diagnostic_log.path

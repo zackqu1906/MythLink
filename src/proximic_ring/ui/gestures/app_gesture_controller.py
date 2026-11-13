@@ -18,6 +18,7 @@ from ...desktop.app_shortcuts import MacAppShortcuts
 from ...platforms.macos.mac_permissions import MacPermissionError
 from ...diagnostics.scene_diagnostics import SceneActionError, SceneDiagnostics, new_trace_id, reason_message, exception_details
 from ...gestures.gesture_settings import BoundGestureEvent, GESTURE_LABELS
+from ...gestures.history import observe_gesture
 from ...voice.ime.input_source_switch import foreground_pid, select_voice_input_source
 from ...scenes.registry import SCENE_LABELS, PRESENTATION
 from ...platforms.macos.wechat_setup import (KEYBOARD_SETTINGS_URL, MENU_TITLES,
@@ -150,6 +151,16 @@ class AppGestureController(QObject):
             if target is not None:
                 facts.update(app=target.bundle, pid=target.pid, scene=target.scene,
                              input_context=target.input_context, blocked=target.blocked)
+                browser = getattr(target, "browser_target", None) or {}
+                if browser.get("focused") and browser.get("authorized"):
+                    facts["website"] = browser.get("website", "")
+            status = ("confirmed" if reason == "browser_action_applied" else
+                      "triggered" if reason in {"shortcut_posted", "global_action_started", "polish_requested"} else
+                      "not_triggered" if stage == "outcome" else "")
+            observe_gesture(self.owner, trace_id, gesture=facts.get("gesture"),
+                application=facts.get("app"), website=facts.get("website"),
+                scene=facts.get("active_scene") or facts.get("scene"), focus=facts.get("input_context"),
+                voice_state=facts.get("phase"), action=ACTION_LABELS.get(facts.get("action")) or facts.get("shortcut") or facts.get("action"), status=status)
             self._diagnostics.record(trace_id, stage, reason, **facts)
         except Exception:
             pass  # Diagnostics must not change gesture routing or execution.
@@ -379,6 +390,9 @@ class AppGestureController(QObject):
         if time.monotonic() - self._source_last < 0.6:
             return
         self._source_busy = True
+        source = event.source.event if isinstance(event.source, BoundGestureEvent) else event.source
+        history_id = getattr(source, "record_id", "")
+        observe_gesture(self.owner, history_id, action="切换输入法", status="observed")
         self._source_last = time.monotonic()
         connection = self.owner._disconnect_event
         def work():
@@ -393,6 +407,7 @@ class AppGestureController(QObject):
             except Exception as exc:
                 error = str(exc)
             finally:
+                observe_gesture(self.owner, history_id, status="not_triggered" if error else "confirmed")
                 if not self._setup_closed:
                     self._inputSourceResult.emit(error)
         threading.Thread(target=work, name="SelectVoiceInputSource", daemon=True).start()
@@ -626,7 +641,7 @@ class AppGestureController(QObject):
             created = time.monotonic()
         state, sentence = self.phase_state(), self.sentence()
         busy = bool(audio_busy or self.owner._ring_gestures.speech_busy())
-        trace_id = new_trace_id()
+        trace_id = getattr(source, "record_id", "") or new_trace_id()
         self._trace(trace_id, "received", "received", gesture=name, route="focus", **state)
         inline = self.owner._inline_input
         # With nothing left to undo, probing must not borrow the just-restored keyboard.
@@ -973,6 +988,7 @@ class AppGestureController(QObject):
             self.notify("输入目标已变化，未执行润色")
             return
         if inline.polish(restore_raw_on_undo=restore_raw_on_undo):
+            self._trace(event.trace_id, "outcome", "polish_requested", target=target, app=bundle, action="polish")
             self.dismissNotice()
             self.owner._event_log("APP_GESTURE", app=bundle, action="polish", result="requested")
 

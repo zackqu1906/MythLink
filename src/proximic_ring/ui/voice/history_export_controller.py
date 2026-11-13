@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot, QStandardPaths, QUrl
 from PySide6.QtGui import QDesktopServices
 
 from ...voice.history_export import export_history, ExportCancelled
+from ..export_picker import choose_export_scope
 
 
 class HistoryExportController(QObject):
@@ -14,9 +15,11 @@ class HistoryExportController(QObject):
     _finished = Signal(object, str)
     _progress = Signal(int, int)
 
-    def __init__(self, store, parent=None):
+    def __init__(self, store, parent=None, *, kind="voice"):
         super().__init__(parent)
         self._store = store
+        self._kind = kind
+        self._title = "手势" if kind == "gesture" else "语音"
         self._busy = False
         self._message = ""
         self._path = ""
@@ -51,9 +54,25 @@ class HistoryExportController(QObject):
         if self._busy or self._cancel.is_set():
             return
         self._busy, self._error = True, False
-        self._message = "正在导出语音历史…"
+        self._previous_message = self._message
+        self._message = "请选择本次导出的应用…"
         self.changed.emit()
-        destination = self._destination()
+        try:
+            choose_export_scope(owner=self.parent(), on_selected=self._selected, kind=self._kind,
+                default_directory=self._destination(),
+                **({"gestures": self._store} if self._kind == "gesture" else {"store": self._store}))
+        except Exception as exc:
+            self._complete(None, f"读取导出范围失败：{exc}")
+            return
+
+    def _selected(self, chosen):
+        if chosen is None or self._cancel.is_set():
+            self._busy, self._message = False, self._previous_message
+            self.changed.emit()
+            return
+        scope, selection, destination = chosen
+        self._message = f"正在导出{self._title}历史…"
+        self.changed.emit()
 
         def work():
             last_progress = 0.0
@@ -65,7 +84,12 @@ class HistoryExportController(QObject):
                     self._progress.emit(done, total)
             result, error = None, ""
             try:
-                result = export_history(self._store, destination, on_progress=progress, cancel=self._cancel)
+                if self._kind == "gesture":
+                    from ...gestures.history import export_gestures
+                    result = export_gestures(self._store, destination, scope=scope, selection=selection, cancel=self._cancel)
+                else:
+                    result = export_history(self._store, destination, on_progress=progress, cancel=self._cancel,
+                                            scope=scope, selection=selection)
             except ExportCancelled:
                 return
             except Exception as exc:
@@ -80,7 +104,7 @@ class HistoryExportController(QObject):
     @Slot(int, int)
     def _show_progress(self, done, total):
         if self._busy:
-            self._message = f"正在导出语音历史：{done} / {total}"
+            self._message = f"正在导出{self._title}历史：{done} / {total}"
             self.changed.emit()
 
     @Slot(object, str)
@@ -90,7 +114,9 @@ class HistoryExportController(QObject):
             self._message = error
         else:
             self._path = result["path"]
-            self._message = f"已导出 {result['record_count']} 条记录到下载文件夹。"
+            self._message = f"已导出 {result['record_count']} 条记录到 {Path(self._path).parent}。"
+            if result.get("filtered_count"):
+                self._message += f"按应用、归属及时间排除 {result['filtered_count']} 条。"
             if result["skipped_count"] or result["missing_file_count"]:
                 self._message += f"跳过 {result['skipped_count']} 条，缺少 {result['missing_file_count']} 个附件，详情见包内清单。"
         self.changed.emit()

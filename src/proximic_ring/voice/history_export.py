@@ -17,6 +17,12 @@ from .modification_dataset import _CURRENT_INTERACTION_ID
 
 README = """Mythlink 语音历史导出 v1
 
+应用与时间筛选以 manifest.export_scope / range 为准；选中记录和已有附件保持完整。
+一条记录的所有已知来源应用必须都被选中；未知归属、损坏的归属证据默认排除。
+浏览器按网站选择时，缺少网站归属的证据不会被猜成当前网站；仍可选择整个浏览器应用。
+associations.jsonl 仅含所有成员均在本包内的关联，不引入未选记录；本地原始数据不变。
+应用筛选不等于对正文、截图或录音内容脱敏。导出文件不会自动上传。
+
 summary.csv：每条交互一行，适合表格筛选；UTF-8 BOM 编码。
 records.jsonl：每行一个完整 InteractionRecord，不截断口述、原文、context 或模型输入。
 interactions/<interaction_id>/：原始 record.json，以及已留存的录音、截图、ASR 更新、事件和 IMU 文件。
@@ -154,8 +160,9 @@ def _record_snapshot(store, identity):
         yield record, raw, files, warnings
 
 
-def export_history(store, destination, *, on_progress=None, cancel=None):
-    """Export all stored interactions, independent of UI filters and row limits."""
+def export_history(store, destination, *, on_progress=None, cancel=None, scope=None, selection=None):
+    """Export complete snapshots within the explicit export-time selection."""
+    from ..diagnostics.export_scope import attachment_scope_ok, filtered_associations
     started = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     with store._lock:
         if store.user_root.is_symlink() or store.interactions_root.is_symlink():
@@ -178,6 +185,11 @@ def export_history(store, destination, *, on_progress=None, cancel=None):
                     snapshot_policy="per_record_locked", source_record_count=len(identities),
                     record_count=0, schema_versions=Counter(), routing_modes=Counter(),
                     context_coverage=Counter(), skipped_records=[], missing_files=[], files=[])
+    manifest["filtered_record_count"] = 0
+    if scope is not None:
+        manifest["export_scope"] = scope.as_dict()
+    if selection is not None:
+        manifest["range"] = selection.key
     completed = set()
     with tempfile.TemporaryDirectory(prefix=".mythlink-export-", dir=destination) as temporary:
         temporary = Path(temporary)
@@ -196,6 +208,10 @@ def export_history(store, destination, *, on_progress=None, cancel=None):
                     except (OSError, ValueError, TypeError, KeyError) as exc:
                         manifest["skipped_records"].append(dict(interaction_id=identity, reason=type(exc).__name__))
                     else:
+                        if ((selection is not None and not selection.overlaps(record))
+                                or (scope is not None and not attachment_scope_ok(files, scope, record))):
+                            manifest["filtered_record_count"] += 1
+                            continue
                         base = f"interactions/{identity}/"
                         output.writestr(base + "record.json", raw)
                         manifest["files"].append(dict(path=base + "record.json", size=len(raw), sha256=hashlib.sha256(raw).hexdigest()))
@@ -228,11 +244,13 @@ def export_history(store, destination, *, on_progress=None, cancel=None):
                 if on_progress:
                     on_progress(index + 1, len(identities))
             if not completed:
-                raise ValueError("没有可读取的语音历史，导出未生成")
+                raise ValueError("所选应用和时间内没有可导出的完整语音记录；归属不明或涉及未选应用的记录已排除")
             records_file.flush()
             csv_file.flush()
             output.write(temporary / "records.jsonl", "records.jsonl")
             output.write(temporary / "summary.csv", "summary.csv")
+            if scope is not None or selection is not None:
+                associations, manifest["filtered_association_count"] = filtered_associations(associations, completed)
             output.writestr("associations.jsonl", associations)
             # Keep the raw index; report links outside this export instead of
             # silently altering manually supplied research labels.
@@ -252,4 +270,5 @@ def export_history(store, destination, *, on_progress=None, cancel=None):
         # Publish only a complete ZIP, and never replace an existing export.
         os.link(archive, path)
     return dict(path=str(path), record_count=manifest["record_count"],
+                filtered_count=manifest["filtered_record_count"],
                 skipped_count=len(manifest["skipped_records"]), missing_file_count=len(manifest["missing_files"]))

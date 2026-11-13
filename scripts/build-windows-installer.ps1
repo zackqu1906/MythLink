@@ -1,7 +1,8 @@
 param(
     [switch]$SkipDependencyInstall,
     [string]$Version,
-    [switch]$AutoVersion
+    [switch]$AutoVersion,
+    [string]$Firmware
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,6 +23,8 @@ if (-not $SkipDependencyInstall) {
 }
 
 Push-Location $ProjectRoot
+$PreviousFirmware = $env:MYTHLINK_RING_FIRMWARE
+if ($Firmware) { $env:MYTHLINK_RING_FIRMWARE = (Resolve-Path -LiteralPath $Firmware).Path }
 $PreviousBuildVersion = $env:MYTHLINK_BUILD_VERSION
 $env:MYTHLINK_BUILD_VERSION = $AppVersion
 try {
@@ -74,6 +77,7 @@ try {
     }
 } finally {
     $env:MYTHLINK_BUILD_VERSION = $PreviousBuildVersion
+    $env:MYTHLINK_RING_FIRMWARE = $PreviousFirmware
     Pop-Location
 }
 

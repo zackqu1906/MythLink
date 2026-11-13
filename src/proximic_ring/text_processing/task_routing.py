@@ -137,8 +137,9 @@ def router_ocr_text(context: dict) -> str:
     if context.get("processing") == "llm_compact":
         if context.get("status") != "ok":
             return ""
-        return (f"软件类型：{context.get('app_type', 'unknown')}\n主题：{context.get('topic', '')}\n"
-                f"上文：{context.get('context', '')}\n内容不确定：{context.get('uncertain', False)}")[-800:]
+        return (f"场景：{context.get('scene', '无法确定')}\n应用：{context.get('application_name') or context.get('application', '')}\n"
+                f"主题：{context.get('topic', '')}\n内容不确定：{context.get('uncertain', False)}\n"
+                f"上文：{context.get('context', '')}")[:800]
     messages = context.get("messages", [])[-4:]
     return "\n".join(f"{m.get('speaker', 'unknown')}: {m.get('text', '')}" for m in messages)[-360:]
 

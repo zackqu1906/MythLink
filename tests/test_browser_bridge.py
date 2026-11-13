@@ -66,6 +66,32 @@ def test_protocol_drops_content_and_rejects_bad_identities():
     assert "editor" not in clean_snapshot(snapshot(editor="arbitrary field content"))
 
 
+def test_website_provenance_requires_authorization_focus_and_a_page():
+    assert clean_snapshot(snapshot(website="OUTLOOK.OFFICE.COM"))["website"] == "outlook.office.com"
+    for fields in ({"focused": False}, {"authorized": False}, {"page": "", "scene": ""}):
+        assert clean_snapshot(snapshot(website="outlook.office.com", **fields))["website"] == ""
+    for host in ("https://outlook.office.com/private", "user@private.example", "private.example:443", "private.example?token=secret"):
+        assert clean_snapshot(snapshot(website=host))["website"] == ""
+
+
+def test_capture_website_evidence_has_bounded_wait_and_rejects_page_changes(monkeypatch):
+    from proximic_ring.browser_bridge import provenance
+    calls = []
+    def post(path, data, **kwargs):
+        calls.append((path, data, kwargs))
+        return snapshot(website="outlook.office.com")
+    monkeypatch.setattr(provenance, "post", post)
+    captured = provenance.snapshot("com.google.Chrome")
+    assert captured["website"] == "outlook.office.com"
+    assert calls[0][2]["timeout"] == .25
+    assert provenance.same_page(captured, dict(captured))
+    assert not provenance.same_page(captured, {**captured, "page": "different-page"})
+    assert not provenance.same_page(captured, {**captured, "window": 99})
+    assert not provenance.same_page(captured, None)
+    monkeypatch.setattr(provenance, "post", lambda *a, **k: (_ for _ in ()).throw(TimeoutError()))
+    assert provenance.snapshot("com.google.Chrome") is None
+
+
 @pytest.mark.parametrize('field', ['session','window','tab','page','frame','document','media','source'])
 def test_every_identity_dimension_invalidates_a_command(field):
     old=snapshot(); new=snapshot(**{field:3 if field in {'window','tab','frame'} else 'changed'})

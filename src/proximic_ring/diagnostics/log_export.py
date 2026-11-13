@@ -22,10 +22,17 @@ from ..voice.history_export import _record_snapshot, _open_regular, _check_cance
 RANGE_LABELS = {"today": "今天", "week": "近一周", "all": "全部"}
 README = """Mythlink 详细诊断包 v1
 
+界面导出的诊断包只按时间筛选，保留跨应用与设备级日志，不自动附带语音或手势历史。
+录音、截图和完整语音记录请从语音记录入口按应用另行导出。
+兼容调用若指定应用筛选，以 manifest.export_scope 为准：只保留归属符合所选应用的记录和日志。
+仅在兼容应用筛选模式下，无法可靠归属的旧日志、stdout/stderr、原生光标日志和运行配置会排除。
+excluded_scope_lines / filtered_record_count 记录排除数量；这类包不保证包含所有系统级错误。
+选中的语音记录和已有附件保持完整；筛选应用不等于对正文、截图、口述做内容脱敏。
+
 diagnostic.log：按时间筛选的完整统一运行日志，不受窗口最近 1000 行或清空窗口影响。
 包含已记录的启动、连接、音频、ASR、模型、输入法、手势、触控板、场景、权限和异常堆栈。
 runtime.json：导出时的版本、系统、进程、运行状态及关键配置；不是故障发生时的状态。
-interactions/：时间范围内相关语音交互的完整 record.json、事件、ASR 更新，以及已留存的录音、截图、IMU。
+interactions/：仅在调用方明确附带语音历史时存在；界面导出不包含此目录。
 ime/：已存在的输入法光标诊断，不会为导出开启额外采集。
 manifest.json：请求范围、实际时间覆盖、源文件、数量、缺失/读取失败和文件 SHA256。
 
@@ -39,7 +46,8 @@ manifest.json：请求范围、实际时间覆盖、源文件、数量、缺失/
 排查顺序：先查看 manifest.json 的覆盖与 warnings，再用 run / trace / interaction_id 串联事件。
 先核对 runtime.json 的版本和源码/打包运行方式，随后定位错误前后的日志及完整交互。
 模型输入、输出、耗时、概率、OCR 和目标原文以 record.json 中实际留存的字段为准；缺失不会补造。
-本包包含个人口述、上下文和已保存的录音/截图，仅在你选择导出后写入本机，不会自动上传。
+日志可能含应用名称和文本片段；若清单 voice_history_requested 为 true，还可能包含个人口述及附件。
+仅在你选择导出后写入本机，不会自动上传。
 配置中的凭据字段不导出；原始业务证据保持原样。分享前可查看包内内容。
 """
 
@@ -99,9 +107,10 @@ def line_time(line):
     return None
 
 
-def filter_logs(paths, target, selection, cancel=None):
+def filter_logs(paths, target, selection, cancel=None, scope=None):
     """Stream rotations in order, preserving traceback continuation lines."""
-    stats = dict(lines=0, selected_lines=0, unknown_time_lines=0,
+    from .export_scope import log_attributions
+    stats = dict(lines=0, selected_lines=0, unknown_time_lines=0, excluded_scope_lines=0,
                  available_start=None, available_end=None, selected_start=None, selected_end=None)
     first = last = selected_first = selected_last = previous = None
     for path in paths:
@@ -114,6 +123,11 @@ def filter_logs(paths, target, selection, cancel=None):
                     previous = stamp
                     first = stamp if first is None else min(first, stamp)
                     last = stamp if last is None else max(last, stamp)
+                if scope is not None and not scope.accepts_attributions(log_attributions(line)):
+                    # Unowned stdout, old logs and bare continuations cannot be
+                    # attributed safely by their text or their nearest neighbour.
+                    stats["excluded_scope_lines"] += 1
+                    continue
                 if previous is None or selection.contains(previous):
                     target.write(line.encode("utf-8"))
                     stats["selected_lines"] += 1
@@ -149,7 +163,7 @@ def safe_configuration(values):
 
 
 def export_diagnostics(writer, destination, selection, *, state=None, store=None,
-                       ime_root=None, cancel=None, on_progress=None):
+                       ime_root=None, cancel=None, on_progress=None, scope=None):
     """Publish one complete ZIP; leave no partial file on failure/cancellation."""
     destination = Path(destination).expanduser().resolve()
     if destination in writer.files() or destination == writer.path.with_name('.' + writer.path.name + '.lock'):
@@ -160,8 +174,17 @@ def export_diagnostics(writer, destination, selection, *, state=None, store=None
                     requested_start=selection.start.isoformat() if selection.start else None,
                     requested_end=selection.end.isoformat(), timezone=str(selection.end.tzinfo),
                     retention=dict(max_bytes_per_file=writer.max_bytes, backup_count=writer.backup_count),
-                    log_sources=[], record_count=0, warnings=[], files=[])
+                    log_sources=[], record_count=0, voice_history_requested=store is not None, warnings=[], files=[])
     warnings = manifest["warnings"]
+    from .export_scope import attachment_scope_ok
+    if scope is not None:
+        manifest["export_scope"] = scope.as_dict()
+        manifest["filtered_record_count"] = 0
+        # Configuration can name excluded applications or contain their paths.
+        # Keep machine/app versions; do not smuggle unowned state into the ZIP.
+        state = {}
+        ime_root = None  # Legacy native traces have no trusted per-line scope.
+        warnings.append(dict(source="scope", reason="归属不明的旧日志、原生光标日志和运行配置未导出"))
     with tempfile.TemporaryDirectory(prefix=".mythlink-diagnostics-", dir=destination.parent) as temporary:
         temporary = Path(temporary)
         snapshots = []
@@ -186,7 +209,7 @@ def export_diagnostics(writer, destination, selection, *, state=None, store=None
                     warnings.append(dict(source=str(path), reason=str(exc)))
         log_path = temporary / "diagnostic.log"
         with log_path.open("wb") as output:
-            manifest["log_coverage"] = filter_logs(snapshots, output, selection, cancel)
+            manifest["log_coverage"] = filter_logs(snapshots, output, selection, cancel, scope=scope)
         if not snapshots:
             warnings.append(dict(source="diagnostic.log", reason="没有可读取的运行日志"))
         archive_path = temporary / "bundle.zip"
@@ -227,6 +250,9 @@ def export_diagnostics(writer, destination, selection, *, state=None, store=None
                         except (OSError, ValueError, TypeError, KeyError) as exc:
                             warnings.append(dict(source=identity, reason=str(exc)))
                         else:
+                            if scope is not None and not attachment_scope_ok(files, scope, record):
+                                manifest["filtered_record_count"] += 1
+                                continue
                             if selection.overlaps(record):
                                 if parse_time(record.get("created_at")) is None:
                                     warnings.append(dict(source=identity, reason="缺少有效创建时间，保守保留相关记录"))
@@ -264,7 +290,9 @@ def export_diagnostics(writer, destination, selection, *, state=None, store=None
         _check_cancel(cancel)
         archive_path.replace(destination)
     return dict(path=str(destination), record_count=manifest["record_count"],
-                log_lines=manifest["log_coverage"]["selected_lines"], warning_count=len(warnings))
+                log_lines=manifest["log_coverage"]["selected_lines"], warning_count=len(warnings),
+                excluded_log_lines=manifest["log_coverage"]["excluded_scope_lines"],
+                filtered_record_count=manifest.get("filtered_record_count", 0))
 
 
 def suggested_filename(selection):

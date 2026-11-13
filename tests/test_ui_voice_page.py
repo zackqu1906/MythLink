@@ -32,7 +32,7 @@ def seed_history(controller):
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
-@pytest.mark.parametrize("routing", ["manual", "auto"])
+@pytest.mark.parametrize("routing", ["manual", "auto", "manual_routed_edit"])
 def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypatch, size, routing):
     from PySide6.QtCore import QCoreApplication, QObject, QMetaObject, QPoint, QPointF, Qt
     from PySide6.QtGui import QImage, QPainter, QColor, QFont, QWheelEvent
@@ -40,6 +40,7 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     from test_shared_voice_capture import raw_capture, finish_asr
     from proximic_ring.text_processing.screen_context import filter_context
     from proximic_ring.text_processing.model import InputModeRoutingResult, TextProcessingRequest, TextProcessingResult, LLMSettings
+    from proximic_ring.text_processing.task_routing import EditPlan
     controller, bridge, _, root, _ = inline_ui
     collector = controller._voice_history
     collector.record_screen_capture(7, raw_capture(), routing=routing, input_context={
@@ -51,9 +52,15 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     source = "输入框原文\n" + "没有空格的长文本" * 120 + "\nhttps://example.test/" + "abcdefgh0123456789" * 100
     collector.record_text_request(TextProcessingRequest(20, 7, "edit", "把今晚改成明晚",
         LLMSettings(enabled=True, model="deepseek-test"), source, routing_mode=routing))
-    collector.record_llm_result(20, TextProcessingResult(20, 7, "edit", "把今晚改成明晚", "我们明晚开会。", .8, True,
-        target_text=source, routing_mode=routing))
+    result_text = "我们明晚开会。\n" + "没有空格的长文本" * 250 + "\nhttps://example.test/" + "abcdefgh0123456789" * 100
+    collector.record_llm_result(20, TextProcessingResult(20, 7, "edit", "把今晚改成明晚", result_text, .8, True,
+        target_text=source, routing_mode=routing,
+        edit_plan=EditPlan(("modify",)) if routing == "manual_routed_edit" else None,
+        model_input={"utterance": "把今晚改成明晚", "editable_text": source, "screen_context": {}}))
     identifier = collector.interaction_id_for_session(7)
+    from proximic_ring.text_processing.screen_context import ScreenContext
+    prepared_text = "LLM 整理后的屏幕上文，保留完整内容。\n" * 100
+    collector.record_context_preparation(identifier, ScreenContext({"status": "ok", "context": prepared_text}), enabled=True)
     if routing == "auto":
         collector.record_routing_result(InputModeRoutingResult(10, 7, "你好", "dictation", .1,
             task_type="dictation", screen_context=filter_context(raw_capture())))
@@ -93,47 +100,43 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     QTest.qWait(220)
     panel = visual_child(entry, "voiceHistoryDetails")
     assert panel is not None and reads == [identifier]
+    if routing == "manual_routed_edit":
+        assert visual_child(panel, "voiceHistoryClassification_llm_0").property("text") == "编辑分类：修改"
     assert visual_child(entry, "automaticVoiceDetailsToggle") is None
     directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     directory.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(directory / f"{routing}-history-simple-{size[0]}.png"))
-    assert visual_child(panel, "voiceHistoryDetail_llm_0").property("text") == "我们明晚开会。"
-    assert not visual_child(panel, "voiceHistoryDetailScroll_llm_0_input").property("visible")
-    QMetaObject.invokeMethod(visual_child(panel, "voiceHistoryInputToggle_llm_0"), "click")
-    QMetaObject.invokeMethod(visual_child(panel, "voiceHistoryOutputToggle_raw_ocr"), "click")
-    QMetaObject.invokeMethod(visual_child(panel, "voiceHistoryScreenshotToggle"), "click")
-    QTest.qWait(100)
+    text = visual_child(panel, "voiceHistoryDetail_llm_0")
+    assert text.property("text") == result_text
+    assert visual_child(panel, "voiceHistoryInputToggle_llm_0") is None
+    assert visual_child(panel, "voiceHistoryOutputToggle_raw_ocr") is None
+    assert visual_child(panel, "voiceHistoryScreenshotToggle") is None
     screenshot = visual_child(panel, "voiceHistoryScreenshot")
-    assert screenshot.property("paintedWidth") > 0
+    for _ in range(100):
+        if screenshot.property("paintedWidth") > 0:
+            break
+        QTest.qWait(10)
+    assert screenshot.property("visible") and screenshot.property("paintedWidth") > 0
     point = screenshot.mapToItem(entry, QPointF())
     assert point.x() >= 0 and point.x() + screenshot.width() <= entry.width()
-    raw_ocr = visual_child(panel, "voiceHistoryDetail_raw_ocr")
-    assert "联系人" in raw_ocr.property("text") and "输入框草稿" in raw_ocr.property("text")
-    assert raw_ocr.property("readOnly") and raw_ocr.property("selectByMouse")
-    for key in ("input_context", "mode", "feedback", "asr_updates", "events", "imu_samples", "ocr_filter"):
+    sections = [visual_child(panel, "voiceHistorySection_" + key) for key in
+                ("decision", "edit_result", "screenshot", "context_preparation")]
+    assert all(sections)
+    assert [item.y() for item in sections] == sorted(item.y() for item in sections)
+    for key in ("raw_ocr", "asr", "input_context", "mode", "feedback", "asr_updates", "events", "imu_samples", "ocr_filter", "llm_0_input"):
         assert visual_child(panel, "voiceHistoryDetail_" + key) is None
-    assert "输入框原文" in visual_child(panel, "voiceHistoryDetail_llm_0_input").property("text")
-    assert root.grabWindow().save(str(directory / f"{routing}-history-{size[0]}.png"))
+    prepared = visual_child(panel, "voiceHistoryDetail_context_preparation")
+    assert prepared.property("text") == prepared_text
+    for body in (text, prepared):
+        assert body.property("readOnly") and body.property("selectByMouse")
+        assert body.property("contentWidth") <= body.width() - body.property("leftPadding") - body.property("rightPadding") + 1
+        assert body.height() >= body.property("contentHeight") + body.property("topPadding") + body.property("bottomPadding") - 1
+        assert body.height() > 280  # Full content, no fixed-height inner viewport.
     assert (bridge.messages, controller.inlineInput._view) == before
-    ocr_y = raw_ocr.mapToItem(view, QPointF()).y()
-    view.setProperty("contentY", max(0, view.property("contentY") + ocr_y - 90)); QTest.qWait(80)
-    assert root.grabWindow().save(str(directory / f"{routing}-history-ocr-{size[0]}.png"))
-    # Long Chinese text and unbroken identifiers wrap within the fixed frame.
-    text = visual_child(panel, "voiceHistoryDetail_llm_0_input")
-    scroll = visual_child(panel, "voiceHistoryDetailScroll_llm_0_input")
-    viewport = scroll.property("contentItem")
-    assert text.width() == pytest.approx(scroll.property("availableWidth"))
-    assert text.property("contentWidth") <= text.width() - text.property("leftPadding") - text.property("rightPadding") + 1
-    assert scroll.property("clip") and viewport.property("contentHeight") > viewport.height()
-    assert panel.width() - scroll.mapToItem(panel, QPointF()).x() - scroll.width() >= 40
-    scroll_y = scroll.mapToItem(view, QPointF()).y()
-    view.setProperty("contentY", view.property("contentY") + scroll_y - 80)
-    QTest.qWait(80)
+
     def scroll_at(point):
         QTest.mouseMove(root, point)
         if size[0] == 940:
-            # macOS trackpad gestures carry pixel deltas and scroll phases.
-            # QTest.wheelEvent rejects the zero-delta begin/end events.
             for phase, delta in ((Qt.ScrollBegin, 0), (Qt.ScrollUpdate, -36),
                                  (Qt.ScrollUpdate, -36), (Qt.ScrollEnd, 0)):
                 event = QWheelEvent(QPointF(point), QPointF(root.mapToGlobal(point)),
@@ -143,18 +146,21 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
         else:
             QTest.wheelEvent(root, point, QPoint(0, -120))
         QTest.qWait(350)
-    outer_y = view.property("contentY")
-    inner_point = scroll.mapToScene(QPointF(scroll.width() / 2, 90)).toPoint()
-    scroll_at(inner_point)
-    assert viewport.property("contentY") > 0
-    assert view.property("contentY") == pytest.approx(outer_y)
-    inner_y = viewport.property("contentY")
-    assert root.grabWindow().save(str(directory / f"{routing}-history-wrap-{size[0]}.png"))
-    # The 40 px blank lane bypasses the inner scroll box for outer scrolling.
-    outer_point = scroll.mapToScene(QPointF(scroll.width() + 20, 90)).toPoint()
-    scroll_at(outer_point)
-    assert view.property("contentY") > outer_y
-    assert viewport.property("contentY") == pytest.approx(inner_y)
+
+    # Text, screenshot, section header and margins all scroll the same list.
+    for target, x, y in [(sections[0], 20, 15), (text, text.width()/2, 50),
+                          (sections[1], 5, 60), (screenshot, screenshot.width()/2, 50),
+                          (prepared, prepared.width()/2, 50)]:
+        target_y = target.mapToItem(view, QPointF()).y()
+        view.setProperty("contentY", max(0, min(view.property("contentY") + target_y - 60,
+            view.property("contentHeight") - view.height())))
+        QTest.qWait(80)
+        outer_y = view.property("contentY")
+        point = target.mapToScene(QPointF(x, y)).toPoint()
+        assert view.mapToScene(QPointF()).y() <= point.y() < view.mapToScene(QPointF(0, view.height())).y()
+        scroll_at(point)
+        assert view.property("contentY") > outer_y
+    assert root.grabWindow().save(str(directory / f"{routing}-history-full-text-{size[0]}.png"))
     # The same menu action also collapses the details.
     QMetaObject.invokeMethod(visual_child(entry, "voiceHistoryMoreButton"), "click")
     QTest.qWait(100)

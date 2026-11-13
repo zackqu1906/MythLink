@@ -9,8 +9,22 @@ from PySide6.QtCore import QObject, QPointF, Qt
 from PySide6.QtTest import QTest
 
 from test_inline_ui import inline_ui
-from test_history_management import add_record
+from test_history_management import add_record as _add_record
 from test_ui_figma_redesign import click
+
+
+def add_record(store, session, text="语音记录"):
+    identity = _add_record(store, session, text)
+    store.record_application(session_id=session, action="applied", mode="dictation", application="Safari")
+    return identity
+
+
+@pytest.fixture(autouse=True)
+def export_selection(monkeypatch):
+    from proximic_ring.diagnostics.export_scope import ExportScope
+    from proximic_ring.diagnostics.log_export import LogRange
+    monkeypatch.setattr("proximic_ring.ui.voice.history_export_controller.choose_export_scope",
+                        lambda **kwargs: kwargs["on_selected"]((ExportScope(frozenset({"com.apple.safari"})), LogRange.create("all"), kwargs["default_directory"])))
 
 
 def wait_finished(exporter):

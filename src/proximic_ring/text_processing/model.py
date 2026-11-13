@@ -22,6 +22,12 @@ INPUT_ROUTING_LABELS = {
     INPUT_ROUTING_ROUTED_EDIT: "手动＋编辑路由",
 }
 INPUT_ROUTING_MODES = frozenset(INPUT_ROUTING_LABELS)
+ROUTED_EDIT_SIX_CLASS = "six_class_v5"
+ROUTED_EDIT_BOUNDARY = "boundary_only_v1"
+ROUTED_EDIT_VARIANT_LABELS = {
+    ROUTED_EDIT_SIX_CLASS: "六分类 v5",
+    ROUTED_EDIT_BOUNDARY: "无分类边界 v1",
+}
 LLM_PROVIDER_LOCAL = "local"
 LLM_PROVIDER_OPENAI = "openai"
 LLM_PROVIDER_VOLCENGINE = "volcengine"
@@ -45,6 +51,11 @@ def normalize_input_mode(value: str) -> str:
 def normalize_input_routing_mode(value: str) -> str:
     mode = str(value or "").strip().lower()
     return mode if mode in INPUT_ROUTING_MODES else INPUT_ROUTING_MANUAL
+
+
+def normalize_routed_edit_variant(value: str) -> str:
+    variant = str(value or "").strip().lower()
+    return variant if variant in ROUTED_EDIT_VARIANT_LABELS else ROUTED_EDIT_SIX_CLASS
 
 
 def normalize_llm_provider(value: str) -> str:
@@ -125,6 +136,7 @@ class TextProcessingRequest:
     edit_plan: EditPlan | None = None
     routing_mode: str = INPUT_ROUTING_MANUAL
     reexecuted: bool = False
+    routed_edit_variant: str = ROUTED_EDIT_SIX_CLASS
 
 
 @dataclass(frozen=True)
@@ -190,3 +202,4 @@ class TextProcessingResult:
     model_input: dict | None = None
     routing_mode: str = INPUT_ROUTING_MANUAL
     screen_context: object = None
+    routed_edit_variant: str = ROUTED_EDIT_SIX_CLASS

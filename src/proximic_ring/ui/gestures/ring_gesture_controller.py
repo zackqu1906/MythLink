@@ -16,6 +16,7 @@ from ..desktop.text_focus_controller import TextFocusController
 from ..desktop.page_scroll_controller import PageScrollController
 from ..desktop.window_selector_controller import WindowSelectorController
 from .app_gesture_controller import InputSourceGestureEvent
+from ...gestures.history import observe_gesture
 
 
 @dataclass(frozen=True)
@@ -236,13 +237,24 @@ class RingGestureController(QObject):
 
     def filter(self, event, audio_busy: bool, connection, *, skip_stroke=False) -> bool:
         """Worker gate: only accepted voice start/end events reach the audio endpoint."""
+        identity = getattr(event, "record_id", "")
+        try:
+            front = self.owner._app_gestures.foreground_identity()
+            observe_gesture(self.owner, identity, gesture=getattr(event, "name", ""),
+                foreground_application=front[0] if front else "", application=front[0] if front else "",
+                voice_state="listening" if audio_busy else self.owner._app_gestures.phase_state()["phase"],
+                status="observed")
+        except Exception:
+            observe_gesture(self.owner, identity, gesture=getattr(event, "name", ""), status="observed")
         if connection is not self.owner._disconnect_event or connection.is_set():
+            observe_gesture(self.owner, identity, status="not_triggered")
             return False
         name = str(getattr(event, "name", ""))
         proximity = getattr(self.owner, "_proximity", None)
         if proximity is not None and proximity.filter_gesture(name, connection):
             return False
         if self.session_blocked():
+            observe_gesture(self.owner, identity, status="not_triggered")
             return False
         agent = getattr(self.owner, '_agent', None)
         if agent is not None and agent.filter_gesture(event, connection):
@@ -258,6 +270,7 @@ class RingGestureController(QObject):
             return False
         with self._lock:
             if self._transition is not None or self._scroll.applying.is_set():
+                observe_gesture(self.owner, identity, status="not_triggered")
                 return False
             generation = self._generation
         service, bindings = self.owner._app_gestures, self.owner._gesture_bindings
@@ -278,11 +291,13 @@ class RingGestureController(QObject):
                       and not service.foreground_has_binding(name))
         if input_only:
             if end_only:
+                observe_gesture(self.owner, identity, status="not_triggered")
                 return False  # There is no active sentence to finish.
             created = time.monotonic()
             inline = self.owner._inline_input
             start_focus = inline.capture_start_focus(require_editable=True)
             if start_focus is not None and start_focus.status == "text" and len(start_focus.target or ()) == 6:
+                observe_gesture(self.owner, identity, application=start_focus.target[3], focus="text")
                 inline.pin_start_focus(start_focus.target, created)
                 return True
         routed = service.envelope(event, audio_busy=audio_busy,

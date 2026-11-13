@@ -370,7 +370,7 @@ UiScrollView {
                             objectName: "voiceHistoryOptionsMenu"
                             UiMenuItem {
                                 objectName: "exportAllVoiceHistoryButton"
-                                text: page.controller.voiceHistoryExport.busy ? "正在导出…" : "导出全部语音记录"
+                                text: page.controller.voiceHistoryExport.busy ? "正在导出…" : "筛选应用并导出语音记录"
                                 enabled: !page.controller.voiceHistoryExport.busy
                                 onTriggered: page.controller.voiceHistoryExport.export()
                             }
@@ -412,7 +412,7 @@ UiScrollView {
                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.leftMargin: 20; Layout.rightMargin: 20; Layout.bottomMargin: 20
                     clip: true; spacing: 12
                     model: page.historyModel
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
+                    ScrollBar.vertical: PreferenceScrollBar { }
                     delegate: VoiceHistoryEntry {
                         width: voiceHistoryList.width
                         controller: page.controller

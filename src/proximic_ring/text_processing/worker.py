@@ -261,6 +261,7 @@ class TextProcessingWorker:
                 task_type=task_type,
                 edit_plan=edit_plan,
                 routing_mode=request.routing_mode,
+                routed_edit_variant=request.routed_edit_variant,
                 session_id=request.session_id,
                 mode=TEXT_MODE_POLISH if request.mode == TEXT_MODE_POLISH else normalize_input_mode(request.mode),
                 raw_text=request.raw_text,

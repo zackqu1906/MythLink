@@ -8,6 +8,11 @@ def test_live_log_reads_all_producers_and_exports_one_file(inline_ui, monkeypatc
     from PySide6.QtQuick import QQuickItem
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QFileDialog
+    from proximic_ring.diagnostics.export_scope import ExportScope
+    from proximic_ring.diagnostics.log_export import LogRange
+    monkeypatch.setattr('proximic_ring.ui.diagnostic_export_controller.choose_export_scope',
+                        lambda **kwargs: kwargs["on_selected"]((ExportScope(frozenset({'test-app'})), LogRange.create('all'), tmp_path)))
+    monkeypatch.setattr('proximic_ring.ui.diagnostic_export_controller.suggested_filename', lambda selection: 'shared.zip')
     controller, _, _, root, _ = inline_ui
     controller.diagnosticExport._ime_root = tmp_path / 'ime'
     dialog = root.findChild(QObject, 'runtimeLogDialog')
@@ -17,7 +22,7 @@ def test_live_log_reads_all_producers_and_exports_one_file(inline_ui, monkeypatc
     controller._diagnostic_log.record('startup evidence', source='startup')
     controller._append_background_diagnostic('background evidence')
     controller.appGestures._diagnostics.record('trace-ui', 'capture', 'recognition_timeout',
-                                              native={'elapsed_ms': 304, 'scanned_nodes': 1084})
+                                              app='test-app', native={'elapsed_ms': 304, 'scanned_nodes': 1084})
     QMetaObject.invokeMethod(dialog, 'open')
     QTest.qWait(250)
     shown = area.property('text')
@@ -25,7 +30,7 @@ def test_live_log_reads_all_producers_and_exports_one_file(inline_ui, monkeypatc
     assert 'startup evidence' in shown and 'background evidence' in shown and '"scanned_nodes":1084' in shown
     # This producer deliberately emits no Qt signal; visible polling still
     # reads it from the same log without touching the hidden TextArea.
-    controller._diagnostic_log.record('native error evidence', source='native.stderr', level='ERROR')
+    controller._diagnostic_log.record('native error evidence', source='native.stderr', level='ERROR', attribution={'application': 'test-app'})
     QTest.qWait(600)
     assert 'native error evidence' in area.property('text')
     output = tmp_path / 'shared.zip'

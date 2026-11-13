@@ -1367,9 +1367,11 @@ def test_retry_uses_original_request_and_labels_each_history_attempt(inline_ui, 
     assert [r["reexecuted"] for r in record["llm"]["requests"]] == [False, True]
     assert [r["candidate_text"] for r in record["llm"]["requests"]] == ["旧结果", "新结果"]
     assert c._modification_dataset.load_entries()[0]["reexecuted"] is True
-    sections = {r["key"]: r for r in history_details(Path("/private/tmp"), record)["sections"]}
-    assert "是否重新执行：否" in sections["llm_0"]["description"]
-    assert "是否重新执行：是" in sections["llm_1"]["description"]
+    details = history_details(Path("/private/tmp"), record)
+    attempts = next(section["items"] for section in details["sections"] if section["key"] == "edit_result")
+    rows = {row["key"]: row for row in attempts}
+    assert not rows["llm_0"]["description"]
+    assert rows["llm_1"]["description"] == "重新执行的编辑请求"
 
 
 @pytest.mark.parametrize("routing_mode", ["auto", "manual_routed_edit"])

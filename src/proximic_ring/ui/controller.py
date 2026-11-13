@@ -75,7 +75,8 @@ from ..voice.interaction_associations import (
 )
 from ..voice.modification_dataset import ModificationDatasetCollector
 from ..runtime_paths import app_data_root, is_frozen, resource_root
-from ..text_processing.model import TEXT_MODE_POLISH
+from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_SIX_CLASS,
+    ROUTED_EDIT_VARIANT_LABELS, normalize_routed_edit_variant)
 from ..text_processing import (
     DEFAULT_ARK_API_KEY_ENV,
     DEFAULT_ARK_BASE_URL,
@@ -387,6 +388,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._startup = StartupController(self)
         self._menu_bar_status_info = self._settings.value("ui/menuBarStatusInfo", True, type=bool)
         self._connected = False
+        self._firmware_update_busy = False
         self._battery_percentage = -1
         self._battery_millivolts = -1
         self._battery_charge_status = -1
@@ -496,6 +498,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             )
         )
         self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
+        self._routed_edit_variant = normalize_routed_edit_variant(
+            self._settings.value("input/routedEditVariant", ROUTED_EDIT_SIX_CLASS))
         self._ocr_context_enabled = self._bool_setting("input/ocrContextEnabled", True)
         self._settings.remove("input/modeCorrectionShortcut")
         self._gesture_settings_error = ""
@@ -685,6 +689,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         # used for ASR/LLM/feedback training data. Keep the old attribute so
         # the QML and playback code remain stable.
         self._voice_history = self._modification_dataset
+        from ..gestures.history import GestureHistory
+        self._gesture_history = GestureHistory(app_data_root() / "data" / "gesture-history.sqlite3")
         self._voice_history_entries = self._voice_history.load_entries(limit=None)
         self._voice_history_model = _VoiceHistoryListModel(
             self._voice_history_entries, self
@@ -933,6 +939,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._agent = AgentController(self)
         from .proximity.proximity_controller import ProximityController
         self._proximity = ProximityController(self, settings=self._settings)
+        from .firmware_update_controller import FirmwareUpdateController
+        self._firmware_update = FirmwareUpdateController(self)
+        self._touchpad.sourceReady.connect(self._firmware_update.attach)
         self._proximity.diagnostic.connect(lambda info: self._event_log("PROXIMITY", **info))
         self._proximity.lockPreparing.connect(self._pause_inputs_for_lock)
         self._proximity.locked.connect(self._pause_inputs_for_lock)
@@ -1049,6 +1058,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         return self._connected
 
     @Property(QObject, constant=True)
+    def firmwareUpdate(self):
+        return self._firmware_update
+
+    @Property(QObject, constant=True)
     def permissionSetup(self):
         return self._permission_setup
 
@@ -1135,6 +1148,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Property("QVariantMap", notify=connectionChanged)
     def connectionInfo(self):
         from .shared.device_connection import connection_info
+        if self._firmware_update_busy:
+            return dict(state='updating', label='正在更新固件', shortLabel='固件更新中',
+                        detail=self._firmware_update.message, actionText='固件更新中…',
+                        action='', enabled=False, pending=True, destructive=False, primary=False)
         return connection_info(self.connectionState, can_reconnect=self.canReconnect,
                                preparing=self._busy, error=self._connection_error)
 
@@ -1370,7 +1387,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._record_inline_edit_intent(session_id)
             options = dict(settings=saved.settings, task_type=saved.task_type,
                            edit_plan=saved.edit_plan, screen_context=replay_context(saved),
-                           routing_mode=saved.routing_mode, reexecuted=True)
+                           routing_mode=saved.routing_mode, reexecuted=True,
+                           routed_edit_variant=saved.routed_edit_variant)
         else:
             options = self._inline_edit_options(key)
         request = self._submit_text_processing(
@@ -1521,11 +1539,25 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         return list(self._voice_history_entries)
 
     @Property(QObject, constant=True)
+    def exportSelection(self):
+        if not hasattr(self, "_export_selection"):
+            from .export_picker import ExportSelection
+            self._export_selection = ExportSelection(self)
+        return self._export_selection
+
+    @Property(QObject, constant=True)
     def voiceHistoryExport(self):
         if not hasattr(self, "_voice_history_export"):
             from .voice.history_export_controller import HistoryExportController
             self._voice_history_export = HistoryExportController(self._voice_history, self)
         return self._voice_history_export
+
+    @Property(QObject, constant=True)
+    def gestureHistory(self):
+        if not hasattr(self, "_gesture_history_controller"):
+            from .gestures.history_controller import GestureHistoryController
+            self._gesture_history_controller = GestureHistoryController(self._gesture_history, self)
+        return self._gesture_history_controller
 
     @Slot(str, result="QVariantMap")
     def historyApplication(self, identity: str) -> dict:
@@ -2652,6 +2684,22 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._append_log(f"听写/指令路由已切换为：{label}")
 
 
+    @Property(str, notify=settingsChanged)
+    def routedEditVariant(self) -> str:
+        return self._routed_edit_variant
+
+    @routedEditVariant.setter
+    def routedEditVariant(self, value: str) -> None:
+        variant = normalize_routed_edit_variant(value)
+        if variant == self._routed_edit_variant:
+            return
+        previous = self._routed_edit_variant
+        self._routed_edit_variant = variant
+        self._settings.setValue("input/routedEditVariant", variant)
+        self.settingsChanged.emit()
+        self._event_log("USER_SETTING", setting="routed_edit_variant", previous=previous, value=variant)
+        self._append_log(f"手动编辑版本已切换为：{ROUTED_EDIT_VARIANT_LABELS[variant]}，下次录音生效")
+
     @Property(bool, notify=settingsChanged)
     def automaticDictationCleanupEnabled(self) -> bool:
         return self._automatic_dictation_cleanup_enabled
@@ -3575,6 +3623,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Slot()
     def reconnectDevice(self) -> None:
         """Reconnect only after an explicit user action."""
+        if self._firmware_update_busy:
+            return
         self._event_log(
             "USER_ACTION",
             action="reconnect_device",
@@ -3611,6 +3661,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot(str)
     def _reconnect_for_proximity(self, target):
+        if self._firmware_update_busy:
+            return
         # Any live lock with a prepared snap-unlock route may recover this ring.
         # The native monitor remains alive throughout, retaining its one-lock token.
         if (not target or target != self._proximity.reconnect_target
@@ -3628,6 +3680,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot()
     def requestDevicePicker(self) -> None:
+        if self._firmware_update_busy:
+            return
         self._event_log(
             "USER_ACTION",
             action="open_device_picker",
@@ -3640,6 +3694,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot()
     def scanDevices(self) -> None:
+        if self._firmware_update_busy:
+            return
         if self._connected or self._busy or self._scan_busy:
             return
         self._discovery_active = True
@@ -3715,6 +3771,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot(str, str)
     def connectToDevice(self, identifier: str, name: str) -> None:
+        if self._firmware_update_busy:
+            return
         self._event_log(
             "USER_ACTION",
             action="connect_device",
@@ -3758,7 +3816,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             return
         self._start_selected_device()
 
-    def _start_selected_device(self) -> None:
+    def _start_selected_device(self, *, firmware_restore=False) -> None:
+        if self._firmware_update_busy and not firmware_restore:
+            return
         if self._worker is not None and self._worker.is_alive():
             return
         self._clear_undo_stack_for_device_boundary()
@@ -4149,6 +4209,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot()
     def _restore_input_preferences(self) -> None:
+        if self._firmware_update_busy:
+            return
         if self._proximity.gestures_blocked:
             self._pause_inputs_for_lock()
             return
@@ -4182,6 +4244,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot()
     def disconnectDevice(self) -> None:
+        if self._firmware_update_busy:
+            return
         if self.connectionState in {"cancelling", "disconnecting"}:
             return
         cancelling = self.connectionState == "connecting"
@@ -4591,6 +4655,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot()
     def requestQuit(self) -> None:
+        if self._firmware_update_busy:
+            self._set_status('固件更新进行中', '请等待固件更新和设备重连完成后退出。', 'starting')
+            return
         self._voice_practice.cancel()
         self._input_restore_pending.clear()
         self._audio_settings_timer.stop()
@@ -4653,6 +4720,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._voice_history_export.close()
         if hasattr(self, "_diagnostic_export"):
             self._diagnostic_export.close()
+        if hasattr(self, "_gesture_history_controller"):
+            self._gesture_history_controller.close()
+        self._gesture_history.close()
         self._hotwords.close()
         self._home_statistics.close()
         self._cancel_inline_requests("主程序已退出")
@@ -4789,15 +4859,29 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         text = str(message).strip()
         if not text:
             return
+        gesture_attribution = None
+        if text.startswith("[GESTURE_RECOGNIZED]"):
+            try:
+                from ..gestures.history import observe_gesture
+                gesture = json.loads(text.split("]", 1)[1])
+                reason = gesture.get("reason", "")
+                actions = {"confirm_start_requested": "开始语音", "confirm_end_requested": "结束语音", "confirm_cancel_start_requested": "取消语音准备"}
+                state = ("triggered" if reason in actions else "observed"
+                         if reason in {"global_mode_route", "ui_dispatch"} else "not_triggered")
+                observe_gesture(self, gesture.get("record_id"), gesture=gesture.get("name"),
+                    action=actions.get(reason), status=state)
+                gesture_attribution = self._gesture_history.attribution(gesture.get("record_id"))
+            except (ValueError, TypeError, AttributeError):
+                pass
         if self._disconnect_event.is_set():
             # Late START/END/model callbacks may still arrive during cleanup.
             # Retain diagnostics without reopening any interaction.
-            self._append_background_diagnostic(text)
+            self._append_background_diagnostic(text, attribution=gesture_attribution)
             return
         summary = text.splitlines()[0].strip()
         if summary.startswith(("[GESTURE_", "固件手势统计：")):
             # Keep detailed telemetry searchable on disk, outside the live log.
-            self._append_background_diagnostic(text)
+            self._append_background_diagnostic(text, attribution=gesture_attribution)
             if summary.startswith("[GESTURE_SOURCE]"):
                 self._gesture_health_status = ""
             elif summary.startswith("[GESTURE_STATUS]"):
@@ -5588,6 +5672,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         routing_mode: str = INPUT_ROUTING_MANUAL,
         settings=None,
         reexecuted: bool = False,
+        routed_edit_variant: str = ROUTED_EDIT_SIX_CLASS,
     ) -> TextProcessingRequest | None:
         normalized_mode = TEXT_MODE_POLISH if mode == TEXT_MODE_POLISH else normalize_input_mode(mode)
         if normalized_mode not in {INPUT_MODE_EDIT, TEXT_MODE_POLISH} and not self._llm_enabled and not force_llm:
@@ -5622,6 +5707,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             edit_plan=edit_plan,
             routing_mode=routing_mode,
             reexecuted=reexecuted,
+            routed_edit_variant=normalize_routed_edit_variant(routed_edit_variant),
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
@@ -7029,6 +7115,16 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             return
         if not self._app_gestures.input_event_valid(app_event):
             return
+        # Only an exact live IMK utterance binding establishes a voice link.
+        # Never attach the nearest/latest session to an unrelated gesture.
+        inline = self._inline_input
+        if (self._inline_enabled() and app_event.sentence == self._app_gestures.sentence()
+                and inline._session_id > 0 and inline._view.get("application")):
+            from ..gestures.history import observe_gesture
+            interaction = self._voice_history.interaction_id_for_session(inline._session_id)
+            if interaction:
+                observe_gesture(self, getattr(event, "record_id", ""), voice_interaction_id=interaction,
+                                voice_application=inline._view["application"])
         if name in self._gesture_bindings.send + self._gesture_bindings.polish:
             self._app_gestures.handle(app_event)
             return
@@ -7081,6 +7177,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             "GESTURE_ACTION",
             _live_message=f"[手势] {gesture_label} → {outcome}" if gesture_label else "",
             gesture=name,
+            record_id=getattr(event, "record_id", ""),
             confidence=getattr(event, "confidence", None),
             action=action or "ignored",
             reason=reason,
@@ -7090,9 +7187,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             target_foreground=self._applied_target_foreground,
             device_timestamp_ms=getattr(event, "timestamp_ms", None),
             interaction_state=self._interaction_state,
+            **self._gesture_history.attribution(getattr(event, "record_id", "")),
         )
         if action is not None:
             self._apply_voice_action(action, _from_gesture=True)
+        from ..gestures.history import observe_gesture
+        observe_gesture(self, getattr(event, "record_id", ""), action=outcome if action else "",
+                        status="triggered" if action else "not_triggered")
 
     @Slot(str)
     def _apply_voice_action(self, action: str, *, _from_gesture: bool = False) -> None:
@@ -8205,14 +8306,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._status_kind = kind
         self.statusChanged.emit()
 
-    def _append_log(self, message: str, *, deferred: bool = False) -> None:
+    def _append_log(self, message: str, *, deferred: bool = False, attribution=None) -> None:
         text = str(message).strip()
         if not text:
             return
         # Wall-clock time is useful for correlating device/model logs.  Actual
         # durations are measured separately with perf_counter in the ASR
         # worker so an OS clock adjustment cannot corrupt latency numbers.
-        line = format_record(text, source='runtime', run=self._diagnostic_run_id)
+        line = format_record(text, source='runtime', run=self._diagnostic_run_id, attribution=attribution)
         self._log_lines.append(line)
         # Retain a bounded summary for existing internal consumers. The live
         # viewer reads the unified disk log, including background producers.
@@ -8233,14 +8334,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             # ASR, desktop injection, undo, or mode conversion.
             pass
 
-    def _append_background_diagnostic(self, message: str) -> None:
+    def _append_background_diagnostic(self, message: str, *, attribution=None) -> None:
         """Persist worker-thread failures without mutating Qt-facing UI state."""
 
         text = str(message).strip()
         if not text:
             return
         try:
-            self._diagnostic_log.record(text, source='runtime.background', run=self._diagnostic_run_id)
+            self._diagnostic_log.record(text, source='runtime.background', run=self._diagnostic_run_id, attribution=attribution)
         except BaseException:
             pass
 
@@ -8273,11 +8374,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             parts.append(f"{key}={rendered}")
         if _live_message is None:
             if _deferred:
-                self._append_log(" ".join(parts), deferred=True)
+                self._append_log(" ".join(parts), deferred=True, attribution=fields)
             else:
-                self._append_log(" ".join(parts))
+                self._append_log(" ".join(parts), attribution=fields)
         else:
-            self._append_background_diagnostic(" ".join(parts))
+            self._append_background_diagnostic(" ".join(parts), attribution=fields)
             if _live_message:
                 self._append_log(_live_message)
 

@@ -102,8 +102,13 @@ def test_automatic_worker_filters_the_shared_frame_before_classification():
 def test_vision_runs_full_window_even_when_chat_layout_is_unavailable(monkeypatch):
     import sys
     from proximic_ring.text_processing.screen_context import recognize_image
+    def opaque_canvas(pixels, *args):
+        # A flat opaque frame has no measurable chat layout, but can have OCR
+        # text. It must not emulate a failed fully transparent capture.
+        pixels[3::4] = bytes([255]) * (400 * 300)
+        return object()
     quartz = SimpleNamespace(CGImageGetWidth=lambda _: 400, CGImageGetHeight=lambda _: 300,
-        CGBitmapContextCreate=lambda *args: object(), CGColorSpaceCreateDeviceRGB=lambda: None,
+        CGBitmapContextCreate=opaque_canvas, CGColorSpaceCreateDeviceRGB=lambda: None,
         kCGImageAlphaPremultipliedLast=1, kCGBitmapByteOrder32Big=2,
         CGContextDrawImage=lambda *args: None, CGRectMake=lambda *args: args)
     class Request:
@@ -183,7 +188,8 @@ def test_details_show_readable_outputs_and_keep_full_evidence_on_disk(tmp_path):
     store._write_json(store._interaction_path(identifier), record)
     assert "sections" not in store.load_entries()[0]
     details = store.load_details(identifier)
-    sections = {section["key"]: section["text"] for section in details["sections"]}
+    sections = {section["key"]: "\n".join(item["text"] for item in section["items"])
+                for section in details["sections"]}
     assert "输入框草稿" in sections["raw_ocr"] and "联系人" in sections["raw_ocr"]
     assert sections["asr"] == "你好"
     assert not {"input_context", "metadata", "imu_samples", "events", "asr_updates", "ocr_filter"} & sections.keys()

@@ -312,6 +312,10 @@ UiScrollView {
         RowLayout {
             Layout.fillWidth: true; Layout.preferredHeight: 44; spacing: 16
             FigmaAction {
+                objectName: "openGestureHistoryButton"; text: "手势记录"; quiet: true
+                onClicked: page.controller.gestureHistory.show()
+            }
+            FigmaAction {
                 objectName: "globalGestureScope"; text: "全局默认"; primary: !page.applicationScope
                 Layout.preferredWidth: 120; Layout.preferredHeight: 40; font.pixelSize: 16
                 onClicked: page.applicationScope = false

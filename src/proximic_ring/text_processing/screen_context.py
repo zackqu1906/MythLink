@@ -83,22 +83,35 @@ def filter_ocr_lines(lines, *, application, sidebar=0.0, history_bottom=1.0):
                     and abs(x - px) < .04):
                 previous["text"] += "\n" + text
                 previous["box"] = [min(x, px), py, max(x + width, px + pw) - min(x, px), y + height - py]
+                previous["ocr_lines"].append(line)
                 observation["disposition"] = "merged"
                 continue
-        content.append({"speaker": speaker, "text": text, "box": [x, y, width, height]})
-    kept, remaining = [], MAX_CONTEXT_CHARS
+        content.append({"speaker": speaker, "text": text, "box": [x, y, width, height], "ocr_lines": [line]})
+    kept, kept_lines, remaining = [], [], MAX_CONTEXT_CHARS
     for message in reversed(content[-16:]):
         text = message["text"]
         if len(text) > remaining:
             if not kept:
                 kept.append({"speaker": message["speaker"], "text": text[-remaining:], "truncated": True})
+                # Keep the same suffix in the LLM's positional evidence. A box
+                # still describes the original OCR line, including when cut.
+                tail, budget = [], remaining
+                for line in reversed(message["ocr_lines"]):
+                    fragment = str(line["text"]).strip()[-budget:]
+                    tail.append(dict(line, text=fragment))
+                    budget -= len(fragment) + 1  # Newline between OCR lines.
+                    if budget <= 0:
+                        break
+                kept_lines.append(list(reversed(tail)))
             break
         kept.append({"speaker": message["speaker"], "text": text})
+        kept_lines.append(message["ocr_lines"])
         remaining -= len(text)
     return ScreenContext({"source": "screen_ocr", "status": "ok" if kept else "empty", "application": application,
             "coverage": "visible_only", "conversation_title": title,
             "speaker_source": "bubble_geometry" if application in WECHAT_APPS else "unknown",
             "messages": list(reversed(kept))}, evidence={"ocr_lines": observations,
+            "message_ocr_lines": list(reversed(kept_lines)),
             "blocks_before_limit": len(content), "blocks_after_limit": len(kept)})
 
 
@@ -124,7 +137,15 @@ def recognize_image(image, application):
     canvas = CG.CGBitmapContextCreate(pixels, width, height, 8, width * 4,
                                      CG.CGColorSpaceCreateDeviceRGB(), CG.kCGImageAlphaPremultipliedLast | CG.kCGBitmapByteOrder32Big)
     CG.CGContextDrawImage(canvas, CG.CGRectMake(0, 0, width, height), image)
-    rgb = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 4)[:, :, :3]
+    rgba = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 4)
+    # ScreenCaptureKit can succeed while returning a fully transparent image
+    # for a hidden/non-shareable window. This is capture failure, not a window
+    # without text. Do not confuse opaque black content with this case.
+    if not np.any(rgba[:, :, 3]):
+        return ScreenContext({**unavailable("窗口截图全透明，未取得实际画面，OCR 未执行", application),
+            "processing": "raw", "error_code": "transparent_window_capture"}, evidence={
+                "ocr_lines": [], "ocr_scope": "target_window", "image_validity": "fully_transparent"})
+    rgb = rgba[:, :, :3]
     sidebar, bottom, layout_error = 0.0, 1.0, ""
     if application in CHAT_APPS:
         # A persistent vertical panel border, measured across many rows, avoids
@@ -218,6 +239,7 @@ def capture_context(target):
         if front is None or application not in {str(front.bundleIdentifier()), str(front.localizedName())}:
             return unavailable("前台应用已变化", application)
         pid, bundle = int(front.processIdentifier()), str(front.bundleIdentifier())
+        application_name = str(front.localizedName() or "")
         if getattr(target, "process_id", 0) and int(target.process_id) != pid:
             return unavailable("目标应用进程已变化", bundle)
         windows = CG.CGWindowListCopyWindowInfo(CG.kCGWindowListOptionOnScreenOnly, CG.kCGNullWindowID)
@@ -230,6 +252,8 @@ def capture_context(target):
         window_id = int(owned[0][CG.kCGWindowNumber])
         if getattr(target, "window_handle", 0) and int(target.window_handle) != window_id:
             return unavailable("目标窗口已变化", bundle)
+        from ..browser_bridge.provenance import snapshot as browser_snapshot, same_page
+        website_before = browser_snapshot(bundle)
         content = _await(lambda cb: SC.SCShareableContent.getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_(True, True, cb))
         window = next((w for w in content.windows() if int(w.windowID()) == window_id), None)
         if window is None or int(window.owningApplication().processID()) != pid:
@@ -251,16 +275,26 @@ def capture_context(target):
             return unavailable("截图期间目标应用已变化", bundle)
         captured = time.perf_counter()
         captured_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        website_after = browser_snapshot(bundle) if website_before else None
         # A failed OCR or PNG encoder must not erase the other piece of evidence.
         try:
             result = recognize_image(image, bundle)
         except Exception as exc:
             result = unavailable(str(exc), bundle)
         result = ScreenContext(result, evidence=getattr(result, "evidence", {}))
-        result.update(capture_id=uuid.uuid4().hex, window_id=window_id, process_id=pid,
+        sharing_state = owned[0].get(CG.kCGWindowSharingState)
+        if result.get("error_code") == "transparent_window_capture" and sharing_state == 0:
+            result["reason"] += "（系统报告该窗口不可共享）"
+        result.update(application_name=application_name,
+                      capture_id=uuid.uuid4().hex, window_id=window_id, process_id=pid,
                       capture_ms=round((captured - started) * 1000), ocr_ms=round((time.perf_counter() - captured) * 1000))
         result.evidence.update(captured_at=captured_at, image_width=int(CG.CGImageGetWidth(image)),
-                               image_height=int(CG.CGImageGetHeight(image)), capture_scope="target_window")
+                               image_height=int(CG.CGImageGetHeight(image)), capture_scope="target_window",
+                               capture_method="screen_capture_kit_window" if manager else "legacy_window",
+                               window_sharing_state=sharing_state)
+        if same_page(website_before, website_after):
+            result.evidence["website_evidence"] = dict(application=bundle, website=website_before["website"],
+                source="browser_extension", captured_at=captured_at, page=website_before["page"])
         try:
             result.evidence["screenshot_png"] = _encode_png(image)
         except Exception as exc:

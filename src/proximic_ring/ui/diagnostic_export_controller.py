@@ -5,12 +5,12 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import QObject, Property, Signal, Slot, QStandardPaths, QUrl, Qt
+from PySide6.QtCore import QObject, Property, Signal, Slot, QUrl, Qt
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog
 
-from ..diagnostics.log_export import LogRange, RANGE_LABELS, export_diagnostics, suggested_filename, safe_configuration
+from ..diagnostics.log_export import LogRange, export_diagnostics, suggested_filename, safe_configuration
 from ..voice.history_export import ExportCancelled
+from .export_picker import choose_export_scope
 
 
 def runtime_snapshot(owner):
@@ -77,27 +77,31 @@ class DiagnosticExportController(QObject):
             self._error, self._message = True, str(exc)
             self.changed.emit()
             return
-        # Mark busy before the native dialog's nested event loop can reenter.
+        # All entry points share one asynchronous selection dialog.
         self._busy, self._error = True, False
-        previous_message = self._message
-        self._message = "请选择诊断包保存位置…"
+        self._previous_message = self._message
+        self._message = "请选择时间范围与保存文件夹…"
         self.changed.emit()
-        downloads = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation) or str(Path.home() / "Downloads")
         try:
-            destination, _ = QFileDialog.getSaveFileName(None, f"导出{RANGE_LABELS[period]}的详细诊断日志",
-                str(Path(downloads) / suggested_filename(selection)), "诊断包 (*.zip)")
-            if not destination or self._cancel.is_set():
-                self._busy, self._message = False, previous_message
-                self.changed.emit()
-                return
-            if not destination.lower().endswith(".zip"):
-                destination += ".zip"
+            choose_export_scope(owner=self._owner, on_selected=self._selected, kind="diagnostic", period=period)
+        except Exception as exc:
+            self._complete(None, str(exc))
+
+    def _selected(self, chosen):
+        if chosen is None or self._cancel.is_set():
+            self._busy, self._message = False, self._previous_message
+            self.changed.emit()
+            return
+        _, selection, directory = chosen
+        period = selection.key
+        try:
+            destination = Path(directory) / suggested_filename(selection)
             state = runtime_snapshot(self._owner)
             self._owner._event_log("USER_ACTION", action="export_diagnostic_log", period=period)
         except Exception as exc:
             self._complete(None, str(exc))
             return
-        writer, store = self._owner._diagnostic_log, self._owner._voice_history
+        writer = self._owner._diagnostic_log
         ime_root = self._ime_root
         self._message = "正在收集完整日志和诊断信息…"
         self.changed.emit()
@@ -121,7 +125,7 @@ class DiagnosticExportController(QObject):
                     _capture.flush()
                 state["touchpad_log_queue_drained"] = drained
                 result = export_diagnostics(writer, destination, LogRange.create(period), state=state,
-                    store=store, ime_root=ime_root, cancel=self._cancel, on_progress=progress)
+                    ime_root=ime_root, cancel=self._cancel, on_progress=progress)
             except ExportCancelled:
                 return
             except Exception as exc:
@@ -146,7 +150,7 @@ class DiagnosticExportController(QObject):
             self._message = f"导出诊断日志失败：{error}"
         else:
             self._path = result["path"]
-            self._message = f"已导出 {result['log_lines']} 行日志、{result['record_count']} 条语音诊断：{self._path}"
+            self._message = f"已导出 {result['log_lines']} 行日志及运行诊断信息：{self._path}"
             if result["warning_count"]:
                 self._message += f"；{result['warning_count']} 项缺失或读取提示，详见包内清单。"
             self._owner._append_log(self._message)

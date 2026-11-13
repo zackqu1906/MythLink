@@ -19,6 +19,7 @@ FigmaDialog {
     width: Math.min(1080, parent.width - 48)
     height: Math.min(720, parent.height - 48)
     modal: true; popupType: Popup.Item
+    closePolicy: Popup.CloseOnEscape
     leftPadding: 256; rightPadding: 32; topPadding: 88; bottomPadding: 36
     header: null; footer: null
     FigmaTheme { id: theme }

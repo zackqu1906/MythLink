@@ -207,7 +207,7 @@ class SceneDiagnostics:
             with self._lock:
                 self._events.append(event)
                 self.writer.record('[SCENE] ' + json.dumps(event, ensure_ascii=False, separators=(',', ':')),
-                                   source='scene', run=self.run_id)
+                                   source='scene', run=self.run_id, attribution=facts)
             return event
         except Exception:
             return {}  # Logging cannot veto a gesture or replay a shortcut.

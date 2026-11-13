@@ -10,11 +10,14 @@ VERSION_ARGS=()
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
         --app-only) APP_ONLY=1; shift ;;
+        --firmware)
+            [[ "$#" -ge 2 ]] || { echo "--firmware requires a DFU zip path" >&2; exit 2; }
+            export MYTHLINK_RING_FIRMWARE="$2"; shift 2 ;;
         --version)
             [[ "$#" -ge 2 ]] || { echo "--version requires X.Y.Z" >&2; exit 2; }
             VERSION_ARGS+=(--version "$2"); shift 2 ;;
         --auto-version) VERSION_ARGS+=(--auto-version); shift ;;
-        *) echo "Usage: $0 [--app-only] [--version X.Y.Z | --auto-version]" >&2; exit 2 ;;
+        *) echo "Usage: $0 [--app-only] [--version X.Y.Z | --auto-version] [--firmware path.zip]" >&2; exit 2 ;;
     esac
 done
 
@@ -111,6 +114,7 @@ if [[ ! -f "$SMOKE_LOG" ]] \
     || ! grep -q "QML root window ready" "$SMOKE_LOG" \
     || ! grep -q "Agent workspace QML ready" "$SMOKE_LOG" \
     || ! grep -q "Ring voice gesture endpoints ready" "$SMOKE_LOG" \
+    || ! grep -q "Bundled ring firmware and OTA ready" "$SMOKE_LOG" \
     || ! grep -q "Computer History recommendation runtime ready" "$SMOKE_LOG" \
     || ! grep -q "packaged ASR imports ready" "$SMOKE_LOG"; then
     echo "macOS packaged application did not complete its startup probe." >&2

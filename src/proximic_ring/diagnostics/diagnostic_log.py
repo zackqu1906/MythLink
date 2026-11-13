@@ -39,10 +39,16 @@ class _LogState:
         self.crash_file = None
 
 
-def format_record(message, *, source='runtime', level='INFO', run=None):
+def format_record(message, *, source='runtime', level='INFO', run=None, attribution=None):
     stamp = datetime.now().astimezone().isoformat(timespec='milliseconds')
     thread = threading.current_thread().name.replace('\n', ' ')
-    prefix = f'[{stamp}] [{level}] [{source}] run={run or _run_id} process={os.getpid()} thread={thread!r} '
+    scope = ''
+    if attribution is not None:
+        import json
+        from .export_scope import attributions
+        identities = sorted(attributions(attribution))
+        scope = '[export=' + json.dumps(identities, ensure_ascii=False).encode().hex() + '] '
+    prefix = f'[{stamp}] [{level}] [{source}] {scope}run={run or _run_id} process={os.getpid()} thread={thread!r} '
     return '\n'.join(prefix + line for line in str(message).rstrip('\r\n').splitlines())
 
 
@@ -151,8 +157,8 @@ class RotatingDiagnosticLog:
             self._refresh_crash_file()
             return self._state.crash_file.fileno()
 
-    def record(self, message, *, source='runtime', level='INFO', run=None):
-        return self.append(format_record(message, source=source, level=level, run=run))
+    def record(self, message, *, source='runtime', level='INFO', run=None, attribution=None):
+        return self.append(format_record(message, source=source, level=level, run=run, attribution=attribution))
 
     def append(self, line: str) -> bool:
         payload = (str(line).rstrip("\r\n") + "\n").encode(

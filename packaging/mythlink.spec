@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import platform
 import runpy
+import sys
 import tomllib
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata, collect_dynamic_libs
@@ -11,6 +12,13 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 project_root = Path(SPECPATH).parent
 source_root = project_root / "src"
+sys.path.insert(0, str(source_root))
+from proximic_ring.firmware.bundle import load_bundle, prepare_bundle
+firmware_override = os.environ.get('MYTHLINK_RING_FIRMWARE', '').strip()
+firmware_source = Path(firmware_override).expanduser() if firmware_override else load_bundle().path
+firmware_directory = project_root / '.build' / 'ring-firmware'
+firmware = prepare_bundle(firmware_source, firmware_directory)
+print(f'Bundling ring firmware: {firmware.version} SHA256={firmware.sha256}')
 app_version = tomllib.loads((project_root / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
 if os.environ.get('MYTHLINK_BUILD_VERSION', app_version) != app_version:
     raise ValueError('Build version differs from pyproject.toml; restart the build with the intended version.')
@@ -23,7 +31,8 @@ workflow_policy = runpy.run_path(str(project_root / 'packaging/legacy_workflows.
 legacy_excludes = workflow_policy['excluded_modules'](source_root)
 
 datas = [item for item in collect_data_files("proximic_ring")
-         if workflow_policy['include_data'](item[0])]
+         if workflow_policy['include_data'](item[0]) and '/assets/firmware/' not in Path(item[0]).as_posix()]
+datas += [(str(path), 'proximic_ring/assets/firmware') for path in firmware_directory.iterdir() if path.is_file()]
 datas.append((str(version_file), 'proximic_ring'))
 # The local ASR tokenizer/model inspects dependency metadata lazily.
 datas += copy_metadata("transformers", recursive=True)
@@ -64,6 +73,7 @@ if notices.is_file():
     datas.append((str(notices), "."))
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
+hiddenimports += collect_submodules('smpclient') + collect_submodules('smp')
 if platform.system() == "Darwin":
     hiddenimports += ["Vision", "CoreML", "ring_mac_sdk.model", "onnxruntime"]
 if platform.system() in {"Darwin", "Windows"}:

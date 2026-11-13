@@ -148,6 +148,11 @@ def main(argv: list[str] | None = None) -> int:
                                                   controller._disconnect_event):
                 raise RuntimeError(f"Packaged voice gesture endpoint rejected: {name}")
         print("[startup] Ring voice gesture endpoints ready")
+        from ..firmware.bundle import load_bundle
+        from ring_python_sdk.ota.backend import SmpOtaBackend
+        firmware = load_bundle()
+        SmpOtaBackend('00000000-0000-0000-0000-000000000000', 8)
+        print(f"[startup] Bundled ring firmware and OTA ready: {firmware.version}")
         if sys.platform == "darwin":
             from ..platforms.macos.mac_permissions import permission_status_report
             report = permission_status_report(app, controller._settings)

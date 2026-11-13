@@ -905,6 +905,7 @@ class RecognitionRuntime:
                                 )
                         # Record firmware output before application state gating.
                         on_state("[GESTURE_RECOGNIZED] " + json.dumps({
+                            "record_id": getattr(event, "record_id", ""),
                             "name": getattr(event, "name", ""),
                             "confidence": getattr(event, "confidence", None),
                             "device_timestamp_ms": getattr(event, "timestamp_ms", None),

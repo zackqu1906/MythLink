@@ -232,6 +232,7 @@ class OpenAICompatibleTextProcessor(
         edit_tool: dict[str, Any] | None = None,
         require_complete: bool = False,
         preserve_whitespace: bool = False,
+        allow_empty_text: bool = False,
     ) -> str | dict[str, Any]:
         provider = normalize_llm_provider(settings.provider)
         use_ark_responses = provider == LLM_PROVIDER_VOLCENGINE
@@ -351,11 +352,12 @@ class OpenAICompatibleTextProcessor(
                     raw_payload[:4000],
                 )
         else:
-            content = self._extract_content(payload)
+            content = (self._extract_completed_text(payload) if allow_empty_text
+                       else self._extract_content(payload))
         if isinstance(content, str):
             if not preserve_whitespace:
                 content = content.strip()
-            has_content = bool(content.strip())
+            has_content = bool(content.strip()) or allow_empty_text
         else:
             has_content = True
         if not has_content:
@@ -380,6 +382,25 @@ class OpenAICompatibleTextProcessor(
                 raw_payload[:4000],
             )
         return content
+
+    @staticmethod
+    def _extract_completed_text(payload):
+        """Direct-body edits may clear text; missing/refused/tool output cannot.
+
+        Only an explicit completed Responses message supplies a body, including
+        a genuine empty string. This does not relax other processing lanes.
+        """
+        parts = []
+        if isinstance(payload, dict) and payload.get("status") == "completed":
+            for item in payload.get("output", []):
+                if isinstance(item, dict) and item.get("type") == "message":
+                    for part in item.get("content", []):
+                        if (isinstance(part, dict) and part.get("type") == "output_text"
+                                and isinstance(part.get("text"), str)):
+                            parts.append(part["text"])
+        if not parts:
+            raise LLMResponseProcessingError("大模型未返回完整正文文本", json.dumps(payload, ensure_ascii=False))
+        return "".join(parts)
 
     @staticmethod
     def _model_output_text(response: str | dict[str, Any]) -> str:

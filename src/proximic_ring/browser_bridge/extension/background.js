@@ -37,7 +37,11 @@ async function collect() {
   catch (_) { return unavailableSnapshot(); }
   const base = {...unavailableSnapshot(), window: window.id ?? -1, tab: tab?.id ?? -1,
     focused: !!window.focused};
-  return collectPage(base, tab);
+  const result = await collectPage(base, tab);
+  const latest = await active();
+  if (!latest.window.focused || latest.window.id !== window.id || latest.tab?.id !== tab?.id || latest.tab?.url !== tab?.url)
+    return unavailableSnapshot();
+  return result;
 }
 function unavailableSnapshot() {
   return {session, window: -1, tab: -1, frame: -1,
@@ -61,6 +65,7 @@ async function collectPage(base, tab) {
   }));
   const top = results.find(r => r?.frame === 0);
   if (!top) return {...base, reason: tab.status === "loading" ? "page_loading" : "browser_page_unavailable"};
+  base.website = url.hostname.toLowerCase();
   base.page = top.document + ":" + top.page;
   const focused = results.filter(r => r?.focused && r.input_context !== "unknown");
   base.input_context = focused.some(r => r.input_context === "text") ? "text" : focused.length ? "nontext" : "unknown";

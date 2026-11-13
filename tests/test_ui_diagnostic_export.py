@@ -14,6 +14,14 @@ from test_inline_ui import inline_ui
 from test_ui_figma_redesign import click
 
 
+@pytest.fixture(autouse=True)
+def export_selection(monkeypatch, tmp_path):
+    from proximic_ring.diagnostics.export_scope import ExportScope
+    from proximic_ring.diagnostics.log_export import LogRange
+    monkeypatch.setattr("proximic_ring.ui.diagnostic_export_controller.choose_export_scope",
+                        lambda **kwargs: kwargs["on_selected"]((ExportScope(frozenset({"com.apple.safari"})), LogRange.create(kwargs.get("period", "all")), tmp_path)))
+
+
 def wait_finished(exporter):
     for _ in range(400):
         QTest.qWait(10)
@@ -23,7 +31,7 @@ def wait_finished(exporter):
     pytest.fail("Diagnostic export did not finish")
 
 
-@pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
+@pytest.mark.parametrize("size", [(1200, 780), (940, 700), (940, 560)])
 @pytest.mark.parametrize("index,period", [(0, "today"), (1, "week"), (2, "all")])
 def test_settings_first_level_exports_selected_range_without_blocking(inline_ui, monkeypatch, tmp_path, size, index, period):
     import proximic_ring.ui.diagnostic_export_controller as module
@@ -32,9 +40,15 @@ def test_settings_first_level_exports_selected_range_without_blocking(inline_ui,
     exporter._ime_root = tmp_path / "ime"
     now = datetime.now().astimezone()
     for days, marker in [(0, "today-evidence"), (3, "week-evidence"), (20, "old-evidence")]:
-        controller._diagnostic_log.append(f"[{(now - timedelta(days=days)).isoformat()}] {marker}")
+        from proximic_ring.diagnostics.diagnostic_log import format_record
+        line = format_record(marker, attribution={"application": "Safari"})
+        controller._diagnostic_log.append(f"[{(now - timedelta(days=days)).isoformat()}]" + line.partition("]")[2])
+    controller._diagnostic_log.record("global-device-error", source="device", level="ERROR")
+    controller._diagnostic_log.record("other-app-error", attribution={"application": "TextEdit"})
+    from test_history_management import add_record
+    add_record(controller._voice_history, 901, "private-voice-content")
     path = tmp_path / (period + ".zip")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(path), ""))
+    monkeypatch.setattr(module, "suggested_filename", lambda selection: path.name)
     started, release = threading.Event(), threading.Event()
     actual, calls = module.export_diagnostics, []
 
@@ -46,15 +60,18 @@ def test_settings_first_level_exports_selected_range_without_blocking(inline_ui,
 
     monkeypatch.setattr(module, "export_diagnostics", slow_export)
     root.resize(*size)
+    root.setProperty("topPadding", 28)
     root.show()
     click(root, "runtimeSettingsButton")
     QTest.qWait(200)
     button = root.findChild(QObject, "settingsExportDiagnosticLogButton")
-    selector = root.findChild(QObject, "diagnosticLogRangeSelect")
-    assert button.property("visible") and selector.property("count") == 3
+    assert root.findChild(QObject, "diagnosticLogRangeSelect") is None
+    assert button.property("visible")
     assert not root.findChild(QObject, "settingsAudioGroup").property("visible")
     assert not root.findChild(QObject, "runtimeLogDialog").property("visible")
-    selector.setProperty("currentIndex", index)
+    from proximic_ring.ui.export_picker import choose_export_scope
+    monkeypatch.setattr(module, "choose_export_scope", choose_export_scope)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
     scroll = root.findChild(QObject, "runtimeSettingsScroll")
     flick = scroll.property("contentItem")
     row = root.findChild(QObject, "diagnosticLogExportRow")
@@ -66,11 +83,23 @@ def test_settings_first_level_exports_selected_range_without_blocking(inline_ui,
     position = button.mapToScene(QPointF(button.width()/2, button.height()/2)).toPoint()
     assert 0 < position.x() < root.width() and 0 < position.y() < root.height()
     QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, position)
+    QTest.qWait(180)
+    selection = controller.exportSelection
+    assert selection.kind == "diagnostic" and selection.applications == []
+    click(root, "exportRange_" + period)
+    click(root, "chooseExportFolderButton")
+    dialog = root.findChild(QObject, "exportApplicationDialog")
+    confirm = root.findChild(QObject, "confirmExportButton")
+    background = dialog.property("background")
+    bottom = background.mapToScene(QPointF()).y() + background.height()
+    assert confirm.mapToScene(QPointF()).y() + confirm.height() <= bottom - 12
+    assert root.grabWindow().save(f"/tmp/mythlink-diagnostic-export-{size[0]}x{size[1]}.png")
+    click(root, "confirmExportButton")
     try:
         assert started.wait(1), exporter.message
         assert exporter.busy
         QTest.qWait(50)
-        assert not button.property("enabled") and not selector.property("enabled")
+        assert not button.property("enabled")
         assert not root.findChild(QObject, "exportDiagnosticLogButton").property("enabled")
         exporter.export("all")
         assert len(calls) == 1 and calls[0] != threading.get_ident()
@@ -83,12 +112,16 @@ def test_settings_first_level_exports_selected_range_without_blocking(inline_ui,
     assert status.property("visible") and "已导出" in status.property("text")
     with ZipFile(path) as archive:
         assert json.loads(archive.read("manifest.json"))["range"] == period
+        assert json.loads(archive.read("manifest.json"))["voice_history_requested"] is False
         log = archive.read("diagnostic.log").decode()
         assert "today-evidence" in log
+        assert "global-device-error" in log and "other-app-error" in log
         assert ("week-evidence" in log) == (index > 0)
         assert ("old-evidence" in log) == (index == 2)
         state = json.loads(archive.read("runtime.json"))["state"]
-        assert "input_method" in state and "permissions" in state and "touchpad" in state
+        assert state["run_id"] == controller._diagnostic_run_id
+        assert "permissions" in state and "application" in state
+        assert not any(name.startswith("interactions/") for name in archive.namelist())
     folder_calls = []
     monkeypatch.setattr(module.QDesktopServices, "openUrl", lambda url: folder_calls.append(url.toLocalFile()) or True)
     QMetaObject.invokeMethod(root.findChild(QObject, "openDiagnosticExportFolderButton"), "click")
@@ -102,10 +135,11 @@ def test_cancel_dialog_and_failure_allow_retry(inline_ui, monkeypatch, tmp_path)
     controller, _, _, _, _ = inline_ui
     exporter = controller.diagnosticExport
     exporter._ime_root = tmp_path / "ime"
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
+    choose = module.choose_export_scope
+    monkeypatch.setattr(module, "choose_export_scope", lambda **kwargs: kwargs["on_selected"](None))
     exporter.export("today")
     assert not exporter.busy and not exporter.error and not exporter.path
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "retry.zip"), ""))
+    monkeypatch.setattr(module, "choose_export_scope", choose)
     actual = module.export_diagnostics
     def fail(*args, **kwargs):
         raise OSError("disk full")

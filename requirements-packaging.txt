@@ -1,3 +1,6 @@
 PyInstaller==6.22.2
 pyinstaller-hooks-contrib==2026.7
 cmake==3.31.6; platform_system == 'Darwin'
+# Firmware OTA is also required when rebuilding an existing Windows environment.
+smpclient==5.2.0; platform_system == 'Darwin' or platform_system == 'Windows'
+smpclient[ble]==7.0.0; platform_system != 'Darwin' and platform_system != 'Windows'

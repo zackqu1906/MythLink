@@ -58,7 +58,8 @@ def process_routed_edit(processor, request, cancelled=lambda: False):
     if cancelled():
         raise RuntimeError("编辑已取消")
     text, raw, model_input, plan = processor.process_routed_edit_with_trace(
-        request.raw_text, request.settings, request.target_text, context)
+        request.raw_text, request.settings, request.target_text, context,
+        variant=request.routed_edit_variant)
     return ProcessingOutput(text, raw, model_input, task_type=EDIT, edit_plan=plan, screen_context=context)
 
 

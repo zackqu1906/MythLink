@@ -25,7 +25,7 @@ def identity(snapshot):
 
 
 def clean_snapshot(value):
-    """Do not retain URLs, page titles, control text or user-entered content."""
+    """Retain an authorized hostname, never URL paths, titles or entered text."""
     if not isinstance(value, dict):
         raise ValueError("invalid_snapshot")
     result = {}
@@ -43,6 +43,8 @@ def clean_snapshot(value):
         if type(value.get(key, False)) is not bool:
             raise ValueError("invalid_snapshot")
         result[key] = value.get(key, False)
+    from ..diagnostics.export_scope import website
+    result["website"] = website(value.get("website", "")) if result["focused"] and result["authorized"] and result["page"] else ""
     result["scene"] = value.get("scene", "") if value.get("scene", "") in {"video", "music", "pdf", "image"} else ""
     result["input_context"] = value.get("input_context", "unknown") if value.get("input_context") in {"text", "nontext"} else "unknown"
     editor = value.get("editor", "")

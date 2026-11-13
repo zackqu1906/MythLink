@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | 手动转换 `manual` | 用户手势 | 原有编辑候选流程 | `ui/voice/manual_voice.py` | `text_processing/manual_processing.py` |
 | 自动判断 `auto` | Clef 联合分类 | 选中模块拼接后生成正文 | `ui/voice/automatic_voice.py` | `text_processing/automatic_processing.py` |
-| 手动＋编辑路由 `manual_routed_edit` | 用户手势 | 一次 DeepSeek 请求返回六类选择与完整正文 | `ui/voice/routed_edit_voice.py` | `text_processing/routed_edit_processing.py` |
+| 手动＋编辑路由 `manual_routed_edit` | 用户手势 | 一次 DeepSeek 请求；可选六类选择＋正文或无分类边界直编 | `ui/voice/routed_edit_voice.py` | `text_processing/routed_edit_processing.py` |
 
 `ui/voice/voice_modes.py` 集中分派会话和原生编辑入口，`text_processing/processing_dispatch.py`
 集中分派三种文本处理策略。Worker 只负责排队、取消、结果及 trace 回调。
@@ -56,28 +56,45 @@ Clef 联合七字段 → 一致性校验 → 组合提示词 → 一次生成 �
 默认沿用手动手势：双击开始，点击结束听写，右滑结束并确认编辑；已有手势绑定不被重置。
 本模式没有听写／编辑模型判断，不调用 Clef，不预先计算另一种候选。
 
+设置 → 听写偏好 → 输入与控制，选择“手动＋编辑路由”后显示“手动编辑版本”：
+“六分类 v5”（`six_class_v5`，默认，旧设置继续使用）与“无分类边界 v1”（`boundary_only_v1`）。
+偏好保存为 `input/routedEditVariant`，未知值回到六分类；录音开始固定本句版本，下次录音应用设置变化。
+历史重做保留原请求的版本、模型设置和上文，不套用当前选择。
+
 - `ui/voice/routed_edit_voice.py`：原生编辑附带本句 OCR；桌面回退路径读取目标快照并提交。
-- `text_processing/routed_edit_prompts.py`：复用当前六类定义、共用编辑要求、组合规则及全部可用模块。
-  同一个提示词要求模型先选类别，只执行选中模块。空原文排除“修改”；正文可按目标创作。
+- `text_processing/routed_edit_prompts.py`：复用当前六类定义、共用编辑要求、组合规则和 OCR 边界；
+  使用第三模式专用执行模块，不继承 Clef 的听写／编辑排除条件或自动模式的歧义跳过规则。
+  用户手势已确认编辑，模型必须选择至少一个类别；所有类别都允许结合上下文自主推断对象、范围、
+  措辞、语言和格式等省略信息并完成结果。空原文排除“修改”；正文可按目标创作。
 - `text_processing/routed_edit_processing.py`：一次火山 DeepSeek 请求，无重试、无候选竞速；
-  中文 `分类：…` 与 `正文：…`，不要求模型输出 JSON。兼容正文同一行或下一行，拒绝未知／重复类别、
-  空原文的修改类别、无任务却改变原文、截断响应，以及共用正文校验不接受的输出。
+  六分类版返回中文 `分类：…` 与 `正文：…`，不要求模型输出 JSON。兼容正文同一行或下一行，拒绝未知／重复类别、
+  空原文的修改类别、未选择编辑类别、截断响应，以及共用正文校验不接受的输出。
+- `text_processing/boundary_edit_prompt.py`：无分类边界 v1 的完整固定提示词，逐字对应 2026-11-11 的
+  216 条实测版本。保留六类原有能力和执行边界，移除选类别、条件模块与类别输出要求。
+  此版本直接返回正文、`edit_plan=None`；不生成假分类或再发一次分类请求。
+  只有已完成的 Responses 显式文本允许空字符串（清空正文），缺失内容、拒绝、工具参数和截断不能作为清空。
 - `ui/voice/inline_controller.py`、原生 `CompositionSession.swift`：保留手动点击／右滑语义；
   `routed_edit_mode` 只允许已确认空原文进入创作，不把不可读取的上下文当作空框。
   原生组件通过 `routed_edit_version=1` 确认支持；旧组件会提示更新，不静默降级为旧编辑。
 
 流程：录音并采集同一帧 OCR，同时按开关预取 DeepSeek 上文 → 手势确认编辑 → 读取已绑定原文 →
 上文开关开启时等待同一句整理结果，关闭时使用空上文 →
-一次 DeepSeek 分类＋正文 → 解析校验 → 原生 revision／光标／范围校验 → 写回及撤销。
+一次 DeepSeek（按版本返回分类＋正文或直接正文）→ 解析校验 → 原生 revision／光标／范围校验 → 写回及撤销。
 点击确认的听写保持手动行为。第三模式编辑不额外启动热词学习请求。
 
 实际请求只有 `utterance`、`editable_text`、`screen_context`。无预期标签、无上游 `edit_plan`。
-完整返回的类别保存为 `result.edit_plan`；它是返回结果，不是在第二次请求中发送的计划。
-没有可执行任务时返回原文，未知类别不被“修复”为成功。
+六分类版完整返回的类别保存为 `result.edit_plan`；它是返回结果，不是在第二次请求中发送的计划。
+六分类版不提示或接受“无可执行编辑”作为成功结果；未知类别不被“修复”为成功。
 
 历史记录保留模式、单次总耗时、实际模型输入、原始分类与正文、最终计划、失败原因和 OCR 过滤证据。
+展开编辑详情后依次显示路由判断、编辑结果与失败信息、OCR 截图、LLM 整理的 OCR。正文校验失败或输出截断时，仍展示已返回的分类并注明
+结果未通过校验；未收到类别时明确显示“未取得分类”，不借用同一记录里其他请求的类别。
+写回失败的原因与模型生成结果分开展示；失败回退原文不作为模型正文显示。旧记录的无任务结果仍可读。
 没有独立分类耗时，也不编造类别概率。源代码接入验证见 `tests/test_routed_edit.py`、
 `tests/test_ui_routed_edit.py` 和原生 `Tests/main.swift` 的 routed 模式事务测试。
+新请求还保存 `routed_edit_variant`、对应 `prompt_version` 与完整 system；无分类版标记
+`classification_type=not_applicable`，详情显示“无分类边界 v1 · 直接生成正文”，不显示分类失败。
+该版本的传输、设置持久化、会话切换和重做测试见 `tests/test_boundary_edit.py`、`tests/test_ui_boundary_edit.py`。
 
 ## 三种模式共用
 
@@ -94,7 +111,7 @@ Clef 联合七字段 → 一致性校验 → 组合提示词 → 一次生成 �
 | `text_processing/llm.py` | 公共处理器 API、HTTP、模型服务、工具调用与编辑响应校验 |
 | `text_processing/processing_common.py` | 输出预算和响应异常类型 |
 | `voice/modification_dataset.py` | 听写、编辑、自动分类及截图的统一记录与删除 |
-| `voice/history_details.py`、`ui/qml/VoiceHistoryDetails.qml` | 三种模式共用的易读详情：模型输出优先，输入按口述／原文／上文展示，不展开协议、提示词或日志 |
+| `voice/history_details.py`、`ui/qml/VoiceHistoryDetails.qml` | 三种模式共用的易读详情：编辑记录按路由、结果与失败、截图、整理后的 OCR 排列，全文自然增高，无输入展开或内部滚动框 |
 | `voice/history_export.py`、`ui/voice/history_export_controller.py` | 设置首页与历史页整体菜单导出完整原始记录、附件、CSV/JSONL 索引和 context 覆盖清单；后台压缩，成功后自动打开导出文件夹，不受历史筛选或展示条数限制 |
 | `ui/voice/inline_controller.py`、`native/ProxiMicInput/Sources/` | 原生会话、目标与版本校验、文字应用、撤销 |
 
@@ -104,15 +121,20 @@ Clef 联合七字段 → 一致性校验 → 组合提示词 → 一次生成 �
 `screen_evidence.ocr_filter_lines` 继续可读；新整理过程独立保存到 `context_preparation`，不覆盖原始 OCR。
 截图回调绑定固定记录 ID；取消判断不会取消记录采集，删除／清空／重连后的迟到回调不会重建或串写记录。
 输入法 BEGIN 已返回的原文、选择范围及版本等另外保存在 `input_context`；未取得的数据不补造。
-三种模式都通过记录的“…”菜单选择“查看记录详情”。最新文字结果在前，随后展示分类、上文整理和语音识别；
-每个模型只显示用途、简短模型名、耗时、状态与可读输出，输入默认折叠。其他候选结果、原始 OCR 文字和截图按需展开。
-详情不再展示请求 JSON、系统提示词、概率、坐标、内部标识、事件或传感器日志；底层文件继续完整保存，已有“打开记录文件夹”入口保留。
-显示层不修改记录、不重新请求模型。空输出与失败回退分开呈现，避免把原文回退误称为模型输出。
-详情文本按框宽换行并在框内滚动，右侧留出 40 像素空白用于滚动外层记录列表。
+三种模式都通过记录的“…”菜单选择“查看记录详情”。编辑指令固定为四块：路由判断、编辑结果与失败信息、
+OCR 截图、LLM 整理的 OCR。路由区保留各次请求实际返回的分类，结果区保留正文与各自的失败原因；
+不会用后一次成功的分类填补前一次失败。没有路由、截图或整理结果时明确说明，不补造数据。
+截图随详情直接显示；取消所有“查看输入”按钮，详情内不再进行第二次展开。
+详情文本按可用宽度换行并完整增高，不限制文本高度，也不设内部滚动框；鼠标滚轮和触控板在文本、截图、标题及留白处
+都滚动外层历史列表。历史列表提供统一滚动条。
+详情不展示请求输入、请求 JSON、系统提示词、概率、坐标、内部标识、事件或传感器日志；底层文件继续完整保存，
+已有“打开记录文件夹”入口和完整记录导出保留。
+
 旧记录仍可读，未采集的截图、上下文或传感器字段明确显示未记录。
 
-设置首页“数据与分析 → 语音历史记录 → 一键导出”和历史页整体“⋯ → 导出全部语音记录”
-共用后台任务，将本安装数据目录中的全部交互导出到下载文件夹；两个入口均显示进度并防止重复导出，
+设置首页“记录与导出 → 语音记录 → 导出”和历史页整体“⋯ → 筛选应用并导出语音记录”
+共用后台任务，每次选择应用、时间范围及保存文件夹（默认 Downloads），导出符合范围的完整交互；
+两个入口均显示进度并防止重复导出，
 成功后自动打开导出文件夹；打开失败时显示文件路径，设置首页仍可手动重新打开。
 文件名为 `Mythlink-voice-history-日期时间-唯一后缀.zip`。包内保留 `interactions/` 原始记录与附件，
 另有 `records.jsonl`、`summary.csv`、`associations.jsonl`、`manifest.json` 和字段说明 `README.txt`。
@@ -164,5 +186,6 @@ v12 明确 compact context、草稿及不确定性的只读边界；六类编辑
 v13 在修改模块中加入共用的 `prompts.py:CHARACTER_CLARIFICATION_RULES`：
 “某词的某字”中指称字被 ASR 识别错时，以释字词中明确对应的字为准，
 例如“怪异的亿腾飞的藤”提取为“异腾”；同音候选无法消歧时不猜，逐字照录时不执行释字。
-手动编辑的片段／全文提示词也引用同一规则；第三模式自动复用修改模块，分类提示词保持不变。
+手动编辑的片段／全文提示词也引用同一规则；第三模式 v4 复用释字依据并将歧义处理适配为自主选择，
+Clef 分类提示词保持不变。
 旧两级／分支方案的冻结提示词仅供 `tools/` 历史评测及 `docs/reports/` 结果追溯，不会被应用加载。

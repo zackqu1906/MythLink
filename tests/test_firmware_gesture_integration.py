@@ -221,6 +221,9 @@ def test_desktop_runtime_enables_tap_while_other_gesture_actions_remain_independ
 
 
 def test_gesture_conversion_and_undo_use_existing_availability(controller, monkeypatch):
+    # Conversion availability is a manual-mode contract; fresh installs now
+    # default to routed editing, whose convert action ends the edit utterance.
+    controller.inputRoutingMode = "manual"
     calls = []
     operation = SimpleNamespace(auto_context=object())
     monkeypatch.setattr(controller, "_active_operation_stack", lambda: [operation])

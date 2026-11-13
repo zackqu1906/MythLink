@@ -27,6 +27,8 @@ ApplicationWindow {
 
 
     FigmaTheme { id: uiTheme }
+    GestureHistoryDialog { controller: appController }
+    ExportDialog { selection: appController.exportSelection }
     property int currentPage: 0
     // Keep association features implemented, but hide their UI surfaces.
     readonly property bool associationUiVisible: false
@@ -205,7 +207,8 @@ ApplicationWindow {
 
     onClosing: function(close) {
         close.accepted = false
-        root.hide()
+        appController.exportSelection.cancel()
+        if (!appController.firmwareUpdate.busy) root.hide()
         appController.requestQuit()
     }
 
@@ -409,6 +412,8 @@ ApplicationWindow {
         modal: true
         popupType: Popup.Item
         title: "运行诊断日志"
+        focus: true
+        z: 20
         background: Rectangle { color: root.panel; radius: 18; border.color: root.border }
         closePolicy: Popup.CloseOnEscape
         onOpened: { logArea.refreshLog(); logArea.jumpToLatest() }
@@ -508,7 +513,7 @@ ApplicationWindow {
 
             Label {
                 Layout.fillWidth: true
-                text: "窗口显示最近 1000 行；诊断包按所选时间导出完整记录和相关附件。"
+                text: "窗口显示最近 1000 行；导出时可选择今天、近一周或全部日志。"
                 color: root.textMuted
                 font.pixelSize: 11
                 wrapMode: Text.Wrap
@@ -516,19 +521,11 @@ ApplicationWindow {
 
             RowLayout {
                 Layout.fillWidth: true
-                FigmaSelect {
-                    id: runtimeLogPeriod
-                    objectName: "runtimeDiagnosticLogRangeSelect"
-                    Layout.preferredWidth: 110
-                    Accessible.name: "诊断日志时间范围"
-                    model: ["今天", "近一周", "全部"]
-                    enabled: !appController.diagnosticExport.busy
-                }
                 FigmaAction {
                     objectName: "exportDiagnosticLogButton"
                     text: appController.diagnosticExport.busy ? "正在导出…" : "导出诊断包"
                     enabled: !appController.diagnosticExport.busy
-                    onClicked: appController.exportDiagnosticLog(["today", "week", "all"][runtimeLogPeriod.currentIndex])
+                    onClicked: appController.exportDiagnosticLog("today")
                 }
                 FigmaAction {
                     objectName: "openDiagnosticLogDirectoryButton"
@@ -542,7 +539,7 @@ ApplicationWindow {
                     onClicked: logArea.jumpToLatest()
                 }
                 FigmaAction { text: "清空窗口"; onClicked: appController.clearLog() }
-                FigmaAction { text: "关闭"; onClicked: runtimeLogDialog.close() }
+                FigmaAction { objectName: "runtimeLogFooterCloseButton"; text: "关闭"; onClicked: runtimeLogDialog.close() }
             }
             UiNotice {
                 Layout.fillWidth: true
@@ -932,7 +929,8 @@ ApplicationWindow {
                             }
                             onAdvancedSettingsRequested: root.showAdvancedSettings(4)
                             onGpuSetupRequested: gpuInstallDialog.open()
-                            onLogRequested: { runtimeSettingsDialog.saveCurrentEditor(); runtimeSettingsDialog.close(); runtimeLogDialog.open() }
+                            onLogRequested: { runtimeSettingsDialog.saveCurrentEditor(); runtimeLogDialog.open() }
+                            onVoiceHistoryRequested: { runtimeSettingsDialog.applyAndClose(); root.currentPage = 4 }
                         }
                         ProximitySettings {
                             objectName: "settingsPage9"

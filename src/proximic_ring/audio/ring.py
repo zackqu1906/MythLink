@@ -151,6 +151,7 @@ class RingAudioSource(AudioSource):
         self._ready = threading.Event()
         self._resume_finished = threading.Event()
         self._thread: threading.Thread | None = None
+        self.firmware_identity: dict = {}
         self._error: BaseException | None = None
         self._resume_error: BaseException | None = None
         self._pcm_generation = object()
@@ -181,6 +182,7 @@ class RingAudioSource(AudioSource):
         if self._thread is not None:
             raise RuntimeError("RingAudioSource is already open")
 
+        self.firmware_identity = {}
         self._clear_queue()
         self._pending = np.empty(0, dtype=np.float32)
         self._pending_start_monotonic_ns = None
@@ -361,6 +363,11 @@ class RingAudioSource(AudioSource):
     @property
     def error(self) -> BaseException | None:
         return self._error
+
+    @property
+    def transport_released(self) -> bool:
+        """OTA may take ownership only after the BLE coroutine finished cleanup."""
+        return self._thread is None or not self._thread.is_alive()
 
     def close(self) -> None:
         self._pcm_generation = object()
@@ -893,6 +900,12 @@ class RingAudioSource(AudioSource):
                 target = self.selector or self.name_keyword
                 raise RuntimeError(f"Ringo device {target!r} not found or connection failed")
             connected_at = time.monotonic()
+            transport = getattr(session, '_sdk_transport', None)
+            info = getattr(transport, 'device_info', None) or getattr(session, 'device_info', None)
+            self.firmware_identity = {
+                'address': getattr(session, 'target_address', ''),
+                'version': getattr(info, 'firmware_version', getattr(info, 'fw_version', '')),
+            }
 
             # BLE and the required NUS service are now validated.  Release the
             # connection phase before doing battery queries or starting audio.

@@ -73,6 +73,16 @@ def test_sidebar_mouse_navigation_keeps_one_preferences_window_open(inline_ui, s
     def mouse_click(name):
         item = visual_child(root.contentItem(), name) or root.findChild(QObject, name)
         assert item is not None and item.property("visible"), name
+        if name == "settingsAudioEntry":
+            # The first-level settings now include more entries. Bring the
+            # actual control into the scroll viewport before sending a click.
+            scroll = root.findChild(QObject, "runtimeSettingsScroll")
+            flick = scroll.property("contentItem")
+            y = item.mapToItem(scroll, QPointF()).y()
+            if y < 0 or y + item.height() > scroll.height():
+                flick.setProperty("contentY", max(0, min(flick.property("contentY") + y - 12,
+                    flick.property("contentHeight") - flick.height())))
+                QTest.qWait(30)
         position = item.mapToScene(QPointF(item.width()/2, item.height()/2)).toPoint()
         assert 0 <= position.x() < root.width() and 0 <= position.y() < root.height()
         QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, position)
@@ -261,9 +271,10 @@ def test_preferences_navigation_logs_agent_release_notes_and_startup(inline_ui, 
     assert "无法修改" in controller.startup.error
     click(root, "runtimeLogButton"); QTest.qWait(150)
     assert root.findChild(QObject, "runtimeLogDialog").property("visible")
-    assert not settings.property("visible")
+    assert settings.property("visible")
     QMetaObject.invokeMethod(root.findChild(QObject, "runtimeLogDialog"), "close")
-    click(root, "runtimeSettingsButton"); QTest.qWait(100)
+    QTest.qWait(100)
+    assert settings.property("opened")
     click(root, "settingsAgentEntry"); QTest.qWait(120)
     assert root.findChild(QObject, "settingsAgentGroup").property("visible")
     screenshot(root, tmp_path, f"preferences-agent-{size[0]}.png")

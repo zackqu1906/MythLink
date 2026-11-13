@@ -748,8 +748,8 @@ class ModificationDatasetCollector:
         """Bind every dictation/edit LLM call to the utterance record."""
         from ..text_processing.automatic_prompts import AUTOMATIC_PROMPT_VERSION, automatic_system_prompt
         from ..text_processing.automatic_inputs import dictation_model_input, edit_model_input
-        from ..text_processing.model import INPUT_ROUTING_ROUTED_EDIT
-        from ..text_processing.routed_edit_prompts import ROUTED_EDIT_PROMPT_VERSION, single_pass_prompt
+        from ..text_processing.model import INPUT_ROUTING_ROUTED_EDIT, normalize_routed_edit_variant
+        from ..text_processing.routed_edit_prompts import routed_edit_prompt_version, routed_edit_prompt
         from ..text_processing.routed_edit_processing import routed_edit_model_input
         request_id = int(getattr(request, "request_id", 0))
         session_id = int(getattr(request, "session_id", 0))
@@ -768,6 +768,7 @@ class ModificationDatasetCollector:
             task_type = str(getattr(request, "task_type", ""))
             routing = getattr(request, "routing_mode", "manual")
             routed_edit = routing == INPUT_ROUTING_ROUTED_EDIT and mode == "edit"
+            variant = normalize_routed_edit_variant(getattr(request, "routed_edit_variant", ""))
             if routed_edit:
                 model_input = routed_edit_model_input(raw_text, target_text, context)
             elif task_type == "dictation":
@@ -784,10 +785,10 @@ class ModificationDatasetCollector:
                 "provider": str(getattr(settings, "provider", "")),
                 "model": str(getattr(settings, "model", "")),
                 "base_url": str(getattr(settings, "base_url", "")),
-                "prompt_version": ROUTED_EDIT_PROMPT_VERSION if routed_edit else AUTOMATIC_PROMPT_VERSION if task_type else PROMPT_VERSION,
+                "prompt_version": routed_edit_prompt_version(variant) if routed_edit else AUTOMATIC_PROMPT_VERSION if task_type else PROMPT_VERSION,
                 "task_type": str(getattr(request, "task_type", "")),
                 "edit_plan": request.edit_plan.as_dict() if getattr(request, "edit_plan", None) else None,
-                "system_prompt": (single_pass_prompt(target_text) if routed_edit else
+                "system_prompt": (routed_edit_prompt(target_text, variant) if routed_edit else
                                   automatic_system_prompt(task_type, getattr(request, "edit_plan", None)) if task_type else ""),
                 "screen_context": context,
                 "input": model_input,
@@ -795,6 +796,9 @@ class ModificationDatasetCollector:
                 "status": "processing",
             }
             record = self._interaction_data(interaction_id)
+            if routed_edit:
+                llm_request["routed_edit_variant"] = variant
+                record["mode"]["routed_edit_variant"] = variant
             if routing == INPUT_ROUTING_ROUTED_EDIT:
                 record["mode"].update(routing=routing, selected=mode, user_intent=mode)
             self._save_screen_evidence_locked(interaction_id, record, getattr(request, "screen_context", None))
@@ -856,11 +860,16 @@ class ModificationDatasetCollector:
                     updates["input"] = model_input
                     updates["screen_context"] = model_input.get("screen_context")
             if routed_edit:
+                from ..text_processing.model import ROUTED_EDIT_BOUNDARY, normalize_routed_edit_variant
+                variant = normalize_routed_edit_variant(getattr(result, "routed_edit_variant", ""))
+                classification_type = "not_applicable" if variant == ROUTED_EDIT_BOUNDARY else "llm_single_pass"
                 plan = result.edit_plan.as_dict() if result.edit_plan else None
-                updates.update(edit_plan=plan, classification_type="llm_single_pass", task_type="edit")
+                updates.update(edit_plan=plan, classification_type=classification_type, task_type="edit",
+                               routed_edit_variant=variant)
                 record["mode"].update(routing="manual_routed_edit", task_type="edit", edit_plan=plan,
                     edit_routing_output=updates["raw_output"], edit_routing_error=updates["error"],
-                    edit_routing_latency_ms=updates["latency_ms"], edit_routing_type="llm_single_pass")
+                    edit_routing_latency_ms=updates["latency_ms"], edit_routing_type=classification_type,
+                    routed_edit_variant=variant)
                 self._save_screen_evidence_locked(interaction_id, record, getattr(result, "screen_context", None))
                 # _update_llm_request_locked reloads the record; save the mode
                 # and filtered OCR evidence first instead of losing that update.

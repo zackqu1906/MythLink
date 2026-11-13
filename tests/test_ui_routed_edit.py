@@ -4,7 +4,8 @@ from dataclasses import replace
 import pytest
 from test_inline_ui import inline_ui
 from test_shared_voice_capture import raw_capture
-from proximic_ring.text_processing.model import INPUT_ROUTING_ROUTED_EDIT, TextProcessingResult
+from proximic_ring.text_processing.model import (INPUT_ROUTING_ROUTED_EDIT, TextProcessingResult,
+                                                ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY)
 from proximic_ring.text_processing.task_routing import EditPlan
 
 
@@ -40,8 +41,10 @@ def test_three_mode_selector_persists_and_tap_dictates_without_routing(inline_ui
 
 
 @pytest.mark.parametrize("source",["明天三点开会",""])
-def test_right_swipe_requests_one_routed_edit_and_result_uses_native_key(inline_ui,monkeypatch,source):
+@pytest.mark.parametrize("variant",[ROUTED_EDIT_SIX_CLASS,ROUTED_EDIT_BOUNDARY])
+def test_right_swipe_requests_one_routed_edit_and_result_uses_native_key(inline_ui,monkeypatch,source,variant):
     controller,bridge,requests,root,event=inline_ui
+    controller.routedEditVariant=variant
     begin_routed(controller,bridge,event,monkeypatch)
     controller._apply_runtime_update("帮我写通知",False,"",2)
     event(phase="listening",ready=True,revision=0,has_composition=True,can_convert=True,edit_requested=False)
@@ -54,17 +57,20 @@ def test_right_swipe_requests_one_routed_edit_and_result_uses_native_key(inline_
     assert not requests
     # Changing future mode must not change this utterance's request policy.
     controller.inputRoutingMode="manual"
+    controller.routedEditVariant=ROUTED_EDIT_SIX_CLASS if variant==ROUTED_EDIT_BOUNDARY else ROUTED_EDIT_BOUNDARY
     event(phase="editing",ready=True,revision=1,edit_requested=True,context_complete=True)
     event("edit_requested",revision=1,instruction="帮我写通知",original=source)
     event("edit_requested",revision=1,instruction="帮我写通知",original=source)
     assert len(requests)==1
     request=requests[0]
     assert request.routing_mode==INPUT_ROUTING_ROUTED_EDIT and request.target_text==source
+    assert request.routed_edit_variant==variant
     assert request.screen_context is controller._voice_capture["model_context"]
     assert request.screen_context is not controller._voice_capture["future"]
     assert request.task_type=="" and request.edit_plan is None
     result=TextProcessingResult(request.request_id,2,"edit",request.raw_text,"明天开会。",.1,True,
-        target_text=source,routing_mode=INPUT_ROUTING_ROUTED_EDIT,task_type="edit",edit_plan=EditPlan(("compose",)))
+        target_text=source,routing_mode=INPUT_ROUTING_ROUTED_EDIT,task_type="edit",
+        edit_plan=None if variant==ROUTED_EDIT_BOUNDARY else EditPlan(("compose",)),routed_edit_variant=variant)
     controller._apply_text_processed(result)
     assert bridge.messages[-1]["type"]=="edit_result" and bridge.messages[-1]["text"]=="明天开会。"
     assert bridge.messages[-1]["revision"]==1

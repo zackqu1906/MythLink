@@ -21,6 +21,8 @@ pyobjc-framework-CoreMedia==12.2.2
 pyobjc-framework-Vision==12.2.2
 pyobjc-framework-CoreML==12.2.2
 bleak==1.1.1
+# 5.2 supports the verified macOS Bleak 1.x transport.
+smpclient==5.2.0
 asr-decoder==0.1.2
 online-fbank==0.0.4
 kaldi-native-fbank==1.22.3
