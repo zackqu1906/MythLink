@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 import threading
 import time
 import sys
 
-from .touchpad_clicks import TouchpadClicks
+from .touchpad_clicks import TouchpadClicks, TwoFingerClicks
 from .touchpad_drag import TouchpadDrag
 from .touchpad_swipe import TouchpadSwipe
 from .touchpad_diagnostics import note
@@ -43,6 +44,9 @@ class TouchpadMouseOutput:
         self._features = (bool(clicks), bool(double_click), bool(right_click), bool(scroll), float(scroll_gain),
                           bool(invert_scroll), bool(horizontal_swipe), bool(dwell_drag), float(dwell_ms))
         self.raw2 = raw2
+        self.two_finger_clicks = TwoFingerClicks() if raw2 and on_double_click else None
+        self._pending_right = None
+        self._right_context = None
         self._stream_key = None
         self._input_gap_at = 0.
         self._seen_clicks = deque(maxlen=256)
@@ -297,6 +301,7 @@ class TouchpadMouseOutput:
                                 self._finish_click(trace, 'clicks_disabled')
                 if batch:
                     self._apply(batch)
+                self._flush_right_click()
                 self._sync_drag()
                 self.drag.tick(time.monotonic())
         except Exception as exc:
@@ -387,6 +392,53 @@ class TouchpadMouseOutput:
         if swipe_context != self._swipe_context or self._blocked_reason():
             self.swipe.reset()
             self._swipe_context = swipe_context
+        right_context = (self._stream_key, self._input_gap_at, self.click_context(), self._features[2])
+        if self.two_finger_clicks and (right_context != self._right_context or blocked):
+            self._discard_right_click(blocked or 'click_context_changed')
+            self._right_context = right_context
+
+    def _discard_right_click(self, reason):
+        pending, self._pending_right = self._pending_right, None
+        if self.two_finger_clicks:
+            self.two_finger_clicks.clear()
+        if pending:
+            self._finish_click(pending[1], reason)
+
+    def _flush_right_click(self, *, force=False):
+        self._sync_drag()
+        pending = self._pending_right
+        if pending is None:
+            return
+        event, trace = pending
+        deadline = event.timestamp + TwoFingerClicks.interval
+        now = time.monotonic()
+        if not force and now < deadline:
+            return
+        self._pending_right = None
+        self.two_finger_clicks.clear()
+        if not self._features[2]:
+            self._finish_click(trace, 'clicks_disabled')
+        elif now > deadline + .25:
+            self._finish_click(trace, 'mouse_queue_expired')
+        else:
+            # The deliberate double-tap wait ends here; native expiry still applies.
+            self._notify_gesture('right-click')
+            self._send_click(trace, replace(event, timestamp=min(now, deadline)))
+
+    def _two_finger_click(self, event, trace, context):
+        previous = self._pending_right
+        if self.two_finger_clicks.feed(event):
+            self._pending_right = None
+            if previous:
+                self._finish_click(previous[1], 'two_finger_double_click', outcome='routed')
+            self._notify_gesture('two-finger-double-click')
+            self._request_stroke(context, trace)
+        else:
+            # An older tap outside the pairing window remains an ordinary right click.
+            if previous:
+                self._flush_right_click(force=True)
+                self.two_finger_clicks.first = event
+            self._pending_right = (event, trace)
 
     def _navigate(self, event):
         self._sync_drag()
@@ -420,6 +472,8 @@ class TouchpadMouseOutput:
         age = now - event.timestamp
         if event.kind == 'pointer_contact':
             context = self.click_context()
+            if event.phase == 'CLASSIFIED' and event.mode == 'SINGLE' and 0 <= age <= .2:
+                self._flush_right_click(force=True)
             if (context == submitted_context and context[1] == 'closed' and
                     self._features[6] and 0 <= age <= .2):
                 self.swipe.contact(event)
@@ -468,6 +522,10 @@ class TouchpadMouseOutput:
                 else:
                     self._finish_click(trace, 'capture_owns_input')
                 return
+            if self.two_finger_clicks and context[1] == 'closed' and event.button == 'right' and event.count == 1:
+                self._two_finger_click(event, trace, context)
+                return
+            self._flush_right_click(force=True)
             enabled = (singles if event.count == 1 else doubles) if event.button == 'left' else right
             if event.button not in {'left', 'right'} or event.count not in {1, 2}:
                 self._finish_click(trace, 'invalid_click')
@@ -480,6 +538,8 @@ class TouchpadMouseOutput:
             self.drag.cancel('two_finger', event)
             dy, direction = ((event.dy, None) if not horizontal_swipe or self.click_context()[1] != 'closed'
                              else self.swipe.move(event))
+            if self.swipe.axis is not None:
+                self._discard_right_click('two_finger_swipe')
             if direction:
                 return dict(kind='navigate', direction=direction, context=self._swipe_context,
                             expires_at=event.timestamp+.2)
@@ -549,21 +609,25 @@ class TouchpadMouseOutput:
             if decision.kind == "single":
                 self._send_click(trace)
             else:
-                trace.record('double_target_request')
-                resolve = getattr(self.mouse, 'resolve_double_click', None)
-                receipt = resolve(dict(trace.fields)) if resolve else {}
-                target = receipt.get('target') if resolve else self.mouse.double_click_target()
-                details = {key: value for key, value in receipt.items() if key not in {'reason', 'target'}}
-                if self.stopped.is_set() or self.connection.is_set():
-                    self._finish_click(trace, self._blocked_reason(), **details)
-                    return
-                if target and self.click_context() == context:
-                    self.paused = True
-                    self.on_double_click(target)
-                    self._finish_click(trace, 'double_click_stroke_requested', outcome='routed', **details)
-                else:
-                    if sys.platform == 'win32' and not target and self.click_context() == context:
-                        self._send_click(trace)
-                        continue
-                    self._finish_click(trace, 'click_context_changed' if self.click_context() != context
-                                       else receipt.get('reason', 'double_target_unavailable'), **details)
+                self._request_stroke(context, trace, legacy=True)
+
+    def _request_stroke(self, context, trace, *, legacy=False):
+        stream = (self._stream_key, self._input_gap_at)
+        trace.record('double_target_request')
+        resolve = getattr(self.mouse, 'resolve_double_click', None)
+        receipt = resolve(dict(trace.fields)) if resolve else {}
+        target = receipt.get('target') if resolve else self.mouse.double_click_target()
+        details = {key: value for key, value in receipt.items() if key not in {'reason', 'target'}}
+        if self._blocked_reason():
+            self._finish_click(trace, self._blocked_reason(), **details)
+        elif stream != (self._stream_key, self._input_gap_at):
+            self._finish_click(trace, 'session_reset', **details)
+        elif target and self.click_context() == context:
+            self.paused = True
+            self.on_double_click(target)
+            self._finish_click(trace, 'double_click_stroke_requested', outcome='routed', **details)
+        elif legacy and sys.platform == 'win32' and not target and self.click_context() == context:
+            self._send_click(trace)
+        else:
+            self._finish_click(trace, 'click_context_changed' if self.click_context() != context
+                               else receipt.get('reason', 'double_target_unavailable'), **details)

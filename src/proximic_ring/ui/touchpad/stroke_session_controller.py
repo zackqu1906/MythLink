@@ -1,4 +1,4 @@
-"""Touchpad double-click stroke sessions, bound to one focused editor.
+"""Touchpad two-finger double-click stroke sessions, bound to one focused editor.
 
 Activation uses Tap's input-method preparation without starting idle voice.
 """
@@ -13,6 +13,9 @@ from ...touchpad.stroke.stroke_display import TRAIL_STYLE
 
 
 class StrokeSessionController(QObject):
+    gestures = {"tap", "double-tap", "index-pinch", "double-index-pinch",
+                "swipe-left", "swipe-right", "swipe-up", "swipe-down"}
+
     def __init__(self, touchpad):
         super().__init__(touchpad)
         self.tp, self.owner = touchpad, touchpad.owner
@@ -63,7 +66,7 @@ class StrokeSessionController(QObject):
 
     def consume(self, event, connection):
         name = getattr(event, "name", "")
-        if self.engaged and name in {"tap", "swipe-left", "swipe-right", "swipe-up", "swipe-down"}:
+        if self.engaged and name in self.gestures:
             return self.phase != "running"
         return False
 
@@ -145,7 +148,8 @@ class StrokeSessionController(QObject):
         self.inline.stroke_target = (message["epoch"], message["client_id"], self._token)
         self._deadline = time.monotonic() + 3
         self._set_phase("native")
-        if not self.inline.send_stroke("stroke_begin", gesture_label=self.tp.strokeGestureLabel):
+        if not self.inline.send_stroke("stroke_begin", gesture_label=self.tp.strokeGestureLabel,
+                                       tap_hint=self.tp.strokeTapHint):
             self.cancel("输入法连接已断开")
 
     def _native_event(self, message):

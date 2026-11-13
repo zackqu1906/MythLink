@@ -21,26 +21,28 @@ func find(_ name: String, in view: NSView) -> NSView? {
     return nil
 }
 let bar = find("strokeCandidateBar", in: content)!
-for index in 0..<6 { precondition(find("strokeCandidate\(index)", in: bar) != nil, "missing candidate cell \(index)") }
+for index in 0..<5 { precondition(find("strokeCandidate\(index)", in: bar) != nil, "missing candidate cell \(index)") }
 for direction in ["up-left", "up", "up-right"] {
     precondition(find("strokePunctuation-\(direction)", in: bar) != nil, "missing punctuation cell \(direction)")
 }
 // Same 3×3 layout as the trial: the first candidate is the center cell.
-let center = find("strokeCandidate0", in: bar)!, left = find("strokeCandidate1", in: bar)!
+let center = find("strokeCandidate0", in: bar)!, right = find("strokeCandidate1", in: bar)!
+let delete = find("strokePunctuation-left", in: bar)!
 let comma = find("strokePunctuation-up-left", in: bar)!
-precondition(left.frame.maxX < center.frame.minX && abs(left.frame.minY - center.frame.minY) < 0.01)
+precondition(right.frame.minX > center.frame.maxX && abs(right.frame.minY - center.frame.minY) < 0.01)
+precondition(delete.frame.maxX < center.frame.minX)
 precondition(comma.frame.maxY < center.frame.minY, "punctuation must be the top row of the flipped grid")
-precondition(left.layer?.borderColor == NSColor(srgbRed: 0x34 / 255, green: 0x5E / 255, blue: 0xE5 / 255, alpha: 1).cgColor,
+precondition(right.layer?.borderColor == NSColor(srgbRed: 0x34 / 255, green: 0x5E / 255, blue: 0xE5 / 255, alpha: 1).cgColor,
              "keyboard/swipe choice must be outlined")
 
 let screen = NSScreen.screens[0].visibleFrame.insetBy(dx: 6, dy: 6)
 let size = StrokeCandidatePanel.menuSize
 // Default: directly below the caret, centered on it.
-let middle = NSRect(x: screen.midX, y: screen.midY, width: 1, height: 20)
+let middle = NSRect(x: screen.midX.rounded(), y: screen.midY.rounded(), width: 2, height: 20)
 palette.position(caret: middle, clientLevel: 0)
 precondition(palette.isVisible && !palette.placedAboveCaret)
 precondition(abs(panel.frame.maxY - (middle.minY - InputPaletteStyle.caretGap)) < 0.01, "menu must sit just below the caret")
-precondition(abs(panel.frame.midX - middle.midX) < 0.5, "menu must be centered under the caret")
+precondition(abs(panel.frame.minX + bar.frame.midX - middle.midX) < 0.5, "grid must stay centered under the caret")
 precondition(abs(bar.frame.minY) < 0.01, "grid must be the top part of the menu below the caret")
 // Following: a moved caret moves the menu.
 let moved = middle.offsetBy(dx: 40, dy: -30)
@@ -60,19 +62,75 @@ let (origin, above) = StrokeCandidatePanel.placement(caret: NSRect(x: 0, y: 10, 
     bounds: NSRect(x: 0, y: 0, width: 800, height: 200), size: size, gap: 4)
 precondition(origin.y == 0 && origin.x == 0 && above, "a screen too short for either side must clamp to its edge")
 
-palette.selection(phase: "selecting", progress: 100, direction: "left", origin: [0, 0],
-                  points: [[0, 0], [-2, 0], [-4, 0], [-6, 0]], selectDistance: 3)
-precondition(left.layer?.backgroundColor == NSColor(srgbRed: 0xED / 255, green: 0xF2 / 255, blue: 1, alpha: 1).cgColor,
-             "aimed candidate must be highlighted")
 let hint = find("strokeSelectionHint", in: content) as! NSTextField
-precondition(hint.stringValue == "选字模式 · 抬手确认")
-content.layoutSubtreeIfNeeded()
-let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
-content.cacheDisplay(in: content.bounds, to: bitmap)
-if CommandLine.arguments.count > 1 {
-    try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
+let exitHint = find("strokeExitHint", in: content) as! NSTextField
+let clearPull = find("strokeClearPull", in: content)!
+let clearFill = find("strokeClearPullFill", in: content)!
+precondition(clearPull.isHidden && clearPull.frame.minX >= 6)
+precondition(abs(clearPull.frame.maxX - (bar.frame.minX + delete.frame.minX)) < 0.01)
+precondition(exitHint.stringValue == "双指双击退出" && exitHint.font!.pointSize < hint.font!.pointSize)
+precondition(!exitHint.isHidden && !exitHint.frame.intersects(bar.frame), "exit reminder must stay outside the writing grid")
+palette.selection(phase: "selecting", progress: 0, direction: "", origin: [], points: [], selectDistance: 6)
+precondition(bar.layer?.borderWidth == 3 && hint.stringValue == "已识别双指 · 滑动选字")
+let selectionBorder = bar.layer?.borderColor
+func screenshot(_ suffix: String) throws {
+    guard CommandLine.arguments.count > 1 else { return }
+    content.layoutSubtreeIfNeeded()
+    let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+    content.cacheDisplay(in: content.bounds, to: bitmap)
+    // Preview on an editor's light surface so transparent gray footer text is visible.
+    let preview = NSImage(size: content.bounds.size)
+    preview.lockFocus()
+    NSColor.white.setFill(); content.bounds.fill()
+    let captured = NSImage(size: content.bounds.size)
+    captured.addRepresentation(bitmap)
+    captured.draw(in: content.bounds, from: .zero, operation: .sourceOver, fraction: 1)
+    preview.unlockFocus()
+    let rendered = NSBitmapImageRep(data: preview.tiffRepresentation!)!
+    try rendered.representation(using: .png, properties: [:])!.write(to:
+        URL(fileURLWithPath: CommandLine.arguments[1] + "-" + suffix + ".png"))
 }
+try screenshot("two-finger")
+palette.selection(phase: "selecting", progress: 100, direction: "left", origin: [0, 0],
+                  points: [[0, 0], [-2, 0], [-4, 0], [-6, 0]], selectDistance: 6)
+let stationaryWindow = panel.frame, stationaryGrid = bar.frame
+content.layoutSubtreeIfNeeded()
+precondition(!clearPull.isHidden && clearFill.frame.width == 0 && clearPull.layer?.shadowOpacity == 0)
+precondition(delete.layer?.backgroundColor == NSColor(srgbRed: 0xC2 / 255, green: 0x41 / 255, blue: 0x3B / 255, alpha: 1).cgColor,
+             "delete must turn red")
+precondition(bar.layer?.borderWidth == 3 && bar.layer?.borderColor != selectionBorder)
+precondition(hint.stringValue == "抬手删除 · 继续外拉可清空")
+try screenshot("delete")
+let deleteBorder = bar.layer?.borderColor
+palette.selection(phase: "selecting", progress: 100, direction: "left", origin: [0, 0],
+                  points: [[0, 0], [-6, 0], [-18, 0], [-24, 0]], selectDistance: 6, clearProgress: 0.5)
+content.layoutSubtreeIfNeeded()
+precondition(abs(clearFill.frame.width - clearPull.frame.width / 2) < 0.01)
+precondition(abs(clearFill.frame.maxX - clearPull.frame.width) < 0.01, "fill must advance from right to left")
+try screenshot("pulling")
+palette.selection(phase: "selecting", progress: 100, direction: "left", origin: [0, 0],
+                  points: [[0, 0], [-6, 0], [-18, 0], [-30, 0]], selectDistance: 6,
+                  clearArmed: true, clearDistance: 30)
+precondition(hint.stringValue == "抬手清空 · 拉回取消" && delete.accessibilityLabel() == "清空笔画")
+precondition(exitHint.stringValue == "双指双击退出" && !exitHint.isHidden)
+precondition(bar.layer?.borderColor != deleteBorder)
+precondition(hint.intrinsicContentSize.width <= hint.frame.width, "clear hint must fit")
+content.layoutSubtreeIfNeeded()
+precondition(clearFill.frame.width == clearPull.frame.width && clearPull.layer!.shadowOpacity > 0)
+precondition(panel.frame == stationaryWindow && bar.frame == stationaryGrid, "clear affordance moved the grid")
+try screenshot("clear")
+palette.selection(phase: "selecting", progress: 100, direction: "left", origin: [0, 0],
+                  points: [[0, 0], [-30, 0], [-18, 0]], selectDistance: 6)
+precondition(hint.stringValue == "抬手删除 · 继续外拉可清空" && delete.accessibilityLabel() == "删除一笔或退格")
+content.layoutSubtreeIfNeeded()
+precondition(clearFill.frame.width == 0 && clearPull.layer?.shadowOpacity == 0)
+// Leave space for the pull tab even at the left screen edge, without a gesture-time jump.
+palette.position(caret: NSRect(x: screen.minX, y: screen.midY, width: 1, height: 20), clientLevel: 0)
+precondition(panel.frame.minX + clearPull.frame.minX >= screen.minX)
+precondition(panel.frame.maxX <= screen.maxX)
 palette.selection(phase: "idle", progress: 0, direction: "", origin: [], points: [], selectDistance: 3)
+precondition(bar.layer?.borderWidth == 0.5 && exitHint.stringValue == "双指双击退出" && clearPull.isHidden)
+try screenshot("writing")
 let trace = Mirror(reflecting: palette).children.first { $0.label == "trail" }!.value as! NSView
 RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8))
 precondition(trace.alphaValue == 0, "completed stroke failed to fade")

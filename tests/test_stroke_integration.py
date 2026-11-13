@@ -36,6 +36,7 @@ def start_stroke(inline_ui):
     source.future.set_result(None); QTest.qWait(20)
     assert tp.active and tp._run.output.active
     tp.setLocalStrokeInput(True)
+    tp.singleFingerAction = 'candidate'  # This fixture exercises explicit tap-to-confirm behavior.
     return c, bridge, root, tp, source
 
 

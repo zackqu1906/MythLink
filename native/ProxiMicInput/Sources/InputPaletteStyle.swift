@@ -10,6 +10,7 @@ enum InputPaletteStyle {
 
 final class InputPaletteSurface: NSView {
     var cornerRadius = InputPaletteStyle.cornerRadius { didSet { refreshSurface() } }
+    var interactionColor: NSColor? { didSet { refreshSurface() } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -27,9 +28,10 @@ final class InputPaletteSurface: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.cornerRadius = cornerRadius
             layer?.masksToBounds = true
-            layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.68).cgColor
-            layer?.borderWidth = 0.5
-            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.25).cgColor
+            layer?.backgroundColor = interactionColor?.withAlphaComponent(0.18).cgColor
+                ?? NSColor.windowBackgroundColor.withAlphaComponent(0.68).cgColor
+            layer?.borderWidth = interactionColor == nil ? 0.5 : 3
+            layer?.borderColor = interactionColor?.cgColor ?? NSColor.separatorColor.withAlphaComponent(0.25).cgColor
         }
     }
 }

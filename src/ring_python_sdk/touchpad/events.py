@@ -75,6 +75,8 @@ class Raw2PointerContact:
     generation: int = 0
     sequence: int = 0
     kind: Literal['pointer_contact'] = 'pointer_contact'
+    start_step: int | None = None
+    end_step: int | None = None
 
 
 @dataclass(frozen=True)

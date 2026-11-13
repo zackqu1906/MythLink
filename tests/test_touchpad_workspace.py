@@ -58,6 +58,15 @@ ApplicationWindow {
             image = window.findChild(QObject, 'strokeCandidateGlyph'+str(index))
             if image is not None:
                 assert abs(image.width()-image.height()) < 1
+        # Reserve the external tab even on narrow screens; revealing it cannot shift the grid.
+        menu = window.findChild(QObject, 'strokeSelectionMenu')
+        geometry = (menu.mapToScene(QPointF()), menu.width(), menu.height())
+        tp._selection_state = dict(phase='selecting', direction='left', clear_armed=True, clear_progress=1)
+        tp.selectionChanged.emit(); QTest.qWait(30)
+        pull = window.findChild(QObject, 'strokeClearPull')
+        assert pull.isVisible() and pull.mapToScene(QPointF()).x() >= 0
+        assert pull.mapToScene(QPointF(pull.width(), 0)).x() <= window.width()
+        assert (menu.mapToScene(QPointF()), menu.width(), menu.height()) == geometry
         output = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
         output.mkdir(parents=True, exist_ok=True)
         assert window.grabWindow().save(str(output/f'workspace-{size[0]}x{size[1]}.png'))
@@ -149,10 +158,11 @@ def test_local_trial_fades_real_ink_and_draws_hold_selection_from_sensor_tuples(
 
 
 @pytest.mark.parametrize('double', [False, True])
-def test_local_double_click_returns_to_mouse_and_takes_back_its_first_tap(inline_ui, double):
+def test_local_double_click_returns_to_mouse_and_takes_back_its_first_tap(inline_ui, double, monkeypatch):
     import time
     from test_touchpad_page_layout import open_trial
     c, bridge, window, tp, source = open_trial(inline_ui, (1024, 700))
+    monkeypatch.setattr(type(tp), 'raw2Supported', property(lambda _: False))
     editor = window.findChild(QObject, 'strokeTestEditor')
     editor.forceActiveFocus()
     tp.setLocalStrokeInput(True)
@@ -166,7 +176,7 @@ def test_local_double_click_returns_to_mouse_and_takes_back_its_first_tap(inline
         tap = dict(points=[(0., 0.)]*10, intent_decision=dict(action='tap'))
         tp._receive(run, 'contact_tap', (run.output, tap))
         QTest.qWait(20)
-        assert editor.property('text') == first  # A single tap still selects immediately.
+        assert editor.property('text') == first + ' '  # Default single tap confirms then inserts space.
         if double:
             tp._receive(run, 'double_click', (run.output, None, time.monotonic()))
             QTest.qWait(30)

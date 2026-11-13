@@ -6,6 +6,7 @@ import pytest
 from proximic_ring.platforms.macos.wechat_native_keys import send_wechat_key
 from proximic_ring.platforms.macos.wechat_native_keys import send_codex_key
 from proximic_ring.platforms.macos.wechat_native_keys import send_input_method_key
+from proximic_ring.platforms.macos.wechat_native_keys import send_stroke_backspace
 
 
 @pytest.fixture
@@ -56,6 +57,20 @@ def test_permission_failure_does_not_post_or_prompt(desktop):
     with pytest.raises(RuntimeError, match="辅助功能"):
         send_wechat_key("select_all", 0, 456)
     assert state.sent == []
+
+
+@pytest.mark.parametrize('bundle', ['com.tencent.xinWeChat', 'com.openai.codex', 'com.apple.TextEdit'])
+def test_stroke_backspace_posts_one_native_key_only_to_pinned_process(desktop, bundle):
+    state, _ = desktop
+    state.bundle = bundle
+    send_stroke_backspace(bundle, 42)
+    assert [(pid, e['code'], e['pressed'], e['flags']) for pid, e in state.sent] == [
+        (42, 51, True, 0), (42, 51, False, 0)]
+    state.sent.clear()
+    state.pid = 43
+    with pytest.raises(RuntimeError):
+        send_stroke_backspace(bundle, 42)
+    assert not state.sent
 
 
 @pytest.mark.parametrize("bundle", ["com.tencent.xinWeChat", "com.microsoft.VSCode"])

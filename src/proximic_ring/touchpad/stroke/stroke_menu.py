@@ -21,10 +21,11 @@ PUNCTUATION_CELLS = (
 # (direction, row, column, arrow, symbol, title, action)
 ACTION_CELLS = (('left', 1, 0, '←', '⌫', '删除', 'delete-one'),)
 # Two-finger travel is measured in the same pointer units as stroke points.
-TWO_FINGER_SELECTION = dict(policy='two-finger-swipe-v1', selectDistance=6.)
+TWO_FINGER_SELECTION = dict(policy='two-finger-swipe-v2', selectDistance=6., clearDistance=30.)
 TRIAL_SELECTION = dict(CONTACT_INTENT, policy='two-finger-five-candidates-v1',
     sourcePolicy=TWO_FINGER_SELECTION['policy'], pageSize=PAGE_SIZE, center='cancel',
     selectDistance=TWO_FINGER_SELECTION['selectDistance'],
+    clearDistance=TWO_FINGER_SELECTION['clearDistance'],
     candidateDirections={direction: index for index, (direction, _, _, _) in enumerate(CANDIDATE_CELLS)
                          if direction != 'center'},
     punctuationDirections={direction: symbol for direction, _, _, symbol, _ in PUNCTUATION_CELLS},
@@ -53,7 +54,8 @@ def two_finger_selection(points, *, finished=False):
     """
     threshold = TWO_FINGER_SELECTION['selectDistance']
     result = dict(policy=TWO_FINGER_SELECTION['policy'], source='two-finger', phase='selecting',
-                  progress=0, direction=None, distance=0., threshold=threshold)
+                  progress=0, direction=None, distance=0., threshold=threshold,
+                  clear_distance=TWO_FINGER_SELECTION['clearDistance'], clear_armed=False, clear_progress=0.)
     try:
         valid = bool(points) and all(len(p) == 2 and all(math.isfinite(v) for v in p) for p in points)
     except (TypeError, ValueError):
@@ -65,6 +67,9 @@ def two_finger_selection(points, *, finished=False):
                       display=_display(points))
         if distance >= threshold:
             result['direction'] = _SECTORS[int((math.degrees(math.atan2(dy, dx)) + 22.5) % 360 // 45)]
+            result['clear_armed'] = result['direction'] == 'left' and -dx >= result['clear_distance']
+            if result['direction'] == 'left':
+                result['clear_progress'] = max(0., min(1., (-dx - 3 * threshold) / (result['clear_distance'] - 3 * threshold)))
     if finished:
         result.pop('display', None)
         result.update(trial_selection(result))
@@ -81,6 +86,8 @@ def trial_selection(decision):
         result.update(action='select', target=TRIAL_SELECTION['candidateDirections'][direction])
     elif direction in TRIAL_SELECTION['punctuationDirections']:
         result.update(action='punctuation', target=TRIAL_SELECTION['punctuationDirections'][direction])
+    elif direction == 'left' and result.get('clear_armed'):
+        result.update(action='clear-all', target=None)
     elif direction in TRIAL_SELECTION['actionDirections']:
         result.update(action=TRIAL_SELECTION['actionDirections'][direction], target=None)
     else:

@@ -13,6 +13,33 @@ class ClickDecision:
     second: object | None = None
 
 
+class TwoFingerClicks:
+    """Pair formal Raw2 right clicks; the pointer defers its first right click."""
+
+    interval = .400
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.first = None
+
+    @staticmethod
+    def source_time(event):
+        return event.timestamp if event.source_timestamp is None else event.source_timestamp
+
+    def feed(self, event):
+        first, self.first = self.first, event
+        if (first is not None
+                and (first.session_id, first.generation) == (event.session_id, event.generation)
+                and first.click_id != event.click_id
+                and 0 < self.source_time(event) - self.source_time(first) <= self.interval + 1e-9
+                and 0 <= event.timestamp - first.timestamp <= self.interval + 1e-9):
+            self.clear()
+            return True
+        return False
+
+
 class TouchpadClicks:
     """Owned by one output worker; no timers or OS events on the BLE thread.
 

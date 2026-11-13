@@ -23,6 +23,7 @@ from ...touchpad.stroke.stroke_input import StrokeDictionary, SYMBOLS, NAMES
 from ...touchpad.stroke.stroke_display import TRAIL_STYLE, normalized_trace
 from ...touchpad.stroke.stroke_common import common_characters
 from ...platforms.macos.mac_permissions import MacPermissionError
+from ...gestures.firmware_gestures import SINGLE_INDEX_WAIT_S
 from ...touchpad.stroke.stroke_fuzzy import stroke_evidence, FuzzyPolicy, retune_evidence, ADAPTIVE_SETTINGS
 from ...touchpad.stroke.stroke_personal import PersonalStrokeModel, TextLearningHistory, capture_ink, profile_key, qt_text_index
 from ...touchpad.stroke.stroke_context import ranking_snapshot
@@ -31,6 +32,7 @@ from ...touchpad.stroke.stroke_menu import (PAGE_SIZE, PUNCTUATION_CELLS, TRIAL_
 from ...touchpad.stroke.stroke_contact_intent import CONTACT_INTENT
 
 PUNCTUATION = tuple(symbol for _, _, _, symbol, _ in PUNCTUATION_CELLS)
+TAP_ACTIONS = {"space", "candidate"}
 from ...touchpad.stroke.stroke_test_gestures import recognize as contact_gesture
 from ...touchpad.stroke.stroke_tap_guard import TapConfirmationGuard
 from ...touchpad.stroke.stroke_experiment import SentenceTrial, write_report
@@ -84,6 +86,10 @@ class TouchpadController(QObject):
         self._warm = False
         self.stroke_output_factory = TouchpadStrokeOutput
         self._mode = "pointer"
+        self._single_finger_action = str(owner._settings.value('touchpad/singleFingerAction', 'space'))
+        self._two_finger_action = str(owner._settings.value('touchpad/twoFingerAction', 'candidate'))
+        if self._single_finger_action not in TAP_ACTIONS: self._single_finger_action = 'space'
+        if self._two_finger_action not in TAP_ACTIONS: self._two_finger_action = 'candidate'
         for key in ("touchpad/inputMode", "touchpad/strokeGesture", "touchpad/strokeEnabled"):
             owner._settings.remove(key)
         self._dictionary = self._predictor = None
@@ -108,7 +114,7 @@ class TouchpadController(QObject):
         self._automatic_restart_blocked = False
         self._voice_gate = False
         self._standard_trace = False
-        self._tap_commit_at = None
+        self._tap_commit = None
         self._local_stroke_focus = False
         self._local_input_since = None
         self._selection_state = {}
@@ -210,8 +216,43 @@ class TouchpadController(QObject):
     @Property(str, notify=changed)
     def inputMode(self): return self._mode
 
-    @Property(str, constant=True)
-    def strokeGestureLabel(self): return "Touchpad 双击"
+    @Property(str, notify=changed)
+    def strokeGestureLabel(self): return "双指双击" if self.raw2Supported else "Touchpad 双击"
+
+    @Property(str, notify=changed)
+    def singleFingerAction(self): return self._single_finger_action
+
+    @singleFingerAction.setter
+    def singleFingerAction(self, value): self._set_tap_action('_single_finger_action', 'singleFingerAction', value)
+
+    @Property(str, notify=changed)
+    def twoFingerAction(self): return self._two_finger_action
+
+    @twoFingerAction.setter
+    def twoFingerAction(self, value): self._set_tap_action('_two_finger_action', 'twoFingerAction', value)
+
+    @Property(str, notify=changed)
+    def strokeTapHint(self):
+        label = {'space': '空格', 'candidate': '首选'}
+        return '单指' + label[self._single_finger_action] + ' · 双指' + label[self._two_finger_action]
+
+    def _set_tap_action(self, attribute, key, value):
+        if value not in TAP_ACTIONS or getattr(self, attribute) == value:
+            return
+        setattr(self, attribute, value)
+        self.owner._settings.setValue('touchpad/' + key, value)
+        if self.strokeSession.phase == 'running' and not self.strokeSession.local:
+            self.owner._inline_input.send_stroke('stroke_gestures', tap_hint=self.strokeTapHint)
+        self.changed.emit()
+
+    def _perform_tap(self, fingers):
+        if self._pending_stroke_commit or not self.strokeSession.allow_input():
+            return
+        action = self._two_finger_action if fingers == 2 else self._single_finger_action
+        if action == 'candidate':
+            self.selectCandidate(0)
+        else:
+            self._insert_symbol(' ')
 
     @Property(int, constant=True)
     def doubleClickIntervalMs(self): return round(TouchpadClicks.interval * 1000)
@@ -406,9 +447,16 @@ class TouchpadController(QObject):
 
     @Slot(str)
     def insertPunctuation(self, symbol):
-        if symbol not in PUNCTUATION or not self.strokeSession.allow_input() or self._pending_stroke_commit:
+        if symbol in PUNCTUATION:
+            self._insert_symbol(symbol)
+
+    def _insert_symbol(self, symbol):
+        if symbol not in (*PUNCTUATION, ' ') or not self.strokeSession.allow_input() or self._pending_stroke_commit:
             return
         if self._speech_busy():
+            return
+        if symbol == ' ' and self.strokeCandidates:
+            self._select_candidate(0, suffix=' ')
             return
         before = self._personal_text
         if self._commit_character(symbol):
@@ -585,8 +633,13 @@ class TouchpadController(QObject):
         # Called on the BLE worker before voice/app mappings; never manipulate Qt here.
         if connection is not self.owner._disconnect_event or connection.is_set():
             return False
+        run = self._run
+        if (run is not None and connection is self._connection
+                and time.monotonic() < run.switch_gesture_until
+                and getattr(event, 'name', '') in {'tap', 'double-tap', 'index-pinch', 'double-index-pinch'}):
+            return True
         if (self._run and self._run.switch_pending is self._run.output
-                and getattr(event, "name", "") in {"tap", "swipe-left", "swipe-right", "swipe-up", "swipe-down"}):
+                and getattr(event, "name", "") in self.strokeSession.gestures):
             return True
         if self.strokeSession.consume(event, connection):
             return True
@@ -594,7 +647,7 @@ class TouchpadController(QObject):
         if (not self._stroke_gate or run is None or run.mode != "stroke"
                 or connection is not self._connection or connection.is_set()):
             return False
-        if getattr(event, "name", "") not in {"swipe-left", "swipe-right", "swipe-up", "swipe-down", "tap"}:
+        if getattr(event, "name", "") not in self.strokeSession.gestures:
             return False
         if self._state == "running":
             self._post(run, "gesture", (run.output, event))
@@ -790,13 +843,24 @@ class TouchpadController(QObject):
 
     @Slot()
     def deleteOne(self):
-        """Delete one pending stroke; with none pending, one typed character."""
-        if self._pending_stroke_commit: return
+        """Delete one pending stroke; otherwise send the editor's Backspace."""
+        if self._pending_stroke_commit or not self.strokeSession.allow_input(): return
         if self._code:
             self.undoStroke()
-        elif self._local_stroke_input and self.strokeSession.allow_input():
+        elif self._local_stroke_input:
             self._trial_event('delete_character')
             self.localBackspaceRequested.emit()
+        elif self.strokeSession.phase == 'running':
+            try:
+                if not self.owner._inline_input.stroke_backspace(self.strokeSession._origin):
+                    self._commit_message = '输入焦点已变化，未执行退格'
+                else:
+                    self._stroke_context = ''
+                    self._refresh_candidates()
+                    self._commit_message = '已退格'
+            except Exception as exc:
+                self._commit_message = '退格失败：' + str(exc)
+            self.changed.emit()
 
     @Slot()
     def clearStrokes(self):
@@ -842,7 +906,7 @@ class TouchpadController(QObject):
             return
         self._select_candidate(index)
 
-    def _select_candidate(self, index):
+    def _select_candidate(self, index, *, suffix=''):
         if self._pending_stroke_commit:
             return
         if self._speech_busy():
@@ -856,24 +920,25 @@ class TouchpadController(QObject):
             trial.commit(len(before), None, False, source='gesture', code=code)
         if 0 <= index < self.candidatePageSize and absolute < len(self._candidates):
             char = self._candidates[absolute]
+            text = char + suffix
             evidence = list(self._stroke_evidence)
             match = next((row for row in self._candidate_matches if row['char'] == char), {})
             # A repaired or page-filling guess says nothing about how the user writes.
             repair = match.get('match_type') in REPAIRS
             try:
-                inserted = self._commit_character(char)
+                inserted = self._commit_character(text)
             except Exception as exc:
                 self._commit_message = "输入失败：" + str(exc)
                 self.changed.emit()
                 return
             if trial is not None:
-                trial.commit(len(before), char, self._personal_text == before + char, code=code)
+                trial.commit(len(before), text, self._personal_text == before + text, code=code)
                 if repair:
                     trial.event('candidate_fill_commit' if match['match_type'] == 'tolerant' else 'whole_correction_commit',
                                 character=char, code=code, corrected_code=match.get('code', ''),
                                 match_type=match['match_type'], edits=match.get('edits', []),
                                 correction_summary=match.get('correction_summary', ''),
-                                delivered=self._personal_text == before + char)
+                                delivered=self._personal_text == before + text)
             if inserted is None:
                 self._commit_repair = repair
                 self._commit_message = "正在输入「" + char + "」…"
@@ -911,8 +976,10 @@ class TouchpadController(QObject):
         self._pending_stroke_commit = ""
         repair, self._commit_repair = self._commit_repair, False
         if success:
-            if char not in PUNCTUATION and not repair:
-                self._learn_writer(char, self._stroke_evidence)
+            self._tap_guard.committed()
+            candidate = char.removesuffix(' ')
+            if candidate and candidate not in PUNCTUATION and not repair:
+                self._learn_writer(candidate, self._stroke_evidence)
             self._code = ""
             self._clear_stroke_evidence()
             context = self.owner._inline_input.stroke_context
@@ -1046,19 +1113,22 @@ class TouchpadController(QObject):
             if run is not self._run or output is not run.output:
                 return
             run.switch_pending = output
+            if run.protocol == 'raw2':
+                # Firmware pinches wait for pairing and can arrive after returning to the mouse.
+                run.switch_gesture_until = time.monotonic() + SINGLE_INDEX_WAIT_S
             self._post(run, "double_click", (output, target, time.monotonic()))
         if run.mode == "stroke":
             local = self._local_stroke_input
             output = self.stroke_output_factory(**common,
                 on_stroke=lambda points: self._post(run, "stroke", (output, points)),
                 on_stroke_details=lambda value: self._post(run, "stroke", (output, value)),
-                on_tap=lambda: None,  # Firmware tap owns confirmation; SDK click only separates ink.
+                on_tap=lambda: None,  # Complete single-finger contacts own the configured action.
                 on_double_click=double_click,
-                # Both the local trial and the macOS palette select with a
-                # two-finger swipe. External taps stay with firmware confirmation.
+                on_two_finger_tap=lambda: self._post(run, 'two_finger_tap', (output, None)),
+                raw2=run.protocol == 'raw2',
                 contact_classifier=trial_contact,
                 two_finger_classifier=two_finger_selection,
-                on_tap_contact=(lambda value: self._post(run, 'contact_tap', (output, value))) if local else None,
+                on_tap_contact=lambda value: self._post(run, 'contact_tap', (output, value)),
                 on_selection=lambda value: self._post(run, 'selection', (output, value)),
                 on_selection_state=lambda value: self._post(run, 'selection_state', (output, value)),
                 on_trace=lambda points, finished: self._post(run, "trace", (output, (points, finished))))
@@ -1105,6 +1175,7 @@ class TouchpadController(QObject):
             return
         run = SimpleNamespace(source=self._source, output=None, reason="", sdk_started=False,
                               output_ready=False, switch_pending=None, mode=self._mode,
+                              switch_gesture_until=0.,
                               last_move_step=0,
                               diagnostics=TouchpadDiagnostics())
         run.protocol = 'raw2' if self.raw2Supported else 'legacy'
@@ -1230,9 +1301,9 @@ class TouchpadController(QObject):
                         run.diagnostics.note(reason)
                 def pointer_moved(event):
                     if run is self._run and run.mode == 'stroke':
-                        # Stroke mode only reads the Raw2 two-finger tag.
+                        # Raw2 contact classification supplies immediate two-finger feedback.
                         submit = getattr(run.output, 'submit_pointer', None)
-                        if submit is not None and event.kind == 'move':
+                        if submit is not None:
                             submit(event)
                     elif run is self._run and run.mode == 'pointer':
                         output = run.output
@@ -1275,12 +1346,13 @@ class TouchpadController(QObject):
             if output is not run.output: return
             self.owner._event_log("TOUCHPAD_DOUBLE_CLICK", _live_message="", mode=run.mode,
                                   age_ms=round((time.monotonic() - created) * 1000))
-            tap_commit_at, self._tap_commit_at = self._tap_commit_at, None
-            if (self._local_stroke_input and self.strokeSession.local and tap_commit_at is not None
-                    and created - tap_commit_at <= TouchpadClicks.interval + .3):
+            tap_commit, self._tap_commit = self._tap_commit, None
+            if (run.protocol != 'raw2' and self._local_stroke_input and self.strokeSession.local and tap_commit is not None
+                    and created - tap_commit[0] <= TouchpadClicks.interval + .3):
                 # The first tap already selected a candidate; a double click
                 # means "back to the mouse", so take that character back out.
-                self.localBackspaceRequested.emit()
+                for _ in range(tap_commit[1]):
+                    self.localBackspaceRequested.emit()
             try:
                 if self._capture_target is None and time.monotonic() - created <= 1:
                     self.strokeSession.request(target)
@@ -1292,16 +1364,21 @@ class TouchpadController(QObject):
                 if not self.strokeSession.engaged and output is run.output:
                     output.pointer_after_step = run.last_move_step
                     output.activate()
-        elif kind in {"stroke", "trace", "gesture", "contact_tap", "selection", "selection_state"} and self._state == "running" and run.mode == "stroke":
+        elif kind in {"stroke", "trace", "gesture", "contact_tap", "two_finger_tap", "selection", "selection_state"} and self._state == "running" and run.mode == "stroke":
             output, payload = value
             if output is not run.output:
                 return
+            if kind in {'stroke', 'gesture', 'contact_tap', 'two_finger_tap', 'selection'} and (
+                    run.switch_pending is output or not output.active or not self.strokeSession.allow_input()):
+                return
             if self.strokeSession.local and self.strokeSession.engaged and self._local_input_since is None:
                 return
-            if kind in {'contact_tap', 'selection', 'selection_state'}:
-                if not self.strokeSession.allow_input() or (kind == 'contact_tap' and not self._local_stroke_input):
+            if kind in {'contact_tap', 'two_finger_tap', 'selection', 'selection_state'}:
+                if not self.strokeSession.allow_input():
                     return
-                if kind == 'selection_state':
+                if kind == 'two_finger_tap':
+                    self._perform_tap(2)
+                elif kind == 'selection_state':
                     display = payload.get('display')
                     if display:
                         # Sensor samples are tuples, which QML receives as opaque values.
@@ -1321,16 +1398,19 @@ class TouchpadController(QObject):
                         self.insertPunctuation(decision['target'])
                     elif decision['action'] == 'delete-one':
                         self.deleteOne()
+                    elif decision['action'] == 'clear-all':
+                        self.clearStrokes()
                     if decision['action'] != 'cancel-selection' and decision.get('direction'):
                         self.selectionCommitted.emit(decision['direction'])
                     self.selectionChanged.emit()
                     self.changed.emit()
                 elif self._tap_allowed(payload):
                     committed = self._tap_guard.last_commit
-                    self.selectCandidate(0)
+                    characters = 2 if self._single_finger_action == 'space' and self.strokeCandidates else 1
+                    self._perform_tap(1)
                     if self._tap_guard.last_commit != committed:
                         # Remembered so the first tap of a double click can be undone.
-                        self._tap_commit_at = time.monotonic()
+                        self._tap_commit = (time.monotonic(), characters)
                 return
             if kind == "gesture" and (run.switch_pending is output or not output.active):
                 return
@@ -1347,7 +1427,7 @@ class TouchpadController(QObject):
                 try:
                     points = payload['points'] if isinstance(payload, dict) else payload
                     kinematics = payload.get('kinematics') if isinstance(payload, dict) else None
-                    if self._local_stroke_input:
+                    if self._local_stroke_input or self.strokeSession.phase == 'running':
                         decision = contact_gesture(points, stroke_dictionary=self._stroke_dictionary(), legacy_selection=False)
                         action = decision['action']
                         if action != 'stroke':
@@ -1410,7 +1490,7 @@ class TouchpadController(QObject):
                 elif name == "swipe-left": self._move_candidate(-1)
                 elif name == "swipe-up": self.undoStroke()
                 elif name == "swipe-down": self.clearStrokes()
-                elif name == "tap" and not self._local_stroke_input:
+                elif name == "tap" and run.protocol != 'raw2' and not self._local_stroke_input:
                     self.selectCandidate(self._selected)
         elif kind == "stats" and self._state == "running":
             captured_at, value, counts = value

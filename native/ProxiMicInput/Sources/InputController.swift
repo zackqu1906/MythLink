@@ -866,7 +866,8 @@ final class ProxiMicInputController: IMKInputController {
             strokeActive = true
             strokeSessionID = token
             if strokePanel == nil { strokePanel = StrokeCandidatePanel() }
-            strokePanel?.exitGestureLabel = String((message["gesture_label"] as? String ?? "Touchpad 双击").prefix(20))
+            strokePanel?.exitGestureLabel = String((message["gesture_label"] as? String ?? "双指双击").prefix(20))
+            strokePanel?.tapHint = String((message["tap_hint"] as? String ?? "单指空格 · 双指首选").prefix(40))
             strokePanel?.update(code: "", candidates: [], selected: 0)
             tick()
             guard activated, ownsActivation, currentClientID == clientID, strokeSessionID == token else { return }
@@ -887,6 +888,9 @@ final class ProxiMicInputController: IMKInputController {
             strokePanel?.trace(points: message["points"] as? [[Double]] ?? [],
                                finished: message["finished"] as? Bool ?? false,
                                style: message["style"] as? [String: Any] ?? [:])
+        case "stroke_gestures":
+            guard strokeActive else { return }
+            strokePanel?.tapHint = String((message["tap_hint"] as? String ?? "").prefix(40))
         case "stroke_update":
             let code = String((message["code"] as? String ?? "").prefix(64))
             let candidates = Array((message["candidates"] as? [String] ?? []).prefix(6))
@@ -918,13 +922,18 @@ final class ProxiMicInputController: IMKInputController {
                                    direction: message["direction"] as? String ?? "",
                                    origin: message["origin"] as? [Double] ?? [],
                                    points: message["points"] as? [[Double]] ?? [],
-                                   selectDistance: message["select_distance"] as? Double ?? 3)
+                                   selectDistance: message["select_distance"] as? Double ?? 3,
+                                   clearArmed: message["clear_armed"] as? Bool ?? false,
+                                   clearDistance: message["clear_distance"] as? Double ?? 30,
+                                   clearProgress: message["clear_progress"] as? Double ?? 0)
         case "stroke_commit":
             let request = message["request_id"] as? String ?? ""
             let value = message["text"] as? String ?? ""
-            // Punctuation cells of the menu replace any pending strokes.
-            let accepted = !request.isEmpty && value.count == 1
-                && (strokeCandidates.contains(value) || ["，", "。", "？"].contains(value))
+            // Commit the first candidate and space together so focus cannot split them.
+            let candidateWithSpace = strokeCandidates.first.map { value == $0 + " " } ?? false
+            let accepted = !request.isEmpty
+                && (candidateWithSpace || (value.count == 1
+                    && (strokeCandidates.contains(value) || ["，", "。", "？", " "].contains(value))))
                 && (!strokeCode.isEmpty || (strokeActive && !token.isEmpty))
             var prefix: String?
             if accepted {
@@ -1055,7 +1064,11 @@ final class ProxiMicInputController: IMKInputController {
         let stateClientID = currentClientID
         let replySession = session
         let context: EditorSnapshot?
-        if strokeActive { context = lastContext }
+        if strokeActive, includeSnapshot, requestID != nil {
+            // A Backspace focus probe needs the current selection, not the entry snapshot.
+            context = EditorSnapshot(text: nil, selection: adapter.startingSelection(), markedRange: unspecifiedRange,
+                                     selectedText: nil, documentAccess: false)
+        } else if strokeActive { context = lastContext }
         else if let session, session.active, requestID == nil || [.listening, .finishing].contains(session.phase) { context = session.original }
         else if includeSnapshot { context = try? adapter.snapshotForBeginning() }
         else { context = lastContext }

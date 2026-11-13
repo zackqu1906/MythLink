@@ -7,7 +7,7 @@ import time
 import uuid
 
 from .stroke.stroke_input import StrokeCollector
-from .touchpad_clicks import TouchpadClicks
+from .touchpad_clicks import TouchpadClicks, TwoFingerClicks
 from .touchpad_diagnostics import note
 from .click_diagnostics import ClickTrace, start_click_diagnostics
 from .stroke.stroke_kinematics import measure_stroke
@@ -18,12 +18,14 @@ class TouchpadStrokeOutput:
     def __init__(self, *, connection, on_ready, on_end, on_stroke, on_tap, on_trace=None,
                  on_double_click=None, on_gesture=None, on_diagnostic=None, on_tap_contact=None,
                  on_stroke_details=None, on_selection=None, on_selection_state=None,
-                 contact_classifier=None, on_contact_intent=None, two_finger_classifier=None):
+                 contact_classifier=None, on_contact_intent=None, two_finger_classifier=None, raw2=False,
+                 on_two_finger_tap=None):
         self.connection = connection
         self.on_ready, self.on_end = on_ready, on_end
         self.on_stroke, self.on_tap = on_stroke, on_tap
         self.on_trace = on_trace
         self.on_tap_contact = on_tap_contact
+        self.on_two_finger_tap = on_two_finger_tap
         self.on_stroke_details = on_stroke_details
         self.on_selection = on_selection
         self.on_selection_state = on_selection_state
@@ -34,17 +36,24 @@ class TouchpadStrokeOutput:
         self.pointer_events = deque(maxlen=512)
         self.two_finger_steps = deque(maxlen=4096)
         self._two_finger_live = False
+        self.raw2 = raw2
+        self._pointer_contact = None
+        self._stream_key = None
+        self._input_gap_at = 0.
+        self._seen_pointer_clicks = deque(maxlen=256)
+        self.two_finger_clicks = TwoFingerClicks() if raw2 and on_double_click else None
+        self.on_gesture = on_gesture
         self.on_contact_intent = on_contact_intent
         self._selection_time = 0.
         self._selection_state = None
         self._selection_two = False
         self.on_double_click = on_double_click
         self.on_diagnostic = on_diagnostic
-        self.clicks = TouchpadClicks(on_gesture=on_gesture, on_diagnostic=on_diagnostic) if on_double_click and contact_classifier is None else None
+        self.clicks = TouchpadClicks(on_gesture=on_gesture, on_diagnostic=on_diagnostic) if on_double_click and not raw2 and contact_classifier is None else None
         # The opt-in contact policy owns single taps (candidate selection); it
         # only borrows SDK click pairing to recognize a double click.
         self.double_clicks = (TouchpadClicks(on_gesture=on_gesture, on_diagnostic=on_diagnostic)
-                              if on_double_click and contact_classifier is not None else None)
+                              if on_double_click and not raw2 and contact_classifier is not None else None)
         self._trace_time = 0.
         self._trace_visible = False
         self.stopped = threading.Event()
@@ -71,6 +80,9 @@ class TouchpadStrokeOutput:
         self._contact_epoch += 1
         self.two_finger_steps.clear()
         self._two_finger_live = self._selection_two = False
+        self._pointer_contact = None
+        if self.two_finger_clicks:
+            self.two_finger_clicks.clear()
         self.pending_strokes.clear()
         self.pending_contact_details.clear()
         self.click_verdicts.clear()
@@ -87,8 +99,10 @@ class TouchpadStrokeOutput:
     def _notify_selection_state(self, points, two_finger=False):
         if self.on_selection_state is None:
             return
-        state = (self.two_finger_classifier(points) if two_finger and points
+        state = (self.two_finger_classifier(points) if two_finger
                  else (self.contact_classifier or hold_selection)(points))
+        if two_finger and state.get('direction') and self.two_finger_clicks:
+            self.two_finger_clicks.clear()
         if state != self._selection_state and self._batch_epoch == self._reset_epoch:
             self._selection_state = state
             self.on_selection_state(state)
@@ -108,6 +122,8 @@ class TouchpadStrokeOutput:
                 if self.on_selection is not None and self._two_finger(contact.get('start_step'), end_step):
                     # A two-finger contact never writes or taps; it selects.
                     decision = self.two_finger_classifier(contact.get('points') or [], finished=True)
+                    if decision.get('direction') and self.two_finger_clicks:
+                        self.two_finger_clicks.clear()
                     value = dict(contact, end_step=end_step, sdk_is_click=is_click, intent_decision=decision)
                     if self.on_contact_intent is not None:
                         self.on_contact_intent({k: v for k, v in value.items() if k != 'points'})
@@ -198,7 +214,11 @@ class TouchpadStrokeOutput:
         self.active = True
 
     def submit_pointer(self, event):
-        """Raw2 pointer frames: only their two-finger mode tag is used."""
+        """Read contact classification even when the fingers have not moved."""
+        if self.raw2 and event.kind in {'click', 'pointer_contact'}:
+            if not getattr(event, 'is_preview', False):
+                self.submit(event)
+            return
         if (self.two_finger_classifier is None or self.stopped.is_set() or not self.active
                 or str(getattr(getattr(event, 'mode', ''), 'value', getattr(event, 'mode', ''))).upper() != 'TWO_FINGER'):
             return
@@ -224,6 +244,8 @@ class TouchpadStrokeOutput:
                 # Raw2 may restart frame numbering or interrupt the same generation.
                 # Invalidate both the pending queue and the worker's detached batch.
                 self._reset_epoch += 1
+                self._stream_key = (event.session_id, event.generation)
+                self._input_gap_at = event.timestamp
                 for _, pending in self.events:
                     if pending: pending.finish('session_reset')
                 self.events.clear()
@@ -237,6 +259,59 @@ class TouchpadStrokeOutput:
             self.events.append((event, trace))
             if trace: trace.record('queued', queue_depth=len(self.events))
         self.wake.set()
+
+    def _pointer_event(self, event, trace):
+        key = (event.session_id, event.generation)
+        if self._stream_key is None:
+            self._stream_key = key
+        source = getattr(event, 'source_timestamp', None)
+        age = time.monotonic() - event.timestamp
+        if (key != self._stream_key or not 0 <= age <= (.25 if trace else .2)
+                or (event.timestamp if source is None else source) < self._input_gap_at):
+            if trace: trace.finish('stroke_pointer_event_expired')
+            return
+        if event.kind == 'pointer_contact':
+            if event.mode == 'TWO_FINGER' and self.two_finger_classifier is not None:
+                self.two_finger_steps.append(event.start_step if event.start_step is not None else event.step)
+                self._pointer_contact = event if event.phase in {'BEGIN', 'CLASSIFIED'} else None
+                if self._pointer_contact:
+                    self._notify_trace([])
+                    self._notify_selection_state(self.collector.points, True)
+            elif event.phase in {'BEGIN', 'CLASSIFIED', 'END', 'CANCEL'}:
+                self._pointer_contact = None
+                if event.mode == 'SINGLE' and self.two_finger_clicks:
+                    self.two_finger_clicks.clear()
+            if event.phase == 'CANCEL' and self.two_finger_clicks:
+                self.two_finger_clicks.clear()
+            return
+        click_id = (key, event.click_id)
+        if click_id in self._seen_pointer_clicks:
+            if trace: trace.finish('duplicate_click')
+            return
+        self._seen_pointer_clicks.append(click_id)
+        if self.two_finger_clicks and event.button == 'right' and event.count == 1:
+            first = self.two_finger_clicks.first
+            if self.two_finger_clicks.feed(event):
+                self.collector.reset()
+                self._clear_pending()
+                self._notify_trace([])
+                self.active = False
+                if self.on_gesture:
+                    try: self.on_gesture('two-finger-double-click')
+                    except Exception: pass
+                self._emit_current(self.on_double_click)
+                if trace: trace.finish('double_click_exit_stroke_requested', outcome='routed')
+                return
+            if first is not None:
+                self._emit_two_finger_tap(first)
+        elif self.two_finger_clicks:
+            self.two_finger_clicks.clear()
+        if trace: trace.finish('stroke_mode_no_mouse_click', outcome='routed')
+
+    def _emit_two_finger_tap(self, event):
+        if (self.on_two_finger_tap and self.active and not self.stopped.is_set() and not self.connection.is_set()
+                and time.monotonic() <= event.timestamp + TwoFingerClicks.interval + .25):
+            self._emit_current(self.on_two_finger_tap)
 
     def _click_stop_reason(self):
         if self.connection.is_set(): return 'disconnected'
@@ -335,6 +410,11 @@ class TouchpadStrokeOutput:
                     if trace: trace.dequeued(queue_depth=len(events))
                     if self.input_since is not None and self.input_since() != self.input_epoch:
                         break
+                    if getattr(event, 'session_id', None) is not None and event.kind in {'click', 'pointer_contact'}:
+                        self._pointer_event(event, trace)
+                        if not self.active:
+                            break
+                        continue
                     if time.monotonic() - event.timestamp > .15:
                         note(self.on_diagnostic, 'stroke_event_stale')
                         if trace: trace.finish('stroke_queue_expired', queue_limit_ms=150)
@@ -416,7 +496,13 @@ class TouchpadStrokeOutput:
                 if self.input_since is not None and self.input_since() != self.input_epoch:
                     continue
                 self._resolve_contacts()
-                two_finger = self.collector.touching and self._two_finger(self.collector.start_step)
+                first = self.two_finger_clicks.first if self.two_finger_clicks else None
+                if first is not None and time.monotonic() >= first.timestamp + TwoFingerClicks.interval:
+                    self.two_finger_clicks.clear()
+                    self._emit_two_finger_tap(first)
+                if self._pointer_contact and not self.collector.touching and time.monotonic() - self._pointer_contact.timestamp > .15:
+                    self._pointer_contact = None
+                two_finger = bool(self._pointer_contact) or (self.collector.touching and self._two_finger(self.collector.start_step))
                 if two_finger and not self._two_finger_live:
                     self._notify_trace([])  # Two fingers draw the selection path, not ink.
                 self._two_finger_live = two_finger
@@ -425,9 +511,10 @@ class TouchpadStrokeOutput:
                             and time.monotonic() - self.collector.moves[-1].timestamp > .15):
                         # A stopped stream is not evidence of a stationary finger.
                         self.collector.reset()
+                        self._pointer_contact = None
                         self._notify_trace([])
                         two_finger = self._two_finger_live = False
-                    if not self.collector.touching:
+                    if not self.collector.touching and not two_finger:
                         # Keep a released two-finger path on screen until it resolves.
                         if not (self._selection_two and self.pending_strokes):
                             self._selection_two = False

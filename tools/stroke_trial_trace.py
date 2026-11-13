@@ -13,12 +13,12 @@ SELECTION_DISPLAY = dict(mode='menu-relative', origin='hold-arming-frame',
     projection='bounded-direction-cells-v1', opacity=.42)
 
 
-def selection_point(point, origin, cells, direction=None, threshold=None):
+def selection_point(point, origin, cells, direction=None, threshold=None, clear_distance=None):
     """Project one raw sample independently, with no path-dependent recentering.
 
     The selection policy is categorical: crossing a sector changes its target.
-    The display follows those same boundaries and compresses travel inside that
-    cell, so even large displacement cannot suggest a different menu action.
+    The display follows those same boundaries and compresses travel inside the
+    cell, except the long left pull that crosses the delete cell to arm clear.
     Rectangles come from the actual layout, including its margins and DPI.
     """
     dx, dy = point[0] - origin[0], point[1] - origin[1]
@@ -43,8 +43,11 @@ def selection_point(point, origin, cells, direction=None, threshold=None):
         (dy / distance - vector.y() / length) * lateral)
     inset = min(10., target.width() * .15, target.height() * .15)
     inside = target.adjusted(inset, inset, -inset, -inset)
-    return QPointF(max(inside.left(), min(inside.right(), result.x())),
-                   max(inside.top(), min(inside.bottom(), result.y())))
+    x = max(inside.left(), min(inside.right(), result.x()))
+    if direction == 'left' and clear_distance is not None:
+        outward = max(0., min(1., (-dx - 3 * threshold) / (clear_distance - 3 * threshold)))
+        x += (target.left() - 6 - x) * outward
+    return QPointF(x, max(inside.top(), min(inside.bottom(), result.y())))
 
 
 class TrialTraceView(TraceView):
@@ -68,12 +71,13 @@ class TrialTraceView(TraceView):
         origin = display['origin']
         # Two-finger states carry their own (longer) recognition threshold.
         threshold = self.selection_state.get('threshold')
-        path = [selection_point(point, origin, cells, threshold=threshold) for point in display['points']]
+        clear_distance = self.selection_state.get('clear_distance')
+        path = [selection_point(point, origin, cells, threshold=threshold, clear_distance=clear_distance) for point in display['points']]
         # Both the endpoint and the highlighted button use this state packet,
         # independent of the separate (potentially downsampled) handwriting ink.
         if path:
             path[-1] = selection_point(display['points'][-1], origin, cells,
-                                       self.selection_state.get('direction'), threshold)
+                                       self.selection_state.get('direction'), threshold, clear_distance)
         return path, cells['center'].center()
 
     def paintEvent(self, event):

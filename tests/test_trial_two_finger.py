@@ -105,7 +105,7 @@ def test_live_two_finger_state_highlights_cell_and_progress(trial):
     window.show(); app.processEvents()
     window.show_selection_state(two_finger_selection(swipe(180)))
     assert window.direction_buttons['left'].property('directionActive')
-    assert window.selection_hint.text() == '双指左滑 · 抬手删除'
+    assert window.selection_hint.text() == '抬手删除 · 继续外拉可清空'
     assert window.selection_progress.value() == 100
     path, origin = window.trace_view.selection_geometry()
     left = window.direction_buttons['left']

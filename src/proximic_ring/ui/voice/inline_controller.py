@@ -607,7 +607,25 @@ class InlineInputController(QObject):
         return self.send_stroke("stroke_selection", phase=str(state.get('phase') or 'idle'),
                                 progress=float(state.get('progress') or 0), direction=state.get('direction') or '',
                                 origin=list(display.get('origin') or []), points=list(display.get('points') or [])[:201],
-                                select_distance=float(select_distance))
+                                select_distance=float(select_distance), clear_armed=bool(state.get('clear_armed')),
+                                clear_distance=float(state.get('clear_distance') or 30.),
+                                clear_progress=float(state.get('clear_progress') or 0.))
+
+    def stroke_backspace(self, origin):
+        """Send the editor's own Backspace only with fresh proof of this stroke target."""
+        from ...voice.ime.focus_probe import valid_selection
+        target = self.stroke_target
+        if (self._installing or not self.stroke_mode or not target or not self._bridge
+                or self._stroke_request or not origin or self._foreground_identity() != origin):
+            return False
+        state = self._bridge.focus_state(timeout=.2)
+        if (not state or not state.get('ready') or not valid_selection(state.get('selection'))
+                or target != self.stroke_target or target[:2] != (state.get('epoch'), state.get('client_id'))
+                or state.get('application') != origin[0] or self._foreground_identity() != origin):
+            return False
+        from ...platforms.macos.wechat_native_keys import send_stroke_backspace
+        send_stroke_backspace(*origin)
+        return True
 
     def stroke_clear(self):
         if self.stroke_target is not None:

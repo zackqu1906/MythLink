@@ -20,6 +20,7 @@ TRIGGER_LABELS = {
     "left-click": "左键单击", "left-double-click": "左键双击",
     "right-click": "右键单击", "right-double-click": "右键双击",
     "two-finger-scroll": "双指纵向滚动",
+    "two-finger-double-click": "双指双击 · 切换笔画输入",
     "two-finger-swipe-left": "双指左滑 · 前进",
     "two-finger-swipe-right": "双指右滑 · 后退",
     "dwell-drag-ready": "已停留 · 移动开始拖动",

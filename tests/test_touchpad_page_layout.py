@@ -62,6 +62,7 @@ def test_wheel_reaches_all_trial_controls_without_rebounding(inline_ui, tmp_path
 @pytest.mark.parametrize('already_running', [False, True])
 def test_trial_button_starts_local_strokes_and_stops_without_double_click(
         inline_ui, monkeypatch, platform, already_running):
+    from test_stroke_session import until
     import proximic_ring.ui.touchpad.touchpad_controller as module
     monkeypatch.setattr(module, 'sys', SimpleNamespace(platform=platform))
     c, bridge, root, tp, source = open_trial(inline_ui, (940, 700))
@@ -79,7 +80,7 @@ def test_trial_button_starts_local_strokes_and_stops_without_double_click(
     assert len(source.starts) == 1
     if not already_running:
         source.future.set_result(None); QTest.qWait(30)
-    assert tp.inputMode == 'stroke' and tp.strokeSession.phase == 'running'
+    until(lambda: tp.inputMode == 'stroke' and tp.strokeSession.phase == 'running')
     assert tp.strokeSession.local and tp._local_stroke_input
     assert not c._recognition_event.is_set()
     assert button.property('text') == '停止试写'

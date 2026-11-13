@@ -116,7 +116,7 @@ Rectangle {
             objectName: "strokeTutorialSelect"
             Layout.fillWidth: true; spacing: 8
             StepText {
-                text: "<b>单指单击</b>选首选字。<br><b>双指八向滑动</b>，可选其他候选、标点或删除。"
+                text: "<b>单击动作</b>可在笔画输入页设置。<br><b>双指左滑</b>退格，继续外拉清空笔画。"
             }
             Figure {
                 Grid {

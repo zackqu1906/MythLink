@@ -38,6 +38,27 @@ async def shared_session(monkeypatch, tmp_path, model=FakeModel):
     return session, client
 
 
+def test_contact_classification_reaches_strokes_with_exact_frame_range_without_motion():
+    from ring_python_sdk.touchpad.raw2 import Raw2Stream
+    from ring_python_sdk.sdk_provider import ContactUpdate, EventMeta
+    stream = object.__new__(Raw2Stream)
+    events = []
+    stream.closed = False
+    stream._key = ('ring', 0)
+    stream.receiver = SimpleNamespace(generation=0, output_after_ns=0, ordinal=25)
+    stream.pointer = events.append
+    stream._deliver = lambda callback, event: callback(event)
+    now = clock_ns()
+    meta = EventMeta('ring', 0, 1, now)
+    held = SimpleNamespace(start_frame=10, start_time_ns=now, end_frame_exclusive=None, end_time_ns=None)
+    ended = SimpleNamespace(start_frame=10, start_time_ns=now, end_frame_exclusive=40, end_time_ns=now)
+    stream._pointer_event(ContactUpdate(meta, 1, 'CLASSIFIED', 'TWO_FINGER', held))
+    stream._pointer_event(ContactUpdate(meta, 1, 'END', 'TWO_FINGER', ended))
+    assert [event.kind for event in events] == ['pointer_contact', 'pointer_contact']
+    assert [(event.start_step, event.end_step) for event in events] == [(11, None), (11, 41)]
+    assert events[0].mode == 'TWO_FINGER'
+
+
 def enable_gestures(session, tmp_path, on_trigger=None, firmware='2.1.6-dev.touchpad.15'):
     from ring_python_sdk.swipe.processor import SwipeProcessor
     session._sdk_transport.device_info = replace(
@@ -470,9 +491,15 @@ def test_four_independent_switches_apply_live_before_dispatch(disabled, index):
     drain(worker, mouse, done, 3)
     expected = [('left', 1), ('left', 2), ('right', 1), ('scroll', None)]
     expected.pop(index)
+    if ('right', 1) in expected:
+        expected.remove(('right', 1))
+        expected.append(('right', 1))  # A single right click waits for the double-tap window.
     assert [(e.get('button', e['kind']), e.get('count')) for e in mouse.calls] == expected
     expected_hints = ['left-click', 'left-double-click', 'right-click', 'two-finger-scroll']
     expected_hints.pop(index)
+    if 'right-click' in expected_hints:
+        expected_hints.remove('right-click')
+        expected_hints.append('right-click')
     assert hints == expected_hints
 
 

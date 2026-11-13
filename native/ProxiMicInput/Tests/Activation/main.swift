@@ -40,12 +40,14 @@ final class StrokeCandidatePanel {
     static var canShow = true
     static var lastTrace: [[Double]] = []
     var exitGestureLabel = "响指"
+    var tapHint = ""
     var needsPosition: Bool { false }
     var isVisible: Bool { Self.visible && Self.canShow }
     func hide() { Self.visible = false; Self.lastTrace = [] }
     func update(code: String, candidates: [String], selected: Int, glyphs: [[String: String]] = []) { Self.visible = true }
     func selection(phase: String, progress: Double, direction: String,
-                   origin: [Double], points: [[Double]], selectDistance: Double) {}
+                   origin: [Double], points: [[Double]], selectDistance: Double,
+                   clearArmed: Bool = false, clearDistance: Double = 30, clearProgress: Double = 0) {}
     func position(caret: NSRect?, clientLevel: Int32) {}
     func trace(points: [[Double]], finished: Bool, style: [String: Any]) { Self.lastTrace = points }
 }
@@ -680,6 +682,28 @@ do {
     controller.deactivateServer(client)
     check(!StrokeCandidatePanel.visible, "empty stroke palette survived losing focus")
     print("PASS gesture stroke session lifecycle and stale-session fence")
+}
+
+// Space confirms the first candidate in the same insertion, including predictions.
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation()
+    let id = currentClientID(controller)
+    controller.receive(["type": "stroke_begin", "client_id": id, "stroke_session": "space"])
+    controller.receive(["type": "stroke_update", "client_id": id, "stroke_session": "space", "code": "一", "candidates": ["二", "三"]])
+    let writes = client.writes
+    controller.receive(["type": "stroke_commit", "client_id": id, "stroke_session": "space", "request_id": "wrong", "text": "三 "])
+    check(client.writes == writes, "space accepted a non-first candidate")
+    controller.receive(["type": "stroke_commit", "client_id": id, "stroke_session": "space", "request_id": "first", "text": "二 "])
+    check(client.text == "二 " && client.writes == writes + 1 && !isValidRange(client.marked),
+          "candidate and space must replace preedit together")
+    controller.receive(["type": "stroke_update", "client_id": id, "stroke_session": "space", "code": "", "prediction": true, "candidates": ["的"]])
+    controller.receive(["type": "stroke_commit", "client_id": id, "stroke_session": "space", "request_id": "prediction", "text": "的 "])
+    check(client.text == "二 的 ", "space did not confirm the first prediction")
+    controller.receive(["type": "stroke_commit", "client_id": id, "stroke_session": "space", "request_id": "empty", "text": " "])
+    check(client.text == "二 的  " && StrokeCandidatePanel.visible, "empty space ended stroke mode")
+    controller.deactivateServer(client)
+    print("PASS candidate plus space is one IMK insertion")
 }
 
 // Predictions remain unmarked until confirmed, share the stroke session fence,

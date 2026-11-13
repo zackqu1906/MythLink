@@ -113,6 +113,31 @@ ScrollView {
                 }
                 Item { Layout.fillWidth: true }
             }
+            GridLayout {
+                visible: page.section === "stroke"
+                width: parent.width
+                columns: page.narrow ? 2 : 4
+                columnSpacing: 12; rowSpacing: 12
+                Label { text: "单指单击"; color: theme.text }
+                ComboBox {
+                    objectName: "strokeSingleTapAction"
+                    Layout.fillWidth: true
+                    model: ["首选＋空格", "确认首选"]
+                    currentIndex: page.touchpad.singleFingerAction === "space" ? 0 : 1
+                    Accessible.name: "笔画模式单指单击"
+                    onActivated: page.touchpad.singleFingerAction = currentIndex === 0 ? "space" : "candidate"
+                }
+                Label { text: "双指单击"; color: theme.text }
+                ComboBox {
+                    objectName: "strokeTwoFingerTapAction"
+                    Layout.fillWidth: true
+                    model: ["首选＋空格", "确认首选"]
+                    currentIndex: page.touchpad.twoFingerAction === "space" ? 0 : 1
+                    enabled: page.touchpad.raw2Supported
+                    Accessible.name: "笔画模式双指单击"
+                    onActivated: page.touchpad.twoFingerAction = currentIndex === 0 ? "space" : "candidate"
+                }
+            }
             StrokeInputBox {
                 width: parent.width; height: implicitHeight
                 visible: page.section === "stroke"
@@ -220,7 +245,9 @@ ScrollView {
                     }
                     Label {
                         Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted
-                        text: page.touchpad.raw2Supported ? "双击执行系统鼠标双击；笔画输入请使用书写区的「开始试写」。连接重置时自动清空旧操作，断流时停止输出，重复和过期点击自动忽略。需要配套新版触摸板固件。" : "当前平台使用兼容触摸板，暂不支持新版双指滚动和独立点击设置。笔画输入可在书写区使用。"
+                        text: page.touchpad.raw2Supported
+                            ? (page.touchpad.externalStrokeSupported ? "点入输入框，双指双击进入或退出笔画输入。单指双击为鼠标双击；双指单击稍候触发右键。" : "双指双击进入或退出试写。单指双击为鼠标双击；双指单击稍候触发右键。")
+                            : "当前平台使用兼容触摸板，暂不支持新版双指滚动和独立点击设置。笔画输入可在书写区使用。"
                     }
                 }
             }

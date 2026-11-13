@@ -44,6 +44,17 @@ def test_motion_then_pause_uses_new_origin_without_showing_preceding_ink(trace_m
     assert menu.trial_selection(menu.trial_contact(points, finished=True))['target'] == '。'
 
 
+def test_outward_clear_path_crosses_delete_cell_only_at_long_pull(trace_modules):
+    from PySide6.QtCore import QRectF
+    _, trace = trace_modules
+    cells = {'center': QRectF(120, 120, 100, 100), 'left': QRectF(10, 120, 100, 100)}
+    short = trace.selection_point((-18, 0), (0, 0), cells, threshold=6, clear_distance=30)
+    long = trace.selection_point((-30, 0), (0, 0), cells, threshold=6, clear_distance=30)
+    assert cells['left'].contains(short)
+    assert 0 < long.x() < cells['left'].left()
+    assert long.y() == short.y()
+
+
 @pytest.mark.parametrize('size', [(1440, 810), (1280, 640), (640, 900), (900, 400)])
 def test_origin_and_endpoint_follow_real_cells_for_all_angles(trace_modules, size):
     from PySide6.QtCore import QRectF, Qt

@@ -10,7 +10,7 @@ from proximic_ring.touchpad.stroke.stroke_menu import (
     trial_contact, two_finger_selection)
 from proximic_ring.touchpad.touchpad_strokes import TouchpadStrokeOutput
 from ring_python_sdk.touchpad import TouchpadClickVerdict, TouchpadContact, TouchpadMove
-from ring_python_sdk.touchpad.events import Raw2PointerMove
+from ring_python_sdk.touchpad.events import Raw2PointerContact, Raw2PointerMove
 
 
 def swipe(dx, dy, frames=20):
@@ -48,6 +48,31 @@ def test_short_two_finger_motion_cancels():
     assert two_finger_selection([], finished=True)['action'] == 'cancel-selection'
 
 
+def test_long_left_pull_arms_clear_only_until_retracted():
+    limit = TWO_FINGER_SELECTION['clearDistance']
+    points = swipe(-limit, 0)
+    live = two_finger_selection(points)
+    assert live['clear_armed'] and 'action' not in live
+    assert two_finger_selection(points, finished=True)['action'] == 'clear-all'
+    points.append((-limit + 1, 0))
+    assert not two_finger_selection(points)['clear_armed']
+    assert two_finger_selection(points, finished=True)['action'] == 'delete-one'
+    points.append((0, 0))
+    assert two_finger_selection(points, finished=True)['action'] == 'cancel-selection'
+    assert two_finger_selection(swipe(-limit, -limit), finished=True)['action'] == 'punctuation'
+    assert two_finger_selection([(0, 0), (float('nan'), 0)], finished=True)['action'] == 'cancel-selection'
+
+
+def test_clear_fill_tracks_outward_travel_and_retraction_without_committing():
+    points = [(0., 0.)]
+    for x, y, progress in [(-6, 0, 0), (-18, 0, 0), (-24, 0, .5), (-30, 0, 1),
+                            (-40, 0, 1), (-24, 0, .5), (-18, 0, 0), (-30, 30, 0), (0, 0, 0)]:
+        points.append((x, y))
+        state = two_finger_selection(points)
+        assert state['clear_progress'] == progress and 'action' not in state
+        assert state['clear_armed'] == (progress == 1)
+
+
 def test_single_finger_hold_no_longer_arms_selection():
     held = [(0., 0.)] * 200 + [(i * .5, 0.) for i in range(1, 30)]
     assert trial_contact(held)['phase'] != 'selecting'
@@ -55,14 +80,14 @@ def test_single_finger_hold_no_longer_arms_selection():
     assert trial_contact(held, finished=True)['action'] in {'stroke', 'tap', 'reject'}
 
 
-def start_output():
+def start_output(**options):
     ready = threading.Event()
     states, selections, strokes, taps = [], [], [], []
     output = TouchpadStrokeOutput(connection=threading.Event(), on_ready=ready.set,
         on_end=lambda *_: None, on_stroke=strokes.append, on_tap=lambda: None,
         on_stroke_details=strokes.append, on_tap_contact=taps.append,
         on_selection=selections.append, on_selection_state=states.append,
-        contact_classifier=trial_contact, two_finger_classifier=two_finger_selection)
+        contact_classifier=trial_contact, two_finger_classifier=two_finger_selection, **options)
     output.start()
     assert ready.wait(1)
     output.activate()
@@ -117,5 +142,51 @@ def test_single_finger_contact_still_writes():
         feed(output, contact(.5, .5))
         wait_for(lambda: bool(strokes))
         assert not selections and not any(s.get('source') == 'two-finger' for s in states)
+    finally:
+        output.stop(); output.thread.join(1)
+
+
+def test_long_left_contact_clears_once_on_release_without_early_delete():
+    output, states, selections, strokes, taps = start_output()
+    try:
+        events = contact(-1, 0)
+        feed(output, events[:-2], two_finger_steps=range(10, 40))
+        wait_for(lambda: any(s.get('clear_armed') for s in states))
+        assert not selections and not strokes and not taps
+        feed(output, events[-2:])
+        wait_for(lambda: bool(selections))
+        assert len(selections) == 1 and selections[0]['decision']['action'] == 'clear-all'
+        assert not strokes and not taps
+    finally:
+        output.stop(); output.thread.join(1)
+
+
+def test_stationary_two_finger_press_shows_selection_before_any_movement():
+    output, states, selections, strokes, taps = start_output(raw2=True)
+    try:
+        now = time.monotonic()
+        output.submit_pointer(Raw2PointerContact('CLASSIFIED', 'TWO_FINGER', 1, 12, now, now,
+                                                session_id='ring', start_step=1))
+        wait_for(lambda: any(s['phase'] == 'selecting' for s in states))
+        assert states[-1]['source'] == 'two-finger' and states[-1]['direction'] is None
+        assert not strokes and not taps and not selections
+        output.submit_pointer(Raw2PointerContact('END', 'TWO_FINGER', 1, 20, time.monotonic(), now,
+                                                session_id='ring', start_step=1, end_step=15))
+        wait_for(lambda: states[-1]['phase'] == 'idle')
+    finally:
+        output.stop(); output.thread.join(1)
+
+
+def test_contact_classification_routes_delete_without_a_pointer_motion_frame():
+    output, states, selections, strokes, taps = start_output(raw2=True)
+    try:
+        events = contact(-.5, 0)
+        now = time.monotonic()
+        output.submit_pointer(Raw2PointerContact('CLASSIFIED', 'TWO_FINGER', 1, 10, now, now,
+                                                session_id='ring', start_step=0))
+        feed(output, events)
+        wait_for(lambda: bool(selections))
+        assert selections[0]['decision']['action'] == 'delete-one'
+        assert not strokes and not taps
     finally:
         output.stop(); output.thread.join(1)

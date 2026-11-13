@@ -20,8 +20,9 @@ Item {
         const state = touchpad.selectionState
         if (ringWriting && !editor.activeFocus) return "输入框未聚焦 · 戒指输入已暂停，点入输入框继续"
         if (state.phase === "selecting") {
-            if (state.direction === "left") return "双指左滑 · 抬手删除"
-            return state.direction ? "双指选字 · 抬手确认" : "双指滑向目标格子 · 原地抬手取消"
+            if (state.clear_armed) return "抬手清空 · 拉回取消"
+            if (state.direction === "left") return "抬手删除 · 继续外拉可清空"
+            return state.direction ? "双指选字 · 抬手确认" : "已识别双指 · 滑动选字"
         }
         if (state.phase === "writing") return "书写中 · 抬手结束"
         return "双指滑向格子选字 · 双指左滑删除"
@@ -39,7 +40,7 @@ Item {
     readonly property int bodyGap: compact ? 12 : 16
     // Keep the whole selection card inside one viewport where possible.
     readonly property real menuSide: {
-        const available = Math.max(0, selectionCard.width - 2 * cardMargin
+        const available = Math.max(0, selectionCard.width - 2 * cardMargin - selectionMenu.clearPullGutter
                                       - (tutorialBeside ? tutorialWidth + bodyGap : 0))
         // A stacked tutorial takes height from the menu.
         const stacked = tutorialOpen && !tutorialBeside ? tutorial.implicitHeight + bodyGap : 0
@@ -120,7 +121,7 @@ Item {
             Label {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.alignment: Qt.AlignVCenter
                 text: box.touchpad.strokePreparing ? "正在准备笔画输入…"
-                    : box.touchpad.active && box.touchpad.inputMode === "stroke" ? "笔画输入中 · 双击回到鼠标"
+                    : box.touchpad.active && box.touchpad.inputMode === "stroke" ? "笔画输入中 · " + box.touchpad.strokeGestureLabel + "回到鼠标"
                     : box.touchpad.active ? "鼠标模式 · 点击「开始试写」进入笔画"
                     : "点击「开始试写」用 Ring 写笔画，也可键入试写"
                 font.pixelSize: 12; color: theme.muted
@@ -440,12 +441,16 @@ Item {
                         Layout.fillWidth: !box.tutorialBeside; Layout.minimumWidth: 0
                         onCloseRequested: box.touchpad.strokeTutorialOpen = false
                     }
-                    StrokeSelectionMenu {
-                        id: selectionMenu
-                        objectName: "strokeSelectionMenu"
-                        touchpad: box.touchpad
+                    Item {
                         Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
-                        Layout.preferredWidth: box.menuSide; Layout.preferredHeight: box.menuSide
+                        Layout.preferredWidth: box.menuSide + selectionMenu.clearPullGutter
+                        Layout.preferredHeight: box.menuSide
+                        StrokeSelectionMenu {
+                            id: selectionMenu
+                            objectName: "strokeSelectionMenu"
+                            touchpad: box.touchpad
+                            x: clearPullGutter; width: box.menuSide; height: box.menuSide
+                        }
                     }
                 }
 
@@ -508,7 +513,7 @@ Item {
         Muted {
             objectName: "strokeTrialHelp"
             Layout.fillWidth: true; Layout.minimumWidth: 0
-            text: "选字：双指滑向目标格子 → 抬手确认（原地抬手取消）   ·   双指左滑 / 单指左→右退笔、删字   ·   三段往返清空笔画"
+            text: "双指左滑退格，继续外拉清空笔画 · 三段往返也可清空 · " + box.touchpad.strokeGestureLabel + "退出"
             wrapMode: Text.Wrap
         }
 

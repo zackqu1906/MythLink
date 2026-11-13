@@ -5,6 +5,7 @@ import QtQuick
 import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
 import QtQuick.Shapes
+import QtQuick.Effects
 
 Rectangle {
     id: menu
@@ -12,6 +13,10 @@ Rectangle {
     readonly property var candidateVisuals: touchpad.strokeCandidateVisuals
     readonly property var selection: touchpad.selectionState
     readonly property bool selecting: selection.phase === "selecting"
+    readonly property bool clearing: selecting && selection.direction === "left" && selection.clear_armed === true
+    readonly property real clearPullGutter: 60
+    readonly property real clearProgress: clearing ? 1 : Math.max(0, Math.min(1, selection.clear_progress || 0))
+    property var deleteCell: null
     readonly property string activeDirection: selecting ? (selection.direction || "center") : ""
     // Briefly highlights the cell a two-finger swipe just confirmed.
     property string committedDirection: ""
@@ -31,8 +36,10 @@ Rectangle {
         target: menu.touchpad
         function onSelectionCommitted(direction) { menu.committedDirection = direction; commitFlash.restart() }
     }
-    color: "#F3F6FC"; radius: 14
-    border.color: "#DCE4F0"; border.width: 1
+    color: clearing ? "#F6C6C2" : selecting ? (activeDirection === "left" ? "#FBE4E2" : "#DDE8FF") : "#F3F6FC"
+    radius: 14
+    border.color: clearing ? "#9C2F2A" : selecting ? (activeDirection === "left" ? "#C2413B" : "#345EE5") : "#DCE4F0"
+    border.width: selecting ? 3 : 1
     FigmaTheme { id: theme }
 
     function updateTrace(points, finished) { trail.updateTrace(points, finished) }
@@ -57,12 +64,15 @@ Rectangle {
                 Layout.preferredWidth: 1; Layout.preferredHeight: 1
                 focusPolicy: Qt.NoFocus; hoverEnabled: enabled
                 padding: 0; horizontalPadding: 0
-                Accessible.name: modelData.action === "delete" ? "删除一笔或一个字" : "输入标点 " + modelData.symbol
-                Component.onCompleted: menu.cells[modelData.direction] = action
+                Accessible.name: modelData.action === "delete" ? (menu.clearing ? "清空笔画" : "删除一笔或退格") : "输入标点 " + modelData.symbol
+                Component.onCompleted: {
+                    menu.cells[modelData.direction] = action
+                    if (modelData.action === "delete") menu.deleteCell = action
+                }
                 background: Rectangle {
                     radius: 10
                     Behavior on color { ColorAnimation { duration: 120 } }
-                    color: action.directionActive ? (action.modelData.action === "delete" ? "#C2413B" : "#234CDB") : action.down ? "#D8E3FA" : (action.enabled && action.hovered) ? "#E7EDFB" : "#EDF2FB"
+                    color: menu.clearing && action.modelData.action === "delete" ? "#9C2F2A" : action.directionActive ? (action.modelData.action === "delete" ? "#C2413B" : "#234CDB") : action.down ? "#D8E3FA" : (action.enabled && action.hovered) ? "#E7EDFB" : "#EDF2FB"
                     border.width: action.directionActive ? 2 : 1
                     border.color: action.directionActive ? (action.modelData.action === "delete" ? "#9C2F2A" : "#1739AC") : "#DCE4F0"
                 }
@@ -98,7 +108,7 @@ Rectangle {
                         id: actionCaption
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom; anchors.bottomMargin: 7
-                        text: action.modelData.title; color: parent.ink
+                        text: menu.clearing && action.modelData.action === "delete" ? "清空笔画" : action.modelData.title; color: parent.ink
                         font.pixelSize: parent.large ? 12 : 11
                     }
                 }
@@ -189,6 +199,55 @@ Rectangle {
         }
     }
 
+    Item {
+        id: clearPull
+        objectName: "strokeClearPull"
+        x: 10 - width
+        y: menu.deleteCell ? 10 + menu.deleteCell.y + (menu.deleteCell.height - height) / 2 : 0
+        width: menu.clearPullGutter; height: 58
+        visible: menu.selecting && menu.activeDirection === "left"
+        enabled: false
+        Accessible.role: Accessible.StaticText
+        Accessible.name: menu.clearing ? "抬手清空笔画" : "继续向左外拉清空笔画"
+        layer.enabled: menu.clearing
+        layer.effect: MultiEffect {
+            shadowEnabled: true; shadowBlur: .4; shadowOpacity: .28
+            shadowColor: "#9C2F2A"; shadowVerticalOffset: 0; shadowHorizontalOffset: 0
+        }
+        onVisibleChanged: if (visible) pullSurface.requestPaint()
+        Canvas {
+            id: pullSurface
+            anchors.fill: parent
+            onAvailableChanged: if (available) requestPaint()
+            onPaint: {
+                const c = getContext("2d"); c.reset()
+                c.beginPath(); c.roundedRect(.5, .5, width - 1, height - 1, 16, 16)
+                c.fillStyle = "#FCE9E6"; c.fill()
+                c.save(); c.clip()
+                c.fillStyle = menu.clearing ? "#9C2F2A" : "#EDABA5"
+                c.fillRect(width * (1 - menu.clearProgress), 0, width * menu.clearProgress, height)
+                c.restore()
+                c.strokeStyle = "#C2413B"; c.lineWidth = 1; c.stroke()
+            }
+            Connections {
+                target: menu
+                function onClearProgressChanged() { pullSurface.requestPaint() }
+                function onClearingChanged() { pullSurface.requestPaint() }
+            }
+        }
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 9; spacing: -8
+            UiIcon { width: 22; height: 22; symbol: "chevron-left"; ink: menu.clearing ? "white" : "#A6322C" }
+            UiIcon { width: 22; height: 22; symbol: "chevron-left"; ink: menu.clearing ? "white" : "#A6322C" }
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 32; text: "清空"; font.pixelSize: 12; font.weight: Font.Medium
+            color: menu.clearing ? "white" : "#A6322C"
+        }
+    }
+
     // Display only: both layers ignore pointer input so the cells stay clickable.
     Item {
         id: overlay
@@ -211,17 +270,18 @@ Rectangle {
             id: selectionPath
             objectName: "strokeSelectionPath"
             anchors.fill: parent
+            anchors.margins: -10
+            anchors.leftMargin: -10 - menu.clearPullGutter
             // Always mounted: a hidden Canvas would drop the first selecting packet's paint.
 
             function rect(direction) {
-                const item = menu.cells[direction]
+                const item = direction === "clear" ? clearPull : menu.cells[direction]
                 if (!item) return null
                 const p = item.mapToItem(selectionPath, 0, 0)
                 return {x: p.x, y: p.y, width: item.width, height: item.height,
                         cx: p.x + item.width / 2, cy: p.y + item.height / 2}
             }
-            // Port of stroke_trial_trace.selection_point: categorical sectors,
-            // with travel compressed inside the target cell.
+            // Keep the sector projection; extend left into the clear tab.
             function project(point, origin, direction) {
                 const dx = point[0] - origin[0], dy = point[1] - origin[1]
                 const distance = Math.hypot(dx, dy)
@@ -245,8 +305,18 @@ Rectangle {
                 const x = center.cx + vx * gain + (dx / distance - vx / length) * lateral
                 const y = center.cy + vy * gain + (dy / distance - vy / length) * lateral
                 const inset = Math.min(10, target.width * .15, target.height * .15)
-                return {x: Math.max(target.x + inset, Math.min(target.x + target.width - inset, x)),
-                        y: Math.max(target.y + inset, Math.min(target.y + target.height - inset, y))}
+                let boundedX = Math.max(target.x + inset, Math.min(target.x + target.width - inset, x))
+                let boundedY = Math.max(target.y + inset, Math.min(target.y + target.height - inset, y))
+                if (direction === "left") {
+                    const approach = Math.max(0, Math.min(1, (-dx - threshold) / (2 * threshold)))
+                    boundedX += (target.x - boundedX) * approach
+                    const clearDistance = menu.selection.clear_distance || 5 * threshold
+                    const outward = Math.max(0, Math.min(1, (-dx - 3 * threshold) / (clearDistance - 3 * threshold)))
+                    const clear = rect("clear")
+                    boundedX += (clear.x + 10 - boundedX) * outward
+                    boundedY += (clear.cy - boundedY) * outward
+                }
+                return {x: boundedX, y: boundedY}
             }
             onPaint: {
                 const c = getContext("2d"); c.reset()

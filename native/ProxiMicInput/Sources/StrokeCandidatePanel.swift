@@ -69,22 +69,24 @@ private final class StrokeTraceView: NSView {
     }
 }
 
-/// Two-finger selection path, projected onto the menu cells exactly as the trial
-/// window does (stroke_trial_trace.selection_point).
+/// Two-finger selection path, continuing through the external clear tab on long left pulls.
 private final class StrokeSelectionPathView: NSView {
     override var isFlipped: Bool { true }
     var cells: [String: NSRect] = [:]
+    var clearTarget = NSRect.zero
     private var origin: [Double] = []
     private var points: [[Double]] = []
     private var direction = ""
     private var threshold = 3.0
+    private var clearDistance = 30.0
     static let sectors = ["right", "down-right", "down", "down-left", "left", "up-left", "up", "up-right"]
 
-    func update(origin: [Double], points: [[Double]], direction: String, threshold: Double) {
+    func update(origin: [Double], points: [[Double]], direction: String, threshold: Double, clearDistance: Double) {
         self.origin = origin.count == 2 && origin.allSatisfy(\.isFinite) ? origin : []
         self.points = Array(points.prefix(201)).filter { $0.count == 2 && $0.allSatisfy(\.isFinite) }
         self.direction = direction
         self.threshold = threshold.isFinite && threshold > 0 ? threshold : 3
+        self.clearDistance = clearDistance.isFinite && clearDistance > self.threshold * 3 ? clearDistance : self.threshold * 5
         needsDisplay = true
     }
 
@@ -110,8 +112,16 @@ private final class StrokeSelectionPathView: NSView {
         let x = Double(center.midX) + vx * gain + (dx / distance - vx / length) * lateral
         let y = Double(center.midY) + vy * gain + (dy / distance - vy / length) * lateral
         let inset = min(10, Double(target.width) * 0.15, Double(target.height) * 0.15)
-        return NSPoint(x: max(Double(target.minX) + inset, min(Double(target.maxX) - inset, x)),
-                       y: max(Double(target.minY) + inset, min(Double(target.maxY) - inset, y)))
+        var boundedX = max(Double(target.minX) + inset, min(Double(target.maxX) - inset, x))
+        var boundedY = max(Double(target.minY) + inset, min(Double(target.maxY) - inset, y))
+        if name == "left" {
+            let approach = max(0, min(1, (-dx - threshold) / (2 * threshold)))
+            boundedX += (Double(target.minX) - boundedX) * approach
+            let outward = max(0, min(1, (-dx - 3 * threshold) / (clearDistance - 3 * threshold)))
+            boundedX += (Double(clearTarget.minX) + 10 - boundedX) * outward
+            boundedY += (Double(clearTarget.midY) - boundedY) * outward
+        }
+        return NSPoint(x: boundedX, y: boundedY)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -139,6 +149,65 @@ private final class StrokeSelectionPathView: NSView {
     }
 }
 
+/// Appears outside the delete cell; only its fill changes during the pull.
+private final class StrokeClearPullView: FlippedView {
+    private let surface = NSView()
+    private let fill = NSView()
+    private let arrow = NSImageView()
+    private let label = NSTextField(labelWithString: "清空")
+    private var progress = 0.0
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        identifier = NSUserInterfaceItemIdentifier("strokeClearPull")
+        wantsLayer = true
+        layer?.shadowColor = NSColor(hex: 0x9C2F2A).cgColor
+        layer?.shadowRadius = 5
+        layer?.shadowOffset = .zero
+        surface.wantsLayer = true
+        surface.layer?.cornerRadius = 16
+        surface.layer?.masksToBounds = true
+        surface.layer?.backgroundColor = NSColor(hex: 0xFCE9E6).cgColor
+        surface.layer?.borderWidth = 1
+        surface.layer?.borderColor = NSColor(hex: 0xC2413B).cgColor
+        fill.identifier = NSUserInterfaceItemIdentifier("strokeClearPullFill")
+        fill.wantsLayer = true
+        surface.addSubview(fill)
+        arrow.identifier = NSUserInterfaceItemIdentifier("strokeClearArrow")
+        arrow.image = NSImage(systemSymbolName: "chevron.left.2", accessibilityDescription: "向左外拉")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold))
+        arrow.imageScaling = .scaleProportionallyUpOrDown
+        label.alignment = .center
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        [surface, arrow, label].forEach { addSubview($0) }
+        isHidden = true
+        update(progress: 0, armed: false)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(progress: Double, armed: Bool) {
+        self.progress = armed ? 1 : progress.isFinite ? min(1, max(0, progress)) : 0
+        fill.layer?.backgroundColor = NSColor(hex: armed ? 0x9C2F2A : 0xEDABA5).cgColor
+        layer?.shadowOpacity = armed ? 0.28 : 0
+        let ink = armed ? NSColor.white : NSColor(hex: 0xA6322C)
+        arrow.contentTintColor = ink
+        label.textColor = ink
+        setAccessibilityLabel(armed ? "抬手清空笔画" : "继续向左外拉清空笔画")
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        surface.frame = bounds
+        fill.frame = NSRect(x: bounds.width * (1 - progress), y: 0, width: bounds.width * progress, height: bounds.height)
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: 16, cornerHeight: 16, transform: nil)
+        CATransaction.commit()
+        arrow.frame = NSRect(x: (bounds.width - 24) / 2, y: 9, width: 24, height: 20)
+        label.frame = NSRect(x: 0, y: 32, width: bounds.width, height: 17)
+    }
+}
+
 /// One menu cell: punctuation on the top row, a candidate glyph below.
 private final class StrokeMenuCell: FlippedView {
     let direction: String
@@ -151,6 +220,7 @@ private final class StrokeMenuCell: FlippedView {
     private(set) var character = ""
     private var chosen = false
     private var active = false
+    private var clearing = false
 
     init(direction: String, arrow value: String, rank number: Int?, symbol: String = "", title: String = "") {
         self.direction = direction
@@ -174,6 +244,13 @@ private final class StrokeMenuCell: FlippedView {
         refresh()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setClearing(_ clearing: Bool) {
+        guard direction == "left" else { return }
+        status.stringValue = clearing ? "清空笔画" : "删除"
+        setAccessibilityLabel(clearing ? "清空笔画" : "删除一笔或退格")
+        if self.clearing != clearing { self.clearing = clearing; refresh() }
+    }
 
     func set(character value: String, glyph: [String: String]?, chosen isChosen: Bool) {
         character = value
@@ -203,10 +280,11 @@ private final class StrokeMenuCell: FlippedView {
     private func refresh() {
         let enabled = punctuation || !character.isEmpty
         let primary = !punctuation && rank.stringValue == "1" && enabled
+        let actionColor = direction == "left" ? NSColor(hex: clearing ? 0x9C2F2A : 0xC2413B) : NSColor(hex: 0x234CDB)
         let background: NSColor = punctuation
-            ? (active ? NSColor(hex: 0x234CDB) : NSColor(hex: 0xEDF2FB))
+            ? (active ? actionColor : NSColor(hex: 0xEDF2FB))
             : (active ? NSColor(hex: 0xEDF2FF) : primary ? NSColor(hex: 0xF0F4FF) : .white)
-        let border: NSColor = active ? (punctuation ? NSColor(hex: 0x1739AC) : NSColor(hex: 0x345EE5))
+        let border: NSColor = active ? (punctuation ? actionColor : NSColor(hex: 0x345EE5))
             : chosen && enabled ? NSColor(hex: 0x345EE5) : primary ? NSColor(hex: 0xAABCF2) : NSColor(hex: 0xDCE4F0)
         layer?.backgroundColor = background.cgColor
         layer?.borderColor = border.cgColor
@@ -238,9 +316,10 @@ final class StrokeCandidatePanel {
     static let cellSize: CGFloat = 78
     static let cellGap: CGFloat = 6
     static let inset: CGFloat = 8
-    static let hintHeight: CGFloat = 24
+    static let hintHeight: CGFloat = 38
+    static let clearGutter: CGFloat = 60
     static var gridSide: CGFloat { inset * 2 + cellSize * 3 + cellGap * 2 }
-    static var menuSize: NSSize { NSSize(width: gridSide, height: gridSide + hintHeight) }
+    static var menuSize: NSSize { NSSize(width: gridSide + clearGutter, height: gridSide + hintHeight) }
     // Same order as stroke_menu.CANDIDATE_CELLS / PUNCTUATION_CELLS / ACTION_CELLS.
     static let candidateCells: [(String, Int, Int, String)] = [
         ("center", 1, 1, "首选"), ("right", 1, 2, "→"),
@@ -250,15 +329,18 @@ final class StrokeCandidatePanel {
         ("up-left", 0, 0, "↖", "，", "逗号"), ("up", 0, 1, "↑", "。", "句号"), ("up-right", 0, 2, "↗", "？", "问号"),
         ("left", 1, 0, "←", "⌫", "删除")]
 
-    var exitGestureLabel = "Touchpad 双击"
+    var exitGestureLabel = "双指双击" { didSet { exitHint.stringValue = exitGestureLabel + "退出" } }
+    var tapHint = "单指空格 · 双指首选" { didSet { refreshHint() } }
     private let panel: NSPanel
     private let content = FlippedView()
     private let hint = NSTextField(labelWithString: "")
+    private let exitHint = NSTextField(labelWithString: "双指双击退出")
     private let choices = InputPaletteSurface()
     private let grid = FlippedView()
     private var cells: [StrokeMenuCell] = []
     private let trail = StrokeTraceView()
     private let selectionPath = StrokeSelectionPathView()
+    private let clearPull = StrokeClearPullView()
     private var anchor = ActionPanelAnchor()
     private var showing = false
     private var code = ""
@@ -266,6 +348,7 @@ final class StrokeCandidatePanel {
     private var phase = "idle"
     private var progress = 0.0
     private var selectionDirection = ""
+    private var clearing = false
     private(set) var placedAboveCaret = false
     var isVisible: Bool { showing && panel.isVisible }
     var needsPosition: Bool { showing && (anchor.needsCaret || !panel.isVisible) }
@@ -288,6 +371,10 @@ final class StrokeCandidatePanel {
         hint.textColor = .secondaryLabelColor
         hint.lineBreakMode = .byTruncatingTail
         hint.identifier = NSUserInterfaceItemIdentifier("strokeSelectionHint")
+        exitHint.font = .systemFont(ofSize: 10)
+        exitHint.textColor = .secondaryLabelColor
+        exitHint.alignment = .right
+        exitHint.identifier = NSUserInterfaceItemIdentifier("strokeExitHint")
         for (direction, row, column, arrow, symbol, title) in Self.punctuationCells {
             let cell = StrokeMenuCell(direction: direction, arrow: arrow, rank: nil, symbol: symbol, title: title)
             cell.frame = Self.cellFrame(row: row, column: column)
@@ -302,15 +389,18 @@ final class StrokeCandidatePanel {
         let gridFrame = NSRect(x: 0, y: 0, width: Self.gridSide, height: Self.gridSide)
         grid.frame = gridFrame
         trail.frame = gridFrame
-        selectionPath.frame = gridFrame
-        selectionPath.cells = Dictionary(uniqueKeysWithValues: cells.map { ($0.direction, $0.frame) })
+        selectionPath.cells = Dictionary(uniqueKeysWithValues: cells.map { ($0.direction, $0.frame.offsetBy(dx: Self.clearGutter, dy: 0)) })
+        selectionPath.clearTarget = NSRect(x: 8, y: Self.cellFrame(row: 1, column: 0).midY - 29,
+                                          width: Self.clearGutter, height: 58)
         choices.frame = gridFrame
         choices.addSubview(grid)
         choices.addSubview(trail)
-        choices.addSubview(selectionPath)
         content.frame = NSRect(origin: .zero, size: Self.menuSize)
         content.addSubview(choices)
+        content.addSubview(clearPull)
+        content.addSubview(selectionPath)
         content.addSubview(hint)
+        content.addSubview(exitHint)
         panel.contentView = content
         layoutHint()
     }
@@ -337,32 +427,36 @@ final class StrokeCandidatePanel {
 
     /// Live two-finger selection feedback; phase is idle/writing/holding/selecting.
     func selection(phase value: String, progress: Double, direction: String,
-                   origin: [Double], points: [[Double]], selectDistance: Double) {
+                   origin: [Double], points: [[Double]], selectDistance: Double,
+                   clearArmed: Bool = false, clearDistance: Double = 30, clearProgress: Double = 0) {
         phase = value
         selectionDirection = direction
         self.progress = progress.isFinite ? min(100, max(0, progress)) : 0
         let selecting = value == "selecting"
+        clearing = selecting && direction == "left" && clearArmed
+        choices.interactionColor = selecting ? NSColor(hex: clearing ? 0x9C2F2A : direction == "left" ? 0xC2413B : 0x345EE5) : nil
         let target = selecting ? (direction.isEmpty ? "center" : direction) : ""
-        cells.forEach { $0.set(active: $0.direction == target) }
+        cells.forEach { $0.set(active: $0.direction == target); $0.setClearing(clearing) }
+        clearPull.isHidden = !selecting || direction != "left"
+        clearPull.update(progress: clearProgress, armed: clearing)
         trail.isHidden = selecting
         selectionPath.isHidden = !selecting
         selectionPath.update(origin: origin, points: selecting ? points : [], direction: direction,
-                             threshold: selectDistance)
+                             threshold: selectDistance, clearDistance: clearDistance)
         refreshHint()
     }
 
     private func refreshHint() {
         switch phase {
         case "selecting":
-            hint.stringValue = selectionDirection == "left" ? "双指左滑 · 抬手删除"
-                : selectionDirection.isEmpty ? "双指滑向目标格子 · 原地抬手取消" : "双指选字 · 抬手确认"
+            hint.stringValue = clearing ? "抬手清空 · 拉回取消" : selectionDirection == "left" ? "抬手删除 · 继续外拉可清空"
+                : selectionDirection.isEmpty ? "已识别双指 · 滑动选字" : "双指选字 · 抬手确认"
         case "holding": hint.stringValue = "保持不动 · \(Int(progress.rounded()))%"
         case "writing": hint.stringValue = "书写中 · 抬手结束"
         default:
-            hint.stringValue = !hasCandidates && code.isEmpty ? "笔画输入 · \(exitGestureLabel)退出"
-                : "双指滑向候选，抬手确认 · \(exitGestureLabel)退出"
+            hint.stringValue = !hasCandidates && code.isEmpty ? "笔画输入" : tapHint
         }
-        hint.textColor = phase == "selecting" ? NSColor(hex: 0x234CDB) : .secondaryLabelColor
+        hint.textColor = phase == "selecting" ? NSColor(hex: selectionDirection == "left" ? 0xC2413B : 0x234CDB) : .secondaryLabelColor
         hint.font = phase == "selecting" ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)
     }
 
@@ -370,9 +464,12 @@ final class StrokeCandidatePanel {
         // The hint sits on the side away from the caret so the grid stays adjacent to it.
         // Flipped content: y = 0 is the top edge.
         let gridY: CGFloat = placedAboveCaret ? Self.hintHeight : 0
-        choices.frame.origin = NSPoint(x: 0, y: gridY)
-        hint.frame = NSRect(x: 6, y: placedAboveCaret ? 4 : Self.gridSide + 4,
-                            width: Self.gridSide - 12, height: Self.hintHeight - 8)
+        choices.frame.origin = NSPoint(x: Self.clearGutter, y: gridY)
+        selectionPath.frame = NSRect(x: 0, y: gridY, width: Self.menuSize.width, height: Self.gridSide)
+        clearPull.frame = selectionPath.clearTarget.offsetBy(dx: 0, dy: gridY)
+        let hintY: CGFloat = placedAboveCaret ? 4 : Self.gridSide + 4
+        hint.frame = NSRect(x: Self.clearGutter + 6, y: hintY, width: Self.gridSide - 12, height: 16)
+        exitHint.frame = NSRect(x: Self.clearGutter + 6, y: hintY + 16, width: Self.gridSide - 12, height: 14)
     }
 
     func trace(points: [[Double]], finished: Bool, style: [String: Any]) {
@@ -388,7 +485,7 @@ final class StrokeCandidatePanel {
         let fitsAbove = above + size.height <= bounds.maxY
         let useAbove = !fitsBelow && (fitsAbove || bounds.maxY - caret.maxY > caret.minY - bounds.minY)
         let y = min(max(useAbove ? above : below, bounds.minY), max(bounds.minY, bounds.maxY - size.height))
-        let x = min(max(caret.midX - size.width / 2, bounds.minX), max(bounds.minX, bounds.maxX - size.width))
+        let x = min(max(caret.midX - (size.width + Self.clearGutter) / 2, bounds.minX), max(bounds.minX, bounds.maxX - size.width))
         return (NSPoint(x: x, y: y), useAbove)
     }
 

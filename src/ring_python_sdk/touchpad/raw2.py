@@ -199,7 +199,10 @@ class Raw2Stream:
             value = Raw2PointerContact(event.phase, event.mode, event.episode_id,
                 self.receiver.ordinal*2, host_seconds(event.meta.source_time_ns),
                 host_seconds(event.range.start_time_ns),
-                None if event.range.end_time_ns is None else host_seconds(event.range.end_time_ns), **meta)
+                None if event.range.end_time_ns is None else host_seconds(event.range.end_time_ns),
+                start_step=event.range.start_frame+1,
+                end_step=None if event.range.end_frame_exclusive is None else event.range.end_frame_exclusive+1,
+                **meta)
         elif isinstance(event, Click):
             # Pairing intentionally waits before confirming a single click.
             # Expiry starts at formal emission; retain source time for diagnostics.

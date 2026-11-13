@@ -83,6 +83,7 @@ service.transport.onMessage = { message in
        glyphs.contains(where: { !($0["png"] ?? "").isEmpty }), let palette = palette() {
         let panel = Mirror(reflecting: palette).children.first { $0.label == "panel" }?.value as? NSPanel
         func images(in view: NSView) -> Int {
+            if view.identifier?.rawValue == "strokeClearArrow" { return 0 }
             let own = (view as? NSImageView)?.image == nil ? 0 : 1
             return own + view.subviews.reduce(0) { $0 + images(in: $1) }
         }
@@ -93,6 +94,31 @@ service.transport.onMessage = { message in
         print("STROKE_GLYPHS_RENDERED")
     }
     switch message["type"] as? String {
+    case "stroke_selection":
+        if let palette = palette(), let panel = Mirror(reflecting: palette).children.first(where: { $0.label == "panel" })?.value as? NSPanel,
+           let content = panel.contentView {
+            func find(_ name: String, in view: NSView) -> NSView? {
+                if view.identifier?.rawValue == name { return view }
+                return view.subviews.lazy.compactMap { find(name, in: $0) }.first
+            }
+            content.layoutSubtreeIfNeeded()
+            let pull = find("strokeClearPull", in: content)!, fill = find("strokeClearPullFill", in: content)!
+            service.send(["type": "pong", "event": "test_pull_feedback", "visible": !pull.isHidden,
+                          "progress": fill.frame.width / pull.frame.width])
+        }
+    case "test_backspace":
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
+            characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51)!
+        precondition(!controller.handle(event, client: editor), "stroke mode must pass Backspace to the editor")
+        let textView = NSTextView()
+        textView.string = editor.text
+        textView.setSelectedRange(editor.selection)
+        textView.deleteBackward(nil)
+        editor.text = textView.string
+        editor.selection = textView.selectedRange()
+        precondition(palette()?.isVisible == true, "Backspace must keep the stroke palette open")
+        service.send(["type": "pong", "event": "test_backspace_done", "text": editor.text])
     case "stroke_begin":
         precondition(palette()?.isVisible == true, "actual stroke palette did not appear")
         print("STROKE_PALETTE_VISIBLE")

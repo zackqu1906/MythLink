@@ -162,20 +162,66 @@ def test_native_palette_gets_the_trial_menu_selection_and_punctuation(stroke):
     assert session.phase == "running"
 
 
-def test_firmware_tap_still_confirms_and_touchpad_single_does_not(stroke):
+def test_touchpad_confirms_without_leaking_firmware_tap_or_pinch_to_shortcuts(stroke, monkeypatch):
     c, bridge, tp, _, session = stroke
     wake(stroke)
     tp.addStroke("h")
-    tp._run.output.options["on_tap"]()
+    monkeypatch.setattr(type(c._global_gesture_bindings), 'action_for', lambda *_: pytest.fail('stroke leaked to global shortcut'))
+    for name in ('tap', 'double-tap', 'index-pinch', 'double-index-pinch'):
+        assert not c._ring_gestures.filter(SimpleNamespace(name=name), False, c._disconnect_event)
     QTest.qWait(20)
     assert not tp._pending_stroke_commit
-    assert not c._ring_gestures.filter(SimpleNamespace(name="tap"), False, c._disconnect_event)
+    tp._run.output.options['on_two_finger_tap']()
     until(lambda: bool(tp._pending_stroke_commit))
     assert any(m["type"] == "stroke_commit" for m in bridge.messages)
     assert session.phase == "running"
 
 
-def test_double_click_owns_queued_transition_before_a_firmware_tap(stroke):
+@pytest.mark.parametrize('swapped', [False, True])
+@pytest.mark.parametrize('has_candidate', [False, True])
+def test_configured_taps_commit_first_then_space_in_one_acknowledged_request(stroke, swapped, has_candidate):
+    c, bridge, tp, _, session = stroke
+    assert (tp.singleFingerAction, tp.twoFingerAction) == ('space', 'candidate')
+    if swapped:
+        tp.singleFingerAction, tp.twoFingerAction = 'candidate', 'space'
+    wake(stroke)
+    if has_candidate:
+        tp.addStroke('h')
+        tp._move_candidate(1)  # Both mapped actions explicitly use the first candidate.
+    candidate = tp.strokeCandidates[0] if has_candidate else ''
+    tp._perform_tap(2 if swapped else 1)
+    request = next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_commit')
+    assert request['text'] == candidate + ' '
+    assert tp._pending_stroke_commit == candidate + ' '
+    tp._perform_tap(2 if swapped else 1)
+    assert sum(m['type'] == 'stroke_commit' for m in bridge.messages) == 1
+    c._inline_input._accept(dict(type='stroke_result', epoch=c._inline_input._epoch,
+        client_id=request['client_id'], request_id=request['request_id'], success=False))
+    assert tp._code == ('h' if has_candidate else '')  # Failed insertion keeps the composition.
+    tp._perform_tap(2 if swapped else 1)
+    request = next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_commit')
+    c._inline_input._accept(dict(type='stroke_result', epoch=c._inline_input._epoch,
+        client_id=request['client_id'], request_id=request['request_id'], success=True))
+    assert not tp._code and tp._stroke_context == candidate + ' ' and session.phase == 'running'
+    tp.addStroke('s')
+    expected = tp.strokeCandidates[0]
+    tp._perform_tap(1 if swapped else 2)
+    assert next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_commit')['text'] == expected
+
+
+def test_external_back_and_forth_clears_ink_without_committing(stroke):
+    _, bridge, tp, _, session = stroke
+    wake(stroke)
+    tp.addStroke('h')
+    run = tp._run
+    run.output.options['on_stroke']([(0., 0.), (40., 0.), (0., 0.), (40., 0.)])
+    until(lambda: not tp._code)
+    assert session.phase == 'running'
+    assert any(m['type'] == 'stroke_clear' for m in bridge.messages)
+    assert not any(m['type'] == 'stroke_commit' for m in bridge.messages)
+
+
+def test_double_click_owns_queued_and_delayed_firmware_taps(stroke):
     c, bridge, tp, _, session = stroke
     wake(stroke)
     tp.addStroke("h")
@@ -185,6 +231,30 @@ def test_double_click_owns_queued_transition_before_a_firmware_tap(stroke):
     until(lambda: not session.engaged)
     assert not any(m["type"] == "stroke_commit" for m in bridge.messages)
     assert tp.active and tp.inputMode == "pointer"
+    for name in ('tap', 'index-pinch', 'double-index-pinch'):
+        assert tp.consume_gesture(SimpleNamespace(name=name), c._disconnect_event)
+    tp._run.switch_gesture_until = time.monotonic() - 1
+    assert not tp.consume_gesture(SimpleNamespace(name='tap'), c._disconnect_event)
+
+
+def test_legacy_local_double_undoes_first_candidate_and_space(stroke):
+    _, _, tp, _, session = stroke
+    tp._run.protocol = 'legacy'
+    tp.setLocalStrokeInput(True)
+    tp.setLocalStrokeFocus(True)
+    session.request_local()
+    until(lambda: session.phase == 'running')
+    entered, deleted = [], []
+    tp.localCharacterCommitted.connect(entered.append)
+    tp.localBackspaceRequested.connect(lambda: deleted.append(True))
+    tp.addStroke('h')
+    candidate = tp.strokeCandidates[0]
+    tp._run.output.options['on_tap_contact'](dict(points=[(0, 0)] * 10))
+    until(lambda: bool(entered))
+    assert entered == [candidate + ' ']
+    tp._run.output.options['on_double_click']()
+    until(lambda: session.phase == 'idle')
+    assert len(deleted) == 2 and tp.inputMode == 'pointer'
 
 
 def test_shared_switch_stops_both_modes_and_next_start_is_mouse(stroke):
@@ -497,7 +567,7 @@ def test_updated_ui_does_not_preview_canonical_shape(stroke, inline_ui, tmp_path
     trail = root.findChild(QObject, "strokeTrailDisplay")
     assert not trail.property("points")
     assert root.grabWindow().save(str(tmp_path / "stroke-no-canonical-preview.png"))
-    assert tp.strokeGestureLabel == "Touchpad 双击"
+    assert tp.strokeGestureLabel == "双指双击"
     assert tp.doubleClickIntervalMs == 400
     assert root.findChild(QObject, "strokeWakeEnabled") is None
     assert root.findChild(QObject, "strokeRingToggle") is None

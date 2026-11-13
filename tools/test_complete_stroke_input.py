@@ -1118,7 +1118,8 @@ class Window(StrokeWindow):
         phase, direction = state['phase'], state.get('direction')
         two_finger = state.get('source') == 'two-finger'
         self.selection_hint.setText(
-            ('双指左滑 · 抬手删除' if direction == 'left' else
+            '抬手清空 · 拉回取消' if state.get('clear_armed') else
+            ('抬手删除 · 继续外拉可清空' if direction == 'left' else
              '双指选字 · 抬手确认' if direction else '双指滑向目标格子 · 原地抬手取消') if two_finger else
             '选字模式 · 抬手确认' if phase == 'selecting' else
             f"保持不动 · {int(state['progress'])}%" if phase == 'holding' else

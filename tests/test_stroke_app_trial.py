@@ -29,6 +29,106 @@ def write(tp, code, char):
     raise AssertionError(char + ' is not a candidate for ' + code)
 
 
+def test_tap_settings_and_local_candidate_plus_space(inline_ui, tmp_path):
+    import os
+    from pathlib import Path
+    from PySide6.QtCore import Q_ARG, QMetaObject
+    window, tp = start(inline_ui)
+    editor = window.findChild(QObject, 'strokeTestEditor')
+    single = window.findChild(QObject, 'strokeSingleTapAction')
+    double = window.findChild(QObject, 'strokeTwoFingerTapAction')
+    try:
+        assert (tp.singleFingerAction, tp.twoFingerAction) == ('space', 'candidate')
+        assert single.property('currentIndex') == 0 and double.property('currentIndex') == 1
+        tp.addStroke('h')
+        first = tp.strokeCandidates[0]
+        tp._perform_tap(1)
+        assert editor.property('text') == first + ' ' and not tp._code
+        single.setProperty('currentIndex', 1)
+        QMetaObject.invokeMethod(single, 'activated', Q_ARG(int, 1))
+        double.setProperty('currentIndex', 0)
+        QMetaObject.invokeMethod(double, 'activated', Q_ARG(int, 0))
+        assert (tp.singleFingerAction, tp.twoFingerAction) == ('candidate', 'space')
+        assert tp.owner._settings.value('touchpad/singleFingerAction') == 'candidate'
+        assert tp.owner._settings.value('touchpad/twoFingerAction') == 'space'
+        tp.singleFingerAction = 'invalid'
+        assert tp.singleFingerAction == 'candidate'
+        tp.addStroke('s')
+        expected = first + ' ' + tp.strokeCandidates[0]
+        tp._perform_tap(1)
+        assert editor.property('text') == expected
+        output = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
+        output.mkdir(parents=True, exist_ok=True)
+        QTest.qWait(30)
+        assert window.grabWindow().save(str(output / 'tap-settings.png'))
+    finally:
+        tp.close()
+        QTest.qWait(20)
+
+
+def test_two_finger_press_and_delete_have_distinct_feedback(inline_ui, tmp_path):
+    import os
+    from pathlib import Path
+    window, tp = start(inline_ui)
+    output = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
+    output.mkdir(parents=True, exist_ok=True)
+    menu = window.findChild(QObject, 'strokeSelectionMenu')
+    pull = window.findChild(QObject, 'strokeClearPull')
+    try:
+        tp.addStroke('h')
+        window.findChild(QObject, 'touchpadViewport').setProperty('contentY', 300)
+        QTest.qWait(30)
+        box = window.findChild(QObject, 'strokeCompositionPanel')
+        assert tp.strokeGestureLabel + '退出' in window.findChild(QObject, 'strokeTrialHelp').property('text')
+        geometry = (menu.mapToScene(QPointF()), menu.width(), menu.height())
+        for phase, direction, clearing, progress, distance, color, name, hint in [
+                ('selecting', None, False, 0, 0, '#dde8ff', 'two-finger', '已识别双指'),
+                ('selecting', 'left', False, 0, 6, '#fbe4e2', 'delete', '继续外拉可清空'),
+                ('selecting', 'left', False, .5, 24, '#fbe4e2', 'pulling', '继续外拉可清空'),
+                ('selecting', 'left', True, 1, 30, '#f6c6c2', 'clear', '抬手清空'),
+                ('selecting', 'left', False, 0, 18, '#fbe4e2', 'retracted', '继续外拉可清空'),
+                ('idle', None, False, 0, 0, '#f3f6fc', 'writing', '双指滑向格子')]:
+            tp._selection_state = dict(phase=phase, direction=direction, source='two-finger', clear_armed=clearing,
+                clear_progress=progress, threshold=6, clear_distance=30,
+                display=dict(origin=[0, 0], points=[[0, 0], [-distance, 0]]))
+            tp.selectionChanged.emit()
+            QTest.qWait(30)
+            assert menu.property('selecting') == (phase == 'selecting')
+            assert menu.property('color').name() == color
+            assert pull.property('visible') == (phase == 'selecting' and direction == 'left')
+            assert menu.property('clearProgress') == progress
+            assert (menu.mapToScene(QPointF()), menu.width(), menu.height()) == geometry
+            assert pull.mapToScene(QPointF()).x() >= 0
+            assert hint in box.property('selectionHint')
+            assert window.grabWindow().save(str(output / ('trial-' + name + '.png')))
+    finally:
+        tp.close()
+        QTest.qWait(20)
+
+
+def test_local_backspace_continues_before_inserted_text_and_removes_selection(inline_ui):
+    from PySide6.QtCore import Q_ARG, QMetaObject
+    window, tp = start(inline_ui)
+    editor = window.findChild(QObject, 'strokeTestEditor')
+    try:
+        editor.setProperty('text', '旧🙂后')
+        editor.setProperty('cursorPosition', 3)
+        tp.localCharacterCommitted.emit('新')
+        tp.addStroke('h')
+        tp.deleteOne()
+        assert editor.property('text') == '旧🙂新后' and not tp._code
+        for expected in ['旧🙂后', '旧后', '后', '后']:
+            tp.deleteOne()
+            assert editor.property('text') == expected
+        editor.setProperty('text', '前选中文字后')
+        QMetaObject.invokeMethod(editor, 'select', Q_ARG(int, 1), Q_ARG(int, 5))
+        tp.deleteOne()
+        assert editor.property('text') == '前后'
+    finally:
+        tp.close()
+        QTest.qWait(20)
+
+
 def test_sentence_trial_clears_the_editor_tracks_progress_and_saves_a_report(inline_ui, tmp_path):
     window, tp = start(inline_ui)
     editor = window.findChild(QObject, 'strokeTestEditor')
