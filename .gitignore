@@ -131,3 +131,20 @@ tools/data/*
 !tools/data/clef_ocr_context_cases.json
 !tools/data/clef_correction_boundary_cases.json
 !tools/data/llm_edit_routing_natural_cases.json
+
+# Historical local investigations and reports are not product documentation.
+/docs/CANDIDATE_STALL_REVIEW_20261019.md
+/docs/CONTACT_INTENT_REVIEW_20261019.md
+/docs/CONTEXT_RANKING_REVIEW_20261019.md
+/docs/INPUT_SOURCE_DEACTIVATION_DIAGNOSIS.md
+/docs/INPUT_STARTUP_RACE_20260928.md
+/docs/JOINED_STROKE_REVIEW_20261019.md
+/docs/LEFT_DOT_REVIEW_20261013.md
+/docs/LLM_EDIT_CANDIDATES_RESEARCH.md
+/docs/PIE_DIAN_DICTIONARY_REVIEW_20261019.md
+/docs/SDK_CLICK_REVIEW_20261013.md
+/docs/SENTENCE_TRIAL_REVIEW_20261013.md
+/docs/STROKE_DICTIONARY_VARIANT_REVIEW_20261021.md
+/docs/TOUCHPAD_ADAPTATION_AUDIT.md
+/docs/report-source.md
+/docs/ProximicVoice_用户数据反馈与个性化研究方案.docx

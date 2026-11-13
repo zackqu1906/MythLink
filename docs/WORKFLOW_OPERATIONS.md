@@ -49,7 +49,7 @@ workflow 为 null 时记录 unresolved 与冲突说明，不强行入组；可�
 在 Downloads 项目终端：
 
 ```sh
-cd /Users/admin/Downloads/ProximicVoice-main
+cd /path/to/MythLink
 # 现有记录 → 单任务自然语言 Workflow，独立后台模型，开启思考
 bash scripts/run-workflows.sh --latest --run
 open agent-experience/workflows/library.html
@@ -341,7 +341,7 @@ UI 只传配置和 busy 标志到原有后台进程。先完成单任务提取�
 在 Downloads 项目启动源码应用（安装版无需替换）：
 
 ```sh
-cd /Users/admin/Downloads/ProximicVoice-main
+cd /path/to/MythLink
 PYTHONPATH=src .runtime/venv/bin/python -m proximic_ring.ui
 ```
 

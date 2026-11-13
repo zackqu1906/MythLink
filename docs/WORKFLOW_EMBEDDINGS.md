@@ -31,7 +31,7 @@ DMG 包含编码运行时，用户不需要 Python、pip 或源码。后台通�
 在 Downloads 项目终端运行：
 
 ```sh
-cd /Users/admin/Downloads/ProximicVoice-main
+cd /path/to/MythLink
 
 # 一次性准备独立环境和固定版本模型；本次已经完成。
 bash scripts/setup-workflow-embeddings.sh

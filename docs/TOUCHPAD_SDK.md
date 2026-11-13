@@ -173,7 +173,7 @@ events = processor.poll(now_monotonic)  # 定时约 1–5 ms 调用，排出待�
 
 模型来源与 SHA-256：`src/ring_python_sdk/touchpad/assets/provenance.json`。MNN runtime 许可证不涵盖供应商模型，发布权限沿用主项目 `THIRD_PARTY_NOTICES.md` 的说明。
 
-必须保持“推理前上传全部状态；推理后缓存全部状态”的顺序，不能边读输出边回写输入。详见 `docs/TOUCHPAD_ADAPTATION_AUDIT.md`；原数据 27,790 帧回放已验证修复效果，无校准或静止冻结。
+必须保持“推理前上传全部状态；推理后缓存全部状态”的顺序，不能边读输出边回写输入。原始设备回放和适配审计保留在本地。
 
 测试入口：`tests/test_touchpad_sdk.py`（会话、互斥、线程、清理、超时、路由与主项目适配），`tests/test_touchpad_backbone.py`（真实 MNN 状态覆盖回归）。仍未宣称 Android 设备逐帧输出完全一致，也未进行本轮 SDK 与语音/手势并发实机验收。
 

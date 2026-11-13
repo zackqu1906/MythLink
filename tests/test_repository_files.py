@@ -38,6 +38,8 @@ class RepositoryFilesTests(unittest.TestCase):
     def test_private_files_do_not_enter_normal_add(self):
         paths = ["docs/reports/my report.json", "docs/research/notes.md",
                  ".local/agent-handoff.md", "docs/IME_DEBUG_HANDOFF_2026-11-12.md",
+                 "docs/INPUT_SOURCE_DEACTIVATION_DIAGNOSIS.md",
+                 "docs/report-source.md",
                  "data/voice/history.json", "agent-experience/session/events.jsonl",
                  "experiments/new-run/audio.wav", "tools/results/latest.json",
                  "gesture-history.sqlite3-wal", ".llama-server.stdout.log",

@@ -46,7 +46,7 @@ Agent 任务区的“记录”按钮通过本机服务直接打开 `overview.htm
 只重新生成总览，不调用任何模型：
 
 ```sh
-cd /Users/admin/Downloads/ProximicVoice-main
+cd /path/to/MythLink
 PYTHONPATH=src .runtime/venv/bin/python -m proximic_ring.agent_workflow.reporting.overview \
   --root ./agent-experience
 open ./agent-experience/overview.html
@@ -54,7 +54,7 @@ open ./agent-experience/overview.html
 
 本说明以下用 **R** 表示同一次应用运行使用的记录根目录：
 
-- Downloads 源码的默认 R：`/Users/admin/Downloads/ProximicVoice-main/agent-experience`。
+- Downloads 源码的默认 R：`/path/to/MythLink/agent-experience`。
 - 当前 worktree 源码有它自己的 `agent-experience`，与 Downloads 不共享数据库。
 - 安装版默认 R：`~/Library/Application Support/ProxiMic Voice/agent-experience`。
 - 显式 `--root`、应用当前 `recordsRoot` 或 `PROXIMIC_DATA_HOME` 会改变位置。总览页顶部始终显示其实际 R，避免把不同目录的数据混在一起。

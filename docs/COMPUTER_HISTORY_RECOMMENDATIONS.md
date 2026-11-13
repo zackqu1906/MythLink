@@ -113,4 +113,4 @@ AX diff 明确保留其类型，不当作完整屏幕。这里基于本机 Compu
 
 真实活动内容的推理因自动审批要求具体授权而暂未运行，也未重启应用启用真实后台。物理 Ring、发布安装包和第二台 Mac 不包含在当前自动化测试证据内。
 
-参考：[官方 Computer History 说明](https://learn.chatgpt.com/docs/customization/computer-history)、[官方 app-server](https://learn.chatgpt.com/docs/app-server)、[官方配置字段](https://learn.chatgpt.com/docs/config-file/config-reference)、[Computer History 技能](/Users/admin/.codex/plugins/cache/openai-bundled/computer-history/1.0.1001425/skills/computer-history/SKILL.md)。
+参考：[官方 Computer History 说明](https://learn.chatgpt.com/docs/customization/computer-history)、[官方 app-server](https://learn.chatgpt.com/docs/app-server)、[官方配置字段](https://learn.chatgpt.com/docs/config-file/config-reference)。
