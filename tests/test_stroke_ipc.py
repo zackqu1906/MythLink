@@ -44,8 +44,9 @@ def native_stroke_harness():
     return binary
 
 
-@pytest.mark.parametrize("initial_text, caret", [("", 0), ("你好世界", 2), ("你🙂好世界", 3)])
-def test_two_finger_double_shows_native_palette_commits_and_returns_to_mouse(stroke, native_stroke_harness, initial_text, caret, monkeypatch):
+@pytest.mark.parametrize("initial_text, caret, delete_before", [("", 0, False), ("你好世界", 2, False),
+    ("你🙂好世界", 3, False), ("前文\n你🙂好后文", 6, True), ("你好世界", 2, True)])
+def test_two_finger_double_shows_native_palette_commits_and_returns_to_mouse(stroke, native_stroke_harness, initial_text, caret, delete_before, monkeypatch):
     c, _, tp, source, session = stroke
     inline = c._inline_input
     received, sent = [], []
@@ -160,6 +161,10 @@ def test_two_finger_double_shows_native_palette_commits_and_returns_to_mouse(str
                 assert (application, pid) == ('test.editor', 123)
                 assert bridge.send(dict(type='test_backspace'))
             monkeypatch.setattr('proximic_ring.platforms.macos.wechat_native_keys.send_stroke_backspace', backspace)
+            def select_to_start(application, pid):
+                assert (application, pid) == ('test.editor', 123)
+                assert bridge.send(dict(type='test_select_to_start'))
+            monkeypatch.setattr('proximic_ring.platforms.macos.wechat_native_keys.send_stroke_select_to_start', select_to_start)
             tp.addStroke('h'); tp.addStroke('s')
             for distance, progress in [(6, 0), (24, .5), (30, 1), (18, 0), (0, 0)]:
                 count = sum(m.get('event') == 'test_pull_feedback' for m in received)
@@ -171,15 +176,23 @@ def test_two_finger_double_shows_native_palette_commits_and_returns_to_mouse(str
             tp._receive(run, 'selection_state', (run.output, dict(phase='idle')))
             tp.deleteOne(); tp.deleteOne()
             assert not tp._code and not any(m['type'] == 'test_backspace' for m in sent)
-            for count in range(1, len(prefix) + 2):
-                prefix = prefix[:-1]
-                tp.deleteOne()
+            for count in range(1, 2 if delete_before else len(prefix) + 2):
+                prefix = '' if delete_before else prefix[:-1]
+                if delete_before:
+                    tp._receive(run, 'selection', (run.output, dict(decision=two_finger_selection(
+                        [(0., 0.), (-30., 0.)], finished=True))))
+                else:
+                    tp.deleteOne()
                 assert sum(m['type'] == 'test_backspace' for m in sent) == count, (tp.commitMessage, received[-3:])
                 until(lambda: sum(m.get('event') == 'test_backspace_done' for m in received) == count)
                 reply = next(m for m in reversed(received) if m.get('event') == 'test_backspace_done')
                 assert reply['text'] == prefix + initial_text[caret:]
                 assert session.phase == 'running' and not tp._code
                 assert bridge.focus_state()['selection'] == [len(prefix.encode('utf-16-le')) // 2, 0]
+            if delete_before:
+                assert sum(m['type'] == 'test_select_to_start' for m in sent) == 1
+                tp.clearStrokesOrDeleteBefore()
+                assert sum(m['type'] == 'test_backspace' for m in sent) == 1  # Caret at zero preserves suffix.
             pointer_event(click(4))
             pointer_event(click(5))
             until(lambda: session.phase == "idle" and tp._run.output.active and tp.inputMode == "pointer")

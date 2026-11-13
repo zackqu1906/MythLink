@@ -20,8 +20,8 @@ Item {
         const state = touchpad.selectionState
         if (ringWriting && !editor.activeFocus) return "输入框未聚焦 · 戒指输入已暂停，点入输入框继续"
         if (state.phase === "selecting") {
-            if (state.clear_armed) return "抬手清空 · 拉回取消"
-            if (state.direction === "left") return "抬手删除 · 继续外拉可清空"
+            if (state.clear_armed) return touchpad.strokeCode.length ? "抬手清空 · 拉回取消" : "抬手删除前文 · 拉回取消"
+            if (state.direction === "left") return touchpad.strokeCode.length ? "抬手删除 · 继续外拉可清空" : "抬手退格 · 外拉删除前文"
             return state.direction ? "双指选字 · 抬手确认" : "已识别双指 · 滑动选字"
         }
         if (state.phase === "writing") return "书写中 · 抬手结束"
@@ -513,7 +513,7 @@ Item {
         Muted {
             objectName: "strokeTrialHelp"
             Layout.fillWidth: true; Layout.minimumWidth: 0
-            text: "双指左滑退格，继续外拉清空笔画 · 三段往返也可清空 · " + box.touchpad.strokeGestureLabel + "退出"
+            text: "双指左滑退格 · 外拉清空笔画，无笔画时删除前文 · " + box.touchpad.strokeGestureLabel + "退出"
             wrapMode: Text.Wrap
         }
 
@@ -630,6 +630,12 @@ Item {
     }
     Connections {
         target: box.touchpad
+        function onLocalDeleteBeforeRequested() {
+            if (!box.inputVisible) return
+            editor.remove(0, editor.selectionEnd)
+            editor.cursorPosition = 0
+            box.updateContext()
+        }
         function onLocalBackspaceRequested() {
             if (!box.inputVisible) return
             let start = editor.selectionStart

@@ -33,6 +33,12 @@ def send_stroke_backspace(application: str, pid: int) -> None:
     _send_key('delete', 1, (uuid.uuid4().int % (1 << 50)) or 1, application, expected_pid=pid)
 
 
+def send_stroke_select_to_start(application: str, pid: int) -> None:
+    """Select the prefix; the caller must verify the selection before deleting."""
+    import uuid
+    _send_key('select_to_start', 0, (uuid.uuid4().int % (1 << 50)) or 1, application, expected_pid=pid)
+
+
 def send_input_method_key(application: str, command: str, count: int, event_tag: int, *, expected_pid=None) -> None:
     if (not isinstance(application, str) or application != application.strip()
             or (not application and (type(expected_pid) is not int or expected_pid <= 0))):

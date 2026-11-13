@@ -7,6 +7,7 @@ from proximic_ring.platforms.macos.wechat_native_keys import send_wechat_key
 from proximic_ring.platforms.macos.wechat_native_keys import send_codex_key
 from proximic_ring.platforms.macos.wechat_native_keys import send_input_method_key
 from proximic_ring.platforms.macos.wechat_native_keys import send_stroke_backspace
+from proximic_ring.platforms.macos.wechat_native_keys import send_stroke_select_to_start
 
 
 @pytest.fixture
@@ -70,6 +71,21 @@ def test_stroke_backspace_posts_one_native_key_only_to_pinned_process(desktop, b
     state.pid = 43
     with pytest.raises(RuntimeError):
         send_stroke_backspace(bundle, 42)
+    assert not state.sent
+
+
+@pytest.mark.parametrize('bundle', ['com.tencent.xinWeChat', 'com.openai.codex', 'com.apple.TextEdit'])
+def test_stroke_prefix_selection_is_tagged_and_pinned_to_process(desktop, bundle):
+    state, _ = desktop
+    state.bundle = bundle
+    send_stroke_select_to_start(bundle, 42)
+    assert [(pid, e['code'], e['pressed'], e['flags']) for pid, e in state.sent] == [
+        (42, 126, True, 384), (42, 126, False, 384)]
+    assert state.sent[0][1]['tag'] > 0
+    state.sent.clear()
+    state.pid = 43
+    with pytest.raises(RuntimeError):
+        send_stroke_select_to_start(bundle, 42)
     assert not state.sent
 
 

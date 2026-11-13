@@ -106,19 +106,21 @@ service.transport.onMessage = { message in
             service.send(["type": "pong", "event": "test_pull_feedback", "visible": !pull.isHidden,
                           "progress": fill.frame.width / pull.frame.width])
         }
-    case "test_backspace":
-        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+    case "test_select_to_start", "test_backspace":
+        let selecting = message["type"] as? String == "test_select_to_start"
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: selecting ? [.command, .shift] : [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
-            characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51)!
-        precondition(!controller.handle(event, client: editor), "stroke mode must pass Backspace to the editor")
+            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: selecting ? 126 : 51)!
+        precondition(!controller.handle(event, client: editor), "stroke mode must pass editor keys")
         let textView = NSTextView()
         textView.string = editor.text
         textView.setSelectedRange(editor.selection)
-        textView.deleteBackward(nil)
+        if selecting { textView.moveToBeginningOfDocumentAndModifySelection(nil) }
+        else { textView.deleteBackward(nil) }
         editor.text = textView.string
         editor.selection = textView.selectedRange()
         precondition(palette()?.isVisible == true, "Backspace must keep the stroke palette open")
-        service.send(["type": "pong", "event": "test_backspace_done", "text": editor.text])
+        service.send(["type": "pong", "event": selecting ? "test_select_to_start_done" : "test_backspace_done", "text": editor.text])
     case "stroke_begin":
         precondition(palette()?.isVisible == true, "actual stroke palette did not appear")
         print("STROKE_PALETTE_VISIBLE")
