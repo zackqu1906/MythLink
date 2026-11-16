@@ -116,11 +116,43 @@ def test_frozen_channel_launches_same_executable_without_source_python(monkeypat
     calls = []
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", "/Applications/Mythlink.app/Contents/MacOS/Mythlink")
+    monkeypatch.setattr(module, "require_gui_session", lambda: None)
     monkeypatch.setattr(module.subprocess, "Popen", lambda args, **kw: calls.append((args, kw)) or SimpleNamespace(stderr=io.BytesIO(), pid=42))
     channel = NativeAccessChannel()
     channel._start()
     assert calls[0][0] == [sys.executable, "--native-access-worker"]
     assert calls[0][1]["stdin"] == subprocess.PIPE
+
+
+def test_unavailable_desktop_does_not_spawn_workers_on_repeated_polls(monkeypatch):
+    import proximic_ring.platforms.macos.native_access as module
+
+    def denied():
+        raise RuntimeError("无法访问图形会话")
+    monkeypatch.setattr(module, "require_gui_session", denied)
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: pytest.fail("worker spawned"))
+    channel = NativeAccessChannel()
+    for _ in range(20):
+        with pytest.raises(RuntimeError, match="图形会话"):
+            channel.permissions()
+    assert channel._process is None
+
+
+def test_aborted_worker_is_not_restarted_by_permission_polling(monkeypatch):
+    import io
+    import signal
+    import proximic_ring.platforms.macos.native_access as module
+
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **kw: pytest.fail("aborted worker restarted"))
+    channel = NativeAccessChannel()
+    process = SimpleNamespace(returncode=-signal.SIGABRT, poll=lambda: -signal.SIGABRT,
+        wait=lambda **kw: -signal.SIGABRT, stdin=io.BytesIO(), stdout=io.BytesIO(), stderr=io.BytesIO())
+    channel._process = process
+    for _ in range(20):
+        with pytest.raises(RuntimeError, match="停止自动重启"):
+            channel.permissions()
+    assert channel._process is None
+    assert process.stdin.closed and process.stdout.closed and process.stderr.closed
 
 
 def test_worker_keeps_ax_targets_local_and_rejects_handles_after_restart(monkeypatch):
