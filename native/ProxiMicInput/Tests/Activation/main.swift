@@ -47,7 +47,9 @@ final class StrokeCandidatePanel {
     func update(code: String, candidates: [String], selected: Int, glyphs: [[String: String]] = []) { Self.visible = true }
     func selection(phase: String, progress: Double, direction: String,
                    origin: [Double], points: [[Double]], selectDistance: Double,
-                   clearArmed: Bool = false, clearDistance: Double = 30, clearProgress: Double = 0) {}
+                   clearArmed: Bool = false, clearDistance: Double = 30, clearProgress: Double = 0,
+                   correctionArmed: Bool = false, correctionProgress: Double = 0) {}
+    func correction(enabled: Bool, text: String, message: String, busy: Bool, canUndo: Bool) {}
     func position(caret: NSRect?, clientLevel: Int32) {}
     func trace(points: [[Double]], finished: Bool, style: [String: Any]) { Self.lastTrace = points }
 }
@@ -798,6 +800,36 @@ do {
     check(client.text.isEmpty && !StrokeCandidatePanel.visible, "stroke exit committed an unselected candidate")
     controller.deactivateServer(client)
     print("PASS stroke exit discards only unconfirmed composition")
+}
+
+// Correction captures the current field's preceding text regardless of how it was entered.
+for handoff in ["existing-text", "immediate", "source-return", "different-client", "changed-text"] {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation()
+    if handoff == "existing-text" {
+        client.text = "已有的输入框文本"; client.selection = NSRange(location: client.text.utf16.count, length: 0)
+    } else { firstSentence(controller, client) }
+    var target = client
+    if !["immediate", "existing-text"].contains(handoff) {
+        suspendSentence(controller)
+        controller.deactivateServer(client)
+        if handoff == "different-client" {
+            target = LocalClient(); target.text = client.text; target.selection = client.selection
+        }
+        if handoff == "changed-text" {
+            target.text = "另一段内容"; target.selection = NSRange(location: target.text.utf16.count, length: 0)
+        }
+        controller.activateServer(target); drainActivation()
+    }
+    let writes = target.writes
+    controller.receive(["type": "stroke_begin", "client_id": currentClientID(controller),
+                        "stroke_session": "correct-preceding-text", "correction_enabled": true])
+    let correction = Mirror(reflecting: controller).children.first { $0.label == "strokeCorrection" }!.value as? StrokeTextCorrection
+    check(correction?.valid == true && correction?.preceding.text == target.text,
+          "did not capture the current editor's preceding text after \(handoff)")
+    check(target.writes == writes, "capturing correction context must not write")
+    controller.deactivateServer(target)
+    print("PASS preceding-text correction scope: \(handoff)")
 }
 
 // Stroke composition uses the existing native client and never starts a voice sentence.

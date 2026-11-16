@@ -16,8 +16,12 @@ Rectangle {
     readonly property bool clearing: selecting && selection.direction === "left" && selection.clear_armed === true
     readonly property string longPullAction: touchpad.strokeCode.length ? "清空笔画" : "删除前文"
     readonly property real clearPullGutter: 60
+    readonly property real correctionPullGutter: touchpad.handwritingCorrectionEnabled ? 60 : 0
+    readonly property bool correcting: selecting && selection.direction === "right" && selection.correction_armed === true
+    readonly property real correctionProgress: correcting ? 1 : Math.max(0, Math.min(1, selection.correction_progress || 0))
     readonly property real clearProgress: clearing ? 1 : Math.max(0, Math.min(1, selection.clear_progress || 0))
     property var deleteCell: null
+    property var correctionCell: null
     readonly property string activeDirection: selecting ? (selection.direction || "center") : ""
     // Briefly highlights the cell a two-finger swipe just confirmed.
     property string committedDirection: ""
@@ -138,7 +142,10 @@ Rectangle {
                 focusPolicy: Qt.NoFocus; hoverEnabled: enabled
                 padding: 0; horizontalPadding: 0
                 Accessible.name: character.length ? "第" + (index + 1) + "候选 " + character + (visual ? "，" + visual.status : "") : "暂无候选"
-                Component.onCompleted: menu.cells[modelData.direction] = cell
+                Component.onCompleted: {
+                    menu.cells[modelData.direction] = cell
+                    if (modelData.direction === "right") menu.correctionCell = cell
+                }
                 background: Rectangle {
                     radius: 10
                     Behavior on color { ColorAnimation { duration: 120 } }
@@ -249,6 +256,53 @@ Rectangle {
         }
     }
 
+    Item {
+        id: correctionPull
+        objectName: "strokeCorrectionPull"
+        x: menu.width - 10
+        y: menu.correctionCell ? 10 + menu.correctionCell.y + (menu.correctionCell.height - height) / 2 : 0
+        width: menu.correctionPullGutter; height: 58
+        visible: menu.touchpad.handwritingCorrectionEnabled && menu.selecting && menu.activeDirection === "right"
+        enabled: false
+        Accessible.role: Accessible.StaticText
+        Accessible.name: (menu.correcting ? "抬手" : "继续向右外拉") + "修正前文"
+        layer.enabled: menu.correcting
+        layer.effect: MultiEffect {
+            shadowEnabled: true; shadowBlur: .4; shadowOpacity: .28
+            shadowColor: "#234CDB"; shadowVerticalOffset: 0; shadowHorizontalOffset: 0
+        }
+        onVisibleChanged: if (visible) correctionSurface.requestPaint()
+        Canvas {
+            id: correctionSurface
+            anchors.fill: parent
+            onAvailableChanged: if (available) requestPaint()
+            onPaint: {
+                const c = getContext("2d"); c.reset()
+                c.beginPath(); c.roundedRect(.5, .5, width - 1, height - 1, 16, 16)
+                c.fillStyle = "#E9EFFF"; c.fill()
+                c.save(); c.clip()
+                c.fillStyle = menu.correcting ? "#234CDB" : "#AABCF2"
+                c.fillRect(0, 0, width * menu.correctionProgress, height)
+                c.restore(); c.strokeStyle = "#345EE5"; c.lineWidth = 1; c.stroke()
+            }
+            Connections {
+                target: menu
+                function onCorrectionProgressChanged() { correctionSurface.requestPaint() }
+                function onCorrectingChanged() { correctionSurface.requestPaint() }
+            }
+        }
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 9; spacing: -8
+            UiIcon { width: 22; height: 22; symbol: "chevron-right"; ink: menu.correcting ? "white" : "#234CDB" }
+            UiIcon { width: 22; height: 22; symbol: "chevron-right"; ink: menu.correcting ? "white" : "#234CDB" }
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter; y: 32
+            text: "修正"; font.pixelSize: 12; color: menu.correcting ? "white" : "#234CDB"
+        }
+    }
+
     // Display only: both layers ignore pointer input so the cells stay clickable.
     Item {
         id: overlay
@@ -273,10 +327,11 @@ Rectangle {
             anchors.fill: parent
             anchors.margins: -10
             anchors.leftMargin: -10 - menu.clearPullGutter
+            anchors.rightMargin: -10 - menu.correctionPullGutter
             // Always mounted: a hidden Canvas would drop the first selecting packet's paint.
 
             function rect(direction) {
-                const item = direction === "clear" ? clearPull : menu.cells[direction]
+                const item = direction === "clear" ? clearPull : direction === "correction" ? correctionPull : menu.cells[direction]
                 if (!item) return null
                 const p = item.mapToItem(selectionPath, 0, 0)
                 return {x: p.x, y: p.y, width: item.width, height: item.height,
@@ -316,6 +371,14 @@ Rectangle {
                     const clear = rect("clear")
                     boundedX += (clear.x + 10 - boundedX) * outward
                     boundedY += (clear.cy - boundedY) * outward
+                } else if (direction === "right" && menu.touchpad.handwritingCorrectionEnabled) {
+                    const approach = Math.max(0, Math.min(1, (dx - threshold) / (2 * threshold)))
+                    boundedX += (target.x + target.width - boundedX) * approach
+                    const limit = menu.selection.clear_distance || 5 * threshold
+                    const outward = Math.max(0, Math.min(1, (dx - 3 * threshold) / (limit - 3 * threshold)))
+                    const edit = rect("correction")
+                    boundedX += (edit.x + edit.width - 10 - boundedX) * outward
+                    boundedY += (edit.cy - boundedY) * outward
                 }
                 return {x: boundedX, y: boundedY}
             }

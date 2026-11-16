@@ -149,7 +149,8 @@ class StrokeSessionController(QObject):
         self._deadline = time.monotonic() + 3
         self._set_phase("native")
         if not self.inline.send_stroke("stroke_begin", gesture_label=self.tp.strokeGestureLabel,
-                                       tap_hint=self.tp.strokeTapHint):
+                                       tap_hint=self.tp.strokeTapHint,
+                                       correction_enabled=self.tp.handwritingCorrectionEnabled):
             self.cancel("输入法连接已断开")
 
     def _native_event(self, message):
@@ -266,6 +267,7 @@ class StrokeSessionController(QObject):
         self.inline.cancel_input_preparation(self._token)
         self.inline.send_stroke("stroke_end")
         self.inline.stroke_target = None
+        self.tp._handwriting_correction.reset()
         self.inline._stroke_request = None
         self.inline._stroke_timer.stop()
         self._initial_context = ""

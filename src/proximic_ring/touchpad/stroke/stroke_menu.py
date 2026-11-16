@@ -46,7 +46,7 @@ def trial_contact(points, *, finished=False):
     return classify_contact(points, finished=finished, hold_select=False)
 
 
-def two_finger_selection(points, *, finished=False):
+def two_finger_selection(points, *, finished=False, correction_enabled=False):
     """Live/final state of one two-finger contact (screen space, +y down).
 
     The direction is the contact's net displacement; below selectDistance it
@@ -55,7 +55,8 @@ def two_finger_selection(points, *, finished=False):
     threshold = TWO_FINGER_SELECTION['selectDistance']
     result = dict(policy=TWO_FINGER_SELECTION['policy'], source='two-finger', phase='selecting',
                   progress=0, direction=None, distance=0., threshold=threshold,
-                  clear_distance=TWO_FINGER_SELECTION['clearDistance'], clear_armed=False, clear_progress=0.)
+                  clear_distance=TWO_FINGER_SELECTION['clearDistance'], clear_armed=False, clear_progress=0.,
+                  correction_armed=False, correction_progress=0.)
     try:
         valid = bool(points) and all(len(p) == 2 and all(math.isfinite(v) for v in p) for p in points)
     except (TypeError, ValueError):
@@ -70,6 +71,9 @@ def two_finger_selection(points, *, finished=False):
             result['clear_armed'] = result['direction'] == 'left' and -dx >= result['clear_distance']
             if result['direction'] == 'left':
                 result['clear_progress'] = max(0., min(1., (-dx - 3 * threshold) / (result['clear_distance'] - 3 * threshold)))
+            if correction_enabled and result['direction'] == 'right':
+                result['correction_armed'] = dx >= result['clear_distance']
+                result['correction_progress'] = max(0., min(1., (dx - 3 * threshold) / (result['clear_distance'] - 3 * threshold)))
     if finished:
         result.pop('display', None)
         result.update(trial_selection(result))
@@ -82,7 +86,9 @@ def trial_selection(decision):
         return dict(decision)
     result = dict(decision)
     direction = result.get('direction') or 'center'
-    if direction in TRIAL_SELECTION['candidateDirections']:
+    if direction == 'right' and result.get('correction_armed'):
+        result.update(action='correct-text', target=None)
+    elif direction in TRIAL_SELECTION['candidateDirections']:
         result.update(action='select', target=TRIAL_SELECTION['candidateDirections'][direction])
     elif direction in TRIAL_SELECTION['punctuationDirections']:
         result.update(action='punctuation', target=TRIAL_SELECTION['punctuationDirections'][direction])
