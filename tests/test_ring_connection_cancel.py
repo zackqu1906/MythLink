@@ -14,6 +14,10 @@ from test_ring_sdk_connection import Client
 @pytest.mark.parametrize("phase", ["connect", "notify", "info"])
 def test_cancel_pending_provider_startup_waits_for_cleanup_without_publishing_ready(monkeypatch, tmp_path, phase):
     import bleak
+    from proximic_ring.audio import ring
+    # This test exercises the in-process provider's native callback lifecycle.
+    # The process backend has separate spawn/cancellation coverage.
+    monkeypatch.setattr(ring, '_connection_backend', lambda: 'sdk')
     entered, cleaning, release = threading.Event(), threading.Event(), threading.Event()
     clients, errors = [], []
 

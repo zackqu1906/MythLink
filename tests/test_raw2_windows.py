@@ -71,7 +71,7 @@ def test_windows_gate_selects_sdk_connection_and_can_be_disabled(monkeypatch):
     supported = TouchpadController.raw2Supported.fget
     def controller(raw2):
         return SimpleNamespace(_source=SimpleNamespace(connected_raw2_firmware=lambda: raw2))
-    assert raw2_model.raw2_platform_supported() and ring._connection_backend() == 'sdk'
+    assert raw2_model.raw2_platform_supported() and ring._connection_backend() == 'process'
     # Before INFO is known, and for touchpad firmware, Raw2 stays selected.
     assert supported(SimpleNamespace(_source=None)) and supported(controller(None)) and supported(controller(True))
     # Public firmware (1.2.133 / 2.0.2) keeps the legacy touchpad on Windows.

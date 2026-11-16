@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ring-python-sdk"
+version = "0.5.0"
+description = "Standalone Ring SDK with isolated BLE and Raw2 touchpad processes"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "bleak==1.1.1",
+  "numpy>=1.26,<2",
+  "onnxruntime==1.21.0",
+  "cryptography>=45.0.0",
+  "winrt-Windows.Devices.Bluetooth==4!10.0.28000.2957; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+legacy = ["MNN==3.6.1"]
+ota = ["smpclient==5.2.0"]
+pointer = ["pyobjc-framework-Quartz>=12.2.2; sys_platform == 'darwin'", "pyobjc-framework-ApplicationServices>=12.2.2; sys_platform == 'darwin'"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ring_python_sdk*", "ring_mac_sdk*", "ring_windows_sdk*"]
+
+[tool.setuptools.package-data]
+ring_python_sdk = ["touchpad/assets/*"]
+ring_mac_sdk = ["py.typed", "assets/*", "native/*.dylib", "licenses/*", "web/*"]
+ring_windows_sdk = ["py.typed", "assets/*", "native/*.dll", "licenses/*", "web/*"]

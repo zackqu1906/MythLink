@@ -42,11 +42,11 @@ _BATTERY_REFRESH_INTERVAL_S = 60.0
 
 
 def _connection_backend() -> str:
-    """macOS, and Windows x64 with the Raw2 loader, use the provider SDK link."""
+    """Keep SDK BLE reception and Raw2 computation outside the application process."""
     if sys.platform == 'darwin':
-        return 'sdk'
+        return 'process'
     from ring_python_sdk.touchpad.raw2_model import windows_raw2_enabled
-    return 'sdk' if windows_raw2_enabled() else 'legacy'
+    return 'process' if windows_raw2_enabled() else 'legacy'
 
 
 class RingAudioSource(AudioSource):

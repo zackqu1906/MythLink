@@ -107,6 +107,7 @@ class StrokeTouchpad(Touchpad):
 
 class Raw2Stream:
     protocol = 'raw2'
+    _receiver_type = StrokeTouchpad
     _callback_running = threading.Lock()
 
     def __init__(self, session, on_event, *, on_pointer_move=None, on_stats=None,
@@ -136,7 +137,7 @@ class Raw2Stream:
             # None on macOS: the provider receiver loads its own model there.
             from .raw2_model import default_model_factory
             model_factory = default_model_factory()
-        self.receiver = StrokeTouchpad(self, model_factory)
+        self.receiver = self._receiver_type(self, model_factory)
 
     def _deliver(self, callback, value):
         # RingCallbacks is shared by all connections. A stuck application callback

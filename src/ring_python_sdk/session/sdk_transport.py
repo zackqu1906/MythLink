@@ -167,13 +167,18 @@ async def connect_session(session, target, *, client_factory=None):
     """Called under RingSession's connection lock; no alternate BLE handshake."""
     session.device_info = None
     session._was_connected = False
-    transport = SessionTransport(session, target, client_factory=client_factory)
+    if session.connection_backend == 'process':
+        from ring_python_sdk.process import ProcessTransport
+        transport = ProcessTransport(session, target, client_factory=client_factory)
+    else:
+        transport = SessionTransport(session, target, client_factory=client_factory)
     session._sdk_transport = transport
     session.client = LegacyControlClient(transport)
     session.tx_uuid, session.rx_uuid = p.NOTIFY, p.REQUEST
     await transport.connect()
     # Without this Windows keeps a 30 ms / latency-4 link and Raw2 stalls.
-    transport.link_preference = request_throughput(transport.client)
+    if session.connection_backend != 'process':
+        transport.link_preference = request_throughput(transport.client)
     session.reconnecting = False
     session._was_connected = True
     log.info('[SDK_CONNECTION] ready backend=%s mtu=%s', Transport.__module__.split('.')[0], session.client.mtu_size)
