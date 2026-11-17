@@ -8,8 +8,8 @@ FigmaDialog {
     objectName: "exportApplicationDialog"
     parent: Overlay.overlay
     anchors.centerIn: parent
-    width: Math.min(640, parent.width - 48)
-    height: Math.min(selection.kind === "diagnostic" ? 520 : 680, parent.height - 48)
+    width: Math.min(selection.kind === "diagnostic" ? 640 : 1040, parent.width - 48)
+    height: Math.min(selection.kind === "diagnostic" ? 520 : 820, parent.height - 48)
     modal: true
     focus: true
     z: 40
@@ -29,7 +29,7 @@ FigmaDialog {
         }
     }
     contentItem: ColumnLayout {
-        spacing: dialog.compact ? 6 : 16
+        spacing: dialog.compact ? 6 : dialog.selection.kind === "diagnostic" ? 16 : 12
         Label {
             Layout.fillWidth: true
             text: dialog.selection.kind === "diagnostic"
@@ -38,8 +38,11 @@ FigmaDialog {
                 : "选择本次导出的应用，保留手势、场景、动作及你的标注。"
             color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap
         }
-        ColumnLayout {
-            Layout.fillWidth: true; spacing: 8
+        GridLayout {
+            id: timeRangeLayout
+            Layout.fillWidth: true
+            columns: dialog.selection.kind === "diagnostic" ? 1 : 2
+            columnSpacing: 12; rowSpacing: 8
             Label { text: "时间范围"; color: theme.text; font.weight: Font.Medium }
             RowLayout {
                 Layout.fillWidth: true; spacing: 8
@@ -57,6 +60,7 @@ FigmaDialog {
                 }
             }
             Label {
+                Layout.columnSpan: timeRangeLayout.columns
                 Layout.fillWidth: true; color: theme.muted; font.pixelSize: 12
                 text: dialog.selection.period === "today" ? "从今天零点开始，按本机时间计算。"
                     : dialog.selection.period === "week" ? "包含今天及前六个自然日。" : "导出本地仍保留的全部记录。"
@@ -76,19 +80,23 @@ FigmaDialog {
             Rectangle {
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: dialog.compact ? 80 : 96
                 radius: 10; color: theme.background; border.color: theme.line
-                ListView {
+                GridView {
                     id: applications
                     objectName: "exportApplicationList"
-                    anchors.fill: parent; anchors.margins: 6
-                    clip: true; spacing: 4
+                    anchors.fill: parent; anchors.margins: 8
+                    anchors.rightMargin: 16
+                    clip: true
+                    cellWidth: width / Math.max(1, Math.floor(width / 200))
+                    cellHeight: 64
                     model: dialog.selection.applications
                     ScrollBar.vertical: ScrollBar { }
                     delegate: AbstractButton {
-                        id: row
+                        id: tile
                         required property var modelData
                         required property int index
                         objectName: "exportApplication_" + index
-                        width: applications.width; height: modelData.website ? 66 : 56
+                        width: applications.cellWidth - 8; height: applications.cellHeight - 8
+                        padding: 10
                         hoverEnabled: true
                         checked: dialog.selection.selectedKeys.indexOf(modelData.key) !== -1
                         Accessible.name: modelData.label
@@ -96,29 +104,32 @@ FigmaDialog {
                         Accessible.checkable: true
                         Accessible.checked: checked
                         onClicked: dialog.selection.toggle(modelData.key)
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: modelData.label
                         background: Rectangle {
-                            radius: 7
-                            color: row.checked ? theme.subtle : row.hovered ? theme.subtle : "transparent"
-                            border.width: row.visualFocus ? 2 : 0; border.color: theme.primary
+                            radius: 8
+                            color: tile.checked ? theme.subtle : tile.hovered ? theme.subtle : theme.surface
+                            border.width: tile.visualFocus ? 2 : 1
+                            border.color: tile.checked || tile.visualFocus ? theme.primary : theme.line
                         }
                         contentItem: RowLayout {
-                            spacing: 12
-                            Item { Layout.preferredWidth: 0 }
+                            spacing: 8
                             ApplicationIcon {
-                                objectName: "exportApplicationIcon_" + row.index
-                                Layout.preferredWidth: 36; Layout.preferredHeight: 36
-                                bundle: row.modelData.bundle; applicationPath: row.modelData.path; label: row.modelData.name
+                                objectName: "exportApplicationIcon_" + tile.index
+                                Layout.preferredWidth: 30; Layout.preferredHeight: 30
+                                bundle: tile.modelData.bundle; applicationPath: tile.modelData.path; label: tile.modelData.name
                             }
                             ColumnLayout {
-                                Layout.fillWidth: true; spacing: 2
-                                Label { Layout.fillWidth: true; text: row.modelData.name; textFormat: Text.PlainText; elide: Text.ElideRight; color: theme.text; font.pixelSize: 14; font.weight: Font.Medium }
-                                Label { Layout.fillWidth: true; visible: row.modelData.website.length > 0; text: row.modelData.website; textFormat: Text.PlainText; elide: Text.ElideRight; color: theme.muted; font.pixelSize: 12 }
+                                Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 2
+                                Label { Layout.fillWidth: true; text: tile.modelData.name; textFormat: Text.PlainText; elide: Text.ElideRight; color: theme.text; font.pixelSize: 13; font.weight: Font.Medium }
+                                Label { Layout.fillWidth: true; visible: tile.modelData.website.length > 0; text: tile.modelData.website; textFormat: Text.PlainText; elide: Text.ElideRight; color: theme.muted; font.pixelSize: 11 }
                             }
                             Rectangle {
-                                Layout.preferredWidth: 20; Layout.preferredHeight: 20; Layout.rightMargin: 12
-                                radius: 5; color: row.checked ? theme.primary : theme.background
-                                border.color: row.checked ? theme.primary : theme.line
-                                Label { anchors.centerIn: parent; text: "✓"; visible: row.checked; color: "white"; font.pixelSize: 14 }
+                                Layout.preferredWidth: 18; Layout.preferredHeight: 18
+                                radius: 4; color: tile.checked ? theme.primary : theme.background
+                                border.color: tile.checked ? theme.primary : theme.line
+                                Label { anchors.centerIn: parent; text: "✓"; visible: tile.checked; color: "white"; font.pixelSize: 12 }
                             }
                         }
                     }
@@ -143,8 +154,10 @@ FigmaDialog {
                 Item { Layout.fillHeight: true }
             }
         }
-        ColumnLayout {
-            Layout.fillWidth: true; spacing: 8
+        GridLayout {
+            Layout.fillWidth: true
+            columns: dialog.selection.kind === "diagnostic" ? 1 : 2
+            columnSpacing: 12; rowSpacing: 8
             Label { text: "保存位置"; color: theme.text; font.weight: Font.Medium }
             RowLayout {
                 Layout.fillWidth: true; spacing: 8

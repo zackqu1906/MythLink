@@ -601,7 +601,7 @@ class TouchpadController(QObject):
         self.owner._inline_input.stroke_mode = stroke_blocked
         # Pointer control does not own text input. Only stroke composition
         # reserves the shared IME client until its text has been settled.
-        blocked = stroke_blocked
+        blocked = stroke_blocked or self._capture_target is not None
         if blocked == self._voice_gate:
             if stroke_changed:
                 self.owner._ring_gestures.input_owner_changed()
@@ -613,7 +613,8 @@ class TouchpadController(QObject):
             self.owner._recognition_event.clear()
             self.owner._cancel_utterance_event.set()
             self.owner._ignore_asr_updates_until_next_start = True
-            self.owner._append_log("笔画输入期间已暂停语音识别")
+            self.owner._append_log("截图期间已暂停语音识别" if self._capture_target is not None
+                                   else "笔画输入期间已暂停语音识别")
         else:
             if (self.owner.recognitionEnabled
                     and not self._closed and not self.owner._quitting
@@ -1184,7 +1185,9 @@ class TouchpadController(QObject):
         else:
             selector = self.owner._ring_gestures.windowSelector
             def click_context():
-                if self._capture_target: return self._capture_target.context
+                if self._capture_target: return self._capture_target.pointer_context
+                clipboard = self.owner._ring_gestures._clipboard_suggestion.pointer_context
+                if clipboard is not None: return clipboard
                 epoch, phase = selector.pointer_context
                 # A quick enter/cancel must also break double-click pairing,
                 # even if the user never tapped inside the capture canvas.

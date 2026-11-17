@@ -3,10 +3,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
 import sys
 
 from PySide6.QtCore import QCoreApplication, QMimeData
 from PySide6.QtGui import QGuiApplication
+
+
+INTERNAL_CLIPBOARD_TYPE = 'application/x-mythlink-internal-clipboard'
+_internal_writes = 0
+_native_internal_revision = None
+
+
+def internal_clipboard_change(revision=None):
+    return _internal_writes > 0 or (revision is not None and revision == _native_internal_revision)
+
+
+@contextmanager
+def internal_clipboard_write():
+    """Exclude temporary text delivery/restoration from user-saved context."""
+    global _internal_writes, _native_internal_revision
+    _internal_writes += 1
+    try:
+        yield
+    finally:
+        try:
+            if sys.platform == 'darwin' and QGuiApplication.platformName() == 'cocoa':
+                from AppKit import NSPasteboard
+                _native_internal_revision = int(NSPasteboard.generalPasteboard().changeCount())
+        except ImportError:
+            pass  # The bridge also supports installations without PyObjC.
+        finally:
+            _internal_writes -= 1
 
 
 @dataclass(frozen=True)
@@ -17,6 +45,9 @@ class QtClipboardSnapshot:
 
 class QtClipboardBridge:
     """Clone all clipboard MIME payloads before temporary Select-All/Copy."""
+
+    def __init__(self, *, internal=True):
+        self.internal = internal
 
     @staticmethod
     def _clipboard():
@@ -41,10 +72,16 @@ class QtClipboardBridge:
             mime.setData(fmt, data)
         if snapshot.image is not None:
             mime.setImageData(snapshot.image)
-        self._clipboard().setMimeData(mime)
-        QCoreApplication.processEvents()
+        mime.setData(INTERNAL_CLIPBOARD_TYPE, b'1')
+        with internal_clipboard_write():
+            self._clipboard().setMimeData(mime)
+            QCoreApplication.processEvents()
 
     def set_text(self, text: str) -> None:
+        with internal_clipboard_write() if self.internal else nullcontext():
+            self._set_text(text)
+
+    def _set_text(self, text: str) -> None:
         value = str(text)
         # QClipboard can advertise data lazily.  On macOS that means changing
         # focus immediately after setText() may let the destination process
@@ -56,6 +93,8 @@ class QtClipboardBridge:
 
                 pasteboard = NSPasteboard.generalPasteboard()
                 pasteboard.clearContents()
+                if self.internal:
+                    pasteboard.setString_forType_('1', INTERNAL_CLIPBOARD_TYPE)
                 if not pasteboard.setString_forType_(
                     value, NSPasteboardTypeString
                 ):
@@ -67,7 +106,11 @@ class QtClipboardBridge:
                 # a functional fallback and the adapter verifies the value
                 # before it sends the paste shortcut.
                 pass
-        self._clipboard().setText(value)
+        mime = QMimeData()
+        mime.setText(value)
+        if self.internal:
+            mime.setData(INTERNAL_CLIPBOARD_TYPE, b'1')
+        self._clipboard().setMimeData(mime)
         QCoreApplication.processEvents()
 
     def text(self) -> str:

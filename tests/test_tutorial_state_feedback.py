@@ -40,7 +40,7 @@ def test_each_lesson_waits_for_text_before_prompting_its_action(inline_ui, stage
     controller, bridge, _, _, event = inline_ui
     tutorial = start_lesson(controller, event)
     tutorial._stage = stage
-    assert tutorial.hint['gestures'] == ['double-tap']
+    assert tutorial.hint['gestures'] == ['tap']
     begin_sentence(controller, event)
     assert tutorial.hint['id'] == f'speak-{stage}'
     assert not tutorial.hint['gestures']

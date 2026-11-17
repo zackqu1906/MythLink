@@ -102,7 +102,7 @@ final class CompositionUndoHistory {
         generation += 1
         if let step = future.last {
             guard snapshot.selection == step.selection else { clear(); return }
-            if let text = snapshot.text {
+            if step.before.source == .imk, let text = snapshot.text {
                 guard isValidRange(step.before.range, length: text.utf16.count),
                       (text as NSString).substring(with: step.before.range) == step.before.text else { clear(); return }
             }
@@ -115,7 +115,10 @@ final class CompositionUndoHistory {
                 NSRange(location: record.original.readableContext!.range.location,
                         length: ($0 as NSString).length)
             } ?? record.committedRange ?? NSRange(location: record.original.selection.location, length: (record.raw as NSString).length)
-            if let text = snapshot.text {
+            // A different reader's snapshot cannot invalidate a saved body.
+            // The saved-source validation remains mandatory before undo/redo writes.
+            let body = record.editedText != nil || record.restoredEditInstruction ? record.editBody : record.sentenceBody
+            if (body?.source ?? .imk) == .imk, let text = snapshot.text {
                 guard isValidRange(range, length: (text as NSString).length),
                       (text as NSString).substring(with: range) == (record.editedText ?? record.raw) else { clear(); return }
             }

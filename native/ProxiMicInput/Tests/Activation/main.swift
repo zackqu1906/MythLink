@@ -143,6 +143,9 @@ func suspendSentence(_ controller: ProxiMicInputController, token: String = "ret
         "utterance_id": "first", "seq": 4, "token": token, "revision": currentSession(controller)!.revision])
 }
 
+// Local clients do not belong to the desktop's foreground application.
+IMEService.shared.activationForegroundPID = { ProcessInfo.processInfo.processIdentifier }
+
 // The IPC regression uses the production service and a process-local editor.
 if CommandLine.arguments.contains("--return-ipc") {
     var editor = LocalClient()
@@ -410,6 +413,116 @@ for outcome in ["sent", "replaced"] {
     check(client.text == "新回答", "next answer failed after retirement")
     controller.deactivateServer(client)
     print("PASS \(outcome) retires native input without writes, fences late replies, and starts a fresh answer")
+}
+
+// A short-lived controller must not discard another client's still-pending
+// activation. The longer sequence replays the 2026-11-16 14:16:54 trace.
+for sequence in ["minimal", "recorded"] {
+    let target = ProxiMicInputController(), transient = ProxiMicInputController()
+    let editor = LocalClient(), temporary = LocalClient()
+    temporary.bundle = ""
+    if sequence == "recorded" { transient.activateServer(temporary) }
+    target.activateServer(editor)
+    if sequence == "recorded" { transient.deactivateServer(temporary) }
+    transient.activateServer(temporary)
+    transient.deactivateServer(temporary)
+    check(editor.reads == 0 && temporary.reads == 0, "callback burst read an unsettled client")
+    drainActivation()
+    check(IMEService.shared.activeController === target,
+          "\(sequence) callback sequence lost the pending target")
+    check(target.sendState(includeSnapshot: true, requestID: "after-transient"),
+          "\(sequence) target remained stuck preparing")
+    firstSentence(target, editor)
+    check(temporary.reads == 0 && temporary.writes == 0, "retired transient client was accessed")
+    target.deactivateServer(editor)
+    check(IMEService.shared.activeController == nil, "completed target resurrected a retired client")
+    print("PASS \(sequence) callback burst preserves only the live pending activation")
+}
+
+// A pending request is eligible only while its own lifecycle remains open.
+for event in ["deactivate", "close"] {
+    let target = ProxiMicInputController(), transient = ProxiMicInputController()
+    let editor = LocalClient(), temporary = LocalClient()
+    target.activateServer(editor)
+    transient.activateServer(temporary)
+    if event == "close" { target.inputControllerWillClose() }
+    else { target.deactivateServer(editor) }
+    transient.deactivateServer(temporary)
+    drainActivation()
+    check(IMEService.shared.activeController == nil, "\(event) restored a retired pending target")
+    check(editor.reads == 0 && editor.writes == 0, "\(event) accessed the retired editor")
+    print("PASS \(event) cancels a superseded pending activation")
+}
+
+// Once a newer client reaches preparation, older pending requests are obsolete.
+do {
+    let old = ProxiMicInputController(), newest = ProxiMicInputController()
+    let oldClient = LocalClient(), newClient = LocalClient()
+    old.activateServer(oldClient)
+    newest.activateServer(newClient)
+    drainActivation()
+    firstSentence(newest, newClient)
+    newest.deactivateServer(newClient)
+    drainActivation()
+    check(IMEService.shared.activeController == nil, "settled newer client revived an older request")
+    check(oldClient.reads == 0 && oldClient.writes == 0, "superseded pending target was accessed")
+    check(!(Mirror(reflecting: old).children.first { $0.label == "preparingActivation" }!.value as! Bool),
+          "superseded target remained stuck preparing")
+    old.deactivateServer(oldClient)
+    print("PASS settled newer activation permanently retires older pending requests")
+}
+
+// A preserved pending request still belongs to its original foreground app.
+for stage in ["settling", "bundle"] {
+    let service = IMEService.shared
+    let foreground = service.activationForegroundPID
+    var pid: pid_t = 101
+    service.activationForegroundPID = { pid }
+    let target = ProxiMicInputController(), transient = ProxiMicInputController()
+    let editor = LocalClient(), temporary = LocalClient()
+    target.activateServer(editor)
+    transient.activateServer(temporary)
+    transient.deactivateServer(temporary)
+    if stage == "settling" { pid = 102 }
+    else { editor.onBundle = { pid = 102 } }
+    drainActivation()
+    check(service.activeController == nil, "\(stage) activation survived a foreground change")
+    check(editor.reads == 0 && editor.writes == 0, "\(stage) activation accessed an old foreground editor")
+    service.activationForegroundPID = foreground
+    target.deactivateServer(editor)
+    print("PASS preserved pending activation revalidates foreground at \(stage)")
+}
+
+// Remote reads can reenter lifecycle callbacks. Once preparation starts, a
+// short-lived successor must not return ownership to that in-flight read.
+do {
+    let target = ProxiMicInputController(), transient = ProxiMicInputController()
+    let editor = LocalClient(), temporary = LocalClient()
+    editor.onBundle = {
+        transient.activateServer(temporary)
+        transient.deactivateServer(temporary)
+    }
+    target.activateServer(editor); drainActivation()
+    check(IMEService.shared.activeController == nil, "transient switch revived an in-flight client read")
+    check(editor.reads == 0 && editor.writes == 0, "retired preparation continued accessing its client")
+    check(!target.sendState(includeSnapshot: true, requestID: "retired-preparation"),
+          "retired preparation published a focus proof")
+    target.deactivateServer(editor)
+    print("PASS in-flight preparation cannot regain ownership after nested activation")
+}
+
+// A previously prepared editor is never a fallback after a transient switch.
+do {
+    let old = ProxiMicInputController(), transient = ProxiMicInputController()
+    let oldClient = LocalClient(), temporary = LocalClient()
+    old.activateServer(oldClient); drainActivation(); firstSentence(old, oldClient)
+    transient.activateServer(temporary)
+    transient.deactivateServer(temporary)
+    drainActivation()
+    check(IMEService.shared.activeController == nil, "transient switch resurrected an old input session")
+    check(!old.sendState(includeSnapshot: true, requestID: "stale-target"), "old session published a focus proof")
+    old.deactivateServer(oldClient)
+    print("PASS transient switch never revives an already prepared session")
 }
 
 for point in ["super", "bundle", "configure", "snapshot"] {
@@ -843,4 +956,83 @@ do {
     check(client.writes == writes, "cleared composition accepted late commit")
     controller.deactivateServer(client)
     print("PASS native takeover cancels uncommitted strokes")
+}
+
+final class ControllerClipboardFixture: ClipboardReadEnvironment {
+    let client: LocalClient
+    var now: TimeInterval = 0
+    var changeCount = 1
+    var contents: ClipboardContents = [["public.utf8-plain-text": Data("保留".utf8)]]
+    var onCopy: ((Int64) -> Void)?
+    init(_ client: LocalClient) { self.client = client }
+    func current() -> Bool { true }
+    func selection() -> NSRange { client.selection }
+    func marked() -> NSRange { client.marked }
+    func backup() throws -> ClipboardContents { contents }
+    func text() -> String? { contents.first?["public.utf8-plain-text"].flatMap { String(data: $0, encoding: .utf8) } }
+    func restore(_ saved: ClipboardContents, replacing count: Int) throws {
+        guard changeCount == count else { throw ClipboardReadError(code: "pasteboard_restore_conflict") }
+        contents = saved; changeCount += 1
+    }
+    func post(_ key: ClipboardReadKey, tag: Int64) throws {
+        switch key {
+        case .prefix: client.selection = NSRange(location: 0, length: client.selection.location)
+        case .suffix: client.selection.length = client.text.utf16.count - client.selection.location
+        case .copy:
+            contents = [["public.utf8-plain-text": Data((client.text as NSString).substring(with: client.selection).utf8)]]
+            changeCount += 1; onCopy?(tag)
+        case .collapseStart: client.selection.length = 0
+        case .collapseEnd: client.selection = NSRange(location: NSMaxRange(client.selection), length: 0)
+        }
+    }
+    func pump() { now += 0.01 }
+}
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client)
+    let adapter = Mirror(reflecting: controller).children.first { $0.label == "adapter" }!.value as! NativeInputClient
+    let environment = ControllerClipboardFixture(client)
+    let reader = ClipboardBodyReader(environment)
+    reader.onFinished = adapter.clipboardReader?.onFinished
+    adapter.configureClipboardReader(reader)
+    let original = client.selection, writes = client.writes
+    var ownTag: Int64 = 0
+    environment.onCopy = { tag in
+        ownTag = tag
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 8, keyDown: true)!
+        event.flags = .maskCommand; event.setIntegerValueField(.eventSourceUserData, value: tag)
+        check(!controller.handle(NSEvent(cgEvent: event), client: client), "active own copy key was swallowed")
+        controller.receive(["type": "reset", "all": true])
+        check(currentSession(controller)?.phase == .dictated, "host reset ran in the middle of copying")
+        check(client.writes == writes, "copy caused preedit/write reentry")
+    }
+    check(reader.read(.prefix(tail: 0), validationStage: "coordination")?.text == "第一句话", "controller copy failed")
+    check(client.selection == original && client.writes == writes, "controller copy moved the caret or wrote text")
+    let late = CGEvent(keyboardEventSource: nil, virtualKey: 8, keyDown: true)!
+    late.flags = .maskCommand; late.setIntegerValueField(.eventSourceUserData, value: ownTag)
+    check(controller.handle(NSEvent(cgEvent: late), client: client), "late own copy key was not consumed")
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+    let queued = Mirror(reflecting: controller).children.first { $0.label == "clipboardMessages" }!.value as! [[String: Any]]
+    check(queued.isEmpty && currentSession(controller)?.phase != .dictated, "deferred reset was lost after copy cleanup")
+    controller.deactivateServer(client)
+    print("PASS B84 controller serializes copy keys host messages and late delivery")
+}
+
+
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    controller.activateServer(client); drainActivation(); firstSentence(controller, client)
+    let adapter = Mirror(reflecting: controller).children.first { $0.label == "adapter" }!.value as! NativeInputClient
+    let environment = ControllerClipboardFixture(client)
+    let active = ClipboardBodyReader(environment)
+    active.onFinished = adapter.clipboardReader?.onFinished
+    adapter.configureClipboardReader(active)
+    environment.onCopy = { _ in
+        controller.receive(["type": "reset", "all": true])
+        controller.deactivateServer(client)
+        let queued = Mirror(reflecting: controller).children.first { $0.label == "clipboardMessages" }!.value as! [[String: Any]]
+        check(queued.isEmpty, "old activation retained deferred reset for the next input session")
+    }
+    check(active.read(.prefix(tail: 0), validationStage: "retire") == nil, "retired activation returned a copy receipt")
+    print("PASS B84 retiring activation discards deferred clipboard messages")
 }

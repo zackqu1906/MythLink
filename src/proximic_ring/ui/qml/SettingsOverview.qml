@@ -203,16 +203,19 @@ ColumnLayout {
             objectName: "routedEditVariantRow"
             visible: pane.controller.inputRoutingMode === "manual_routed_edit"
             title: "手动编辑版本"
-            description: pane.controller.routedEditVariant === "boundary_only_v1"
-                ? "按完整边界直接生成正文，由模型自行组合编辑要求，不输出分类。下次录音生效。"
-                : "保留原来的六分类版本，在一次请求中返回任务类别和完整正文。下次录音生效。"
+            description: pane.controller.routedEditVariant === "six_class_v5"
+                ? "保留原来的六分类版本，在一次请求中返回任务类别和完整正文。下次录音生效。"
+                : pane.controller.routedEditVariant === "boundary_only_v1"
+                  ? "按完整边界直接生成正文，由模型自行组合编辑要求，不输出分类。下次录音生效。"
+                  : "通用编辑要求始终保留；可对照保留或移除精细规则的效果。直接生成正文，下次录音生效。"
             FigmaSelect {
                 objectName: "routedEditVariantCombo"
                 Layout.fillWidth: true
                 Accessible.name: "手动编辑版本"
-                model: ["六分类 v5", "无分类边界 v1"]
-                currentIndex: pane.controller.routedEditVariant === "boundary_only_v1" ? 1 : 0
-                onActivated: pane.controller.routedEditVariant = ["six_class_v5", "boundary_only_v1"][currentIndex]
+                property var variantKeys: ["six_class_v5", "boundary_only_v1", "general_only_v1", "general_full_v1", "general_no_spelling_v1", "general_no_polish_v1", "general_no_structure_v1", "general_no_spelling_polish_v1", "general_no_spelling_polish_structure_v1"]
+                model: ["六分类 v5", "无分类边界 v1", "general 通用编辑", "general＋全部精细规则", "general＋缺释字细则", "general＋缺润色细则", "general＋缺结构细则", "general＋缺释字、润色细则", "general＋缺释字、润色、结构细则"]
+                currentIndex: Math.max(0, variantKeys.indexOf(pane.controller.routedEditVariant))
+                onActivated: pane.controller.routedEditVariant = variantKeys[currentIndex]
             }
         }
         FigmaFormRow {
@@ -358,6 +361,25 @@ ColumnLayout {
         objectName: "settingsGeneralGroup"
         visible: pane.expandedSection === "general"
         title: "通用"
+        FigmaFormRow {
+            preferenceStyle: true
+            objectName: "screenshotDirectoryRow"
+            title: "截图保存位置"
+            description: pane.controller.ringGestures.screenshot.directory
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                FigmaAction {
+                    objectName: "changeScreenshotDirectoryButton"
+                    text: "更改位置"; quiet: true
+                    onClicked: pane.controller.ringGestures.screenshot.chooseDirectory()
+                }
+                FigmaAction {
+                    objectName: "openScreenshotDirectoryButton"
+                    text: "打开文件夹"; quiet: true
+                    onClicked: pane.controller.ringGestures.screenshot.openDirectory()
+                }
+            }
+        }
         FigmaFormRow {
             preferenceStyle: true
             title: "应用版本"

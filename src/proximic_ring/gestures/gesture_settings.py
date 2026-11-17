@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+import re
 
 
 GESTURE_LABELS = {
@@ -26,9 +27,12 @@ GESTURE_ACTION_LABELS = {"confirm": "开始", "end": "结束", "undo": "撤销",
 RING_RESERVED_GESTURES = frozenset({"index-pinch", "middle-pinch", "clench", "swipe-down", "swipe-up"})
 VOICE_GESTURE_GROUP = frozenset({"tap", "double-tap", "swipe-left", "swipe-right", "swipe-up", "swipe-down"})
 GLOBAL_ACTION_LABELS = {"show_menu": "手势提示", "window_selector": "窗口选择",
+                        "screen_capture": "截图", "clipboard_paste": "粘贴",
                         "scroll_up": "向上滚动", "scroll_down": "向下滚动",
                         "workflow_recommendations": "下一步推荐", "agent": "唤起 / 返回 Agent"}
 GLOBAL_BINDINGS_KEY = "gestures/globalBindingsV1"
+GLOBAL_APPLICATIONS_KEY = "gestures/recentApplicationsV1"
+MAX_RECENT_APPLICATIONS = 5
 
 
 @dataclass(frozen=True)
@@ -52,21 +56,66 @@ class GlobalShortcut:
 
 
 @dataclass(frozen=True)
+class ApplicationChoice:
+    bundle: str
+    application_name: str
+
+    def __post_init__(self):
+        if not isinstance(self.bundle, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", self.bundle):
+            raise ValueError("请选择有效应用")
+        if (not isinstance(self.application_name, str) or not self.application_name.strip()
+                or len(self.application_name.strip()) > 120):
+            raise ValueError("应用名称无效")
+        object.__setattr__(self, "application_name", self.application_name.strip())
+
+    @property
+    def label(self):
+        return "打开 " + self.application_name
+
+
+@dataclass(frozen=True)
+class GlobalApplication:
+    gesture: str
+    bundle: str
+    application_name: str
+
+    def __post_init__(self):
+        if self.gesture not in GESTURE_LABELS:
+            raise ValueError("请选择有效手势")
+        choice = ApplicationChoice(self.bundle, self.application_name)
+        object.__setattr__(self, "application_name", choice.application_name)
+
+    @property
+    def action_id(self):
+        return "application:" + self.gesture
+
+    @property
+    def label(self):
+        return "打开 " + self.application_name
+
+
+@dataclass(frozen=True)
 class GlobalGestureBindings:
     show_menu: str = "index-pinch"
     switch_mode: str = ""  # Retired; accepted only for old callers/settings.
     window_selector: str = "clench"
+    screen_capture: str = ""
+    clipboard_paste: str = ""
     scroll_up: str = "swipe-up"
     scroll_down: str = "swipe-down"
     workflow_recommendations: str = "double-index-pinch"
     agent: str = "double-middle-pinch"
     custom_shortcuts: tuple[GlobalShortcut, ...] = ()
+    applications: tuple[GlobalApplication, ...] = ()
 
     def __post_init__(self):
         if (not isinstance(self.custom_shortcuts, tuple)
                 or any(not isinstance(item, GlobalShortcut) for item in self.custom_shortcuts)):
             raise ValueError("全局自定义快捷键格式无效")
-        values = list(self.as_dict().values()) + [item.gesture for item in self.custom_shortcuts]
+        if (not isinstance(self.applications, tuple)
+                or any(not isinstance(item, GlobalApplication) for item in self.applications)):
+            raise ValueError("全局打开应用设置格式无效")
+        values = list(self.as_dict().values()) + [item.gesture for item in (*self.custom_shortcuts, *self.applications)]
         if any(not isinstance(value, str) for value in values):
             raise ValueError("请选择有效手势或无")
         values = [value for value in values if value]
@@ -82,13 +131,16 @@ class GlobalGestureBindings:
         return frozenset(value for value in self.assignments().values() if value)
 
     def assignments(self):
-        return {**self.as_dict(), **{item.action_id: item.gesture for item in self.custom_shortcuts}}
+        return {**self.as_dict(), **{item.action_id: item.gesture for item in (*self.custom_shortcuts, *self.applications)}}
 
     def labels(self):
-        return {**GLOBAL_ACTION_LABELS, **{item.action_id: item.label for item in self.custom_shortcuts}}
+        return {**GLOBAL_ACTION_LABELS, **{item.action_id: item.label for item in (*self.custom_shortcuts, *self.applications)}}
 
     def custom_for(self, gesture):
         return next((item for item in self.custom_shortcuts if item.gesture == gesture), None)
+
+    def application_for(self, gesture):
+        return next((item for item in self.applications if item.gesture == gesture), None)
 
     def action_for(self, gesture):
         return next((action for action, value in self.assignments().items() if value and value == gesture), "")
@@ -107,22 +159,31 @@ class GlobalGestureBindings:
             assignments[action] = gesture
         return replace(self, **{key: assignments[key] for key in GLOBAL_ACTION_LABELS},
                        custom_shortcuts=tuple(replace(item, gesture=assignments[item.action_id])
-                           for item in self.custom_shortcuts if assignments[item.action_id]))
+                           for item in self.custom_shortcuts if assignments[item.action_id]),
+                       applications=tuple(replace(item, gesture=assignments[item.action_id])
+                           for item in self.applications if assignments[item.action_id]))
 
     def with_custom(self, gesture, label, shortcut):
         custom = GlobalShortcut(gesture, label, shortcut)
         cleared = self.with_action(gesture, '')
         return replace(cleared, custom_shortcuts=(*cleared.custom_shortcuts, custom))
 
+    def with_application(self, gesture, bundle, application_name):
+        application = GlobalApplication(gesture, bundle, application_name)
+        cleared = self.with_action(gesture, '')
+        return replace(cleared, applications=(*cleared.applications, application))
+
     def to_json(self):
         return json.dumps({**self.as_dict(), 'custom_shortcuts': [
             dict(gesture=item.gesture, label=item.label, shortcut=item.shortcut)
-            for item in self.custom_shortcuts]}, ensure_ascii=False)
+            for item in self.custom_shortcuts], 'applications': [
+            dict(gesture=item.gesture, bundle=item.bundle, application_name=item.application_name)
+            for item in self.applications]}, ensure_ascii=False)
 
     @classmethod
     def from_json(cls, value):
         data = json.loads(str(value))
-        if (not isinstance(data, dict) or set(data) - (set(GLOBAL_ACTION_LABELS) | {"switch_mode", "custom_shortcuts"})
+        if (not isinstance(data, dict) or set(data) - (set(GLOBAL_ACTION_LABELS) | {"switch_mode", "custom_shortcuts", "applications"})
                 or not {"show_menu", "window_selector"} <= set(data)):
             raise ValueError("全局手势设置格式无效")
         data.pop("switch_mode", None)
@@ -133,10 +194,18 @@ class GlobalGestureBindings:
             data['custom_shortcuts'] = tuple(GlobalShortcut(**item) for item in customs)
         except (TypeError, AttributeError) as exc:
             raise ValueError("全局自定义快捷键格式无效") from exc
+        applications = data.pop('applications', [])
+        if not isinstance(applications, list):
+            raise ValueError("全局打开应用设置格式无效")
+        try:
+            data['applications'] = tuple(GlobalApplication(**item) for item in applications)
+        except (TypeError, AttributeError) as exc:
+            raise ValueError("全局打开应用设置格式无效") from exc
         # Upgrade missing functions without replacing explicit unbindings or
         # taking a gesture already assigned by the user.
         occupied = {value for key, value in data.items() if key != 'custom_shortcuts' and isinstance(value, str)}
         occupied.update(item.gesture for item in data['custom_shortcuts'])
+        occupied.update(item.gesture for item in data['applications'])
         for action, gesture in cls().as_dict().items():
             if action not in data:
                 data[action] = gesture if gesture not in occupied else ''
@@ -162,7 +231,7 @@ def reserve_ring_gestures(bindings: GestureBindings, reserved=RING_RESERVED_GEST
 
 @dataclass(frozen=True)
 class GestureBindings:
-    confirm: tuple[str, ...] = ("double-tap", "")
+    confirm: tuple[str, ...] = ("tap", "")
     end: tuple[str, ...] = ("tap", "")
     undo: tuple[str, ...] = ("swipe-left", "")
     switch_mode: tuple[str, ...] = ("swipe-right", "")
@@ -223,7 +292,7 @@ class GestureBindings:
     def confirm_hint(self) -> str:
         return " / ".join(
             "双击 tap" if name == "double-tap" else
-            "tap" if name == "tap" else GESTURE_LABELS[name]
+            "单击 tap" if name == "tap" else GESTURE_LABELS[name]
             for name in self.confirm if name
         )
 

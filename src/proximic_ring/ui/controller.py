@@ -533,11 +533,6 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 self._gesture_bindings = migrate_voice_defaults(self._gesture_bindings)
                 self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
                 self._settings.setValue("gestures/appDefaultsMigrated", True)
-            if not self._bool_setting("gestures/doubleTapDefaultMigrated", False):
-                if self._gesture_bindings.confirm == ("tap", ""):
-                    self._gesture_bindings = replace(self._gesture_bindings, confirm=("double-tap", ""))
-                    self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
-                self._settings.setValue("gestures/doubleTapDefaultMigrated", True)
             from .gestures.voice_gesture_mapping import single_bindings
             single = single_bindings(self._gesture_bindings)
             if single != self._gesture_bindings:
@@ -1387,6 +1382,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._record_inline_edit_intent(session_id)
             options = dict(settings=saved.settings, task_type=saved.task_type,
                            edit_plan=saved.edit_plan, screen_context=replay_context(saved),
+                           saved_context=saved.saved_context,
                            routing_mode=saved.routing_mode, reexecuted=True,
                            routed_edit_variant=saved.routed_edit_variant)
         else:
@@ -5667,6 +5663,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         update_interaction: bool = True,
         task_type: str = "",
         screen_context=None,
+        saved_context=None,
         edit_plan=None,
         force_llm: bool = False,
         routing_mode: str = INPUT_ROUTING_MANUAL,
@@ -5704,6 +5701,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             target_text=target_text,
             task_type=task_type,
             screen_context=screen_context,
+            saved_context=saved_context,
             edit_plan=edit_plan,
             routing_mode=routing_mode,
             reexecuted=reexecuted,
@@ -7065,6 +7063,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot(object, object)
     def _apply_gesture(self, event: object, connection: object) -> None:
+        app_event = event.source if isinstance(event, ModeGestureEvent) else event
+        if isinstance(app_event, AppGestureEvent):
+            def resume(validated):
+                ready = replace(event, source=validated) if isinstance(event, ModeGestureEvent) else validated
+                self._apply_gesture(ready, connection)
+            if self._app_gestures.defer_input_gesture(app_event, connection, resume):
+                return  # Keep a borrowed input source until validation and dispatch finish.
         try:
             self._apply_gesture_current(event, connection)
         finally:

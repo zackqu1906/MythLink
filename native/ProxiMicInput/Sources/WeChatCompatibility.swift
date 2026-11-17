@@ -66,13 +66,27 @@ final class WeChatCompatibility {
     private let current: () -> Bool
     private var selectionTarget = unspecifiedRange
     private var selectionUsesAX = false
+    private var selectionBody: EditorTextRange?
     private var operationID = ""
     private var tracingSelection = false
     private(set) var pending = false
     private(set) var failure: String?
     private(set) var readbackDiagnostics: [String: Any] = [:]
     private(set) var eventTag: Int64 = 0
-    private var stage = ""
+    // Diagnostic elapsed time includes asynchronous waits, grouped by state.
+    // It never changes deadlines, scheduling, or acknowledgement policy.
+    private var stageElapsedMS: [String: Double] = [:]
+    private var stageEnteredAt: TimeInterval?
+    private var stage = "" {
+        didSet {
+            guard stage != oldValue else { return }
+            let now = clock()
+            if let entered = stageEnteredAt, !oldValue.isEmpty {
+                stageElapsedMS[oldValue, default: 0] += max(0, now - entered) * 1000
+            }
+            stageEnteredAt = stage.isEmpty ? nil : now
+        }
+    }
     private var deadline: TimeInterval = 0
     private var earliest: TimeInterval = 0
     private var keyAcknowledged = false
@@ -81,6 +95,10 @@ final class WeChatCompatibility {
     private var keyDeliveryDeadline: TimeInterval = 0
     private var expectedRange = unspecifiedRange
     private var expectedBefore = ""
+    private var expectedBody: EditorTextRange?
+    private var validationStage = "replace_prewrite"
+    private var selectedReceipt: EditorTextRange?
+    private var preservedTailSource: EditorTextSource?
     private var replacement = ""
     private var result = ""
     private var resultCaret = 0
@@ -96,12 +114,8 @@ final class WeChatCompatibility {
     private var selectionWrittenAt: TimeInterval = 0
     private var postwriteCaretTarget = unspecifiedRange
     private var writtenRange = unspecifiedRange
-    private var writtenCaretObservation = unspecifiedRange
-    private var writtenCaretObservedAt: TimeInterval = 0
     private var postwriteTail = ""
     private var baselineCaret = unspecifiedRange
-    private var baselineObservation: EditorTextRange?
-    private var baselineObservedAt: TimeInterval = 0
     private var postwriteAXObservation = unspecifiedRange
     private var postwriteAXObservedAt: TimeInterval = 0
     private var postwriteMoveAttempted = false
@@ -129,12 +143,13 @@ final class WeChatCompatibility {
         if pending && tracingSelection { trace("cancelled") }
         generation += 1; pending = false; stage = ""; eventTag = 0; expectedKeys = []
         tracingSelection = false
-        selectionUsesAX = false
+        selectionUsesAX = false; selectionBody = nil; selectedReceipt = nil
+        expectedBody = nil; preservedTailSource = nil; validationStage = "replace_prewrite"
         verifiedReplacementCaret = nil; verifiedReplacement = nil; requestedReplacement = nil
         replacementTextVerified = false; selectionWriteSent = false
         postwriteCaretTarget = unspecifiedRange; postwriteAXObservation = unspecifiedRange
-        writtenRange = unspecifiedRange; writtenCaretObservation = unspecifiedRange
-        writtenCaretObservedAt = 0; baselineObservation = nil; baselineObservedAt = 0
+        writtenRange = unspecifiedRange
+        stageElapsedMS = [:]; stageEnteredAt = nil
         postwriteTail = ""; baselineCaret = unspecifiedRange
         postwriteAXObservedAt = 0; postwriteMoveAttempted = false
         preparedEditContext = nil; contextOriginal = nil; verifiedDocument = nil
@@ -157,8 +172,17 @@ final class WeChatCompatibility {
         start(range: range, before: before, text: text)
     }
 
-    func replaceSelected(_ range: NSRange, before: String, with text: String, restoringCaret: Int?) {
-        start(range: range, before: before, text: text)
+    func replaceSelected(_ range: NSRange, before: String, with text: String, restoringCaret: Int?,
+                         baseline: EditorTextRange? = nil, validationStage: String = "replace_prewrite") {
+        start(range: range, before: before, text: text, baseline: baseline, validationStage: validationStage)
+        requestedCaret = restoringCaret
+    }
+
+    func replacePrefix(before: String, with text: String, tail: Int, restoringCaret: Int?,
+                       baseline: EditorTextRange? = nil, validationStage: String = "replace_prewrite", preservedSource: EditorTextSource? = nil) {
+        start(range: NSRange(location: 0, length: before.utf16.count), before: before, text: text,
+              prefixTail: tail, baseline: baseline, validationStage: validationStage)
+        preservedTailSource = preservedSource
         requestedCaret = restoringCaret
     }
 
@@ -170,6 +194,8 @@ final class WeChatCompatibility {
             "caret_restore_limit": 512]
         contextInstruction = instruction; contextSelectedText = selectedText
         contextSource = source; contextCandidate = candidate
+        validationStage = "edit_prewrite"; preservedTailSource = source?.source
+        readbackDiagnostics["baseline_source"] = source?.source.rawValue ?? "unbound"
         contextPrefix = ""; contextWhole = ""; contextCaret = 0
         operationStartedAt = clock()
         pending = true; stage = "context_committed"
@@ -253,17 +279,24 @@ final class WeChatCompatibility {
     /// Select only the still-owned sentence, then delete once (or restore the
     /// selection it replaced). Never selects/copies the whole field or depends
     /// on Qt's undo grouping. Live preedit cancellation uses IME commit directly.
-    func undoSentence(_ range: NSRange, with text: String) {
+    func undoSentence(_ range: NSRange, with text: String, baseline: EditorTextRange? = nil, restoredSource: EditorTextSource? = nil) {
         cancel(); failure = nil
         readbackDiagnostics = [:]
         let probe = client.probe()
         guard isValidRange(range), range.length > 0,
               probe.selection == NSRange(location: NSMaxRange(range), length: 0),
               !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
-              let before = client.readText(in: range),
-              (before as NSString).length == range.length, before.count <= 512 else {
+              let body = client.readBody(in: range, fallback: .before(range.length), source: baseline?.source, stage: "undo_sentence_prewrite"),
+              body.text.utf16.count == range.length, body.text.count <= 512 else {
             failure = "本句文字或光标已变化，未执行撤销"; return
         }
+        let before = body.text
+        if let baseline {
+            client.recordBodyValidation(stage: "undo_sentence_prewrite", baseline: baseline, observed: body, matches: before == baseline.text)
+            guard before == baseline.text else { fail("本句正文与保存基准不一致", code: "baseline_body_mismatch"); return }
+        }
+        expectedBody = body; validationStage = "undo_sentence_selected"
+        preservedTailSource = restoredSource
         expectedRange = range; expectedBefore = before; replacement = text
         requestedReplacement = EditorTextRange(text: text, range: NSRange(location: range.location, length: (text as NSString).length))
         requestedCaret = nil
@@ -272,11 +305,15 @@ final class WeChatCompatibility {
         key("select_previous", count: before.count, next: "sentence_selected")
     }
 
-    private func start(range: NSRange, before: String, text: String) {
+    private func start(range: NSRange, before: String, text: String, prefixTail: Int? = nil,
+                       baseline: EditorTextRange? = nil, validationStage: String = "replace_prewrite") {
         cancel(); failure = nil
         readbackDiagnostics = ["write_sent": false, "source_range": [range.location, range.length],
                                "caret_restore_limit": 512]
         operationStartedAt = clock()
+        expectedBody = baseline; self.validationStage = validationStage
+        readbackDiagnostics["baseline_source"] = baseline?.source.rawValue ?? "unbound"
+        readbackDiagnostics["validation_stage"] = validationStage
         guard isValidRange(range), range.length == (before as NSString).length else {
             failure = "输入框原文范围无效"; return
         }
@@ -285,15 +322,49 @@ final class WeChatCompatibility {
         requestedCaret = nil
         pending = true
         deadline = clock() + 2.5
-        if prefixOnly { selectPrefix(range, next: "capture") }
+        if prefixOnly, let prefixTail {
+            let caret = client.probe().selection
+            guard range.location == 0, caret.length == 0,
+                  let nativeRange = EditorReadScope.prefix(tail: prefixTail).range(at: caret) else {
+                fail("当前 IMK 位置无法界定上文写入范围", code: "native_prefix_unavailable"); return
+            }
+            // The saved body's length belongs to its reader. Derive the
+            // native selection target afresh, never from an AX body offset.
+            selectPrefix(nativeRange, next: "capture")
+        } else if prefixOnly { selectPrefix(range, next: "capture") }
         else { key("select_all", next: "capture") }
+    }
+
+    func recordBodyValidation(stage: String, baseline: EditorTextRange, observed: EditorTextRange?,
+                              matches: Bool, read: [String: Any]) {
+        let result = observed == nil ? "unavailable" : (matches ? "matched" : "mismatch")
+        let details: [String: Any] = ["validation_stage": stage, "baseline_source": baseline.source.rawValue,
+            "observed_source": observed?.source.rawValue ?? "unavailable", "read_policy": "saved_source",
+            "baseline_range": [baseline.range.location, baseline.range.length],
+            "observed_body_range": observed.map { [$0.range.location, $0.range.length] } ?? [-1, -1],
+            "baseline_scope": baseline.readScope.map { String(describing: $0) } ?? "exact",
+            "baseline_characters": baseline.text.utf16.count, "observed_characters": observed?.text.utf16.count ?? -1,
+            "validation_result": result, "text_matches": matches, "body_read": read]
+        if pending { readbackDiagnostics.merge(details) { _, new in new } }
+        selectionDriver?.record(details.merging(["event": "body_validation", "operation_stage": stage,
+            "operation_id": pending ? operationID : UUID().uuidString,
+            "failure_code": result == "matched" ? "" : (observed == nil ? "baseline_read_unavailable" : "baseline_body_mismatch")]) { _, new in new })
     }
 
     private func trace(_ event: String) {
         guard tracingSelection else { return }
         readbackDiagnostics["operation_id"] = operationID
         readbackDiagnostics["operation_stage"] = stage
-        readbackDiagnostics["operation_ms"] = (clock() - operationStartedAt) * 1000
+        let now = clock()
+        readbackDiagnostics["operation_ms"] = max(0, now - operationStartedAt) * 1000
+        var elapsed = stageElapsedMS
+        if let entered = stageEnteredAt, !stage.isEmpty {
+            elapsed[stage, default: 0] += max(0, now - entered) * 1000
+        }
+        readbackDiagnostics["stage_elapsed_ms"] = elapsed
+        if selectionWriteSent {
+            readbackDiagnostics["post_write_ms"] = max(0, now - selectionWrittenAt) * 1000
+        }
         selectionDriver?.record(readbackDiagnostics.merging(["event": event]) { _, new in new })
     }
 
@@ -307,7 +378,7 @@ final class WeChatCompatibility {
               !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else {
             fail("输入框光标或组合状态已变化，未选择上文", code: "selection_state_changed"); return
         }
-        selectionTarget = range
+        selectionTarget = range; selectionBody = nil
         readbackDiagnostics["selection_target"] = [range.location, range.length]
         readbackDiagnostics["selection_caret"] = [probe.selection.location, probe.selection.length]
         stage = next
@@ -380,19 +451,47 @@ final class WeChatCompatibility {
         }
     }
 
+    /// Snapshot a failed target check before later probes can change diagnostics.
+    /// These wrappers make exactly the same checks as B80.
+    private func currentTarget(_ step: String) -> Bool {
+        let valid = current()
+        if !valid {
+            readbackDiagnostics["target_failure"] = ["category": "session", "reason": "current_guard_failed", "step": step]
+        }
+        return valid
+    }
+
+    private func validateTarget(_ step: String, current: () -> Bool) -> Bool {
+        let valid = selectionDriver?.validateTarget(current: current, step: step) != false
+        if !valid {
+            readbackDiagnostics["target_failure"] = selectionDriver?.metadata["target_last_failure"] ??
+                ["category": "unknown", "reason": "driver_unclassified", "step": step]
+        }
+        return valid
+    }
+
     private func fail(_ message: String, code: String = "unconfirmed") {
         readbackDiagnostics["failure_code"] = code
+        if readbackDiagnostics["target_failure"] == nil,
+           selectionDriver?.metadata["target_check_result"] as? String == "failed",
+           let targetFailure = selectionDriver?.metadata["target_last_failure"] {
+            readbackDiagnostics["target_failure"] = targetFailure
+        }
+        let targetFailure = readbackDiagnostics["target_failure"] as? [String: Any]
+        let targetDetail = targetFailure.map {
+            "；目标校验[\($0["category"] as? String ?? "unknown")/\($0["reason"] as? String ?? "unknown")/\($0["step"] as? String ?? "unknown")]"
+        } ?? ""
         readbackDiagnostics["operation_ms"] = (clock() - operationStartedAt) * 1000
         trace("failed")
         let sent = readbackDiagnostics["write_sent"] as? Bool == true
         failure = tracingSelection
-            ? "[\(InputMethodDiagnostics.buildLabel)/\(stage)/\(code)/\(operationID.prefix(8))] \(message)；\(sent ? "写入已发出，未自动重试" : "未写入结果")"
+            ? "[\(InputMethodDiagnostics.buildLabel)/\(stage)/\(readbackDiagnostics["baseline_source"] as? String ?? "unbound")/\(code)/\(operationID.prefix(8))] \(message)\(targetDetail)；\(sent ? "写入已发出，未自动重试" : "未写入结果")"
             : message
         tracingSelection = false
         cancel()
     }
 
-    private func selectedDocument() -> String? {
+    private func selectedDocument(source requiredSource: EditorTextSource? = nil) -> String? {
         let token = generation
         let probe = client.probe()
         readbackDiagnostics["operation_stage"] = stage
@@ -410,21 +509,38 @@ final class WeChatCompatibility {
             trace("selection_wait"); return nil
         }
         readbackDiagnostics["selection_matches"] = true
-        // A confirmed AX selection can coexist with stale IMK selection geometry.
-        // Prefer IMK text, then read AX against the already verified target range.
-        var selected = client.readIMKText(in: range)
+        let body = client.readBody(in: range, fallback: prefixOnly ? .selected : nil,
+                                   source: requiredSource, stage: validationStage)
         guard pending, generation == token, current() else { return nil }
-        readbackDiagnostics["source_imk_read"] = client.lastTextReadDiagnostics
-        readbackDiagnostics["source_read_method"] = "imk"
-        if selected == nil, prefixOnly {
-            selected = readAXText(in: range, selection: range)
-            readbackDiagnostics["source_read_method"] = selected == nil ? "unavailable" : "ax"
-            guard pending, generation == token, current() else { return nil }
-            if selected == nil { fail("IMK 和 AX 均未提供完整选区正文，未执行替换", code: "source_read_unavailable"); return nil }
+        selectedReceipt = body
+        let selected = body?.text
+        let read = client.lastTextReadDiagnostics
+        readbackDiagnostics["source_imk_read"] = read["imk_read"] ?? (body?.source == .imk ? read : nil)
+        readbackDiagnostics["source_clipboard_read"] = read["clipboard_read"]
+        readbackDiagnostics["source_read_method"] = body?.source.rawValue ?? "unavailable"
+        readbackDiagnostics["baseline_source"] = requiredSource?.rawValue ?? "unbound"
+        readbackDiagnostics["validation_stage"] = validationStage
+        readbackDiagnostics["source_body_read"] = read
+        if body?.source == .ax, let body {
+            guard body.range == body.selection,
+                  range.location == 0 ? body.range.location == 0 : body.range == range else {
+                fail("AX 未确认同一个上文选区，未执行替换", code: "source_selection_changed")
+                return nil
+            }
+            selectionBody = body
+            readbackDiagnostics["source_ax_read"] = axReadDiagnostics
+        }
+        if body == nil, prefixOnly {
+            if read["clipboard_attempted"] as? Bool == true, let failure = client.terminalTextReadFailure {
+                fail(failure, code: "source_clipboard_read_unavailable"); return nil
+            }
+            fail("\(requiredSource?.rawValue.uppercased() ?? "IMK/AX") 未提供基准对应的完整选区正文，未执行替换", code: "source_read_unavailable")
+            return nil
         }
         readbackDiagnostics["source_read_available"] = selected != nil
         readbackDiagnostics["selected_characters"] = selected?.utf16.count ?? -1
-        guard pending, generation == token, let value = selected, value.utf16.count == range.length else {
+        let bodyLength = body?.source == .clipboard ? body?.range.length : (selectionBody?.range.length ?? range.length)
+        guard pending, generation == token, let value = selected, value.utf16.count == bodyLength else {
             trace("source_read_wait"); return nil
         }
         // A dropped Cmd+A must not turn a prefix selection or an empty caret
@@ -439,7 +555,7 @@ final class WeChatCompatibility {
 
     private func confirmedSelection(_ probe: CompositionProbe, token: Int) -> Bool {
         let observed: NSRange?
-        if selectionUsesAX {
+        if selectionUsesAX || selectionBody?.source == .ax {
             observed = selectionDriver?.readSelection(current: {
                 self.pending && self.generation == token && self.current()
             })
@@ -451,7 +567,7 @@ final class WeChatCompatibility {
         readbackDiagnostics["selection_read_available"] = observed != nil
         readbackDiagnostics["verified_selection"] = observed.map { [$0.location, $0.length] } ?? [-1, -1]
         readbackDiagnostics["imk_selection_matches"] = probe.selection == selectionTarget
-        return pending && generation == token && current() && observed == selectionTarget
+        return pending && generation == token && current() && observed == (selectionBody?.selection ?? selectionTarget)
     }
 
     private func moveCaret() {
@@ -485,9 +601,9 @@ final class WeChatCompatibility {
     private func writeSelected(_ observed: String) {
         if prefixOnly {
             let token = generation
-            let targetValid = selectionDriver?.validateTarget(current: {
+            let targetValid = validateTarget("write_preflight", current: {
                 self.pending && self.generation == token && self.current()
-            }) != false
+            })
             // AX and IMK calls can pump cancellation callbacks. Probe after
             // target validation and recheck the generation after both calls.
             let probe = client.probe()
@@ -531,7 +647,7 @@ final class WeChatCompatibility {
         pending = false; stage = ""
     }
 
-    /// Establish the inserted span from IMK's settled insertion-end caret,
+    /// Establish the inserted span from IMK's first valid insertion-end caret,
     /// before any deliberate restoration into the inserted text. Never infer
     /// this length from the model payload (controls may normalize that payload).
     private func confirmPrefixWrite() {
@@ -545,11 +661,8 @@ final class WeChatCompatibility {
             trace("write_caret_wait"); return
         }
         readbackDiagnostics["observed_selection"] = [probe.selection.location, probe.selection.length]
-        if writtenCaretObservation != probe.selection {
-            writtenCaretObservation = probe.selection; writtenCaretObservedAt = clock()
-            trace("write_caret_observed"); return
-        }
-        guard clock() - writtenCaretObservedAt >= 0.04 else { return }
+        readbackDiagnostics["caret_confirmation"] = "single_valid_sample"
+        trace("write_caret_observed")
         let localCaret = resultCaret - selectionTarget.location
         guard localCaret >= 0, localCaret <= result.utf16.count else {
             fail("待恢复的光标范围无效", code: "invalid_result_caret"); return
@@ -568,9 +681,16 @@ final class WeChatCompatibility {
         }
         if !tail.isEmpty {
             let tailRange = NSRange(location: NSMaxRange(actualRange) - tail.utf16.count, length: tail.utf16.count)
-            let observedTail = client.readText(in: tailRange)
+            let tailBaseline = EditorTextRange(text: tail, range: tailRange,
+                source: preservedTailSource ?? selectedReceipt?.source ?? .imk, readScope: .before(tail.utf16.count))
+            do { try client.validateBody(tailBaseline, stage: validationStage + "_preserved_tail") }
+            catch {
+                guard pending, generation == token, current() else { return }
+                if client.terminalTextReadFailure != nil { fail(error.localizedDescription, code: "postwrite_tail_unavailable") }
+                else { trace("postwrite_tail_wait") }
+                return
+            }
             guard pending, generation == token, current() else { return }
-            guard observedTail == tail else { trace("postwrite_tail_wait"); return }
         }
         let after = client.probe()
         guard pending, generation == token, current(), after.selection == probe.selection,
@@ -591,19 +711,22 @@ final class WeChatCompatibility {
         }
     }
 
-    func readAXText(in range: NSRange, selection: NSRange, whole: Bool = false) -> String? {
+    var axReadDiagnostics: [String: Any] { selectionDriver?.metadata ?? [:] }
+
+    func readAXBody(_ scope: EditorReadScope) -> EditorTextRange? {
         let token = generation
-        guard prefixOnly, current(), isValidRange(range), range.length <= 512 * 1024 else { return nil }
-        let currentRead = { self.generation == token && self.current() }
-        let text = whole ? selectionDriver?.readDocument(in: range, selection: selection, current: currentRead)
-                         : selectionDriver?.readText(in: range, selection: selection, current: currentRead)
-        guard generation == token, current(), let text, text.utf16.count == range.length else { return nil }
-        return text
+        guard prefixOnly, current() else { return nil }
+        let body = selectionDriver?.readBody(scope, current: { self.generation == token && self.current() })
+        guard generation == token, current(), let body, let selection = body.selection,
+              isValidRange(selection), isValidRange(body.range), body.range.length <= 512 * 1024,
+              body.source == .ax, body.text.utf16.count == body.range.length,
+              scope.range(at: selection, documentLength: scope == .document ? body.text.utf16.count : nil) == body.range else { return nil }
+        return body
     }
 
     private func beginPostwriteBaseline(_ caret: NSRange) {
         // B70 may refresh the IMK coordinate during relative arrow repair.
-        // Use the final agreed caret, not its pre-move target or model length.
+        // Use the final IMK caret, not its pre-move target or model length.
         guard prefixOnly, isValidRange(caret), caret.length == 0,
               caret.location >= selectionTarget.location,
               caret.location - selectionTarget.location <= 512 * 1024 - postwriteTail.utf16.count else {
@@ -621,9 +744,9 @@ final class WeChatCompatibility {
         confirmPostwriteBaseline()
     }
 
-    /// Read only after native/AX caret correction, and require a stable exact
-    /// read in the same IMK coordinate space. A nil/partial read is never a
-    /// model-backed receipt or an empty-document observation.
+    /// Read only after caret correction. Save the first complete body in its
+    /// reader's coordinates, retaining IMK operation geometry separately.
+    /// This is an actual-text receipt, not a comparison with the model payload.
     private func confirmPostwriteBaseline() {
         let token = generation
         let before = client.probe()
@@ -632,17 +755,23 @@ final class WeChatCompatibility {
               !isValidRange(before.markedRange) || before.markedRange.length == 0 else {
             fail("保存撤销基准时光标已变化", code: "postwrite_baseline_caret_changed"); return
         }
-        let text = client.readText(in: writtenRange)
+        let body = client.readBody(in: writtenRange, fallback: selectionTarget.location == 0
+            ? .prefix(tail: postwriteTail.utf16.count) : nil,
+            source: postwriteTail.isEmpty ? nil : preservedTailSource,
+            stage: validationStage + "_postwrite_baseline")
+        let text = body?.text
         let read = client.lastTextReadDiagnostics
-        let source: EditorTextSource = read["read_source"] as? String == "ax" ? .ax : .imk
+        let source = body?.source ?? EditorTextSource(rawValue: read["read_source"] as? String ?? "") ?? .imk
         guard pending, generation == token, current() else { return }
         readbackDiagnostics["baseline_read_method"] = read["read_source"] ?? "imk"
+        readbackDiagnostics["baseline_source"] = body?.source.rawValue ?? "unbound"
+        readbackDiagnostics["validation_stage"] = validationStage + "_postwrite_baseline"
         readbackDiagnostics["undo_baseline_source"] = "post_caret_" + source.rawValue
         let after = client.probe()
         guard pending, generation == token, current() else { return }
-        guard selectionDriver?.validateTarget(current: {
+        guard validateTarget("postwrite_baseline_after_read", current: {
             self.pending && self.generation == token && self.current()
-        }) != false else {
+        }) else {
             if pending, generation == token { fail("读取撤销基准期间输入目标已变化", code: "target_changed") }
             return
         }
@@ -654,28 +783,28 @@ final class WeChatCompatibility {
         readbackDiagnostics["baseline_read_available"] = text != nil
         readbackDiagnostics["baseline_read"] = read
         readbackDiagnostics["baseline_characters"] = text?.utf16.count ?? -1
-        guard let text, text.utf16.count == writtenRange.length else {
-            baselineObservation = nil
+        guard let body, let text, text.utf16.count == body.range.length else {
             trace("postwrite_baseline_read_wait")
-            if read["ax_attempted"] as? Bool == true {
-                fail("IMK 和 AX 均未提供完整的写后正文，无法建立撤销基准", code: "postwrite_baseline_unavailable")
+            if read["clipboard_attempted"] as? Bool == true, let failure = client.terminalTextReadFailure {
+                fail(failure, code: "postwrite_clipboard_read_unavailable")
+            } else if client.terminalTextReadFailure != nil || read["ax_attempted"] as? Bool == true {
+                fail("写后基准的读取来源未提供完整正文，无法建立撤销基准", code: "postwrite_baseline_unavailable")
             }
             return
         }
         guard postwriteTail.isEmpty || text.hasSuffix(postwriteTail) else {
             fail("光标恢复后的保留文字边界不一致，未建立撤销基准", code: "postwrite_baseline_tail_changed"); return
         }
-        let snapshot = EditorTextRange(text: text, range: writtenRange, source: source)
-        if baselineObservation != snapshot {
-            baselineObservation = snapshot; baselineObservedAt = clock()
-            trace("postwrite_baseline_observed"); return
-        }
-        guard clock() - baselineObservedAt >= 0.04 else { return }
+        let snapshot = body
+        readbackDiagnostics["baseline_body_range"] = [body.range.location, body.range.length]
+        readbackDiagnostics["baseline_body_selection"] = body.selection.map { [$0.location, $0.length] } ?? [-1, -1]
+        readbackDiagnostics["baseline_confirmation"] = "single_complete_read"
+        trace("postwrite_baseline_observed")
         // Model comparison is diagnostic only; the receipt carries native text.
         readbackDiagnostics["replacement_text_matches"] = text == result
         readbackDiagnostics["native_text_verified"] = true
         readbackDiagnostics["ack_source"] = "post_caret_" + source.rawValue
-        readbackDiagnostics["baseline_stable"] = true
+        readbackDiagnostics["baseline_stable"] = false // No cross-time stability test in B80.
         verifiedReplacement = snapshot
         verifiedReplacementCaret = after.selection
         replacementTextVerified = true
@@ -718,9 +847,9 @@ final class WeChatCompatibility {
               !isValidRange(after.markedRange) || after.markedRange.length == 0 else {
             fail("AX 查询期间 IMK 光标已变化，未继续定位", code: "postwrite_imk_caret_changed"); return
         }
-        guard selectionDriver?.validateTarget(current: {
+        guard validateTarget("postwrite_caret_after_ax", current: {
             self.pending && self.generation == token && self.current()
-        }) != false else {
+        }) else {
             if pending, generation == token { fail("写后输入目标已变化，已停止定位", code: "target_changed") }
             return
         }
@@ -738,13 +867,13 @@ final class WeChatCompatibility {
             guard probe.selection == after.selection else {
                 fail("移动后采样期间IMK位置变化，未继续操作", code: "postwrite_caret_sample_changed"); return
             }
-            if ax == after.selection {
-                readbackDiagnostics["postwrite_caret_status"] = "moved_and_verified"
-                completeSelectedWrite(after.selection)
-            } else {
-                readbackDiagnostics["postwrite_caret_status"] = "moved_but_disagreed"
-                fail("移动后AX与IMK光标仍不一致，未继续移动", code: "postwrite_caret_not_aligned")
+            guard isValidRange(ax), ax.length == 0 else {
+                fail("移动后AX出现选区，未继续操作", code: "postwrite_ax_selection_changed"); return
             }
+            // B73 experiment: retain both observations, but do not require
+            // equal coordinate numbers before the existing body readback.
+            readbackDiagnostics["postwrite_caret_status"] = "moved_without_alignment_check"
+            completeSelectedWrite(after.selection)
             return
         }
         guard after.selection == postwriteCaretTarget else {
@@ -783,7 +912,7 @@ final class WeChatCompatibility {
         readbackDiagnostics["postwrite_key_acknowledged"] = false
         trace("postwrite_keys_requested")
         // Do not query AXNumberOfCharacters or set an absolute AX range here.
-        // Send the signed difference as one arrow-key batch.
+        // This experiment sends the signed difference as one arrow-key batch.
         key(command, count: abs(delta), next: "postwrite_caret")
     }
 
@@ -795,7 +924,7 @@ final class WeChatCompatibility {
                 fail(failure, code: "body_read_unavailable")
             }
         }
-        if tracingSelection, (!current() || selectionDriver?.validateTarget(current: current) == false) {
+        if tracingSelection, (!currentTarget("advance.before") || !validateTarget("advance", current: current)) {
             fail("输入目标已变化，已停止操作", code: "target_changed"); return
         }
         if stage == "postwrite_caret", postwriteMoveAttempted,
@@ -804,8 +933,8 @@ final class WeChatCompatibility {
         }
         guard clock() < deadline else {
             if stage == "postwrite_baseline" {
-                fail("文字写入已发出，但 IMK 和 AX 均未提供完整稳定的写后正文，无法建立撤销基准",
-                     code: baselineObservation == nil ? "postwrite_baseline_unavailable" : "postwrite_baseline_unstable")
+                fail("文字写入已发出，但未取得完整的写后正文，无法建立撤销基准",
+                     code: "postwrite_baseline_unavailable")
                 return
             }
             if stage == "postwrite_caret", postwriteMoveAttempted {
@@ -834,11 +963,12 @@ final class WeChatCompatibility {
             if prefixOnly { selectPrefix(NSRange(location: 0, length: contextCaret), next: "context_whole") }
             else { key("select_all", next: "context_whole") }
         case "context_whole":
-            guard let whole = selectedDocument(), pending, generation == token else { return }
-            guard contextCaret <= (whole as NSString).length else {
+            guard let whole = selectedDocument(source: contextSource?.source), pending, generation == token else { return }
+            let textCaret = prefixOnly ? whole.utf16.count : contextCaret
+            guard textCaret <= (whole as NSString).length else {
                 fail("输入框光标与当前原文不一致，未执行编辑", code: "caret_outside_document"); return
             }
-            contextPrefix = (whole as NSString).substring(to: contextCaret)
+            contextPrefix = (whole as NSString).substring(to: textCaret)
             readbackDiagnostics["instruction_matches"] = contextPrefix.hasSuffix(contextInstruction)
             guard contextPrefix.hasSuffix(contextInstruction) else {
                 fail("当前选区未包含刚才的口述指令，未执行编辑", code: "instruction_mismatch"); return
@@ -847,11 +977,23 @@ final class WeChatCompatibility {
             let instructionRange = NSRange(location: (contextPrefix as NSString).length - (contextInstruction as NSString).length,
                                            length: (contextInstruction as NSString).length)
             let source = (whole as NSString).replacingCharacters(in: instructionRange, with: contextSelectedText)
+            let nativeOriginal = NSRange(location: contextCaret - contextInstruction.utf16.count,
+                                         length: contextSelectedText.utf16.count)
+            guard isValidRange(nativeOriginal) else {
+                fail("当前 IMK 位置无法界定原听写范围", code: "native_instruction_range_unavailable"); return
+            }
             contextOriginal = EditorSnapshot(text: nil,
-                selection: NSRange(location: instructionRange.location, length: (contextSelectedText as NSString).length),
+                selection: nativeOriginal,
                 markedRange: unspecifiedRange, selectedText: contextSelectedText, documentAccess: true,
-                readableContext: EditorTextRange(text: source, range: NSRange(location: 0, length: (source as NSString).length)))
+                readableContext: EditorTextRange(text: source, range: NSRange(location: 0, length: source.utf16.count),
+                    source: selectedReceipt?.source ?? .imk, readScope: prefixOnly ? .prefix(tail: 0) : .document),
+                contextSelection: selectionBody == nil ? nil : NSRange(location: instructionRange.location, length: contextSelectedText.utf16.count))
             let comparison = EditSourceComparison.compare(contextSource, with: source)
+            if let baseline = contextSource, let selectedReceipt {
+                client.recordBodyValidation(stage: validationStage, baseline: baseline,
+                    observed: EditorTextRange(text: source, range: NSRange(location: 0, length: source.utf16.count),
+                        source: selectedReceipt.source, readScope: .prefix(tail: 0)), matches: comparison != .different)
+            }
             readbackDiagnostics.merge(["expected_characters": contextSource?.range.length ?? -1,
                 "observed_characters": (source as NSString).length,
                 "source_expected_characters": contextSource?.range.length ?? -1,
@@ -862,7 +1004,7 @@ final class WeChatCompatibility {
                 // Source and native selection agree. Replace immediately while
                 // selected; no restore/reselect cycle, clipboard, or second read.
                 preparedEditContext = PreparedEditContext(original: original, dictatedText: whole,
-                    caret: NSRange(location: (contextPrefix as NSString).length, length: 0))
+                    caret: NSRange(location: contextCaret, length: 0))
                 // Model output covers only the text before the instruction's
                 // original insertion point. Restore the initial selection and
                 // keep all following text verbatim, using this existing read.
@@ -912,8 +1054,11 @@ final class WeChatCompatibility {
         case "sentence_selected":
             let probe = client.probe()
             guard probe.selection == expectedRange,
-                  !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
-                  client.readText(in: expectedRange) == expectedBefore else { return }
+                  !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }
+            var proof = expectedBody ?? EditorTextRange(text: expectedBefore, range: expectedRange)
+            proof.readScope = .selected
+            do { try client.validateBody(proof, stage: "undo_sentence_selected") }
+            catch { fail(error.localizedDescription, code: "sentence_source_unconfirmed"); return }
             if replacement.isEmpty { key("delete", next: "sentence_written") }
             else {
                 client.commit(replacement)
@@ -922,13 +1067,22 @@ final class WeChatCompatibility {
         case "sentence_written":
             let probe = client.probe()
             guard probe.selection == NSRange(location: resultCaret, length: 0),
-                  !isValidRange(probe.markedRange) || probe.markedRange.length == 0,
-                  client.readText(in: NSRange(location: expectedRange.location, length: (replacement as NSString).length)) == replacement else { return }
+                  !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }
+            let proof = EditorTextRange(text: replacement, range: NSRange(location: expectedRange.location, length: replacement.utf16.count),
+                source: preservedTailSource ?? .imk, readScope: .before(replacement.utf16.count))
+            do { try client.validateBody(proof, stage: "undo_sentence_postwrite") }
+            catch { fail(error.localizedDescription, code: "sentence_restore_unconfirmed"); return }
             pending = false; stage = ""
         case "capture":
-            guard let whole = selectedDocument(), prefixOnly || isValidRange(expectedRange, length: (whole as NSString).length) else { return }
+            guard let whole = selectedDocument(source: expectedBody?.source), prefixOnly || isValidRange(expectedRange, length: (whole as NSString).length) else { return }
             guard pending, generation == token else { return }
             let selectedSource = prefixOnly ? whole : (whole as NSString).substring(with: expectedRange)
+            if let baseline = expectedBody, let selectedReceipt {
+                client.recordBodyValidation(stage: validationStage, baseline: baseline,
+                    observed: EditorTextRange(text: selectedSource,
+                        range: NSRange(location: expectedRange.location, length: selectedSource.utf16.count),
+                        source: selectedReceipt.source, readScope: prefixOnly ? .selected : nil), matches: selectedSource == expectedBefore)
+            }
             guard selectedSource == expectedBefore else {
                 readbackDiagnostics.merge(EditSourceComparison.diagnostics(
                     EditorTextRange(text: expectedBefore, range: expectedRange),

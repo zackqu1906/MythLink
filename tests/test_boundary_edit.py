@@ -18,7 +18,7 @@ def test_current_boundary_prompt_one_call_and_literal_body(target,body):
         '完成要求',settings(),target,{'topic':'上下文'},variant=ROUTED_EDIT_BOUNDARY)
     assert result==raw==body and plan is None and len(calls)==1
     assert calls[0]['input'][0]['content'][0]['text']==BOUNDARY_EDIT_PROMPT
-    assert BOUNDARY_EDIT_PROMPT_VERSION=='boundary-only-v3-final-requirements'
+    assert BOUNDARY_EDIT_PROMPT_VERSION=='boundary-only-v8-context-source-selection'
     assert json.loads(calls[0]['input'][1]['content'][0]['text'])==model_input
     assert model_input=={'utterance':'完成要求','editable_text':target,'screen_context':{'topic':'上下文'}}
     assert 'tools' not in calls[0] and calls[0]['thinking']=={'type':'disabled'}

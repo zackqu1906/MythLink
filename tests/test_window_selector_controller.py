@@ -72,7 +72,7 @@ def test_gestures_navigate_confirm_exact_window_and_never_start_voice(selector, 
     assert d.activated == [(10, d.b)] and hidden and not notices
     c._apply_gesture(old, c._disconnect_event)
     assert not sent and c.ringGestures.mode == mode
-    assert request(c, "double-tap")
+    assert request(c, "tap")
     assert all(t != threading.get_ident() for t in threads)
 
 

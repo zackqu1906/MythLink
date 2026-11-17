@@ -147,6 +147,10 @@ def _record_snapshot(store, identity):
                 name = _object(record.get(section)).get(field)
                 if name:
                     names[name] = True
+            for request in _object(record.get("llm")).get("requests", []):
+                name = _object(_object(request).get("saved_context_snapshot")).get("screenshot_file")
+                if name:
+                    names[name] = True
             files, warnings = {}, []
             for name, expected in names.items():
                 if not isinstance(name, str) or Path(name).name != name or name in {".", "..", "record.json"} or "\\" in name:

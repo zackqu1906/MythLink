@@ -23,8 +23,9 @@ def test_voice_configuration_navigation_and_voice_page_enable_state(mapping_ui):
     pointer_click(root, "openVoiceGestureSettingsButton")
     assert root.property("currentPage") == 1
     assert find(root, "voiceGestureBindingDialog").property("visible")
-    assert find(root, "voiceFunctionGestures_confirm").property("text") == "双击"
-    assert find(root, "voiceFunctionGestures_end").property("text") == "点击"
+    assert find(root, "voiceFunctionGestures_start_end").property("text") == "点击"
+    assert find(root, "voiceFunctionGestures_confirm").property("text") == "无"
+    assert find(root, "voiceFunctionGestures_end").property("text") == "无"
     for enabled in (False, True):
         c._recognition_enabled = enabled
         c.recognitionEnabledChanged.emit()
@@ -222,7 +223,10 @@ def test_v5_cards_show_saved_mapping_for_scope_and_single_double_trigger(mapping
     for key in ("tap", "double-tap"):
         pointer_click(root, "gestureSingle_tap" if key == "tap" else "gestureCard_double-tap")
         voice_label = find(root, "gestureVoiceMappingLabel_tap")
-        assert voice_label.isVisible() and voice_label.property("text") == c.voiceGestureAction(key)["label"]
+        if key == "tap":
+            assert voice_label.isVisible() and voice_label.property("text") == "开始 / 定稿"
+        else:
+            assert not voice_label.isVisible() and not c.voiceGestureAction(key)
     assert c.setVoiceGestureAction("snap", "start_end")
     QTest.qWait(40)
     assert find(root, "gestureVoiceMappingLabel_snap").property("text") == "开始 / 定稿"
@@ -275,7 +279,8 @@ def test_enabled_voice_bindings_are_visible_with_each_scopes_saved_functions(map
         assert left.x() + left.width() + 6 <= tap.x()
         assert tap.x() + tap.width() + 6 <= right.x()
         pointer_click(root, "gestureCard_double-tap")
-        assert find(root, "gestureVoiceMappingLabel_tap").property("text") == c.voiceGestureAction("double-tap")["label"]
+        assert not find(root, "gestureVoiceMappingLabel_tap").isVisible()
+        assert not c.voiceGestureAction("double-tap")
         pointer_click(root, "gestureSingle_tap")
     pointer_click(root, "gestureApplication_com.example.Other")
     c._recognition_enabled = False

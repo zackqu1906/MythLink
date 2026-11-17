@@ -8,6 +8,8 @@ from proximic_ring.text_processing.model import ROUTED_EDIT_BOUNDARY,ROUTED_EDIT
     ({},ROUTED_EDIT_SIX_CLASS),
     ({'input/routedEditVariant':ROUTED_EDIT_BOUNDARY},ROUTED_EDIT_BOUNDARY),
     ({'input/routedEditVariant':ROUTED_EDIT_SIX_CLASS},ROUTED_EDIT_SIX_CLASS),
+    ({'input/routedEditVariant':'general_only_v1'},'general_only_v1'),
+    ({'input/routedEditVariant':'general_full_v1'},'general_full_v1'),
     ({'input/routedEditVariant':'unknown-future-version'},ROUTED_EDIT_SIX_CLASS),
 ],indirect=['inline_ui'])
 def test_saved_or_missing_variant_loads_without_changing_mode(inline_ui,expected):
@@ -15,8 +17,8 @@ def test_saved_or_missing_variant_loads_without_changing_mode(inline_ui,expected
     c,_,_,root,_=inline_ui
     assert c.routedEditVariant==expected and c.inputRoutingMode=='manual'
     combo=root.findChild(QObject,'routedEditVariantCombo')
-    assert combo.property('count')==2
-    assert combo.property('currentIndex')==(1 if expected==ROUTED_EDIT_BOUNDARY else 0)
+    assert combo.property('count')==9
+    assert combo.property('currentIndex')=={ROUTED_EDIT_SIX_CLASS:0, ROUTED_EDIT_BOUNDARY:1, 'general_only_v1':2, 'general_full_v1':3}[expected]
 
 def test_settings_combo_changes_persistent_variant_and_renders(inline_ui,monkeypatch):
     from PySide6.QtCore import QObject,QMetaObject,Q_ARG,QSettings,QPointF
@@ -33,7 +35,7 @@ def test_settings_combo_changes_persistent_variant_and_renders(inline_ui,monkeyp
     row=root.findChild(QQuickItem,'routedEditVariantRow')
     combo=root.findChild(QObject,'routedEditVariantCombo')
     assert row.isVisible()
-    for index,value in [(1,ROUTED_EDIT_BOUNDARY),(0,ROUTED_EDIT_SIX_CLASS),(1,ROUTED_EDIT_BOUNDARY)]:
+    for index,value in [(1,ROUTED_EDIT_BOUNDARY),(0,ROUTED_EDIT_SIX_CLASS),(2,'general_only_v1'),(3,'general_full_v1'),(8,'general_no_spelling_polish_structure_v1'),(1,ROUTED_EDIT_BOUNDARY)]:
         combo.setProperty('currentIndex',index)
         assert QMetaObject.invokeMethod(combo,'activated',Q_ARG(int,index))
         assert c.routedEditVariant==value
@@ -50,7 +52,7 @@ def test_settings_combo_changes_persistent_variant_and_renders(inline_ui,monkeyp
     c.inputRoutingMode='manual_routed_edit';QTest.qWait(20)
     assert row.isVisible() and c.routedEditVariant==ROUTED_EDIT_BOUNDARY
 
-@pytest.mark.parametrize('variant',[ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS])
+@pytest.mark.parametrize('variant',[ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS,'general_only_v1','general_no_polish_v1'])
 def test_reexecution_uses_original_variant_after_setting_changes(inline_ui,monkeypatch,variant):
     c,_,requests,_,event=inline_ui
     context={'status':'ok','context':'当时上文'}

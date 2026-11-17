@@ -25,7 +25,7 @@ def test_three_lessons_follow_native_input_without_practice_capture(inline_ui):
     controller, bridge, _, _, event = inline_ui
     tutorial = start_lesson(controller, event)
     assert not controller.voicePractice.active
-    assert tutorial.hint["gestures"] == ["double-tap"]
+    assert tutorial.hint["gestures"] == ["tap"]
     begin_sentence(controller, event)
     assert tutorial.hint["id"] == "speak-0" and tutorial.hint["gestures"] == []
     event(ready=True, phase="listening", raw="下午三点")
@@ -58,7 +58,7 @@ def test_three_lessons_follow_native_input_without_practice_capture(inline_ui):
     event("settled", phase="dictated", text="下午三点开会。", revision=6)
     event(ready=True, phase="dictated", polished=True, revision=6)
     tutorial.advance()
-    assert tutorial._stage == 2 and tutorial.hint["gestures"] == ["double-tap"]
+    assert tutorial._stage == 2 and tutorial.hint["gestures"] == ["tap"]
     begin_sentence(controller, event, session=2)
     assert tutorial.hint["id"] == "speak-2" and tutorial.hint["gestures"] == []
     event(ready=True, phase="listening", raw="把三点改成四点")

@@ -20,7 +20,13 @@ def frozen_edit_request(request, result):
             return None
         context = PreparedContext()
         context.set_result(deepcopy(value))
-    return replace(request, settings=deepcopy(request.settings), screen_context=context,
+    from ...screenshots.context import resolve_saved_context
+    saved_context = None
+    if request.saved_context is not None:
+        if hasattr(request.saved_context, "done") and not request.saved_context.done():
+            return None
+        saved_context = resolve_saved_context(request.saved_context)
+    return replace(request, settings=deepcopy(request.settings), screen_context=context, saved_context=saved_context,
                    edit_plan=deepcopy(request.edit_plan))
 
 

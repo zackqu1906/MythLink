@@ -115,6 +115,10 @@ Thumbs.db
 !tools/data/
 tools/data/*
 !tools/data/README.md
+!tools/data/VOICE_EVAL_DATASET.md
+!tools/data/voice_eval_master.json
+!tools/data/voice_eval_subsets.json
+!tools/data/voice_eval_annotation_audit_20261117.json
 !tools/data/automatic_voice_routing_cases.json
 !tools/data/clef_cases.template.json
 !tools/data/clef_primary_validation_cases.json

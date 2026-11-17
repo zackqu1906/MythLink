@@ -58,7 +58,7 @@ def test_cancellation_drops_late_asr_and_queued_gestures(practice):
     assert not practice.active
     practice.setText("user draft")
     practice._apply_result(old, "dictation", "late response", "")
-    practice._apply_gesture(old, "double-tap")
+    practice._apply_gesture(old, "tap")
     assert practice.text == "user draft"
     assert not practice.recording
     assert not practice.consume_gesture(SimpleNamespace(name="tap"))
@@ -98,7 +98,7 @@ def test_full_recognition_polish_and_edit_are_local_and_undoable(practice, monke
     completed = []
     practice.completed.connect(completed.append)
     assert practice.arm()
-    assert practice.consume_gesture(SimpleNamespace(name="double-tap"))
+    assert practice.consume_gesture(SimpleNamespace(name="tap"))
     wait_for(lambda: practice.recording)
     voice(practice)
     assert practice.consume_gesture(SimpleNamespace(name="tap"))
@@ -170,7 +170,7 @@ def test_ring_gestures_work_after_audio_test(practice, monkeypatch):
     voice(practice)
     practice.finish()
     assert practice.arm()
-    practice.consume_gesture(SimpleNamespace(name="double-tap"))
+    practice.consume_gesture(SimpleNamespace(name="tap"))
     assert practice.recording and practice.mode == "dictation"
 
 

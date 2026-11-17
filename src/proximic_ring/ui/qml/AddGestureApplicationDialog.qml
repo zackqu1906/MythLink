@@ -6,6 +6,10 @@ FigmaDialog {
     id: dialog
     required property var catalog
     signal applicationAdded(string bundle)
+    signal applicationChosen(string bundle)
+    property bool selectionOnly: false
+    property string selectedBundle: ""
+    property string errorText: ""
     FigmaTheme { id: theme }
     property bool showAll: false
     readonly property string query: appSearch.text.trim().toLowerCase()
@@ -14,12 +18,12 @@ FigmaDialog {
     readonly property var results: showingRunning ? runningApps : catalog.candidates.filter(function(app) {
         return (app.search || (app.label + " " + app.value)).toLowerCase().indexOf(dialog.query) >= 0
     })
-    objectName: "addGestureApplicationDialog"
-    title: "添加应用"
+    objectName: selectionOnly ? "launchGestureApplicationDialog" : "addGestureApplicationDialog"
+    title: selectionOnly ? "选择要打开的应用" : "添加应用"
     padding: 20; topPadding: 0; bottomPadding: 0
     header: Label { text: dialog.title; leftPadding: 20; rightPadding: 20; topPadding: 20; bottomPadding: 12; font.family: theme.family; font.pixelSize: 18; font.weight: Font.Medium; color: theme.text }
     modal: true
-    onAboutToShow: { appSearch.text = ""; showAll = false; catalog.refreshApplications() }
+    onAboutToShow: { appSearch.text = ""; showAll = false; errorText = ""; catalog.refreshApplications() }
     onOpened: appSearch.forceActiveFocus()
     footer: Item {
         implicitHeight: 72
@@ -30,7 +34,7 @@ FigmaDialog {
         spacing: 12
         UiTextField {
             id: appSearch
-            objectName: "installedApplicationSearch"
+            objectName: dialog.selectionOnly ? "launchApplicationSearch" : "installedApplicationSearch"
             Layout.fillWidth: true; implicitHeight: 40
             hintText: "搜索本机应用"; placeholderText: hintText; font.family: theme.family; font.pixelSize: 16; font.weight: Font.Medium
             leftPadding: 16; rightPadding: 16; color: theme.text
@@ -38,16 +42,17 @@ FigmaDialog {
         }
         RowLayout {
             Layout.fillWidth: true
-            Label { objectName: "applicationResultsHeading"; text: dialog.query ? "搜索结果" : dialog.showingRunning ? "当前已打开" : "本机应用"; color: theme.text; font.pixelSize: 14; font.weight: Font.DemiBold }
+            Label { objectName: dialog.selectionOnly ? "launchApplicationResultsHeading" : "applicationResultsHeading"; text: dialog.query ? "搜索结果" : dialog.showingRunning ? "当前已打开" : "本机应用"; color: theme.text; font.pixelSize: 14; font.weight: Font.DemiBold }
             Label { text: dialog.results.length + " 个"; color: theme.muted; font.pixelSize: 12 }
             Item { Layout.fillWidth: true }
-            FigmaAction { objectName: "showAllInstalledApplications"; visible: dialog.showingRunning; text: "所有应用"; quiet: true; implicitHeight: 30; onClicked: dialog.showAll = true }
+            FigmaAction { objectName: dialog.selectionOnly ? "showAllLaunchApplications" : "showAllInstalledApplications"; visible: dialog.showingRunning; text: "所有应用"; quiet: true; implicitHeight: 30; onClicked: dialog.showAll = true }
             FigmaAction { text: dialog.catalog.listBusy ? "搜索中…" : "刷新"; quiet: true; implicitHeight: 30; enabled: !dialog.catalog.listBusy; onClicked: dialog.catalog.refreshApplications() }
         }
         UiNotice { Layout.fillWidth: true; visible: text.length > 0; text: dialog.catalog.listMessage; wrapMode: Text.Wrap; font.pixelSize: 12 }
+        UiNotice { objectName: dialog.selectionOnly ? "launchApplicationError" : "addApplicationError"; Layout.fillWidth: true; visible: text.length > 0; text: dialog.errorText; color: theme.warning; wrapMode: Text.Wrap; font.pixelSize: 12 }
         ListView {
             id: applicationList
-            objectName: "availableGestureApplications"
+            objectName: dialog.selectionOnly ? "availableLaunchApplications" : "availableGestureApplications"
             Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: Math.min(280, Math.max(88, contentHeight))
             clip: true; spacing: 12
             model: dialog.results
@@ -67,9 +72,13 @@ FigmaDialog {
                     }
                     FigmaAction {
                         readonly property bool added: dialog.catalog.apps.some(function(app) { return app.value === modelData.value })
-                        objectName: "addGestureApp_" + modelData.value
-                        text: added ? "选择" : "添加"; quiet: true; implicitHeight: 32; contentColor: theme.primary
+                        objectName: (dialog.selectionOnly ? "chooseLaunchApp_" : "addGestureApp_") + modelData.value
+                        text: dialog.selectionOnly ? (dialog.selectedBundle === modelData.value ? "已选择" : "选择") : added ? "选择" : "添加"; quiet: true; implicitHeight: 32; contentColor: theme.primary
                         onClicked: {
+                            if (dialog.selectionOnly) {
+                                dialog.applicationChosen(modelData.value)
+                                return
+                            }
                             if (dialog.catalog.addApplication(modelData.value)) {
                                 dialog.applicationAdded(modelData.value)
                                 dialog.close()

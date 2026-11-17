@@ -28,8 +28,12 @@ Rectangle {
         var voiceBindings = service.profiles
         return globalController.globalActionOptions(gesture)
     }
-    readonly property var saved: applicationScope ? (catalog.bindings[bundle] || {})[gesture] || null
-        : globalOptions.filter(function(a) { return editor.globalController.globalBindings[a.id] === editor.gesture })[0] || null
+    readonly property var saved: {
+        if (applicationScope) return (catalog.bindings[bundle] || {})[gesture] || null
+        var bindings = globalController.globalBindings
+        var action = globalController.globalBindingAction(gesture)
+        return action.id ? action : null
+    }
     readonly property string pendingDefault: applicationScope ? catalog.pendingBindings[gesture] || "" : ""
     readonly property string savedId: saved ? saved.id : ""
     readonly property string contextKey: applicationScope ? bundle + "/" + catalog.selectedScene + "/" + gesture : "global/" + gesture
@@ -56,6 +60,7 @@ Rectangle {
         if (action.category) return false
         if (selectedActionId === action.id) return true
         var selection = saved
+        if (action.applicationBundle) return Boolean(selection && selection.applicationBundle === action.applicationBundle)
         return Boolean(action.keyboardPreset && selection && ActionPresentation.presetFor(selection, Qt.platform.os)?.id === action.id)
     }
     readonly property var filteredActions: availableActions.filter(function(a) {
@@ -65,8 +70,7 @@ Rectangle {
     })
     readonly property var savedAction: saved ? availableActions.filter(function(a) { return a.id === editor.savedId })[0] || null : null
     readonly property string globalEffect: {
-        var action = globalOptions.filter(function(a) { return a.id === editor.savedId })[0]
-        return action ? action.effect : "选择后自动保存并生效。"
+        return saved && saved.effect ? saved.effect : "选择后自动保存并生效。"
     }
     readonly property string savedStatus: {
         if (!saved) return ""
@@ -132,6 +136,15 @@ Rectangle {
         if (!action && actionId !== "") { feedbackError = true; feedback = "此动作已不在当前菜单中，原绑定已保留。请刷新快捷键后重试。"; return }
         if (action && !actionEnabled(action)) return
         if (!editable) return
+        if (!applicationScope && actionId === "open_application") {
+            mappingMenu.close()
+            applicationDialog.open()
+            return
+        }
+        if (!applicationScope && action && action.applicationBundle) {
+            if (saveAction({id:"open_application", applicationBundle:action.applicationBundle})) mappingMenu.close()
+            return
+        }
         saveAction(action && action.keyboardPreset ? Object.assign({}, action, {newCustom:true}) : action || {id:"", label:"无"})
         mappingMenu.close()
     }
@@ -141,8 +154,23 @@ Rectangle {
         mappingMenu.close()
         return true
     }
-    onContextKeyChanged: { search.text = ""; category = "all"; feedback = ""; feedbackError = false; customDialog.close(); mappingMenu.close() }
-    onVisibleChanged: if (!visible) { mappingMenu.close(); customDialog.close() }
+    onContextKeyChanged: { search.text = ""; category = "all"; feedback = ""; feedbackError = false; customDialog.close(); applicationDialog.close(); mappingMenu.close() }
+    onVisibleChanged: if (!visible) { mappingMenu.close(); customDialog.close(); applicationDialog.close() }
+    AddGestureApplicationDialog {
+        id: applicationDialog
+        parent: Overlay.overlay
+        catalog: editor.catalog
+        selectionOnly: true
+        selectedBundle: editor.saved ? editor.saved.applicationBundle || "" : ""
+        width: Math.min(480, parent ? parent.width - 40 : 480)
+        height: Math.min(520, parent ? parent.height - 40 : 520, implicitHeight)
+        x: parent ? (parent.width - width) / 2 : 0
+        y: parent ? Math.max(20, (parent.height - height) / 2) : 0
+        onApplicationChosen: function(bundle) {
+            if (editor.saveAction({id:"open_application", applicationBundle:bundle})) applicationDialog.close()
+            else errorText = editor.feedback
+        }
+    }
     CustomShortcutDialog {
         id: customDialog
         parent: Overlay.overlay

@@ -75,7 +75,7 @@ def test_tutorial_renders_all_current_gestures_and_updates_when_they_are_removed
 
 def test_live_tutorial_does_not_suggest_an_unbound_start_or_polish_gesture(inline_ui):
     controller, _, _, _, event = inline_ui
-    assert controller.setVoiceGestureAction("double-tap", "")
+    assert controller.setVoiceGestureAction("tap", "")
     tutorial = start_lesson(controller, event)
     assert tutorial.hint["id"] == "unbound-confirm" and not tutorial.hint["gestures"]
     assert controller.setVoiceGestureAction("double-middle-pinch", "confirm")

@@ -84,7 +84,7 @@ func restoreUpdateSource(_ handoff: UpdateSourceHandoff, voiceIDs: Set<String>,
     }
     try select(handoff.originalSource)
     guard currentSource() == handoff.originalSource else {
-        throw SourceSelectionFailure("安装已完成，但系统尚未恢复 Mythlink 输入法；可手动选择或双击 tap 切入")
+        throw SourceSelectionFailure("安装已完成，但系统尚未恢复 Mythlink 输入法；可手动选择或触发开始语音手势切入")
     }
     return true
 }

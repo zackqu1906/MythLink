@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from ..text_processing.task_routing import EDIT_TASK_LABELS, LEGACY_EDIT_TASK_LABELS
-from ..text_processing.model import ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_VARIANT_LABELS, normalize_routed_edit_variant
+from ..text_processing.model import ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_VARIANT_LABELS, normalize_routed_edit_variant
 
 
 def local_artifact(directory: Path, filename):
@@ -125,7 +125,7 @@ def _routed_classification(request):
 
 
 def _edit_classification(request, *, routed, legacy_plan=None):
-    if routed and request.get('routed_edit_variant') == ROUTED_EDIT_BOUNDARY:
+    if routed and request.get('routed_edit_variant') in ROUTED_EDIT_BODY_VARIANTS:
         return '', ''
     labels = _tasks(request.get('edit_plan'))
     if labels:
@@ -212,8 +212,8 @@ def history_details(directory: Path, record: dict) -> dict:
         failed = bool(request.get('error') or request.get('status') == 'failed')
         key = 'llm_' + str(index)
         title = '编辑请求 ' + str(index + 1) if edit_record and len(requests) > 1 else ''
-        if routed and request.get('routed_edit_variant') == ROUTED_EDIT_BOUNDARY:
-            classifications.append(item(key, '无分类边界 v1 · 直接生成正文', title=title, model=model))
+        if routed and request.get('routed_edit_variant') in ROUTED_EDIT_BODY_VARIANTS:
+            classifications.append(item(key, ROUTED_EDIT_VARIANT_LABELS[request['routed_edit_variant']] + ' · 直接生成正文', title=title, model=model))
         elif classification:
             classifications.append(item(key, title=title, model=model,
                                         classificationText=classification, classificationNote=note))
@@ -323,6 +323,30 @@ def history_details(directory: Path, record: dict) -> dict:
     sections.append(screenshot_section)
     if preparation or edit_record:
         sections.append(context_section)
+    seen_saved = set()
+    for request in requests:
+        saved = _dict(request.get('saved_context_snapshot'))
+        if not saved:
+            continue
+        capture_id = saved.get('capture_id') or str(request.get('request_id'))
+        if capture_id in seen_saved:
+            continue
+        seen_saved.add(capture_id)
+        image = local_artifact(directory, saved.get('screenshot_file'))
+        image_url = image.resolve().as_uri() if image and image.suffix == '.png' else ''
+        key = 'saved_context_' + str(request.get('request_id'))
+        copied = saved.get('source') == 'copied_text'
+        if not copied:
+            sections.append(section(key + '_image', '本次编辑的保存截图参考', kind='image',
+                imageUrl=image_url, caption=saved.get('captured_at', ''),
+                errorText=_error(saved.get('screenshot_error'))))
+        text = (saved.get('text') if saved.get('status') == 'ok' else
+                '正在处理保存的截图…' if saved.get('status') == 'processing' else
+                saved.get('reason') or '没有可用的保存截图上下文')
+        cleanup = _dict(saved.get('cleanup'))
+        sections.append(section(key + '_text', '本次编辑的复制文本参考' if copied else '保存截图 · LLM 清理后的文字', [item(
+            key, text or '清理后没有完整内容', model=_model(cleanup.get('model'), cleanup.get('provider')),
+            latency=cleanup.get('latency_ms'))]))
     return {'summary': ' · '.join(v for v in ({'auto': '自动判断', 'manual_routed_edit': '手动＋编辑路由'}.get(mode.get('routing'), '手动转换'), outcome_label) if v),
             'outcomeError': outcome_error, 'outcomeTitle': outcome_label or '本次处理未完成',
             'warningText': warning, 'screenshotUrl': screenshot_url, 'screenshotText': caption, 'sections': sections}

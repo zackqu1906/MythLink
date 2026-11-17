@@ -232,14 +232,17 @@ UiScrollView {
                 }
                 ColumnLayout {
                     Layout.fillWidth: true; Layout.fillHeight: true; spacing: 8
-                    Label { Layout.preferredHeight: 24; verticalAlignment: Text.AlignVCenter; text: "虚拟文本框"; color: theme.text; font.pixelSize: 16 }
+                    Label { Layout.preferredHeight: 24; verticalAlignment: Text.AlignVCenter; text: "测试文本框"; color: theme.text; font.pixelSize: 16 }
                     VoicePracticeEditor {
                         Layout.fillWidth: true; Layout.fillHeight: true
-                        controller: page.controller
-                        practice: page.controller.voicePractice
                     }
                 }
             }
+        }
+        SavedScreenshotContextCard {
+            visible: page.historyOnly
+            width: parent.width
+            capture: page.controller.ringGestures.screenshot
         }
         Rectangle {
             id: voiceHistoryCard

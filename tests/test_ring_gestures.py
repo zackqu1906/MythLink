@@ -34,7 +34,7 @@ def test_retired_mode_gesture_never_toggles_or_blocks_native_start(route):
     c, _, _, _, sent, _, _ = route
     for _ in range(2):
         assert not request(c, "middle-pinch")
-        assert request(c, "double-tap")
+        assert request(c, "tap")
     assert not sent and "switch_mode" not in c.ringGestures.globalBindings
 
 
@@ -126,7 +126,7 @@ def test_lock_consumes_start_end_and_app_gestures_before_target_reads(route, mon
 
 @pytest.mark.parametrize("app_mapping", [False, True])
 @pytest.mark.parametrize("voice_override", [False, True])
-def test_real_runtime_gates_confirm_before_audio_and_keeps_input_double_tap_endpoint(route, monkeypatch, app_mapping, voice_override):
+def test_real_runtime_gates_confirm_before_audio_and_keeps_input_single_tap_endpoint(route, monkeypatch, app_mapping, voice_override):
     import proximic_ring.gestures.firmware_gestures as host
     c, _, inline, _, _, _, _ = route
     if app_mapping:
@@ -188,7 +188,7 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_double_tap_endp
                 monkeypatch.setattr(c._inline_input, 'capture_start_focus', lambda **_: InputFocus('text',
                     ('e', 'c', '', service.backend.target.bundle, service.backend.target.pid, (0, 0))))
                 gesture("middle-pinch")  # Retired mode switch does nothing.
-                gesture("double-tap")
+                gesture("tap")
                 assert gate.gesture_busy and not gate.active
                 QCoreApplication.processEvents()
             elif self.reads == 2:
@@ -224,4 +224,4 @@ def test_real_runtime_gates_confirm_before_audio_and_keeps_input_double_tap_endp
         gesture_filter=route_after_feedback)
     assert actions == []  # Focus routing queues non-endpoint gestures itself.
     assert len(finals) == len(started) == 1
-    assert detected == ["middle-pinch", "double-tap", "circle-clockwise", "tap"]
+    assert detected == ["middle-pinch", "tap", "circle-clockwise", "tap"]

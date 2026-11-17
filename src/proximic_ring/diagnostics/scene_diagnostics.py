@@ -131,6 +131,7 @@ MESSAGES = {
     'phase_blocked': '当前语音处理阶段暂不允许执行场景动作',
     'duplicate_suppressed': '短时间内重复触发，本次已忽略',
     'shortcut_posted': '快捷键已发送；目标应用是否响应尚未验证',
+    'application_open_failed': '无法打开所选应用，请确认应用仍已安装，或重新选择应用',
     'key_allocation_failed': '系统未能创建快捷键，请重试',
     'native_exception': '原生操作失败，请稍后重试',
     'channel_start_failed': '原生按键通道启动失败，请重试',

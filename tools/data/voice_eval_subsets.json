@@ -1,0 +1,87 @@
+{
+  "schema_version": "voice-eval-subset-definitions-v1",
+  "subsets": {
+    "binary_accuracy": {
+      "tasks": [
+        "binary"
+      ]
+    },
+    "six_class_accuracy": {
+      "tasks": [
+        "six_class"
+      ]
+    },
+    "editing_accuracy": {
+      "tasks": [
+        "editing"
+      ],
+      "kind": "single"
+    },
+    "character_clarification_editing": {
+      "tasks": [
+        "editing"
+      ],
+      "tags": [
+        "character_clarification"
+      ],
+      "kind": "single"
+    },
+    "character_clarification_positive": {
+      "tasks": [
+        "editing"
+      ],
+      "tags": [
+        "character_clarification"
+      ],
+      "clarification_role": "positive",
+      "kind": "single"
+    },
+    "character_clarification_binary": {
+      "tasks": [
+        "binary"
+      ],
+      "tags": [
+        "character_clarification"
+      ]
+    },
+    "multi_task_editing": {
+      "tasks": [
+        "editing"
+      ],
+      "tags": [
+        "multi_task"
+      ],
+      "kind": "single"
+    },
+    "editing_sequences": {
+      "tasks": [
+        "editing"
+      ],
+      "kind": "sequence"
+    },
+    "fine_22_accuracy": {
+      "tasks": [
+        "fine_22"
+      ]
+    },
+    "saved_context_editing": {
+      "tasks": [
+        "editing"
+      ],
+      "tags": [
+        "saved_context"
+      ],
+      "kind": "single"
+    },
+    "saved_news_email": {
+      "tasks": [
+        "editing"
+      ],
+      "tags": [
+        "saved_context",
+        "news_summary"
+      ],
+      "kind": "single"
+    }
+  }
+}

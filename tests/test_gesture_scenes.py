@@ -557,7 +557,7 @@ def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exi
                 QCoreApplication.processEvents()
                 assert sent == [(POWERPOINT, "Escape")] and not gate.gesture_busy and not started
                 backend.target = replace(backend.target, scene="", input_context="text")
-                gesture("double-tap")
+                gesture("tap")
                 assert gate.gesture_busy
             elif self.reads == 2:
                 assert gate.active and len(started) == 1

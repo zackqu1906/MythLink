@@ -13,7 +13,7 @@ def test_input_hints_never_show_global_or_application_actions():
     view = hint_view("input", [row("swipe-left", "上一页")], globals)
     actions = {orb["key"]: orb["action"] for orb in view["orbs"]}
     assert actions == {"swipe-left": "撤销", "swipe-right": "编辑 / 下一步", "swipe-up": "发送",
-                       "swipe-down": "润色本句", "double-tap": "开始语音", "tap": "结束语音"}
+                       "swipe-down": "润色本句", "tap": "开始 / 定稿"}
     assert all(orb["scope"] == "mode" for orb in view["orbs"])
     assert view["modeTitle"] == "输入中"
 
@@ -21,12 +21,12 @@ def test_input_hints_never_show_global_or_application_actions():
 def test_outside_hints_follow_defaults_and_explicit_unbindings():
     view = hint_view("operation")
     keys = {orb["key"] for orb in view["orbs"]}
-    assert keys == {"double-tap", "clench", "index-pinch", "swipe-up", "swipe-down", "double-index-pinch"}
+    assert keys == {"tap", "clench", "index-pinch", "swipe-up", "swipe-down", "double-index-pinch"}
     assert view["overflow"] == 1  # Agent remains configured beyond the six visible hints.
     assert view["modeTitle"] == "应用手势"
     bindings = GlobalGestureBindings(scroll_up="", scroll_down="").as_dict()
     assert {orb["key"] for orb in hint_view("operation", global_bindings=bindings)["orbs"]} == {
-        "double-tap", "clench", "index-pinch", "double-index-pinch", "double-middle-pinch"}
+        "tap", "clench", "index-pinch", "double-index-pinch", "double-middle-pinch"}
 
 
 def test_disabled_redo_keeps_the_original_input_hint():

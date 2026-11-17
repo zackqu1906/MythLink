@@ -144,7 +144,11 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(shots / f'home-input-method-update-{size[0]}.png'))
-    assert not button.property('visible')
+    assert button.property('visible') and button.property('text') == '立即更新'
+    # Home uses the same installer guard and explains why a live input blocks updating.
+    QMetaObject.invokeMethod(button, 'click')
+    assert not controller.inlineInput.installing
+    assert '先结束当前语音' in notice.property('message')
     QMetaObject.invokeMethod(root.findChild(QObject, 'runtimeSettingsButton'), 'click')
     QTest.qWait(160)
     dialog = root.findChild(QObject, 'runtimeSettingsDialog')
@@ -153,8 +157,13 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     QMetaObject.invokeMethod(dialog, 'close')
     QTest.qWait(160)
     controller.inlineInput._installing = True
+    controller.inlineInput._installation_message = '正在更新输入法…'
     controller.inlineInput.changed.emit()
     assert not button.property('enabled')
+    assert button.property('text') == '处理中…'
+    assert notice.property('message') == '正在更新输入法…'
+    controller.inlineInput._installation_finished('安装未完成：测试更新失败')
+    assert button.property('enabled') and '测试更新失败' in notice.property('message')
     # A success message alone must not hide a still-outdated installed bundle.
     controller.inlineInput._installation_finished('已安装并启用')
     assert notice.property('visible')
@@ -174,5 +183,6 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     shutil.rmtree(value.destination)
     root.setProperty('currentPage', 0)
     assert notice.property('visible') and '尚未安装' in notice.property('message')
-    assert not button.property('visible')
+    assert button.property('visible') and button.property('text') == '立即安装'
+    assert notice.property('message') == '语音输入法尚未安装。'
     assert not calls

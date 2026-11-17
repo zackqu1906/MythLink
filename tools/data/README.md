@@ -1,4 +1,20 @@
-# Clef 测试样例
+# 语音测试数据
+
+## 当前唯一维护入口
+
+新增、修正和标签维护统一进入 [`voice_eval_master.json`](voice_eval_master.json)。二分类、六类多标签分类、编辑正文和释字等专项集通过 `tools/voice_eval_dataset.py` 筛选生成；听写样例不会进入编辑测试。
+
+```sh
+python3 tools/voice_eval_dataset.py validate
+python3 tools/voice_eval_dataset.py refresh --output-dir /tmp/voice-eval
+python3 tools/voice_eval_dataset.py export --task editing --kind single --tag 释字 --clarification-role positive --output /tmp/clarification.json
+```
+
+完整字段说明、新增／修改命令、评分约定和旧工具适配见 [`VOICE_EVAL_DATASET.md`](VOICE_EVAL_DATASET.md)。[`voice_eval_subsets.json`](voice_eval_subsets.json) 只维护专项集查询条件。下文旧文件与命令保留供历史实验复现，后续不要在各旧文件分别加题。
+
+2026-11-17 已逐条复核 675 条主数据，修订版 2 的结论及修改前后值见 [`voice_eval_annotation_audit_20261117.json`](voice_eval_annotation_audit_20261117.json)。
+
+## 历史 Clef 测试样例
 
 样例独立于测试程序。直接增删 JSON 数组中的对象即可；不用改 Python。
 

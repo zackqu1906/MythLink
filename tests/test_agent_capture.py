@@ -67,11 +67,11 @@ def ready(capture):
     assert capture.phase == 'locating', capture.agent.errorMessage
 
 
-def draw(capture):
+def select_region(capture):
     x, y, _, _ = capture.windows[0].spec['geometry']
-    capture.tap(0, x + 50, y + 40)
+    capture.select_point(0, x + 50, y + 40)
     capture.move(x + 150, y + 40); capture.move(x + 150, y + 140)
-    capture.tap(0, x + 50, y + 100)
+    capture.select_point(0, x + 150, y + 140)
     assert capture.phase == 'preview'
 
 
@@ -91,7 +91,7 @@ def test_button_trace_preview_attach_and_explicit_send(capture):
     # Swipes cannot confirm before a complete selection exists.
     assert agent.filter_gesture(SimpleNamespace(name=gesture), owner._disconnect_event)
     QTest.qWait(10); assert cap.phase == 'locating'
-    draw(cap)
+    select_region(cap)
     assert agent.filter_gesture(SimpleNamespace(name=gesture), owner._disconnect_event)
     QTest.qWait(30)
     assert not cap.active and not sent and not agent.pickingAttachments
@@ -110,34 +110,33 @@ def test_cancel_redraw_stale_swipe_and_original_turn(capture):
     owner, cap, _, sent, root = capture; agent = owner.agent
     agent.workspace.update({'turnId': 'original'})
     cap.start('task'); ready(cap)
-    cap.tap(0, 50, 40); cap.move(150, 140)
+    cap.select_point(0, 50, 40); cap.move(150, 140)
     old_context = cap.context
-    cap.tap(0, 50, 140)
+    cap.select_point(0, 150, 140)
     cap._handle_input(old_context, 'swipe-right', None, time.monotonic())
     assert cap.active and cap.phase == 'preview'
     cap.reset(); assert cap.phase == 'locating' and cap.selection is None
-    draw(cap)
+    select_region(cap)
     agent.workspace.update({'turnId': 'next'})
     cap.confirm(); QTest.qWait(10)
     with pytest.raises(ValueError, match='原任务已结束'): agent.workspace.submission('task')
     assert not sent
     agent.workspace.remove_attachment('task', agent.inputAttachments[0]['path'])
     existing = list(root.rglob('*.png'))
-    cap.start('task'); ready(cap); draw(cap); cap.cancel()
+    cap.start('task'); ready(cap); select_region(cap); cap.cancel()
     assert list(root.rglob('*.png')) == existing
 
 
-@pytest.mark.parametrize('phase', ['drawing', 'preview'])
+@pytest.mark.parametrize('phase', ['selecting', 'preview'])
 @pytest.mark.parametrize('input_kind', ['ring', 'keyboard'])
-def test_left_clears_selection_then_exits_down_does_not_attach(capture, phase, input_kind):
+def test_left_exits_immediately_down_does_not_attach(capture, phase, input_kind):
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     owner, cap, overlay, sent, root = capture
     owner.agent.edit('task', '保留草稿')
     cap.start('task'); ready(cap)
-    frame = cap.windows[0].image
-    if phase == 'preview': draw(cap)
-    else: cap.tap(0, 50, 40); cap.move(150, 140)
+    if phase == 'preview': select_region(cap)
+    else: cap.select_point(0, 50, 40); cap.move(150, 140)
     def send(direction):
         if input_kind == 'ring':
             assert owner.agent.filter_gesture(SimpleNamespace(name='swipe-' + direction), owner._disconnect_event)
@@ -145,10 +144,6 @@ def test_left_clears_selection_then_exits_down_does_not_attach(capture, phase, i
         QTest.qWait(20)
     send('down')
     assert cap.phase == phase and not owner.agent.inputAttachments
-    send('left')
-    assert cap.active and cap.phase == 'locating' and cap.selection is None
-    assert cap.selected_screen == -1 and cap.windows[0].image is frame
-    assert owner.agent.pickingAttachments and '左滑退出' in cap.notice
     send('left')
     assert not cap.active and not owner.agent.pickingAttachments
     assert overlay.windows['task'].isVisible() and owner.agent.draft('task') == '保留草稿'
@@ -172,7 +167,7 @@ def test_left_without_selection_exits_and_invalidates_pending_capture(capture):
 
 def test_toolbar_avoids_dock_and_work_area_changes_keep_selection(capture):
     _, cap, _, _, _ = capture
-    cap.start('task'); ready(cap); draw(cap)
+    cap.start('task'); ready(cap); select_region(cap)
     window = cap.windows[0]; selection = cap.selection
     sx, sy, width, height = window.spec['geometry']
     for dock_height in (0, 80, 150):
@@ -205,7 +200,7 @@ def test_late_worker_and_permission_failure_restore_task(capture, monkeypatch):
 
 
 def test_existing_pointer_is_reused_tap_deduplicated_and_context_released(capture):
-    from PySide6.QtCore import QPoint
+    from PySide6.QtCore import QPoint, Qt
     from PySide6.QtGui import QCursor
     from PySide6.QtTest import QTest
     from test_ui_touchpad import prepare
@@ -216,15 +211,18 @@ def test_existing_pointer_is_reused_tap_deduplicated_and_context_released(captur
     original_context = output.options['click_context']()
     cap.start('task'); ready(cap)
     assert len(source.starts) == 1 and pointer._run.output is output
-    assert output.options['click_context']() == cap.context
+    assert output.options['click_context']() == cap.pointer_context
     QCursor.setPos(QPoint(50, 40))
     owner.agent.filter_gesture(SimpleNamespace(name='tap'), owner._disconnect_event)
     QTest.qWait(10); assert cap.phase == 'locating'  # Duplicate firmware tap ignored.
-    output.options['on_capture_click'](cap.context); QTest.qWait(10)
-    assert cap.phase == 'drawing'
-    cap.move(150, 140)
-    output.options['on_capture_click'](cap.context); QTest.qWait(10)
+    output.options['on_capture_click'](cap.pointer_context); QTest.qWait(10)
+    assert cap.phase == 'selecting'  # One SDK tap fixes exactly one corner.
+    window = cap.windows[0]
+    pointer_context = cap.pointer_context
+    QTest.mouseMove(window, QPoint(150, 140))
+    QTest.mouseClick(window, Qt.LeftButton, pos=QPoint(150, 140))
     assert cap.phase == 'preview' and not pointer.strokeSession.engaged
+    assert cap.pointer_context == pointer_context
     cap.cancel()
     assert pointer.active and source.stops == 0 and pointer._capture_target is None
     assert output.options['click_context']() != original_context
@@ -255,14 +253,12 @@ def test_cancel_button_escape_and_display_change_do_not_save(capture):
     window = cap.windows[0]
     buttons = window.findChildren(QPushButton)
     assert len(buttons) == 2 and all('Esc' not in button.text() for button in buttons)
-    assert window.back.text() == '← 退出截图' and window.confirm.text() == '发送 →'
-    draw(cap)
-    assert window.back.text() == '← 取消选区'
-    QTest.mouseClick(window.back, Qt.LeftButton)
-    assert cap.active and cap.selection is None and window.back.text() == '← 退出截图'
+    assert window.back.accessibleName() == '退出截图' and window.confirm.text() == '加入输入框 →'
+    assert window.back.text() == '← 左滑退出'
+    select_region(cap)
     QTest.mouseClick(window.back, Qt.LeftButton)
     assert not cap.active
-    cap.start('task'); ready(cap); draw(cap)
+    cap.start('task'); ready(cap); select_region(cap)
     QTest.keyClick(cap.windows[0], Qt.Key_Escape)
     assert not cap.active
     cap.start('task'); ready(cap); cap._screen_changed()

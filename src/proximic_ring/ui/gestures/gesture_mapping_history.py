@@ -61,6 +61,8 @@ class GestureMappingHistory(QObject):
         try:
             if scope == "voice":
                 success = self.owner.setVoiceGestureAction(gesture, action.get("voiceAction", ""))
+            elif scope == "global" and action.get("id") == "open_application":
+                success = ring.setGlobalApplicationBinding(gesture, action.get("applicationBundle", ""))
             elif action.get("newCustom"):
                 success = (catalog.setCustomBinding(bundle, gesture, action["label"], action["shortcut"])
                            if scope == "application" else ring.setGlobalCustomBinding(gesture, action["label"], action["shortcut"]))

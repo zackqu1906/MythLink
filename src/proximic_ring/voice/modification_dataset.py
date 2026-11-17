@@ -770,7 +770,9 @@ class ModificationDatasetCollector:
             routed_edit = routing == INPUT_ROUTING_ROUTED_EDIT and mode == "edit"
             variant = normalize_routed_edit_variant(getattr(request, "routed_edit_variant", ""))
             if routed_edit:
-                model_input = routed_edit_model_input(raw_text, target_text, context)
+                saved_context = getattr(request, "saved_context", None)
+                model_input = routed_edit_model_input(raw_text, target_text, context,
+                    dict(saved_context) if isinstance(saved_context, dict) else None)
             elif task_type == "dictation":
                 model_input = dictation_model_input(raw_text, context)
             elif task_type == "edit":
@@ -819,6 +821,47 @@ class ModificationDatasetCollector:
                     "mode": mode,
                 },
             )
+        if routed_edit and getattr(request, "saved_context", None) is not None:
+            self.record_saved_context(interaction_id, request_id, request.saved_context)
+
+    def record_saved_context(self, interaction_id, request_id, context):
+        """Pin image and cleanup evidence to this request, even after replacement."""
+        with self._lock:
+            generation = self._screen_generation
+            self._update_llm_request_locked(interaction_id, request_id,
+                {"saved_context_snapshot": {"status": "processing"}})
+
+        def completed(future):
+            try:
+                value = future.result() if hasattr(future, "result") else future
+            except Exception as exc:
+                value = {"status": "unavailable", "reason": str(exc)}
+            with self._lock:
+                if (generation != self._screen_generation or interaction_id in self._deleted_interactions
+                        or not self._interaction_path(interaction_id).is_file()):
+                    return
+                evidence = getattr(value, "evidence", {})
+                saved = {**evidence.get("saved_screenshot", {}), **dict(value)}
+                png = evidence.get("screenshot_png")
+                capture_id = str(value.get("capture_id", ""))
+                if isinstance(png, bytes) and png and re.fullmatch(r"[a-f0-9]{32}", capture_id):
+                    filename = f"saved-screen-{capture_id}.png"
+                    path = self._interaction_dir(interaction_id) / filename
+                    try:
+                        temporary = path.with_suffix(".png.tmp")
+                        temporary.write_bytes(png)
+                        temporary.replace(path)
+                        saved["screenshot_file"] = filename
+                    except OSError as exc:
+                        saved["screenshot_error"] = str(exc)
+                self._update_llm_request_locked(interaction_id, request_id,
+                    {"saved_context_snapshot": saved, "saved_context": dict(value)})
+                self._publish_history_locked(interaction_id, force=True)
+
+        if hasattr(context, "add_done_callback"):
+            context.add_done_callback(completed)
+        else:
+            completed(context)
 
     def record_llm_result(self, request_id: int, result) -> None:
         with self._lock:
@@ -860,9 +903,9 @@ class ModificationDatasetCollector:
                     updates["input"] = model_input
                     updates["screen_context"] = model_input.get("screen_context")
             if routed_edit:
-                from ..text_processing.model import ROUTED_EDIT_BOUNDARY, normalize_routed_edit_variant
+                from ..text_processing.model import ROUTED_EDIT_BODY_VARIANTS, normalize_routed_edit_variant
                 variant = normalize_routed_edit_variant(getattr(result, "routed_edit_variant", ""))
-                classification_type = "not_applicable" if variant == ROUTED_EDIT_BOUNDARY else "llm_single_pass"
+                classification_type = "not_applicable" if variant in ROUTED_EDIT_BODY_VARIANTS else "llm_single_pass"
                 plan = result.edit_plan.as_dict() if result.edit_plan else None
                 updates.update(edit_plan=plan, classification_type=classification_type, task_type="edit",
                                routed_edit_variant=variant)

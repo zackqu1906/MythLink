@@ -118,9 +118,8 @@ def reserve_ring_profiles(profiles, reserved=frozenset()):
 
 
 def migrate_voice_defaults(bindings: GestureBindings) -> GestureBindings:
-    # Split the shipped single-tap toggle into double-tap start and tap end.
+    # Retire legacy aliases without changing the saved start/end choices.
     return replace(bindings,
-                   confirm=("double-tap", "") if bindings.confirm == ("tap", "") else bindings.confirm,
                    undo=("swipe-left", "") if bindings.undo == ("swipe-left", "swipe-down") else bindings.undo,
                    switch_mode=("swipe-right", "") if bindings.switch_mode == ("swipe-right", "swipe-up") else bindings.switch_mode,
                    send=("swipe-up", "") if not any(bindings.send) and bindings.switch_mode == ("swipe-right", "swipe-up") else bindings.send,

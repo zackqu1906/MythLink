@@ -31,6 +31,167 @@ def setup_probe(reply=None):
     return bridge, data, select
 
 
+@pytest.fixture
+def focus_clock(monkeypatch):
+    from proximic_ring.voice.ime import focus_probe
+    clock = SimpleNamespace(now=10.0)
+    clock.monotonic = lambda: clock.now
+    clock.sleep = lambda seconds: setattr(clock, 'now', clock.now + seconds)
+    monkeypatch.setattr(focus_probe, 'time', clock)
+    return clock
+
+
+@pytest.mark.parametrize('selection_delay', [.78, 1.15])
+def test_cold_activation_leaves_time_for_fresh_focus(focus_clock, selection_delay):
+    # Recorded startup: connection at ~780 ms, prepared client at ~815 ms.
+    # The old shared 800 ms deadline reports an error before that valid reply.
+    bridge = SimpleNamespace(epoch='', connected=False)
+    selected, queries = [], []
+    started = focus_clock.now
+    def select(pid, *, timeout):
+        selected.append(pid)
+        focus_clock.sleep(min(selection_delay, timeout))
+        if selection_delay >= timeout:
+            raise TimeoutError
+        bridge.connected, bridge.epoch = True, 'e'
+    def reply(*, timeout):
+        queries.append(timeout)
+        if focus_clock.now < started + selection_delay + .035:
+            return {'ready': False, 'client_id': '', 'application': ''}
+        return state()
+    bridge.focus_state = reply
+    proof = probe_input_focus(bridge, lambda: FRONT, select)
+    assert proof.status == 'text', proof
+    assert proof.target == ('e', 'c', '', BUNDLE, 42, (3, 0))
+    assert proof.elapsed_ms >= (selection_delay + .035) * 1000
+    assert selected == [42] and all(0 < wait <= .2 for wait in queries)
+
+
+@pytest.mark.parametrize('response', ['disconnected', 'inactive', 'silent', 'late_ready'])
+def test_activation_wait_has_a_fixed_total_deadline(focus_clock, response):
+    bridge, _, _ = setup_probe()
+    selected, queries = [], []
+    def select(pid, *, timeout):
+        selected.append(pid)
+        assert timeout == pytest.approx(1.5)
+        focus_clock.sleep(1.45)
+        bridge.connected = response != 'disconnected'
+        bridge.epoch = 'e' if bridge.connected else ''
+    def reply(*, timeout):
+        queries.append(timeout)
+        focus_clock.sleep(timeout)
+        if not selected or response == 'inactive':
+            return {'ready': False, 'client_id': '', 'application': ''}
+        return state() if response == 'late_ready' and focus_clock.now >= 12.3 else None
+    bridge.focus_state = reply
+    proof = probe_input_focus(bridge, lambda: FRONT, select)
+    if response == 'disconnected':
+        assert proof.reason == 'foreground_or_connection_changed'
+    else:
+        assert proof.reason == 'input_method_timeout'
+        assert proof.elapsed_ms == pytest.approx(2300)
+    assert proof.target is None and selected == [42]
+    assert all(0 < wait <= .2 for wait in queries)
+
+
+def test_source_selection_receipt_does_not_mean_process_or_client_is_ready(focus_clock):
+    class ColdBridge:
+        @property
+        def connected(self):
+            return focus_clock.now >= 11.05
+
+        @property
+        def epoch(self):
+            return 'e' if self.connected else ''
+
+        def focus_state(self, **_):
+            return state() if focus_clock.now >= 11.1 else None
+    selected = []
+    def select(pid, **_):
+        selected.append(pid)
+        focus_clock.sleep(.02)
+    proof = probe_input_focus(ColdBridge(), lambda: FRONT, select)
+    assert proof.status == 'text', proof
+    assert 1100 <= proof.elapsed_ms < 1200 and selected == [42]
+
+
+def test_new_source_that_never_connects_stops_at_total_deadline(focus_clock):
+    bridge = SimpleNamespace(epoch='', connected=False)
+    selected = []
+    def select(pid, **_):
+        selected.append(pid)
+        focus_clock.sleep(.3)
+    proof = probe_input_focus(bridge, lambda: FRONT, select)
+    assert proof.reason == 'input_method_timeout' and proof.elapsed_ms == pytest.approx(2300)
+    assert selected == [42]
+
+
+def test_source_selection_cannot_overrun_its_budget_with_a_ready_reply(focus_clock):
+    bridge, _, _ = setup_probe({'ready': False, 'client_id': '', 'application': ''})
+    def select(*_, timeout):
+        focus_clock.sleep(timeout + .01)
+        bridge.focus_state = lambda **_: pytest.fail('queried after activation expired')
+    assert probe_input_focus(bridge, lambda: FRONT, select).reason == 'input_method_timeout'
+
+
+@pytest.mark.parametrize('change', ['app', 'pid', 'epoch'])
+def test_target_change_during_extended_activation_wait_cancels(focus_clock, change):
+    bridge, data, _ = setup_probe({'ready': False, 'client_id': '', 'application': ''})
+    def select(*_, **__):
+        focus_clock.sleep(1.1)
+        if change == 'app': data['front'] = ('other', 42)
+        if change == 'pid': data['front'] = (BUNDLE, 43)
+        if change == 'epoch': bridge.epoch = 'new'
+        bridge.focus_state = lambda **_: pytest.fail('queried changed target')
+    proof = probe_input_focus(bridge, lambda: data['front'], select)
+    assert proof.reason == 'foreground_or_connection_changed' and proof.target is None
+
+
+@pytest.mark.parametrize('conflicting_binding', [False, True])
+def test_slow_focus_confirmation_starts_proof_age_when_ready(route, monkeypatch, focus_clock,
+                                                           conflicting_binding):
+    from proximic_ring.ui.gestures import ring_gesture_controller, app_gesture_controller
+    c, service, inline, backend, sent, messages, _ = route
+    assert c.setGestureBinding('confirm', 0, 'tap')
+    if conflicting_binding:
+        assert configure(service, monkeypatch, backend.target.bundle).setBinding(
+            backend.target.bundle, 'tap', ACTION['id'])
+    monkeypatch.setattr(ring_gesture_controller, 'time', focus_clock)
+    monkeypatch.setattr(app_gesture_controller, 'time', focus_clock)
+    target = ('e', 'c', '', backend.target.bundle, backend.target.pid, (3, 0))
+    def capture(**_):
+        focus_clock.sleep(1.2)
+        return InputFocus('text', target, elapsed_ms=1200)
+    monkeypatch.setattr(inline, 'capture_start_focus', capture)
+    assert request(c, 'tap', deliver=False)
+    assert inline._pending_gesture_focus == (target, focus_clock.now)
+    assert not sent and not messages
+
+
+@pytest.mark.parametrize('change', ['none', 'queue_delay', 'settings'])
+def test_slow_outside_focus_keeps_dispatch_expiry_and_generation(route, monkeypatch, focus_clock, change):
+    from proximic_ring.ui.gestures import app_gesture_controller
+    c, service, inline, backend, _, _, _ = route
+    assert c.setGestureBinding('confirm', 0, 'tap')
+    assert configure(service, monkeypatch, backend.target.bundle).setBinding(
+        backend.target.bundle, 'tap', ACTION['id'])
+    monkeypatch.setattr(app_gesture_controller, 'time', focus_clock)
+    capture = inline.capture_start_focus
+    backend.target = replace(backend.target, input_context='nontext')
+    def slow_capture(**options):
+        focus_clock.sleep(1.2)
+        if change == 'settings':
+            service._generation += 1
+        return capture(**options)
+    monkeypatch.setattr(inline, 'capture_start_focus', slow_capture)
+    event = service.envelope(SimpleNamespace(name='tap'))
+    assert event.route == 'outside'
+    if change == 'queue_delay':
+        focus_clock.sleep(1.01)
+    assert service._override_stop_reason(event) == {
+        'none': '', 'queue_delay': 'event_expired', 'settings': 'settings_changed'}[change]
+
+
 def test_idle_live_focus_needs_neither_sentence_nor_source_switch():
     bridge, data, select = setup_probe()
     proof = probe_input_focus(bridge, lambda: data['front'], select)
@@ -42,7 +203,7 @@ def test_unselected_source_is_selected_before_fresh_focus_query():
     bridge, data, select = setup_probe({'ready': False, 'client_id': '', 'application': ''})
     proof = probe_input_focus(bridge, lambda: data['front'], select)
     assert proof.status == 'text'
-    assert data['selected'][0][0] == 42 and 0 < data['selected'][0][1]['timeout'] <= .8
+    assert data['selected'][0][0] == 42 and 0 < data['selected'][0][1]['timeout'] <= 1.5
 
 
 def test_source_recovery_cannot_retarget_a_user_app_switch():

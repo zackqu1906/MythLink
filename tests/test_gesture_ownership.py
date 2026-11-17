@@ -31,7 +31,7 @@ def test_app_binding_can_share_every_input_or_global_gesture_without_disabling_v
     assert not catalog.voice_overridden(BUNDLE) and not catalog.voice_disabled_bundles()
     assert not catalog.voiceOverrideNotice
     backend.target = replace(backend.target, focus="composer", role="AXTextArea", input_context="text")
-    assert request(c, "double-tap")
+    assert request(c, "tap")
     assert len(sent) == 1
 
 

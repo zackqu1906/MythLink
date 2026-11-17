@@ -32,13 +32,20 @@ UiScrollView {
             objectName: "homeInputMethodNotice"
             Layout.fillWidth: true
             readonly property string versionState: page.controller.inlineInput.inputMethodVersion.state
+            property bool installationRequested: false
+            onVersionStateChanged: installationRequested = false
             visible: page.controller.inlineInput.enabled
                      && (versionState === "outdated" || versionState === "not_installed" || versionState === "needs_build")
-            message: page.controller.inlineInput.installing ? "正在更新语音输入法…"
-                     : versionState === "not_installed" ? "语音输入法尚未安装，请在设置的“系统与权限”中安装。"
-                     : "语音输入法待更新，请在设置的“系统与权限”中更新。"
-            actionText: ""
+            message: page.controller.inlineInput.installing ? page.controller.inlineInput.installationMessage
+                     : (versionState === "not_installed" ? "语音输入法尚未安装。" : "语音输入法待更新。")
+                       + (installationRequested ? "\n" + page.controller.inlineInput.installationMessage : "")
+            actionText: page.controller.inlineInput.installing ? "处理中…"
+                        : versionState === "not_installed" ? "立即安装" : "立即更新"
             enabled: !page.controller.inlineInput.installing
+            onActivated: {
+                installationRequested = true
+                page.controller.inlineInput.installInputMethod()
+            }
         }
         ColumnLayout {
             objectName: "homePermissionNotices"

@@ -10,6 +10,8 @@ def feedback_block_reason(controller, *, suggestion=None):
         return "voice_interaction"
     if controller.ringGestures.windowSelector.phase != "closed":
         return "window_selector"
+    if getattr(getattr(controller, 'touchpad', None), '_capture_target', None) is not None:
+        return "screen_capture"
     if controller.appGestures.recording:
         return "shortcut_recording"
     if suggestion is not None and suggestion.visible:

@@ -227,7 +227,7 @@ Item {
             Text {
                 id: caption
                 anchors.centerIn: parent
-                text: root.deferred ? "地址栏 · Tap 聚焦" : "输入框 "+(root.selected+1)+" / "+root.candidates.length+" · 双击 Tap 语音"
+                text: root.deferred ? "地址栏 · Tap 聚焦" : "输入框 "+(root.selected+1)+" / "+root.candidates.length+" · 使用开始语音手势输入"
                 color: "#CFFAFE"; font.pixelSize: 12; font.weight: Font.DemiBold
             }
         }

@@ -28,6 +28,13 @@ xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -fra
   "$TASK_ROOT/native/ProxiMicInput/Sources/ActionPanel.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Tests/ActionPanel/main.swift" -o "$BUILD_ROOT/panel-presentation-tests"
 "$BUILD_ROOT/panel-presentation-tests"
+xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" -framework AppKit \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/InputPaletteStyle.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/VoiceHudBindings.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/VoiceHudViews.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/ClipboardSuggestion.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Tests/ClipboardSuggestion/main.swift" -o "$BUILD_ROOT/clipboard-suggestion-tests"
+"$BUILD_ROOT/clipboard-suggestion-tests"
 xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CompositionSession.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Tests/main.swift" -o "$BUILD_ROOT/transaction-tests"
@@ -57,6 +64,7 @@ xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/NativePrefixSelection.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/EditorContextReader.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CaretDiagnostics.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/ClipboardBodyRead.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/InputClient.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Tests/InputAdapter/main.swift" -o "$BUILD_ROOT/input-adapter-tests"
 "$BUILD_ROOT/input-adapter-tests"

@@ -217,7 +217,7 @@ class BrowserExtensionController(QObject):
         try:
             # Use the existing eager macOS pasteboard writer. QClipboard alone
             # can leave the previous item visible when Chrome takes focus.
-            QtClipboardBridge().set_text(value)
+            QtClipboardBridge(internal=False).set_text(value)
             return True
         except (OSError, RuntimeError):
             return False

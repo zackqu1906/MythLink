@@ -75,7 +75,9 @@ final class StrictIMKClient: NSObject, IMKTextInput {
         view.setMarkedText(string!, selectedRange: selectionRange,
                            replacementRange: ignoreReplacementRange || ignoreMarkedReplacementRange ? unspecifiedRange : range)
     }
+    var selectionReadOverride: (() -> NSRange)?
     func selectedRange() -> NSRange {
+        if let override = selectionReadOverride { return override() }
         if let selected = fixedReportedSelection { return selected }
         if !reportedSelections.isEmpty { return reportedSelections.removeFirst() }
         if compositionCoordinateOffset != 0 && (view.hasMarkedText() || insertCount == 0) {
@@ -869,7 +871,7 @@ final class WeChatFixture {
     var afterKey: ((String, Int) -> Void)?
     var deferKeyAck = false
     var pendingKeyAck: ((String?) -> Void)?
-    init(_ text: String, caret: Int? = nil, codex: Bool = false, application: String? = nil, directRange: Bool = true, prefixOnly: Bool = false, selectionDriver: PrefixSelectionDriver? = nil) {
+    init(_ text: String, caret: Int? = nil, codex: Bool = false, application: String? = nil, directRange: Bool = true, prefixOnly: Bool = false, selectionDriver: PrefixSelectionDriver? = nil, isCurrent: @escaping () -> Bool = { true }) {
         proxy = StrictIMKClient(text, selection: caret.map { NSRange(location: $0, length: 0) })
         proxy.ignoreReplacementRange = !codex
         if codex {
@@ -879,7 +881,7 @@ final class WeChatFixture {
             proxy.acceptsEmptyInsert = true
         }
         proxy.bundle = application ?? (codex ? "com.openai.codex" : "com.tencent.xinWeChat")
-        adapter = NativeInputClient(proxy)
+        adapter = NativeInputClient(proxy, isCurrent: isCurrent)
         let deliver: WeChatCompatibility.SendKey = { [unowned self] command, count, _, done in
             keys.append(command); keyCounts.append(count)
             if let keyError { done(keyError); return }
@@ -2067,26 +2069,29 @@ final class MainPrefixDriver: PrefixSelectionDriver {
         readCount += 1; onRead?(readCount)
         return valid && current() && !readUnavailable ? (axOverride ?? proxy?.view.selectedRange()) : nil
     }
-    func readDocument(in range: NSRange, selection expected: NSRange, current: () -> Bool) -> String? {
-        guard range.location == 0, let proxy, range.length == proxy.view.string.utf16.count else { return nil }
-        return readText(in: range, selection: expected, current: current)
-    }
     var textEnabled = false
     var textReadCount = 0
     var textOverride: ((NSRange) -> String?)?
     var onTextRead: (() -> Void)?
-    func readText(in range: NSRange, selection expected: NSRange, current: () -> Bool) -> String? {
+    func readBody(_ scope: EditorReadScope, current: () -> Bool) -> EditorTextRange? {
         textReadCount += 1
         guard textEnabled, valid, current(), !readUnavailable,
-              (axOverride ?? proxy?.view.selectedRange()) == expected,
-              let proxy, isValidRange(range, length: proxy.view.string.utf16.count) else { return nil }
+              let before = axOverride ?? proxy?.view.selectedRange(),
+              let proxy, let range = scope.range(at: before, documentLength: proxy.view.string.utf16.count),
+              isValidRange(range, length: proxy.view.string.utf16.count) else { return nil }
         let text = textOverride.map { $0(range) } ?? (proxy.view.string as NSString).substring(with: range)
         onTextRead?()
-        guard valid, current(), (axOverride ?? proxy.view.selectedRange()) == expected else { return nil }
-        return text
+        guard valid, current(), (axOverride ?? proxy.view.selectedRange()) == before,
+              let text, text.utf16.count == range.length else { return nil }
+        return EditorTextRange(text: text, range: range, source: .ax, selection: before, readScope: scope)
     }
     var validationCount = 0
     var onValidate: ((Int) -> Void)?
+    var onValidateStep: ((String) -> Void)?
+    func validateTarget(current: () -> Bool, step: String) -> Bool {
+        onValidateStep?(step)
+        return validateTarget(current: current)
+    }
     func begin(_ operation: String) {}
     func validateTarget(current: () -> Bool) -> Bool {
         validationCount += 1; onValidate?(validationCount)
@@ -2372,6 +2377,84 @@ func prepareRightRepair(_ f: WeChatFixture, _ d: MainPrefixDriver,
     }
 }
 
+test("B73 replay IMK 271 AX 268 to IMK 273 AX 270 continues to body baseline") {
+    let (f, d) = prefixFixture()
+    let candidate = String(repeating: "字", count: 273)
+    prepareRightRepair(f, d, candidate: candidate, before: 268)
+    f.proxy.onInsert = {
+        if f.proxy.view.string.hasPrefix(candidate) {
+            f.proxy.view.setSelectedRange(NSRange(location: 268, length: 0))
+            f.proxy.fixedReportedSelection = NSRange(location: 271, length: 0)
+            f.proxy.unavailableDocumentRead = true
+        }
+    }
+    f.afterKey = { _, _ in
+        f.proxy.view.setSelectedRange(NSRange(location: 270, length: 0))
+        f.proxy.fixedReportedSelection = NSRange(location: 273, length: 0)
+    }
+    let s = try prefixEdit(f, candidate: candidate)
+    check(s.phase == .edited && f.keys == ["caret_forward"] && f.keyCounts == [3],
+          "post-move coordinate difference still blocked baseline: \(s.error)")
+    check(s.undoRecord()?.editedText == candidate && f.proxy.insertCount == 2 &&
+          f.proxy.view.string == candidate + "后文", "body baseline or single-write behavior changed")
+    check(d.events.last?["postwrite_imk_after_move"] as? [Int] == [273, 0] &&
+          d.events.last?["postwrite_ax_after_move"] as? [Int] == [270, 0] &&
+          d.events.last?["baseline_range"] as? [Int] == [0, 273], "missing continued baseline geometry")
+}
+
+test("B74 unequal post-move coordinates do not bypass failed IMK and AX body reads") {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    d.textOverride = { _ in nil }
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    f.proxy.onTextRead = nil
+    f.afterKey = { _, _ in f.proxy.fixedReportedSelection = NSRange(location: 3, length: 0) }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.error.contains("postwrite_baseline_unavailable") &&
+          f.keys == ["caret_forward"] && f.proxy.insertCount == 2 && d.textReadCount > 0,
+          "alignment relaxation bypassed actual body read failure: \(s.error)")
+    check(s.undoRecord() == nil &&
+          d.events.last?["postwrite_caret_status"] as? String == "moved_without_alignment_check",
+          "unreadable baseline became undoable or failed at the old alignment gate")
+}
+
+test("B78 AX baseline uses own 229 prefix while IMK caret remains 235") {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    let candidate = String(repeating: "字", count: 235)
+    prepareRightRepair(f, d, candidate: candidate, before: 225)
+    f.proxy.onTextRead = nil
+    f.proxy.onInsert = {
+        if f.proxy.view.string.hasPrefix(candidate) {
+            f.proxy.view.setSelectedRange(NSRange(location: 225, length: 0))
+            f.proxy.fixedReportedSelection = NSRange(location: 231, length: 0)
+            f.proxy.unavailableDocumentRead = true
+        }
+    }
+    f.afterKey = { _, _ in
+        f.proxy.view.setSelectedRange(NSRange(location: 229, length: 0))
+        f.proxy.fixedReportedSelection = NSRange(location: 235, length: 0)
+    }
+    let s = try prefixEdit(f, candidate: candidate)
+    check(s.phase == .edited && f.keys == ["caret_forward"] && f.keyCounts == [6] &&
+          f.proxy.insertCount == 2 && d.textReadCount == 1,
+          "stable AX offset still rejected body fallback: \(s.error)")
+    check(s.undoRecord()?.editedText == String(candidate.prefix(229)) &&
+          f.adapter.verifiedReplacement?.range == NSRange(location: 0, length: 229) &&
+          f.adapter.verifiedReplacementCaret == NSRange(location: 235, length: 0) &&
+          d.events.last?["baseline_read_method"] as? String == "ax" &&
+          d.events.last?["baseline_range"] as? [Int] == [0, 235],
+          "AX body coordinates were mixed with IMK caret or model text")
+}
+
+test("B73 noncollapsed AX selection after movement still stops before body baseline") {
+    let (f, d) = prefixFixture()
+    prepareRightRepair(f, d, candidate: "新文", before: 1)
+    f.afterKey = { _, _ in d.axOverride = NSRange(location: 0, length: 1) }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.error.contains("postwrite_ax_selection_changed") &&
+          f.keys == ["caret_forward"] && f.proxy.insertCount == 2 && s.undoRecord() == nil,
+          "position-only relaxation also accepted a text selection: \(s.error)")
+}
+
 test("B70 replay 363 IMK 357 AX and 361 reported length sends six right keys") {
     let (f, d) = prefixFixture()
     let candidate = String(repeating: "字", count: 363)
@@ -2386,7 +2469,7 @@ test("B70 replay 363 IMK 357 AX and 361 reported length sends six right keys") {
     check(f.proxy.insertCount == 2 && f.proxy.view.string == candidate + "后文", "repair rewrote candidate")
     check(d.events.last?["native_text_verified"] as? Bool == true &&
           d.events.last?["undo_baseline_source"] as? String == "post_caret_imk" &&
-          d.events.last?["postwrite_caret_status"] as? String == "moved_and_verified",
+          d.events.last?["postwrite_caret_status"] as? String == "moved_without_alignment_check",
           "missing post-key body baseline")
 }
 
@@ -2399,23 +2482,23 @@ test("B70 matching or unavailable AX retains the existing write without keys") {
     }
 }
 
-test("B70 swallowed right movement never repeats or rewrites") {
+test("B73 swallowed right movement continues to body check without repeating or rewriting") {
     let (f, d) = prefixFixture(); f.dropCaretMovement = true
     prepareRightRepair(f, d, candidate: "新文", before: 1)
     let s = try prefixEdit(f)
-    check(s.phase == .error && s.error.contains("postwrite_caret_not_aligned") &&
+    check(s.phase == .edited &&
           f.keys == ["caret_forward"] && f.keyCounts == [1] && f.proxy.insertCount == 2,
-          "dropped movement accepted or retried: \(s.error)")
+          "body check blocked by alignment or movement retried: \(s.error)")
     check(d.events.last?["postwrite_ax_after_move"] as? [Int] == [1, 0], "missing post-key AX read")
 }
 
-test("B70 a changed IMK position after right movement is recorded without chasing") {
+test("B73 a changed IMK position after right movement enters body check without chasing") {
     let (f, d) = prefixFixture()
     prepareRightRepair(f, d, candidate: "新文", before: 1)
     f.afterKey = { _, _ in f.proxy.fixedReportedSelection = NSRange(location: 3, length: 0) }
     let s = try prefixEdit(f)
-    check(s.phase == .error && s.error.contains("postwrite_caret_not_aligned") && f.keys == ["caret_forward"],
-          "changed position was followed with additional movement")
+    check(s.phase == .edited && f.keys == ["caret_forward"],
+          "changed position blocked body check or caused additional movement: \(s.error)")
     check(d.events.last?["postwrite_imk_after_move"] as? [Int] == [3, 0], "missing post-key IMK position")
 }
 
@@ -2494,12 +2577,14 @@ test("B70 AX disappearing after right dispatch is not a successful skip") {
           "unreadable post-key AX accepted or repeated")
 }
 
-test("B70 character steps differing from UTF16 offsets cannot claim alignment") {
+test("B73 character steps differing from UTF16 offsets proceed without claiming alignment") {
     let (f, d) = prefixFixture()
     prepareRightRepair(f, d, candidate: "字😀", before: 0)
     let s = try prefixEdit(f, candidate: "字😀")
-    check(s.phase == .error && s.error.contains("postwrite_caret_not_aligned") &&
-          f.keyCounts == [3] && f.proxy.insertCount == 2, "overshoot was confirmed or retried")
+    check(s.phase == .edited &&
+          f.keyCounts == [3] && f.proxy.insertCount == 2 &&
+          d.events.last?["postwrite_caret_status"] as? String == "moved_without_alignment_check",
+          "alignment still required or movement repeated: \(s.error)")
 }
 
 
@@ -2623,7 +2708,7 @@ test("B71 baseline reads only after relative keys and uses refreshed IMK coordin
         f.proxy.fixedReportedSelection = NSRange(location: 3, length: 0)
     }
     let s = try prefixEdit(f)
-    check(s.phase == .edited && s.undoRecord()?.editedText == "新\n文" && postwriteReads >= 2,
+    check(s.phase == .edited && s.undoRecord()?.editedText == "新\n文" && postwriteReads == 1,
           "baseline used old target or model: \(s.error)")
     check(d.events.last?["baseline_range"] as? [Int] == [0, 3] &&
           d.events.last?["postwrite_imk_target"] as? [Int] == [2, 0], "final baseline lost refreshed range")
@@ -2646,7 +2731,7 @@ test("B71 partial or wrong-range postwrite reads never create an undo record") {
     }
 }
 
-test("B71 changing postwrite body times out without trusting the last sample") {
+test("B80 first complete IMK sample becomes baseline and later mismatch refuses undo") {
     let (f, _) = prefixFixture(); var reads = 0
     f.proxy.textReadOverride = { range in
         guard f.proxy.insertCount >= 2 else { return nil }
@@ -2654,8 +2739,12 @@ test("B71 changing postwrite body times out without trusting the last sample") {
         return (reads % 2 == 0 ? "新文" : "另一", range)
     }
     let s = try prefixEdit(f)
-    check(s.phase == .error && s.error.contains("postwrite_baseline_unstable") && s.undoRecord() == nil,
-          "unstable body became baseline")
+    check(s.phase == .edited && reads == 1 && s.undoRecord()?.editedText == "另一",
+          "single complete IMK sample was not saved")
+    let writes = f.proxy.insertCount
+    s.cancel(); f.drain(s)
+    check(s.phase == .error && s.error.contains("mismatch") && f.proxy.insertCount == writes,
+          "later IMK mismatch overwrote external content")
 }
 
 test("B71 external same-length change is rejected against the native baseline") {
@@ -2675,7 +2764,7 @@ test("B71 cancellation or target change during baseline read cannot publish hist
         f.proxy.onTextRead = { _ in
             guard f.proxy.insertCount >= 2 else { return }
             reads += 1
-            if reads == 2 {
+            if reads == 1 {
                 if cancel { f.adapter.cancelClientOperation() } else { d.valid = false }
             }
         }
@@ -2716,7 +2805,7 @@ test("B71 interior restoration cannot split a combined character") {
 }
 
 // B72 reproduces the Codex trace: current AX/IMK caret, nil full IMK body.
-test("B72 nil IMK postwrite read uses stable AX body and preserves rich suffix") {
+test("B80 nil IMK postwrite read uses one AX snapshot and preserves rich suffix") {
     let (f, driver) = prefixFixture()
     driver.textEnabled = true
     f.proxy.view.textStorage!.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 2, length: 2))
@@ -2725,7 +2814,7 @@ test("B72 nil IMK postwrite read uses stable AX body and preserves rich suffix")
     check(s.phase == .edited, "nil IMK plus valid AX did not finish: \(s.error)")
     check(s.undoRecord()?.editedText == "新文", "AX baseline not saved")
     check(driver.events.contains { $0["undo_baseline_source"] as? String == "post_caret_ax" && $0["event"] as? String == "confirmed" }, "AX provenance missing")
-    check(driver.textReadCount >= 2, "AX baseline was not stabilized")
+    check(driver.textReadCount == 1, "AX baseline read more than once")
     check(f.proxy.view.textStorage!.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? NSColor == .red, "suffix formatting changed")
     s.cancel(); f.drain(s)
     check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "AX-backed undo failed: \(s.error)")
@@ -2767,13 +2856,17 @@ test("B72 AX unavailable partial and moving selection cannot establish baseline"
     }
 }
 
-test("B72 AX changing text needs two equal observations") {
+test("B80 first complete AX sample becomes baseline and later mismatch refuses undo") {
     let (f, driver) = prefixFixture(); driver.textEnabled = true
     f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
     driver.textOverride = { _ in driver.textReadCount % 2 == 0 ? "甲乙" : "丙丁" }
     let s = try prefixEdit(f)
-    check(s.phase == .error && s.undoRecord() == nil, "unstable AX accepted")
-    check(s.error.contains("postwrite_baseline_unstable"), "unstable AX error lost: \(s.error)")
+    check(s.phase == .edited && driver.textReadCount == 1 && s.undoRecord()?.editedText == "丙丁",
+          "single complete AX sample not saved")
+    let writes = f.proxy.insertCount
+    s.cancel(); f.drain(s)
+    check(s.phase == .error && s.error.contains("mismatch") && f.proxy.insertCount == writes,
+          "later AX mismatch bypassed saved baseline")
 }
 
 test("B72 target change or cancellation inside AX read cannot publish history") {
@@ -2789,9 +2882,8 @@ test("B72 target change or cancellation inside AX read cannot publish history") 
     }
 }
 
-test("B72 complete IMK mismatch never falls back to matching AX") {
+test("B79 complete IMK baseline mismatch never falls back to matching AX") {
     let (f, driver) = prefixFixture(); driver.textEnabled = true
-    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
     let s = try prefixEdit(f)
     check(s.phase == .edited, "edit failed")
     f.proxy.unavailableDocumentRead = false
@@ -2846,7 +2938,7 @@ test("B72 AX baseline supports suspension and restored undo") {
 }
 
 
-test("B72 recovered IMK is preferred on each later validation read") {
+test("B79 recovered IMK cannot replace an AX validation source") {
     let (f, driver) = prefixFixture(); driver.textEnabled = true
     f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
     let s = try prefixEdit(f)
@@ -2854,7 +2946,7 @@ test("B72 recovered IMK is preferred on each later validation read") {
     f.proxy.unavailableDocumentRead = false; f.proxy.onInsert = nil
     let axReads = driver.textReadCount
     s.cancel(); f.drain(s)
-    check(s.phase == .dictated && driver.textReadCount == axReads, "recovered IMK was not preferred")
+    check(s.phase == .dictated && driver.textReadCount > axReads, "AX baseline lost its reader when IMK recovered")
 }
 
 test("B72 AX supports second sentence undo and redo after edit undo") {
@@ -2878,14 +2970,14 @@ test("B72 double read failure is terminal even if a later read would recover") {
     check(s.undoRecord() == nil, "failed read created history")
 }
 
-test("B72 undo ownership double failure does not retry a recovered reader") {
+test("B79 IMK baseline unavailability stops without AX fallback") {
     let (f, driver) = prefixFixture("com.tencent.xinWeChat"); driver.textEnabled = true
     let s = try prefixEdit(f)
     f.proxy.unavailableDocumentRead = true
     let writes = f.proxy.insertCount
     driver.textOverride = { range in driver.textReadCount == 1 ? nil : (f.proxy.view.string as NSString).substring(with: range) }
     s.cancel(); f.drain(s)
-    check(s.phase == .error && driver.textReadCount == 1 && f.proxy.insertCount == writes, "ownership double failure retried/wrote phase=\(s.phase) reads=\(driver.textReadCount) writes=\(f.proxy.insertCount)/\(writes) error=\(s.error)")
+    check(s.phase == .error && driver.textReadCount == 0 && f.proxy.insertCount == writes, "ownership double failure retried/wrote phase=\(s.phase) reads=\(driver.textReadCount) writes=\(f.proxy.insertCount)/\(writes) error=\(s.error)")
 }
 
 test("B72 AX prefix cannot be promoted to a full snapshot") {
@@ -2902,4 +2994,849 @@ test("B72 full AX snapshot checks IMK geometry after the remote read") {
     var rejected = false
     do { _ = try f.adapter.snapshot() } catch { rejected = true }
     check(rejected, "AX snapshot retained stale IMK geometry")
+}
+
+test("B75 initial partial IMK context uses AX prefix before the next model request") {
+    let body = String(repeating: "文", count: 231)
+    let (f, driver) = prefixFixture(text: body + "后文", caret: 231)
+    driver.textEnabled = true
+    f.proxy.textReadOverride = { range in
+        if f.proxy.insertCount == 0 && !f.proxy.view.hasMarkedText() {
+            if range.location >= 174 && NSMaxRange(range) <= 233 {
+                return ((f.proxy.view.string as NSString).substring(with: range), range)
+            }
+            return (nil, NSRange(location: 0, length: 0))
+        }
+        return nil
+    }
+    let s = try f.session()
+    check(s.editRequestText == body, "B75 regression: initial source is unavailable despite a complete AX prefix")
+    check(!s.original.complete && s.original.text == nil, "prefix falsely claimed a full document")
+    check(driver.calls.isEmpty && f.keys.isEmpty && f.proxy.insertCount == 0 &&
+          f.proxy.view.selectedRange() == NSRange(location: 231, length: 0), "source read changed the editor")
+    var requests = 0
+    s.onEdit = { source, instruction, _ in
+        check(source == body && instruction == "精简", "wrong next-edit model source")
+        requests += 1
+    }
+    s.update("精简", final: false); s.convert(); s.update("精简", final: true); f.drain(s)
+    check(s.phase == .editing && requests == 1, "next edit still failed before the model: \(s.error)")
+}
+
+test("B75 initial nil partial and wrong-length IMK reads use exact UTF16 AX prefix") {
+    for mode in ["nil", "partial", "length"] {
+        let (f, driver) = prefixFixture(text: "前😀文后文", caret: 4)
+        driver.textEnabled = true
+        f.proxy.textReadOverride = { range in
+            if mode == "nil" { return (nil, NSRange(location: 0, length: 0)) }
+            return ("前", mode == "partial" ? NSRange(location: 0, length: 1) : range)
+        }
+        let s = try f.session()
+        check(s.editRequestText == "前😀文" && s.original.readableContext?.source == .ax,
+              "incomplete IMK \(mode) did not use AX")
+        let d = f.adapter.lastReadDiagnostics
+        check(d["query"] as? String == "snapshot" && d["read_source"] as? String == "ax" &&
+              d["ax_attempted"] as? Bool == true && d["requested_range"] as? [Int] == [0, 4] &&
+              d["context_readable_range"] as? [Int] == [0, 4] && d["imk_read"] != nil,
+              "initial read lost diagnostic provenance")
+        check(driver.textReadCount == 1 && driver.calls.isEmpty && f.keys.isEmpty, "initial read selected or retried")
+    }
+}
+
+test("B75 healthy initial IMK prefix is preferred even if AX contains different text") {
+    let (f, driver) = prefixFixture()
+    driver.textEnabled = true; driver.textOverride = { _ in "别文" }
+    let s = try f.session()
+    check(s.editRequestText == "前文" && driver.textReadCount == 0, "healthy IMK was bypassed")
+}
+
+test("B75 a long exact IMK prefix is tried before AX after bounded context probing") {
+    let body = String(repeating: "文", count: 33_000)
+    let (f, driver) = prefixFixture(text: body + "后文", caret: body.utf16.count)
+    driver.textEnabled = true
+    let s = try f.session()
+    check(s.editRequestText == body && driver.textReadCount == 0, "bounded context skipped a complete exact IMK prefix")
+}
+
+test("B75 initial selected text comes from the same AX prefix and excludes it from model source") {
+    let (f, driver) = prefixFixture(text: "前文选😀后文", caret: 2)
+    f.proxy.view.setSelectedRange(NSRange(location: 2, length: 3))
+    f.proxy.unavailableDocumentRead = true; driver.textEnabled = true
+    let s = try f.session()
+    check(s.editRequestText == "前文" && s.original.selectedText == "选😀" &&
+          s.original.readableContext?.range == NSRange(location: 0, length: 5), "selected text lost or sent to the model")
+    check(driver.textReadCount == 1 && driver.calls.isEmpty && f.keys.isEmpty, "selected prefix was read twice or moved")
+}
+
+test("B75 initial AX context preserves rich suffix through edit undo and a fresh edit") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat"] {
+        let (f, driver) = prefixFixture(app)
+        driver.textEnabled = true
+        f.proxy.view.textStorage!.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 2, length: 2))
+        f.proxy.textReadOverride = { range in
+            if f.proxy.view.selectedRange().length == 0 && !f.proxy.view.hasMarkedText() && range.location == 0 {
+                return (nil, NSRange(location: 0, length: 0))
+            }
+            return nil
+        }
+        let first = try prefixEdit(f)
+        check(first.phase == .edited && f.proxy.view.string == "新文后文", "initial AX edit failed in \(app): \(first.error)")
+        let next = try f.session()
+        check(next.editRequestText == "新文" && next.original.readableContext?.source == .ax, "fresh next edit failed after AX baseline")
+        first.cancel(); f.drain(first)
+        check(first.phase == .dictated && f.proxy.view.string == "前文改写后文", "undo failed after AX initial context: \(first.error)")
+        let attrs = f.proxy.view.textStorage!.attributes(at: 4, effectiveRange: nil)
+        check(attrs[.foregroundColor] as? NSColor == .red, "initial AX context damaged formatted suffix")
+    }
+}
+
+test("B75 missing or short AX initial body stops editing with a precise error and preserves dictation") {
+    for mode in ["nil", "short", "target"] {
+        let (f, driver) = prefixFixture()
+        driver.textEnabled = true
+        f.proxy.textReadOverride = { range in range.location == 0 ? (nil, NSRange(location: 0, length: 0)) : nil }
+        if mode == "target" { driver.onTextRead = { driver.valid = false } }
+        else { driver.textOverride = { _ in mode == "nil" ? nil : "前" } }
+        let s = try f.session()
+        check(s.editRequestText == nil && s.original.contextReadFailure?.contains("B84/context_read/imk_ax_unavailable") == true,
+              "failed AX became editable or lost failure detail")
+        check(f.adapter.terminalTextReadFailure == nil && driver.textReadCount == 1, "initial read poisoned dictation or retried")
+        var requests = 0; s.onEdit = { _, _, _ in requests += 1 }
+        s.update("改写", final: false); s.convert(); s.update("改写", final: true); f.drain(s)
+        check(requests == 0 && s.phase == .dictated && f.proxy.view.string == "前文改写后文" &&
+              s.error.contains("B84/context_read/imk_ax_unavailable"), "failed context blocked dictation or requested a model: \(s.error)")
+    }
+}
+
+test("B75 IMK caret or marked state changing during initial AX read rejects stale context") {
+    for marked in [false, true] {
+        let (f, driver) = prefixFixture()
+        driver.textEnabled = true; f.proxy.unavailableDocumentRead = true
+        driver.onTextRead = {
+            if marked { f.proxy.reportedMarkedRanges = Array(repeating: NSRange(location: 2, length: 1), count: 6) }
+            else { f.proxy.fixedReportedSelection = NSRange(location: 1, length: 0) }
+        }
+        var failure = ""
+        do { _ = try f.session() } catch { failure = String(describing: error) }
+        check(failure.contains("context_read/geometry_changed") && f.proxy.insertCount == 0 && driver.calls.isEmpty,
+              "changing IMK state accepted initial AX context")
+    }
+}
+
+test("B75 invalidated input lease during initial AX read discards the result") {
+    let proxy = StrictIMKClient("前文")
+    proxy.unavailableDocumentRead = true
+    var current = true
+    let adapter = NativeInputClient(proxy, isCurrent: { current })
+    let driver = MainPrefixDriver(); driver.proxy = proxy; driver.textEnabled = true
+    adapter.configureKeyDelivery({ _, _, _, _ in fatalError("read must not send keys") }, selectionDriver: driver)
+    driver.onTextRead = { current = false }
+    var rejected = false
+    do { _ = try adapter.snapshotForBeginning() } catch { rejected = true }
+    check(rejected && proxy.insertCount == 0, "stale lease accepted initial AX context")
+}
+
+test("B75 initial context fallback does not broaden active composition or empty ranges") {
+    for mode in ["marked", "empty"] {
+        let (f, driver) = prefixFixture(text: mode == "empty" ? "" : "前文", caret: mode == "empty" ? 0 : 2)
+        driver.textEnabled = true; f.proxy.unavailableDocumentRead = true
+        if mode == "marked" { f.proxy.reportedMarkedRanges = Array(repeating: NSRange(location: 0, length: 2), count: 4) }
+        let snapshot = try f.adapter.snapshotForBeginning()
+        check(driver.textReadCount == 0 && driver.calls.isEmpty && f.keys.isEmpty, "unsafe or unnecessary initial AX read: \(mode)")
+        check(mode == "empty" ? snapshot.readableContext?.text == "" : snapshot.readableContext == nil,
+              "invalid context became editable")
+    }
+}
+
+
+test("B78 AX initial context uses its own caret instead of stale IMK 1536") {
+    let (f, driver) = prefixFixture(text: "前文后文", caret: 2)
+    driver.textEnabled = true
+    f.proxy.fixedReportedSelection = NSRange(location: 1536, length: 0)
+    f.proxy.unavailableDocumentRead = true
+    let s = try f.session()
+    check(s.editRequestText == "前文", "B78 regression: AX own prefix was rejected because IMK requested 1536")
+    check(driver.calls.isEmpty && f.keys.isEmpty && f.proxy.insertCount == 0, "context fallback changed the editor")
+    check(s.original.selection == NSRange(location: 1536, length: 0) &&
+          s.original.contextSelection == NSRange(location: 2, length: 0), "AX caret replaced native geometry")
+}
+
+test("B78 AX full snapshot ignores stale IMK length and keeps native geometry separate") {
+    let (f, d) = prefixFixture(text: "前文后文", caret: 2); d.textEnabled = true
+    f.proxy.fixedReportedSelection = NSRange(location: 1536, length: 0)
+    f.proxy.reportedLength = 1536; f.proxy.unavailableDocumentRead = true
+    let s = try f.session()
+    check(s.editRequestText == "前文" && s.original.readableContext?.text == "前文后文", "AX full text was bounded by IMK length")
+    check(s.original.selection.location == 1536 && s.original.contextSelection?.location == 2 &&
+          !s.original.complete && !s.canReplace, "AX text authorized an IMK full-document replacement")
+    check(d.textReadCount == 1 && f.proxy.insertCount == 0 && f.keys.isEmpty, "snapshot reread or changed text")
+}
+
+test("B78 AX initial noncollapsed selection supplies both model boundary and selected text") {
+    let (f, d) = prefixFixture(text: "前文选区后文", caret: 2); d.textEnabled = true
+    f.proxy.view.setSelectedRange(NSRange(location: 2, length: 2))
+    f.proxy.fixedReportedSelection = NSRange(location: 1536, length: 2)
+    f.proxy.unavailableDocumentRead = true
+    let s = try f.session()
+    check(s.editRequestText == "前文" && s.original.selectedText == "选区" && s.editOriginal?.text == "前文选区", "model slicing mixed AX and IMK coordinates")
+    check(s.original.selection.location == 1536 && s.original.contextSelection == NSRange(location: 2, length: 2), "native selection lost")
+}
+
+test("B78 relative body reads and explicit tail use AX anchors in either offset direction") {
+    let (f, d) = prefixFixture(text: "甲乙丙丁戊己", caret: 4); d.textEnabled = true
+    f.proxy.unavailableDocumentRead = true
+    f.proxy.fixedReportedSelection = NSRange(location: 12, length: 0)
+    let preceding = f.adapter.readBody(in: NSRange(location: 10, length: 2), fallback: nil)
+    check(preceding?.text == "丙丁" && preceding?.range == NSRange(location: 2, length: 2), "relative read reused IMK origin")
+    f.proxy.fixedReportedSelection = NSRange(location: 2, length: 0)
+    let prefix = f.adapter.readBody(in: NSRange(location: 0, length: 2), fallback: .prefix(tail: 1))
+    check(prefix?.text == "甲乙丙丁戊" && prefix?.range == NSRange(location: 0, length: 5), "AX prefix was truncated to IMK caret")
+    check(d.calls.isEmpty && f.keys.isEmpty && f.proxy.insertCount == 0, "body read mutated editor")
+}
+
+test("B78 unanchored interior fallback fails without reading an unrelated AX range") {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    f.proxy.unavailableDocumentRead = true
+    f.proxy.fixedReportedSelection = NSRange(location: 1536, length: 0)
+    check(f.adapter.readText(in: NSRange(location: 20, length: 2)) == nil &&
+          f.adapter.terminalTextReadFailure?.contains("unanchored_range") == true && d.textReadCount == 0,
+          "unrelated IMK interior range was translated into an AX write proof")
+}
+
+test("B78 selected AX fallback verifies its own prefix before the candidate write") {
+    let (f, d) = prefixFixture(); d.textEnabled = true; f.proxy.unavailableDocumentRead = true
+    let s = try f.session()
+    s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+    f.proxy.onInsert = {
+        if f.proxy.view.string == "前文改写后文" {
+            f.proxy.fixedReportedSelection = NSRange(location: 100, length: 0)
+            f.proxy.unavailableDocumentRead = true
+        } else { f.proxy.fixedReportedSelection = nil }
+    }
+    d.attempt = .unavailable("ax_imk_caret_disagreement")
+    f.afterKey = { key, _ in
+        if key == "select_to_start" { f.proxy.fixedReportedSelection = NSRange(location: 0, length: 100) }
+    }
+    s.applyEdit(text: "新文", revision: s.revision, error: nil); f.drain(s)
+    check(s.phase == .edited && f.proxy.view.string == "新文后文", "AX selected source could not complete: \(s.error)")
+    check(f.keys == ["select_to_start"] && f.proxy.insertCount == 2 &&
+          s.original.contextSelection == NSRange(location: 2, length: 0) && s.original.selection.location == 98,
+          "selected text geometry was used as native IMK geometry")
+    f.afterKey = nil; f.proxy.onInsert = nil; d.attempt = .submitted
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "AX selected context could not restore dictation: \(s.error)")
+}
+
+test("B78 AX baseline undo and redo derive native selection from current IMK caret") {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    let candidate = String(repeating: "字", count: 235)
+    prepareRightRepair(f, d, candidate: candidate, before: 225)
+    f.proxy.onTextRead = nil
+    f.proxy.onInsert = {
+        if f.proxy.view.string.hasPrefix(candidate) {
+            f.proxy.view.setSelectedRange(NSRange(location: 225, length: 0))
+            f.proxy.fixedReportedSelection = NSRange(location: 231, length: 0)
+            f.proxy.unavailableDocumentRead = true
+        } else { f.proxy.fixedReportedSelection = nil }
+    }
+    f.afterKey = { _, _ in
+        f.proxy.view.setSelectedRange(NSRange(location: 229, length: 0))
+        f.proxy.fixedReportedSelection = NSRange(location: 235, length: 0)
+    }
+    let s = try prefixEdit(f, candidate: candidate)
+    guard let record = s.undoRecord() else { fatalError("AX edit history missing") }
+    check(record.editedText == String(candidate.prefix(229)), "baseline used model/IMK length")
+    let suffix = String(candidate.suffix(6)) + "后文"
+    f.afterKey = { key, _ in
+        if key == "select_to_start" { f.proxy.fixedReportedSelection = NSRange(location: 0, length: 235) }
+    }
+    d.attempt = .unavailable("ax_imk_caret_disagreement")
+    s.cancel(); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写" + suffix,
+          "AX undo was bounded by saved AX offset as IMK: \(s.error)")
+    check(d.calls.last == NSRange(location: 0, length: 235), "AX offset 229 used as native selection target")
+    guard let redo = s.redoRecord(afterUndoing: record) else { fatalError("AX undo lost redo") }
+    f.afterKey = nil; f.proxy.onInsert = nil; d.attempt = .submitted
+    let resumed = CompositionSession(client: f.adapter, undo: record, utteranceID: "b78-redo", sequence: 1,
+                                     revision: s.revision + 1, clock: { f.now })
+    resumed.restoreRedo(redo); f.drain(resumed)
+    check(resumed.phase == .edited && f.proxy.view.string == candidate + "后文" &&
+          f.proxy.view.selectedRange() == NSRange(location: 229, length: 0), "AX redo used saved IMK caret inside result: \(resumed.error)")
+}
+
+
+test("B78 oversized stale IMK prefix cannot constrain a small valid AX prefix") {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    f.proxy.fixedReportedSelection = NSRange(location: 512 * 1024 + 1, length: 0)
+    f.proxy.unavailableDocumentRead = true
+    let s = try f.session()
+    check(s.editRequestText == "前文" && d.textReadCount == 1 && f.keys.isEmpty, "IMK range limit rejected AX own bounded range")
+    d.axOverride = NSRange(location: 512 * 1024 + 1, length: 0)
+    check(f.adapter.readBody(in: NSRange(location: 0, length: 512 * 1024 + 1), fallback: .prefix(tail: 0)) == nil,
+          "AX own range limit was removed")
+}
+
+// Same input field, different AX/IMK paragraph representations; mirrors B78's
+// AX 254 / IMK 257 source_mismatch after the selection refreshed IMK.
+test("B79 AX context keeps AX validation when selected IMK recovers with extra newlines") {
+    let ax = "甲\n乙", imk = "甲\n\n\n\n乙", instruction = "改写"
+    let (f, d) = prefixFixture(text: ax + "后文", caret: ax.utf16.count)
+    d.textEnabled = true; d.attempt = .unavailable("ax_imk_caret_disagreement")
+    f.proxy.unavailableDocumentRead = true
+    f.proxy.onInsert = {
+        if f.proxy.view.string == ax + instruction + "后文" {
+            f.proxy.unavailableDocumentRead = false
+            f.proxy.fixedReportedSelection = NSRange(location: imk.utf16.count + instruction.utf16.count, length: 0)
+        } else { f.proxy.fixedReportedSelection = nil }
+    }
+    f.afterKey = { key, _ in
+        if key == "select_to_start" {
+            f.proxy.fixedReportedSelection = NSRange(location: 0, length: imk.utf16.count + instruction.utf16.count)
+        }
+    }
+    f.proxy.textReadOverride = { range in
+        if f.proxy.view.string == ax + instruction + "后文", range == NSRange(location: 0, length: 8) {
+            return (imk + instruction, range)
+        }
+        return nil
+    }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && f.proxy.view.string == "新文后文",
+          "B79 regression: AX baseline was compared against recovered IMK text: \(s.error)")
+    check(d.events.contains { $0["source_read_method"] as? String == "ax" }, "AX validation provenance missing")
+}
+
+test("B79 bound AX read skips a healthy different IMK body and records the exact source") {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    let proof = EditorTextRange(text: "前文", range: NSRange(location: 0, length: 2), source: .ax, readScope: .prefix(tail: 0))
+    f.proxy.textReadOverride = { range in (String(repeating: "错", count: range.length), range) }
+    let reads = f.proxy.reads
+    let observed = try f.adapter.validateBody(proof, stage: "retry_ownership")
+    check(observed.source == .ax && f.proxy.reads == reads, "bound AX performed IMK text reads")
+    let event = d.events.last!
+    check(event["validation_stage"] as? String == "retry_ownership" && event["baseline_source"] as? String == "ax" &&
+          event["observed_source"] as? String == "ax" && event["validation_result"] as? String == "matched", "validation diagnostic lost source or stage")
+}
+
+test("B79 bound reader unavailability stops even when the other source matches") {
+    for source in [EditorTextSource.ax, .imk] {
+        let (f, d) = prefixFixture(); d.textEnabled = source == .imk
+        f.proxy.unavailableDocumentRead = source == .imk
+        let proof = EditorTextRange(text: "前文", range: NSRange(location: 0, length: 2), source: source, readScope: .prefix(tail: 0))
+        var message = ""
+        do { try f.adapter.validateBody(proof, stage: "redo_ownership") }
+        catch { message = error.localizedDescription }
+        check(message.contains("B84/redo_ownership/" + source.rawValue + "/read_unavailable"), "missing source-specific read failure: \(message)")
+        check(d.events.last?["validation_result"] as? String == "unavailable", "read failure mislabeled content change")
+        if source == .imk { check(d.textReadCount == 0, "IMK baseline switched to AX") }
+        else { check(f.proxy.reads == 0, "AX baseline tried IMK") }
+    }
+}
+
+test("B79 bound source mismatch is not bypassed and has source-specific diagnostics") {
+    for source in [EditorTextSource.ax, .imk] {
+        let (f, d) = prefixFixture(); d.textEnabled = true
+        if source == .ax { d.textOverride = { _ in "别文" } }
+        else { f.proxy.textReadOverride = { range in ("别文", range) } }
+        let proof = EditorTextRange(text: "前文", range: NSRange(location: 0, length: 2), source: source, readScope: .prefix(tail: 0))
+        var message = ""
+        do { try f.adapter.validateBody(proof, stage: "resume_body") }
+        catch { message = error.localizedDescription }
+        check(message.contains("B84/resume_body/" + source.rawValue + "/body_mismatch"), "mismatch not attributed: \(message)")
+        check(d.events.last?["validation_result"] as? String == "mismatch" && f.proxy.insertCount == 0, "mismatch changed document")
+    }
+}
+
+test("B80 single AX baseline retains source after IMK recovers") {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    f.proxy.onInsert = { if f.proxy.view.string.hasPrefix("新文") { f.proxy.unavailableDocumentRead = true } }
+    d.onTextRead = { f.proxy.unavailableDocumentRead = false }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && s.undoRecord()?.editBody?.source == .ax && d.textReadCount == 1,
+          "single AX receipt lost its source: \(s.error)")
+}
+
+// A fresh write needs a new baseline; outside writes IMK recovers with a
+// different complete representation. AX stays coherent through every step.
+func axHistoryFixture() throws -> (WeChatFixture, MainPrefixDriver, CompositionSession, () -> Void) {
+    let (f, d) = prefixFixture(); d.textEnabled = true
+    f.proxy.unavailableDocumentRead = true
+    var recovered = false
+    f.proxy.onInsert = { recovered = false; f.proxy.unavailableDocumentRead = true }
+    f.proxy.textReadOverride = { range in
+        if recovered, !f.proxy.view.hasMarkedText(), isValidRange(range, length: f.proxy.view.string.utf16.count) {
+            return (String(repeating: "错", count: range.length), range)
+        }
+        return nil
+    }
+    let s = try prefixEdit(f)
+    check(s.phase == .edited && s.undoRecord()?.editBody?.source == .ax, "AX history fixture failed: \(s.error)")
+    let recover = { recovered = true; f.proxy.unavailableDocumentRead = false }
+    return (f, d, s, recover)
+}
+
+test("B79 AX edit baseline survives suspension resume undo redo and repeated undo") {
+    let (f, d, initial, recover) = try axHistoryFixture()
+    recover()
+    let saved = try initial.suspension()
+    var s = try CompositionSession(client: f.adapter, resuming: saved, sequence: 100, clock: { f.now })
+    let history = CompositionUndoHistory(); history.configure(enabled: true)
+    history.settled(s)
+    s.onSettled = { _, _ in history.settled(s) }
+    history.undo(s); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "AX resumed undo failed: \(s.error)")
+    recover()
+    guard let redo = history.prepareRedo(s) else { fatalError("saved-source redo missing") }
+    check(redo.before.source == .ax && redo.result.editBody?.source == .ax, "redo flattened source")
+    s = CompositionSession(client: f.adapter, undo: redo.result, utteranceID: "b79-redo", sequence: 1, revision: s.revision + 1, clock: { f.now })
+    s.onSettled = { _, _ in history.settled(s) }
+    s.restoreRedo(redo); f.drain(s)
+    check(s.phase == .edited && f.proxy.view.string == "新文后文" && s.undoRecord()?.editBody?.source == .ax, "AX redo failed: \(s.error)")
+    recover(); history.undo(s); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "AX repeated undo failed: \(s.error)")
+    check(d.events.contains { $0["validation_stage"] as? String == "redo_ownership" && $0["baseline_source"] as? String == "ax" }, "redo diagnostic missing")
+}
+
+test("B79 restored AX instruction keeps its source through history capture and retry") {
+    let (f, d, initial, recover) = try axHistoryFixture()
+    recover(); initial.cancel(); f.drain(initial)
+    check(initial.phase == .dictated && initial.canRetryEdit, "initial undo failed")
+    guard let record = initial.undoRecord() else { fatalError("restored instruction record missing") }
+    check(record.editBody?.source == .ax && record.sentenceBody?.source == .ax, "restored receipt flattened")
+    recover()
+    let restored = CompositionSession(client: f.adapter, undo: record, utteranceID: "b79-retry", sequence: 1, revision: initial.revision + 1, clock: { f.now })
+    var requests = 0
+    restored.onEdit = { source, instruction, _ in
+        check(source == "前文" && instruction == "改写", "retry changed original request")
+        requests += 1
+    }
+    let writes = f.proxy.insertCount
+    restored.retryEdit(); f.drain(restored)
+    check(restored.phase == .editing && requests == 1 && f.proxy.insertCount == writes, "AX retry mixed reader: \(restored.error)")
+    restored.applyEdit(text: "再次", revision: restored.revision, error: nil); f.drain(restored)
+    check(restored.phase == .edited && f.proxy.view.string == "再次后文", "AX retry write failed: \(restored.error)")
+    check(d.events.contains { $0["validation_stage"] as? String == "retry_ownership" && $0["baseline_source"] as? String == "ax" }, "retry diagnostic missing")
+}
+
+test("B79 new BEGIN cannot discard AX history by comparing an IMK snapshot") {
+    let (f, _, s, recover) = try axHistoryFixture()
+    let history = CompositionUndoHistory(); history.configure(enabled: true); history.settled(s)
+    let saved = history.snapshot(); history.clear(); history.restore(saved)
+    recover()
+    let snapshot = try f.adapter.snapshot()
+    check(snapshot.text != "新文后文", "fixture did not recover a different IMK representation")
+    history.begin(snapshot)
+    guard let record = history.pop() else { fatalError("BEGIN discarded AX history using IMK text") }
+    check(record.editBody?.source == .ax, "history serialization lost reader")
+    let restored = CompositionSession(client: f.adapter, undo: record, utteranceID: "b79-history", sequence: 1, revision: 1, clock: { f.now })
+    restored.cancel(); f.drain(restored)
+    check(restored.phase == .dictated && f.proxy.view.string == "前文改写后文", "restored historical AX undo failed: \(restored.error)")
+}
+
+test("B79 unavailable AX history refuses undo before any write despite matching IMK") {
+    let (f, d, s, _) = try axHistoryFixture()
+    f.proxy.textReadOverride = nil; f.proxy.unavailableDocumentRead = false; d.textEnabled = false
+    let writes = f.proxy.insertCount
+    s.cancel(); f.drain(s)
+    check(s.phase == .error && f.proxy.insertCount == writes && s.error.contains("/ax/") && s.error.contains("source_read_unavailable"),
+          "AX failure silently used IMK or lost stage: \(s.error)")
+    check(d.events.last?["validation_stage"] as? String == "undo_edit_prewrite", "failure stage missing")
+}
+
+// B80: a no-motion undo must finish on its first valid post-write sample.
+test("B80 single valid tick completes undo without two stabilization windows") {
+    for reader in ["imk", "ax", "imk_without_ax_caret"] {
+        let (f, d) = prefixFixture(); d.textEnabled = true
+        let s = try prefixEdit(f)
+        let offset = d.events.count
+        f.proxy.onInsert = {
+            f.proxy.unavailableDocumentRead = reader == "ax"
+            d.readUnavailable = reader == "imk_without_ax_caret"
+        }
+        s.cancel()
+        for _ in 0..<40 {
+            if d.events.dropFirst(offset).contains(where: { $0["event"] as? String == "write_sent" }) { break }
+            f.now += 0.06; f.adapter.advanceClientOperation(); s.advanceReadback()
+        }
+        check(d.events.dropFirst(offset).contains { $0["event"] as? String == "write_sent" }, "undo did not write")
+        f.now += 0.06; f.adapter.advanceClientOperation(); s.advanceReadback()
+        check(s.phase == .dictated && !s.awaitingReadback && !f.adapter.clientOperationPending,
+              "B80 single-read undo still waits after first valid postwrite tick: \(reader)")
+        check(f.proxy.view.string == "前文改写后文" && f.keys.isEmpty, "single read changed restored text or moved caret")
+        let events = Array(d.events.dropFirst(offset))
+        let sent = events.first { $0["event"] as? String == "write_sent" }!["operation_ms"] as! Double
+        let done = events.first { $0["event"] as? String == "confirmed" }!["operation_ms"] as! Double
+        check(done - sent <= 60.001, "two stabilization windows remain")
+    }
+}
+
+
+test("B80 timing records include each write phase on success and unavailable read") {
+    for available in [false, true] {
+        let (f, d) = prefixFixture()
+        f.proxy.onTextRead = { _ in if f.proxy.insertCount >= 2 { f.now += 0.007 } }
+        d.onRead = { _ in if f.proxy.insertCount >= 2 { f.now += 0.003 } }
+        d.onValidate = { _ in if f.proxy.insertCount >= 2 { f.now += 0.002 } }
+        f.proxy.onInsert = { if f.proxy.insertCount >= 2 { f.proxy.unavailableDocumentRead = !available } }
+        let s = try prefixEdit(f)
+        let event = d.events.last { $0["event"] as? String == (available ? "confirmed" : "failed") }!
+        check((available ? s.phase == .edited : s.phase == .error), "wrong timing fixture state")
+        let phases = event["stage_elapsed_ms"] as! [String: Double]
+        for phase in ["written", "postwrite_caret", "postwrite_baseline"] {
+            check(phases[phase] != nil && phases[phase]! >= 0, "missing phase duration: \(phase)")
+        }
+        check(phases["postwrite_caret"]! >= 4.999 && phases["postwrite_baseline"]! >= 8.999,
+              "API duration excluded from phase timing")
+        let total = event["operation_ms"] as! Double
+        check(abs(phases.values.reduce(0, +) - total) < 0.001, "phase durations overlap or omit time")
+        check((event["post_write_ms"] as! Double) <= total, "postwrite total exceeds operation")
+        let read = event["baseline_read"] as! [String: Any]
+        check((read["read_elapsed_ms"] as? Double ?? -1) >= 0, "body API duration missing")
+        if available {
+            check(event["baseline_confirmation"] as? String == "single_complete_read" &&
+                  event["baseline_stable"] as? Bool == false, "single read falsely claims repeated stability")
+        }
+    }
+}
+
+test("B80 single-read completion still waits for valid collapsed caret") {
+    let (f, d) = prefixFixture()
+    let s = try f.session()
+    s.update("改写", final: false); s.convert(); s.update("改写", final: true)
+    f.proxy.onInsert = { if f.proxy.insertCount >= 2 { f.proxy.fixedReportedSelection = NSRange(location: 0, length: 2) } }
+    s.applyEdit(text: "新文", revision: s.revision, error: nil)
+    for _ in 0..<4 { f.now += 0.06; f.adapter.advanceClientOperation(); s.advanceReadback() }
+    check(f.adapter.clientOperationPending && s.undoRecord() == nil &&
+          !d.events.contains { $0["event"] as? String == "postwrite_baseline_begin" }, "uncollapsed selection became receipt")
+    f.proxy.fixedReportedSelection = nil
+    f.now += 0.06; f.adapter.advanceClientOperation(); s.advanceReadback()
+    check(s.phase == .edited && s.undoRecord()?.editedText == "新文", "valid first caret did not finish")
+}
+
+
+test("B82 postwrite target failure exposes category reason and callsite") {
+    for (category, reason) in [("foreground", "application_changed"), ("foreground", "application_unavailable"), ("session", "current_guard_failed")] {
+        let (f, d) = prefixFixture()
+        f.proxy.onInsert = {
+            if f.proxy.insertCount >= 2 {
+                d.valid = false
+                d.metadata["target_check_result"] = "failed"
+                d.metadata["target_last_failure"] = ["category": category, "reason": reason, "step": "advance.before"]
+            }
+        }
+        let s = try prefixEdit(f)
+        check(s.phase == .error && f.proxy.insertCount == 2 && s.error.contains(category + "/" + reason), "target error lacks cause: \(s.error)")
+        let failed = d.events.last { $0["event"] as? String == "failed" }!
+        check((failed["target_failure"] as? [String: Any])?["reason"] as? String == reason &&
+              failed["operation_stage"] as? String == "written" && failed["write_sent"] as? Bool == true,
+              "postwrite target failure lost its stage")
+    }
+}
+test("B82 invalid current session is diagnosed before driver target check") {
+    var current = true
+    let d = MainPrefixDriver()
+    let f = WeChatFixture("前文后文", caret: 2, codex: true, directRange: false, prefixOnly: true, selectionDriver: d, isCurrent: { current })
+    d.proxy = f.proxy
+    f.proxy.onInsert = { if f.proxy.insertCount >= 2 { current = false } }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && s.error.contains("session/current_guard_failed") && f.proxy.insertCount == 2,
+          "short circuit lost session attribution: \(s.error)")
+}
+test("B82 prewrite target failure survives subsequent diagnostic activity and never writes") {
+    let (f, d) = prefixFixture()
+    d.onValidateStep = { step in
+        if step == "write_preflight" {
+            d.valid = false
+            d.metadata["target_check_result"] = "failed"
+            d.metadata["target_last_failure"] = ["category": "foreground", "reason": "application_changed", "step": step]
+        }
+    }
+    d.onRead = { _ in
+        // A subsequent observation must not erase the failed prewrite check.
+        if !d.valid { d.valid = true; d.metadata["target_check_result"] = "passed"; d.metadata["target_last_failure"] = nil }
+    }
+    let s = try prefixEdit(f)
+    check(s.phase == .error && f.proxy.insertCount == 1 && s.error.contains("foreground/application_changed"),
+          "prewrite failure overwritten or write proceeded: \(s.error)")
+}
+
+final class TestClipboardEnvironment: ClipboardReadEnvironment {
+    let proxy: StrictIMKClient
+    var now: TimeInterval = 0
+    var changeCount = 1
+    var contents: ClipboardContents = [["public.utf8-plain-text": Data("用户剪贴板".utf8), "public.rtf": Data([1, 2, 3])], ["custom.item": Data([4, 5])]]
+    var valid = true
+    var copyEnabled = true
+    var backupFails = false
+    var restoreCaret = true
+    var partialPrefix = false
+    var conflictOnRestore = false
+    var commands: [ClipboardReadKey] = []
+    var lastTag: Int64 = 0
+    var copiedOverride: String?
+    var onPost: ((ClipboardReadKey) -> Void)?
+    var onPump: (() -> Void)?
+    init(_ proxy: StrictIMKClient) { self.proxy = proxy }
+    func current() -> Bool { valid }
+    func selection() -> NSRange { proxy.selectedRange() }
+    func marked() -> NSRange { proxy.markedRange() }
+    func backup() throws -> ClipboardContents {
+        if backupFails { throw ClipboardReadError(code: "pasteboard_backup_unavailable") }
+        return contents
+    }
+    func text() -> String? { contents.first?["public.utf8-plain-text"].flatMap { String(data: $0, encoding: .utf8) } }
+    func restore(_ saved: ClipboardContents, replacing count: Int) throws {
+        if conflictOnRestore { contents = [["public.utf8-plain-text": Data("用户的新复制".utf8)]]; changeCount += 1 }
+        guard count == changeCount else { throw ClipboardReadError(code: "pasteboard_restore_conflict") }
+        if contents != saved { contents = saved; changeCount += 1 }
+    }
+    func post(_ key: ClipboardReadKey, tag: Int64) throws {
+        commands.append(key); lastTag = tag
+        let selection = proxy.view.selectedRange()
+        switch key {
+        case .prefix:
+            proxy.view.setSelectedRange(NSRange(location: partialPrefix ? 1 : 0, length: selection.location - (partialPrefix ? 1 : 0)))
+        case .suffix:
+            proxy.view.setSelectedRange(NSRange(location: selection.location, length: proxy.view.string.utf16.count - selection.location))
+        case .copy:
+            if copyEnabled {
+                let text = copiedOverride ?? (proxy.view.string as NSString).substring(with: selection)
+                contents = [["public.utf8-plain-text": Data(text.utf8)]]; changeCount += 1
+            }
+        case .collapseStart: if restoreCaret { proxy.view.setSelectedRange(NSRange(location: selection.location, length: 0)) }
+        case .collapseEnd: if restoreCaret { proxy.view.setSelectedRange(NSRange(location: NSMaxRange(selection), length: 0)) }
+        }
+        onPost?(key)
+    }
+    func pump() { now += 0.01; onPump?() }
+}
+func clipboardFixture(_ app: String = "test.editor", text: String = "前文后文", caret: Int = 2) -> (WeChatFixture, MainPrefixDriver, TestClipboardEnvironment, ClipboardBodyReader) {
+    let (f, driver) = prefixFixture(app, text: text, caret: caret)
+    let environment = TestClipboardEnvironment(f.proxy)
+    let reader = ClipboardBodyReader(environment)
+    reader.record = { driver.record($0) }
+    f.adapter.configureClipboardReader(reader)
+    return (f, driver, environment, reader)
+}
+test("B84 healthy IMK and AX do not copy or disturb the pasteboard") {
+    for ax in [false, true] {
+        let (f, d, env, _) = clipboardFixture()
+        f.proxy.unavailableDocumentRead = ax; d.textEnabled = ax
+        let saved = env.contents
+        let body = f.adapter.readBody(in: NSRange(location: 0, length: 2), fallback: .prefix(tail: 0))
+        check(body?.source == (ax ? .ax : .imk) && env.commands.isEmpty && env.contents == saved, "healthy reader invoked copy")
+    }
+}
+test("B84 third reader captures initial prefix and preserves rich suffix and all clipboard items") {
+    for app in ["com.openai.codex", "com.tencent.xinWeChat", "com.microsoft.VSCode", "test.editor"] {
+        let (f, _, env, reader) = clipboardFixture(app, text: "甲😀\n乙后文", caret: 5)
+        f.proxy.unavailableDocumentRead = true
+        f.proxy.view.textStorage!.addAttribute(.foregroundColor, value: NSColor.red, range: NSRange(location: 5, length: 2))
+        let saved = env.contents
+        let s = try f.session()
+        check(s.original.readableContext?.source == .clipboard && s.editRequestText == "甲😀\n乙", "initial clipboard context failed: \(s.original)")
+        check(f.proxy.view.selectedRange() == NSRange(location: 5, length: 0) && env.contents == saved, "context did not restore caret/pasteboard")
+        check(f.proxy.view.textStorage!.attribute(.foregroundColor, at: 5, effectiveRange: nil) as? NSColor == .red, "copy altered rich suffix")
+        check(reader.diagnostics["clipboard_result"] as? String == "available", "missing clipboard receipt")
+    }
+}
+test("B84 bound clipboard validation bypasses healthy but different IMK and AX") {
+    let (f, d, env, _) = clipboardFixture(); d.textEnabled = true
+    f.proxy.staleDocumentRead = true; d.textOverride = { _ in "错文" }
+    let baseline = EditorTextRange(text: "前文", range: NSRange(location: 0, length: 2), source: .clipboard, readScope: .prefix(tail: 0))
+    let before = f.proxy.reads, axBefore = d.textReadCount
+    let observed = try f.adapter.validateBody(baseline, stage: "undo_ownership")
+    check(observed.source == .clipboard && f.proxy.reads == before && d.textReadCount == axBefore, "clipboard source changed reader")
+    check(env.commands.count == 3, "clipboard validation failed to select/copy/restore")
+}
+test("B84 saved IMK or AX failures never escape to matching clipboard") {
+    for source in [EditorTextSource.imk, .ax] {
+        let (f, _, env, _) = clipboardFixture(); f.proxy.unavailableDocumentRead = true
+        let baseline = EditorTextRange(text: "前文", range: NSRange(location: 0, length: 2), source: source, readScope: .prefix(tail: 0))
+        var failed = false
+        do { try f.adapter.validateBody(baseline, stage: "redo_ownership") } catch { failed = true }
+        check(failed && env.commands.isEmpty, "saved source was replaced with clipboard")
+    }
+}
+test("B84 clipboard mismatch is distinct from unavailable and never rechecks IMK") {
+    let (f, _, _, _) = clipboardFixture()
+    let baseline = EditorTextRange(text: "旧文", range: NSRange(location: 0, length: 2), source: .clipboard, readScope: .prefix(tail: 0))
+    var message = ""
+    do { try f.adapter.validateBody(baseline, stage: "retry_ownership") } catch { message = error.localizedDescription }
+    check(message.contains("clipboard/body_mismatch") && f.proxy.reads == 0 && f.proxy.insertCount == 0, "mismatch escaped clipboard validation")
+}
+test("B84 copy timeout rejects old clipboard and still restores caret") {
+    let (f, _, env, reader) = clipboardFixture(); env.copyEnabled = false
+    let saved = env.contents
+    check(reader.read(.prefix(tail: 0), validationStage: "postwrite") == nil, "old pasteboard treated as fresh copy")
+    check(reader.diagnostics["clipboard_failure"] as? String == "copy_timeout" && reader.diagnostics["clipboard_failure_step"] as? String == "copy_wait", "timeout attribution missing")
+    check(env.contents == saved && f.proxy.view.selectedRange() == NSRange(location: 2, length: 0), "timeout failed cleanup")
+}
+test("B84 intercepted partial prefix selection fails before copy and restores its endpoint") {
+    let (f, _, env, reader) = clipboardFixture(); env.partialPrefix = true
+    check(reader.read(.prefix(tail: 0), validationStage: "context") == nil, "partial prefix accepted")
+    check(!env.commands.contains(.copy) && f.proxy.view.selectedRange() == NSRange(location: 2, length: 0), "partial selection copied or left behind")
+    check(reader.diagnostics["clipboard_failure"] as? String == "selection_not_confirmed", "selection failure hidden")
+}
+test("B84 clipboard conflict preserves concurrent user copy and rejects the receipt") {
+    let (f, _, env, reader) = clipboardFixture(); env.conflictOnRestore = true
+    check(reader.read(.prefix(tail: 0), validationStage: "postwrite") == nil, "restore conflict accepted")
+    check(env.text() == "用户的新复制" && f.proxy.view.selectedRange() == NSRange(location: 2, length: 0), "new user copy overwritten")
+    check(reader.diagnostics["clipboard_cleanup_failure"] as? String == "pasteboard_restore_conflict", "cleanup conflict hidden")
+}
+test("B84 caret restore failure rejects text and still restores the clipboard") {
+    let (_, _, env, reader) = clipboardFixture(); env.restoreCaret = false
+    let saved = env.contents
+    check(reader.read(.prefix(tail: 0), validationStage: "undo") == nil && env.contents == saved, "caret failure returned text or lost pasteboard")
+    check(reader.diagnostics["clipboard_failure"] as? String == "caret_restore_timeout", "caret restore failure hidden")
+    check(env.commands.filter { $0 == .collapseEnd }.count == 1, "uncertain restore key was resent")
+}
+test("B84 copying existing selection never collapses or recreates it") {
+    let (f, _, env, reader) = clipboardFixture(); f.proxy.view.setSelectedRange(NSRange(location: 0, length: 2))
+    let saved = env.contents
+    let body = reader.read(.selected, validationStage: "edit_prewrite")
+    check(body?.text == "前文" && body?.source == .clipboard && env.commands == [.copy], "selected read moved selection")
+    check(f.proxy.view.selectedRange() == NSRange(location: 0, length: 2) && env.contents == saved, "selected read lost state")
+}
+test("B84 before and prefix-tail scopes use copied UTF16 rather than arrow counts") {
+    for scope in [EditorReadScope.before(2), .prefix(tail: 1), .after(1)] {
+        let (f, _, env, reader) = clipboardFixture(text: "甲😀乙后文", caret: 3)
+        let saved = env.contents
+        let result = reader.read(scope, validationStage: "undo_postwrite")
+        let expected = scope == .before(2) ? "😀" : (scope == .after(1) ? "乙" : "甲😀乙")
+        check(result?.text == expected && result?.readScope == scope, "semantic copied span is wrong: \(String(describing: result))")
+        check(env.contents == saved && f.proxy.view.selectedRange() == NSRange(location: 3, length: 0), "multi-copy failed restoration")
+    }
+}
+test("B84 backup failure and live composition never send selection or copy keys") {
+    for marked in [false, true] {
+        let (f, _, env, reader) = clipboardFixture()
+        if marked { f.adapter.mark("正在说话") } else { env.backupFails = true }
+        check(reader.read(.prefix(tail: 0), validationStage: "context") == nil && env.commands.isEmpty, "unsafe clipboard preflight sent keys")
+    }
+}
+test("B84 cancellation never restores a caret into a changed target") {
+    let (_, _, env, reader) = clipboardFixture()
+    let saved = env.contents
+    env.onPost = { key in if key == .copy { env.valid = false } }
+    check(reader.read(.prefix(tail: 0), validationStage: "context") == nil, "target change returned body")
+    check(!env.commands.contains(.collapseEnd), "caret restored after target changed")
+    // A completed copy is still observed and restored even if the session changed.
+    check(reader.diagnostics["clipboard_result"] as? String == "failed", "target failure missing")
+    _ = saved
+}
+test("B84 postwrite clipboard baseline survives suspension resume undo redo and repeat undo") {
+    let (f, d, env, _) = clipboardFixture(); f.proxy.unavailableDocumentRead = true
+    let savedClipboard = env.contents
+    let initial = try prefixEdit(f)
+    check(initial.phase == .edited && initial.undoRecord()?.editBody?.source == .clipboard, "clipboard edit failed: \(initial.error)")
+    f.proxy.unavailableDocumentRead = false; f.proxy.staleDocumentRead = true; d.textEnabled = true
+    let saved = try initial.suspension()
+    var s = try CompositionSession(client: f.adapter, resuming: saved, sequence: 100, clock: { f.now })
+    let history = CompositionUndoHistory(); history.configure(enabled: true); history.settled(s)
+    s.onSettled = { _, _ in history.settled(s) }
+    f.proxy.onInsert = { f.proxy.unavailableDocumentRead = true; d.textEnabled = false }
+    history.undo(s); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文", "clipboard undo failed: \(s.error)")
+    guard let redo = history.prepareRedo(s) else { fatalError("clipboard redo unavailable") }
+    check(redo.before.source == .clipboard && redo.result.editBody?.source == .clipboard, "redo lost clipboard source: before=\(redo.before.source), result=\(String(describing: redo.result.editBody?.source)), restored=\(String(describing: s.undoRecord()?.editBody?.source))")
+    s = CompositionSession(client: f.adapter, undo: redo.result, utteranceID: "b84-redo", sequence: 1, revision: s.revision + 1, clock: { f.now })
+    s.onSettled = { _, _ in history.settled(s) }
+    s.restoreRedo(redo); f.drain(s)
+    check(s.phase == .edited && f.proxy.view.string == "新文后文", "clipboard redo failed: \(s.error)")
+    history.undo(s); f.drain(s)
+    check(s.phase == .dictated && f.proxy.view.string == "前文改写后文" && env.contents == savedClipboard, "repeat undo or pasteboard restore failed: \(s.error)")
+}
+test("B84 clipboard history retry keeps original source after history restore") {
+    let (f, _, _, _) = clipboardFixture(); f.proxy.unavailableDocumentRead = true
+    let s = try prefixEdit(f); s.cancel(); f.drain(s)
+    check(s.phase == .dictated && s.canRetryEdit, "clipboard retry fixture failed: \(s.error)")
+    guard let record = s.undoRecord() else { fatalError("clipboard undo record missing") }
+    check(record.editBody?.source == .clipboard, "history capture dropped source")
+    let restored = CompositionSession(client: f.adapter, undo: record, utteranceID: "b84-retry", sequence: 1, revision: s.revision + 1, clock: { f.now })
+    var requests = 0
+    restored.onEdit = { _, _, _ in requests += 1 }
+    restored.retryEdit(); f.drain(restored)
+    check(restored.phase == .editing && requests == 1, "clipboard retry failed: \(restored.error)")
+    restored.applyEdit(text: "再次", revision: restored.revision, error: nil); f.drain(restored)
+    check(restored.phase == .edited && f.proxy.view.string == "再次后文", "clipboard retried write failed: \(restored.error)")
+}
+
+
+test("B84 native pasteboard restores every item and type without touching the general pasteboard") {
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("Mythlink.B84.Tests." + UUID().uuidString))
+    defer { pasteboard.releaseGlobally() }
+    let env = NativeClipboardReadEnvironment(pid: 0, bundle: "", pasteboard: pasteboard,
+        current: { true }, selection: { NSRange(location: 0, length: 0) }, marked: { unspecifiedRange })
+    let first = NSPasteboardItem(), second = NSPasteboardItem()
+    first.setString("原始文字😀", forType: .string)
+    first.setData(Data([1, 4, 9]), forType: NSPasteboard.PasteboardType("test.rich"))
+    second.setData(Data([2, 8, 16]), forType: NSPasteboard.PasteboardType("test.file"))
+    pasteboard.clearContents(); check(pasteboard.writeObjects([first, second]), "fixture pasteboard write failed")
+    let saved = try env.backup()
+    pasteboard.clearContents(); pasteboard.setString("临时复制", forType: .string)
+    try env.restore(saved, replacing: env.changeCount)
+    let restored = try env.backup()
+    check(restored == saved, "native multi-item rich pasteboard was not restored")
+    let oldCount = env.changeCount
+    pasteboard.clearContents(); pasteboard.setString("其他程序的新复制", forType: .string)
+    var failure = ""
+    do { try env.restore(saved, replacing: oldCount) } catch { failure = (error as? ClipboardReadError)?.code ?? "unknown" }
+    check(failure == "pasteboard_restore_conflict" && env.text() == "其他程序的新复制", "native restore overwrote a new clipboard owner")
+}
+
+
+test("B84 nested clipboard read cannot reset the transaction and late own keys are consumed") {
+    let (_, _, env, reader) = clipboardFixture()
+    var called = false
+    env.onPost = { key in
+        if key == .copy, !called {
+            called = true
+            check(reader.handling(tag: env.lastTag) == false, "active own key was not passed through")
+            check(reader.read(.prefix(tail: 0), validationStage: "nested") == nil && reader.active, "nested copy replaced active read")
+        }
+    }
+    check(reader.read(.prefix(tail: 0), validationStage: "original")?.text == "前文", "outer read failed after nested attempt")
+    check(reader.diagnostics["validation_stage"] as? String == "original", "nested read overwrote diagnostics")
+    check(reader.handling(tag: env.lastTag) == true && reader.handling(tag: 0) == nil, "late own key not consumed or normal key swallowed")
+}
+
+test("B84 passive stroke context never selects or copies") {
+    let (f, _, env, _) = clipboardFixture(); f.proxy.unavailableDocumentRead = true
+    check(f.adapter.strokeContext() == nil && env.commands.isEmpty, "stroke hint used disruptive copy fallback")
+}
+
+
+test("B84 nonempty selection copied as empty text is unavailable not an empty baseline") {
+    let (_, _, env, reader) = clipboardFixture(); env.copiedOverride = ""
+    let saved = env.contents
+    check(reader.read(.prefix(tail: 0), validationStage: "postwrite") == nil, "empty copy became a baseline")
+    check(reader.diagnostics["clipboard_failure"] as? String == "copy_text_empty" && env.contents == saved, "empty copy error or cleanup missing")
+}
+
+
+test("B84 clipboard text length remains independent of IMK selection coordinates during replacement") {
+    let (f, d, env, _) = clipboardFixture()
+    f.proxy.unavailableDocumentRead = true
+    d.attempt = .unavailable("ax_selection_unavailable"); d.readUnavailable = true
+    f.proxy.selectionReadOverride = {
+        let native = f.proxy.view.selectedRange()
+        if native.length > 0 { return NSRange(location: native.location, length: native.length + 3) }
+        return NSRange(location: native.location + 3, length: 0)
+    }
+    let saved = env.contents
+    var baseline = f.adapter.readBody(in: NSRange(location: 0, length: 5), fallback: .prefix(tail: 0))!
+    check(baseline.text == "前文" && baseline.range.length == 2, "copied body inherited IMK length")
+    for target in ["新文", "前文"] {
+        f.adapter.replaceEditingPrefix(baseline, with: target, tail: 0, restoringCaret: nil, stage: "clipboard_coordinate_test", preservedSource: .clipboard)
+        for _ in 0..<60 {
+            f.now += 0.06; f.adapter.advanceClientOperation()
+            if !f.adapter.clientOperationPending { break }
+        }
+        check(f.adapter.clientOperationFailure == nil, "copied source compared with IMK length: \(f.adapter.clientOperationFailure ?? "")")
+        guard let receipt = f.adapter.verifiedReplacement else { fatalError("clipboard receipt missing") }
+        check(receipt.source == .clipboard && receipt.text == target && receipt.range.length == 2, "written receipt changed source or geometry")
+        check(f.proxy.view.string == target + "后文" && f.proxy.view.selectedRange() == NSRange(location: 2, length: 0) && env.contents == saved, "copied replacement changed suffix or caret")
+        baseline = receipt
+    }
 }

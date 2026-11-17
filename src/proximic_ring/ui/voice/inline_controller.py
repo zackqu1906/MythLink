@@ -40,6 +40,7 @@ class InlineInputController(QObject):
     strokeCommitted = Signal(str, bool, str)
     strokeInvalidated = Signal()
     strokeEvent = Signal(object)
+    clipboardEvent = Signal(object)
 
     def __init__(self, parent=None, *, enabled=None, bridge_factory=None, source_switch_factory=None):
         super().__init__(parent)
@@ -90,7 +91,7 @@ class InlineInputController(QObject):
         self._transport_error = ""
         self._installing = False
         self._input_method_version = dict(state="unknown", text="版本待确认", current=False, detail="")
-        self._installation_message = "使用 Mythlink 时也可直接更新；安装后点入文本框并双击 tap 即可使用。"
+        self._installation_message = "使用 Mythlink 时也可直接更新；安装后点入文本框并触发开始语音手势即可使用。"
         self._installationFinished.connect(self._installation_finished)
         self._reply_stage = ""
         self._source_switch_factory = source_switch_factory or InputSourceActivation
@@ -223,13 +224,13 @@ class InlineInputController(QObject):
                 from ...voice.ime.input_method_install import InputMethodInstaller
                 result = InputMethodInstaller().install()
                 if result.get("input_source_restore_error"):
-                    message = "已安装并启用，但未能自动恢复输入法。请点入文本框后双击 tap，或从菜单栏选择 Mythlink。"
+                    message = "已安装并启用，但未能自动恢复输入法。请点入文本框后触发开始语音手势，或从菜单栏选择 Mythlink。"
                 elif result.get("input_source_restored"):
                     message = "已安装并启用，已恢复 Mythlink 输入法。"
                 elif result.get("input_source_switched"):
-                    message = "已安装并启用；应用或输入法已变化，保留当前选择。点入文本框后可双击 tap 切入。"
+                    message = "已安装并启用；应用或输入法已变化，保留当前选择。点入文本框后可通过开始语音手势切入。"
                 else:
-                    message = "已安装并启用。请点入目标文本框并双击 tap，程序会自动切入语音输入法。"
+                    message = "已安装并启用。请点入目标文本框并触发开始语音手势，程序会自动切入语音输入法。"
             except Exception as exc:
                 message = "安装未完成：" + str(exc)
             try:
@@ -268,11 +269,11 @@ class InlineInputController(QObject):
         if self._transport_error:
             return "输入法连接失败：" + self._transport_error
         if self._epoch:
-            return "输入法已连接 · 已就绪" if self.ready else "输入法已连接 · 点入文本框后双击 tap 自动开始"
+            return "输入法已连接 · 已就绪" if self.ready else "输入法已连接 · 点入文本框后触发开始语音手势"
         installed = [Path.home() / "Library/Input Methods/ProxiMicInput.app", Path("/Library/Input Methods/ProxiMicInput.app")]
         if not any(path.exists() for path in installed):
             return "语音输入法未安装"
-        return "语音输入法待连接 · 点入文本框后双击 tap 自动切入"
+        return "语音输入法待连接 · 点入文本框后通过开始语音手势切入"
 
     @Property(bool, notify=changed)
     def active(self):
@@ -503,6 +504,14 @@ class InlineInputController(QObject):
 
     def pin_start_focus(self, target, created):
         self._pending_gesture_focus = (target, created) if target is not None else None
+
+    def gesture_target_is_current(self, target):
+        """Cheap identity guard after a worker has verified the live selection."""
+        return bool(target and len(target) in {5, 6} and not self._closed
+                    and self.enabled and self.ready and not self.stroke_mode
+                    and tuple(target[:4]) == (self._epoch, self._client_id, self._utterance_id,
+                                             str(self._view.get("application", "")))
+                    and self._foreground_identity() == (target[3], target[4]))
 
     def same_gesture_target(self, target):
         if target and len(target) == 6:
@@ -1278,6 +1287,10 @@ class InlineInputController(QObject):
         if self._source_return.handle(message):
             return
         kind = message.get("type")
+        if kind == 'clipboard_offer_state':
+            if message.get('epoch') == self._epoch:
+                self.clipboardEvent.emit(dict(message))
+            return
         if kind in {"state", "stroke_ready", "stroke_cleared", "stroke_ink_cleared", "disconnected", "connected"}:
             if kind == "connected" or message.get("epoch") == self._epoch:
                 self.strokeEvent.emit(dict(message))

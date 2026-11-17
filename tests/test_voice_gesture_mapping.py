@@ -27,7 +27,7 @@ def test_reassignment_releases_old_gesture_and_keeps_other_functions():
     assert updated.end == ("", "") and updated.undo == ("tap", "")
     assert action_for(updated, "swipe-left") is None
     assert original.end == ("tap", "")
-    assert updated.confirm == original.confirm and updated.send == original.send
+    assert updated.confirm == ("", "") and updated.send == original.send
     updated = with_action(updated, "double-tap", "polish")
     assert updated.confirm == ("", "") and updated.polish == ("double-tap", "")
     assert action_for(updated, "swipe-down") is None

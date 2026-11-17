@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     agent_overlay = AgentOverlay(controller.agent, controller, app)
     from .shared.main_window_activation import MainWindowActivation
     main_activation = MainWindowActivation(window, agent_overlay, app)
+    controller.ringGestures.mainWindowRequested.connect(main_activation.show)
     from .shared.notifications import install_ring_disconnect_notice
 
     install_ring_disconnect_notice(window, controller)

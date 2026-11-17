@@ -39,6 +39,7 @@ class Owner(QObject):
     _global_gesture_bindings = GlobalGestureBindings()
     def __init__(self):
         super().__init__()
+        self._settings = SimpleNamespace(value=lambda key, default=None: default, setValue=lambda *args: None)
         self._disconnect_event = threading.Event()
         self._app_gestures = SimpleNamespace(backend=backend, _generation=0, _pending=None,
             phase_state=lambda: dict(phase='idle', composing=False, writing=False, edit_requested=False),

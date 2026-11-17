@@ -1,10 +1,5 @@
 import AppKit
 
-private final class PassivePanel: NSPanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
-}
-
 /// Native IME palette. It never activates the input method or steals the client caret.
 final class ActionPanel: NSObject {
     private let panel: NSPanel
@@ -53,7 +48,7 @@ final class ActionPanel: NSObject {
     var onFinish: (() -> Void)?
 
     override init() {
-        panel = PassivePanel(contentRect: NSRect(x: 0, y: 0, width: 290, height: 60),
+        panel = InputPaletteWindow(contentRect: NSRect(x: 0, y: 0, width: 290, height: 60),
                              styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
         panel.isFloatingPanel = true

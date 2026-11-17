@@ -16,6 +16,7 @@ final class IMEService {
     let transport = IPCClient()
     let activation = InputActivation<ProxiMicInputController>()
     var activeController: ProxiMicInputController? { activation.current }
+    var activationForegroundPID: () -> pid_t = { NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0 }
     private(set) var epoch: String?
     var cancelShortcut = "Esc"
     var gestureHints = VoiceHudBindings()
@@ -25,6 +26,17 @@ final class IMEService {
     var redoEnabled: Bool { historyMode == .next }
     var suspendedInput: SuspendedInput?
     private lazy var noticePanel = ActionPanel()
+    private var clipboardToken = ""
+    private lazy var clipboardPanel: ClipboardSuggestionPanel = {
+        let panel = ClipboardSuggestionPanel()
+        panel.onVisibility = { [weak self] token, visible in
+            if !visible, self?.clipboardToken == token { self?.clipboardToken = "" }
+            self?.send(["type": "clipboard_offer_state", "token": token, "visible": visible])
+        }
+        return panel
+    }()
+
+    func hideClipboardSuggestion() { clipboardToken = ""; clipboardPanel.hide() }
 
     private init() {
         transport.onMessage = { [weak self] in self?.receive($0) }
@@ -33,6 +45,7 @@ final class IMEService {
             self.epoch = nil
             self.suspendedInput = nil
             self.noticePanel.hide()
+            self.hideClipboardSuggestion()
             self.activeController?.hostDisconnected()
         }
     }
@@ -70,6 +83,36 @@ final class IMEService {
             return
         }
         guard let epoch, message["epoch"] as? String == epoch else { return }
+        if type == "clipboard_dismiss" {
+            if let token = message["token"] as? String {
+                if clipboardToken == token { clipboardToken = "" }
+                clipboardPanel.hide(token: token)
+            }
+            return
+        }
+        if type == "clipboard_offer" {
+            guard let token = message["token"] as? String, !token.isEmpty else { return }
+            clipboardToken = token
+            guard let pid = message["foreground_pid"] as? Int32,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
+                  let revision = message["revision"] as? Int,
+                  let values = message["rect"] as? [Double], values.count == 4,
+                  values.allSatisfy({ $0.isFinite }), values[2] >= 0, values[3] > 0,
+                  let screen = NSScreen.screens.first,
+                  let preview = ClipboardPreview.read(.general, revision: revision),
+                  clipboardToken == token,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+                if clipboardToken == token { clipboardToken = "" }
+                send(["type": "clipboard_offer_state", "token": token, "visible": false]); return
+            }
+            let caret = NSRect(x: values[0], y: screen.frame.maxY - values[1] - values[3],
+                               width: max(1, values[2]), height: values[3])
+            if !clipboardPanel.show(preview, token: token, caret: caret) {
+                send(["type": "clipboard_offer_state", "token": token, "visible": false])
+            }
+            return
+        }
+        if ["begin", "stroke_update", "input_notice"].contains(type) { hideClipboardSuggestion() }
         if type == "discard_suspended_input" {
             if message["token"] as? String == suspendedInput?.token { suspendedInput = nil }
             if let token = message["token"] as? String { activeController?.discardResumedInput(token: token) }
@@ -222,9 +265,16 @@ final class ProxiMicInputController: IMKInputController {
 
     override func activateServer(_ sender: Any!) {
         let service = IMEService.shared
+        let foregroundPID = service.activationForegroundPID()
         let previous = service.activeController
         let lease = service.activation.begin(self)
         activationLease = lease
+        var scheduled = false
+        defer {
+            // Reentry before scheduling cannot leave a dormant request that
+            // could become current when a newer controller deactivates.
+            if !scheduled { service.activation.end(self, lease) }
+        }
         activationSenders.begin(sender as AnyObject?)
         // Retire local timers before any remote IMK call can reenter us.
         activated = false
@@ -272,13 +322,20 @@ final class ProxiMicInputController: IMKInputController {
         // This is only preparation, never readiness or permission to write.
         preparingActivation = true
         activationTimer = Timer.scheduledTimer(withTimeInterval: 0.025, repeats: false) { [weak self] _ in
-            guard let self, service.activation.owns(self, lease) else { return }
+            guard let self, self.activationLease == lease else { return }
             self.activationTimer = nil
-            self.prepareActivation(sender, lease: lease)
+            self.preparingActivation = false
+            guard service.activation.prepare(self, lease) else { return }
+            guard foregroundPID > 0, service.activationForegroundPID() == foregroundPID else {
+                self.retireActivation("activation_target_changed", reason: "已切换前台应用")
+                return
+            }
+            self.prepareActivation(sender, lease: lease, foregroundPID: foregroundPID)
         }
+        scheduled = true
     }
 
-    private func prepareActivation(_ sender: Any!, lease: UInt64) {
+    private func prepareActivation(_ sender: Any!, lease: UInt64, foregroundPID: pid_t) {
         let service = IMEService.shared
         guard service.activation.owns(self, lease) else { return }
         preparingActivation = true
@@ -297,6 +354,10 @@ final class ProxiMicInputController: IMKInputController {
         let bundle = input.bundleIdentifier() ?? ""
         activationApplication = bundle
         guard service.activation.owns(self, lease) else { return }
+        guard service.activationForegroundPID() == foregroundPID else {
+            retireActivation("activation_target_changed", reason: "已切换前台应用")
+            return
+        }
         // Source-launched Qt clients have no bundle identifier. They still
         // need native selection/deletion; the host pins their begin-time PID.
         let selectionDriver = makeSelectionDriver(
@@ -311,6 +372,21 @@ final class ProxiMicInputController: IMKInputController {
             self.sendEvent("wechat_key", extra: ["request_id": id, "command": command, "count": count,
                                                  "event_tag": tag, "application": bundle])
         }, selectionDriver: selectionDriver)
+        let clipboardReader = ClipboardBodyReader(NativeClipboardReadEnvironment(
+            pid: foregroundPID, bundle: bundle,
+            current: { [weak self, weak nextAdapter] in
+                guard let self, let nextAdapter else { return false }
+                return self.activated && service.activation.owns(self, lease) && self.adapter === nextAdapter
+            }, selection: { [weak nextAdapter] in nextAdapter?.client.selectedRange() ?? unspecifiedRange },
+            marked: { [weak nextAdapter] in nextAdapter?.client.markedRange() ?? unspecifiedRange }))
+        clipboardReader.record = { [weak selectionDriver] event in selectionDriver?.record(event) }
+        clipboardReader.onFinished = { [weak self] in
+            DispatchQueue.main.async { [weak self] in self?.drainClipboardMessages() }
+        }
+        nextAdapter.configureClipboardReader(clipboardReader, allowed: { [weak self] in
+            guard let self else { return false }
+            return !self.strokeActive && (self.pendingBeginID != nil || self.isWriting)
+        })
         guard service.activation.owns(self, lease) else { return }
         adapter = nextAdapter
         currentClientID = UUID().uuidString
@@ -334,6 +410,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     private func retireActivation(_ event: String, reason: String) {
+        clipboardMessages.removeAll()
         clearStroke()
         traceLifecycle(event)
         let lease = activationLease
@@ -380,6 +457,12 @@ final class ProxiMicInputController: IMKInputController {
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard activated, ownsActivation, let event else { return false }
+        IMEService.shared.hideClipboardSuggestion()
+        if event.type == .keyDown,
+           let handling = adapter?.clipboardKeyHandling(tag: event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) {
+            return handling
+        }
+        if adapter?.clipboardReadInProgress == true { adapter?.clipboardReader?.cancel() }
         if event.type == .leftMouseDown {
             clearStroke(ending: strokeSessionID.isEmpty)
             if session?.active == true || undoHistory.enabled || adapter?.clientOperationPending == true {
@@ -417,6 +500,7 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     override func commitComposition(_ sender: Any!) {
+        if adapter?.clipboardReadInProgress == true { return }
         if strokeActive {
             if !isWriting { clearStroke() }
             return
@@ -505,7 +589,18 @@ final class ProxiMicInputController: IMKInputController {
         return event.charactersIgnoringModifiers?.lowercased() == key
     }
 
+    private var clipboardMessages: [[String: Any]] = []
+    private func drainClipboardMessages() {
+        guard adapter?.clipboardReadInProgress != true else { return }
+        let messages = clipboardMessages; clipboardMessages = []
+        for message in messages { receive(message) }
+    }
+
     func receive(_ message: [String: Any]) {
+        if adapter?.clipboardReadInProgress == true {
+            clipboardMessages.append(message)
+            return
+        }
         guard activated, ownsActivation, !preparingActivation, let adapter, let type = message["type"] as? String else { return }
         if type == "reset", message["all"] as? Bool == true {
             IMEService.shared.suspendedInput = nil
@@ -1066,7 +1161,8 @@ final class ProxiMicInputController: IMKInputController {
     @discardableResult
     func sendState(includeSnapshot: Bool = false, requestID: String? = nil, failedUtteranceID: String? = nil,
                    reply: [String: Any]? = nil) -> Bool {
-        guard activated, ownsActivation, !preparingActivation, !stateReadInProgress, let adapter else { return false }
+        guard activated, ownsActivation, !preparingActivation, !stateReadInProgress, let adapter,
+              !adapter.clipboardReadInProgress else { return false }
         // IMK reads can pump the run loop; coalesce nested host pings instead
         // of recursively reading the same document on a half-built snapshot.
         stateReadInProgress = true
@@ -1167,7 +1263,7 @@ final class ProxiMicInputController: IMKInputController {
     private var selectionPolls = 0
     private var needsIdleTargetRefresh = false
     private func tick() {
-        guard activated, ownsActivation, let adapter else { return }
+        guard activated, ownsActivation, let adapter, !adapter.clipboardReadInProgress else { return }
         let clientID = currentClientID
         if !isWriting, adapter.clientOperationPending {
             isWriting = true

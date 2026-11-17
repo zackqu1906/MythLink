@@ -1,5 +1,10 @@
 import AppKit
 
+final class InputPaletteWindow: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 /// Shared presentation for voice and stroke input; never changes focus or input.
 enum InputPaletteStyle {
     static let rowHeight: CGFloat = 32

@@ -1,20 +1,26 @@
 """Focus-based gesture ownership, ahead of the audio endpoint and shortcuts."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+import json
 import threading
 import time
+import sys
 
 from PySide6.QtCore import QObject, Property, QTimer, Qt, Signal, Slot
 
 from ...gestures.app_gestures import QUIET_PHASES
 from ...gestures.gesture_settings import (GESTURE_LABELS, GLOBAL_ACTION_LABELS, GLOBAL_BINDINGS_KEY,
-                                VOICE_GESTURE_GROUP)
+                                VOICE_GESTURE_GROUP, ApplicationChoice, GLOBAL_APPLICATIONS_KEY,
+                                MAX_RECENT_APPLICATIONS)
 from ...scenes.registry import SCENE_LABELS
+from ...desktop.host_application import HOST_BUNDLE
 from ...diagnostics.scene_diagnostics import reason_message
 from ..desktop.text_focus_controller import TextFocusController
 from ..desktop.page_scroll_controller import PageScrollController
 from ..desktop.window_selector_controller import WindowSelectorController
+from ..desktop.application_launcher import ApplicationLauncher
+from ...screenshots.saved_capture import SavedCaptureController
 from .app_gesture_controller import InputSourceGestureEvent
 from ...gestures.history import observe_gesture
 
@@ -39,11 +45,13 @@ class MenuRequest:
     app_generation: int = -1
     trace_id: str = ""
     input_focus: object = None
+    application: object = None
 
 
 class RingGestureController(QObject):
     changed = Signal()
     showRequested = Signal(str, str)
+    mainWindowRequested = Signal()
     hideRequested = Signal()
     sceneHudRequested = Signal(str, object)
     _sceneHudReady = Signal(int, float, object, object)
@@ -54,6 +62,7 @@ class RingGestureController(QObject):
     def __init__(self, owner):
         super().__init__(owner)
         self.owner = owner
+        self._recent_applications = self._load_recent_applications()
         self._lock = threading.Lock()
         self._mode = "input"
         self._generation = 0
@@ -73,6 +82,9 @@ class RingGestureController(QObject):
         self.hideRequested.connect(self._cancel_scene_hud)
         self.changed.connect(self._cancel_scene_hud)
         self._selector = WindowSelectorController(self)
+        self._application_launcher = ApplicationLauncher(self)
+        self._screenshot = SavedCaptureController(owner, self)
+        self._screenshot.savedNotice.connect(lambda message: owner._app_gestures.notify(message, duration=3500))
         # Retained compatibility API; field discovery/selection is retired.
         self._fields = TextFocusController(self, enabled=False)
         self._scroll = PageScrollController(self)
@@ -84,6 +96,39 @@ class RingGestureController(QObject):
         self._sceneHudReady.connect(self._show_scene_hud, Qt.QueuedConnection)
         self._globalTargetReady.connect(self._apply_global_target, Qt.QueuedConnection)
         owner.connectedChanged.connect(self._connection_changed)
+        from ..shared.clipboard_suggestion import ClipboardSuggestionController
+        self._clipboard_suggestion = ClipboardSuggestionController(owner, self)
+
+    def _load_recent_applications(self):
+        raw = self.owner._settings.value(GLOBAL_APPLICATIONS_KEY, None)
+        try:
+            # Migrate existing launch bindings once, without changing assignments.
+            records = (json.loads(str(raw)) if raw is not None else [
+                dict(bundle=item.bundle, application_name=item.application_name)
+                for item in reversed(self.owner._global_gesture_bindings.applications)])
+            if not isinstance(records, list):
+                raise ValueError("打开应用记录格式无效")
+            choices = {}
+            for record in records:
+                choice = ApplicationChoice(**record)
+                choices.setdefault(choice.bundle, choice)
+            recent = tuple(choices.values())[:MAX_RECENT_APPLICATIONS]
+        except (TypeError, ValueError):
+            return ()  # A damaged history never resets the actual gesture bindings.
+        if raw is None:
+            self.owner._settings.setValue(GLOBAL_APPLICATIONS_KEY,
+                json.dumps([asdict(item) for item in recent], ensure_ascii=False))
+        return recent
+
+    def _remember_application(self, application):
+        choice = ApplicationChoice(application.bundle, application.application_name)
+        recent = (choice, *(item for item in self._recent_applications if item.bundle != choice.bundle))[:MAX_RECENT_APPLICATIONS]
+        if recent == self._recent_applications:
+            return
+        self.owner._settings.setValue(GLOBAL_APPLICATIONS_KEY,
+            json.dumps([asdict(item) for item in recent], ensure_ascii=False))
+        self._recent_applications = recent
+        self.changed.emit()
 
     @Property(str, notify=changed)
     def mode(self):
@@ -114,6 +159,10 @@ class RingGestureController(QObject):
     def globalActions(self):
         return [dict(value=key, label=label) for key, label in GLOBAL_ACTION_LABELS.items()]
 
+    @Property(QObject, constant=True)
+    def screenshot(self):
+        return self._screenshot
+
     @Slot(str, result="QVariantList")
     def globalGestureOptions(self, action):
         used = {g for key, g in self.globalBindings.items() if key != action}
@@ -131,6 +180,13 @@ class RingGestureController(QObject):
         previous_action = bindings.action_for(gesture)
         options = [dict(id="", label="无", path="解除此手势的全局绑定", shortcut="", available=True,
                         effect="此手势不执行全局功能，可在应用中配置动作。")]
+        if sys.platform == "darwin":
+            options.append(dict(id="open_application", label="打开应用", path="选择要打开的本机应用", shortcut="",
+                                available=True, effect="触发后打开所选应用；已打开时切换到该应用。"))
+            options.extend(dict(id="application-choice:" + item.bundle, label=item.label,
+                                path="最近选择的应用 · 全局手势共用", shortcut="", applicationBundle=item.bundle,
+                                available=True, effect=f"选择后，{GESTURE_LABELS[gesture]}用于「{item.label}」。")
+                           for item in self._recent_applications)
         action_order = [item.action_id for item in reversed(bindings.custom_shortcuts)] + list(GLOBAL_ACTION_LABELS)
         for action in action_order:
             label = labels[action]
@@ -151,6 +207,18 @@ class RingGestureController(QObject):
                                 available=True, effect=effect))
         return options
 
+    @Slot(str, result="QVariantMap")
+    def globalBindingAction(self, gesture):
+        bindings = self.owner._global_gesture_bindings
+        application = bindings.application_for(gesture)
+        if application is not None:
+            # The saved binding stays visible even if its app ages out of history.
+            return dict(id=application.action_id, label=application.label, path="打开应用", shortcut="",
+                        applicationBundle=application.bundle, available=True,
+                        effect="此手势当前用于「" + application.label + "」。")
+        action = bindings.action_for(gesture)
+        return next((item for item in self.globalActionOptions(gesture) if action and item["id"] == action), {})
+
     @Slot(str, str, result=bool)
     def setGlobalGestureAction(self, gesture, action):
         """Gesture-first editor: move a function, or exchange two assignments atomically."""
@@ -169,6 +237,27 @@ class RingGestureController(QObject):
             self.owner._app_gestures.notify(str(exc))
             return False
         return self._save_global_bindings(updated)
+
+    @Slot(str, str, result=bool)
+    def setGlobalApplicationBinding(self, gesture, bundle):
+        candidate = next((app for app in self.owner.appGestures.catalog.candidates if app["value"] == bundle), None)
+        if candidate is None:
+            recent = next((item for item in self._recent_applications if item.bundle == bundle), None)
+            if recent is not None:
+                candidate = dict(value=recent.bundle, label=recent.application_name)
+        if candidate is None or sys.platform != "darwin":
+            self.owner._app_gestures.notify("未找到此应用，请刷新应用列表后重试")
+            return False
+        try:
+            updated = self.owner._global_gesture_bindings.with_application(gesture, bundle, candidate["label"])
+        except (TypeError, ValueError) as exc:
+            self.owner._app_gestures.notify(str(exc))
+            return False
+        if not self._save_global_bindings(updated):
+            return False
+        # History is shared independently of gesture transactions and survives undo.
+        self._remember_application(updated.application_for(gesture))
+        return True
 
     @Slot(str, str, result=bool)
     def setGlobalBinding(self, action, gesture):
@@ -216,6 +305,7 @@ class RingGestureController(QObject):
                 self._transition = None
             self.hideRequested.emit()
             self._selector.cancel()
+            self._screenshot.cancel()
             self.owner._app_gestures.cancel_pending()
 
     def speech_busy(self):
@@ -256,6 +346,10 @@ class RingGestureController(QObject):
         if self.session_blocked():
             observe_gesture(self.owner, identity, status="not_triggered")
             return False
+        if self._clipboard_suggestion.consume(event, connection):
+            return False
+        if self._screenshot.consume(event, connection):
+            return False
         agent = getattr(self.owner, '_agent', None)
         if agent is not None and agent.filter_gesture(event, connection):
             return False
@@ -293,12 +387,12 @@ class RingGestureController(QObject):
             if end_only:
                 observe_gesture(self.owner, identity, status="not_triggered")
                 return False  # There is no active sentence to finish.
-            created = time.monotonic()
             inline = self.owner._inline_input
             start_focus = inline.capture_start_focus(require_editable=True)
+            confirmed = time.monotonic()
             if start_focus is not None and start_focus.status == "text" and len(start_focus.target or ()) == 6:
                 observe_gesture(self.owner, identity, application=start_focus.target[3], focus="text")
-                inline.pin_start_focus(start_focus.target, created)
+                inline.pin_start_focus(start_focus.target, confirmed)
                 return True
         routed = service.envelope(event, audio_busy=audio_busy,
                                   start_focus=start_focus, input_only=input_only, end_only=end_only)
@@ -363,6 +457,14 @@ class RingGestureController(QObject):
         if not action:
             service._stop_trace(event, "binding_missing")
             return
+        if action == 'clipboard_paste':
+            from ...gestures.app_gestures import AppBinding
+            # Let the destination application consume the original clipboard
+            # MIME data, including images. Never replace it with text or a path.
+            shortcut = 'Cmd+V' if sys.platform == 'darwin' else 'Ctrl+V'
+            service._dispatch('global:clipboard_paste', AppBinding(source.name, shortcut),
+                              event.target, trace_id=event.trace_id, input_focus=event.input_focus)
+            return
         custom = self.owner._global_gesture_bindings.custom_for(source.name)
         if custom is not None:
             from ...gestures.app_gestures import AppBinding
@@ -370,14 +472,16 @@ class RingGestureController(QObject):
                               event.target, trace_id=event.trace_id, input_focus=event.input_focus)
             return
         canonical = {"show_menu": "index-pinch", "window_selector": "clench",
+                     "screen_capture": "screen-capture",
                      "scroll_up": "swipe-up", "scroll_down": "swipe-down",
                      "workflow_recommendations": "workflow-recommendations", "agent": "agent"}
+        application = self.owner._global_gesture_bindings.application_for(source.name)
         stamp = (self._selector.capture_stamp() if action == "window_selector" else
                  self._scroll.capture_stamp() if action in {"scroll_up", "scroll_down"} else None)
-        request = MenuRequest(canonical[action], self._generation, event.created, False,
+        request = MenuRequest("open_application" if application else canonical[action], self._generation, event.created, False,
                               stamp=stamp, target=event.target, app_generation=event.generation,
                               transition=self._transition, trace_id=event.trace_id,
-                              input_focus=event.input_focus)
+                              input_focus=event.input_focus, application=application)
         self._apply(request, connection)
 
     def envelope(self, event):
@@ -388,7 +492,7 @@ class RingGestureController(QObject):
         return ModeGestureEvent(self.owner._app_gestures.envelope(event), generation)
 
     def input_owner_changed(self):
-        """Discard queued actions when stroke input takes/releases the gestures."""
+        """Discard queued actions when stroke input or capture owns the gestures."""
         with self._lock:
             self._generation += 1
             self._transition = None
@@ -573,6 +677,14 @@ class RingGestureController(QObject):
                 self._global_trace(request, reason or diagnostic.get("reason") or "target_changed",
                                    native=diagnostic)
                 return
+            if request.application is not None:
+                if request.application.bundle == HOST_BUNDLE:
+                    self.mainWindowRequested.emit()
+                    self._application_opened(request, True, "")
+                else:
+                    self._application_launcher.open(request.application, lambda success, detail:
+                        self._application_opened(request, success, detail))
+                return
             self._global_trace(request, "global_action_started", native=diagnostic)
             with self._lock:
                 self._mode = "operation"  # Internal hint/scroll context, never a user-selected mode.
@@ -588,6 +700,11 @@ class RingGestureController(QObject):
                 self.owner.agent.toggleFocus()
                 self._log(request.name, 'show')
                 return
+            if request.name == "screen-capture":
+                self.hideRequested.emit()
+                self._screenshot.start()
+                self._log(request.name, 'show')
+                return
             if request.name in {"swipe-up", "swipe-down"}:
                 self._scroll.start(request, connection)
                 return
@@ -598,6 +715,14 @@ class RingGestureController(QObject):
                 self._selector.start(current, connection)
         finally:
             self._release_global(request)
+
+    def _application_opened(self, request, success, detail):
+        if self._closed:
+            return
+        self._global_trace(request, "global_action_started" if success else "application_open_failed",
+                           application_bundle=request.application.bundle, error=detail)
+        if not success:
+            self.owner._app_gestures.notify(f"无法打开「{request.application.application_name}」，请确认应用仍已安装，或重新选择应用")
 
     def _log(self, gesture, action, reason=""):
         self.owner._event_log("RING_GESTURE", gesture=gesture, action=action,
@@ -618,6 +743,9 @@ class RingGestureController(QObject):
 
     def close(self):
         self._closed = True
+        self._clipboard_suggestion.close()
+        self._screenshot.close()
+        self._application_launcher.close()
         self._cancel_scene_hud()
         self._fields.close()
         self._scroll.close()

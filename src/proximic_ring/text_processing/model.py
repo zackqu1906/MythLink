@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .task_routing import EditPlan
+from .general_edit_prompt import GENERAL_EDIT_VARIANTS
 
 
 INPUT_MODE_DICTATION = "dictation"
@@ -24,10 +25,13 @@ INPUT_ROUTING_LABELS = {
 INPUT_ROUTING_MODES = frozenset(INPUT_ROUTING_LABELS)
 ROUTED_EDIT_SIX_CLASS = "six_class_v5"
 ROUTED_EDIT_BOUNDARY = "boundary_only_v1"
+
 ROUTED_EDIT_VARIANT_LABELS = {
     ROUTED_EDIT_SIX_CLASS: "六分类 v5",
     ROUTED_EDIT_BOUNDARY: "无分类边界 v1",
+    **{key: value[0] for key, value in GENERAL_EDIT_VARIANTS.items()},
 }
+ROUTED_EDIT_BODY_VARIANTS = frozenset({ROUTED_EDIT_BOUNDARY, *GENERAL_EDIT_VARIANTS})
 LLM_PROVIDER_LOCAL = "local"
 LLM_PROVIDER_OPENAI = "openai"
 LLM_PROVIDER_VOLCENGINE = "volcengine"
@@ -137,6 +141,7 @@ class TextProcessingRequest:
     routing_mode: str = INPUT_ROUTING_MANUAL
     reexecuted: bool = False
     routed_edit_variant: str = ROUTED_EDIT_SIX_CLASS
+    saved_context: object = None
 
 
 @dataclass(frozen=True)

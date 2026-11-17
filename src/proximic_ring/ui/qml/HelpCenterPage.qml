@@ -46,7 +46,7 @@ ColumnLayout {
                 model: [
                     {symbol: "mic", title: "语音输入", description: "连接 Ring 并开启语音识别。点入文本框后，使用当前配置的语音手势开始输入；语音输入页可查看记录。"},
                     {symbol: "pointer", title: "鼠标控制", description: "在触摸板页开启鼠标控制，通过戒指触摸板移动指针和轻触点击，并调整指针速度。"},
-                    {symbol: "gesture", title: "手势控制", description: "默认双击 Tap 开始语音、单击 Tap 结束语音。仅与输入手势重叠时，输入框内优先执行输入功能；其他手势按应用优先、全局兜底执行。语音处理期间仍可取消本次操作。"}
+                    {symbol: "gesture", title: "手势控制", description: "默认单击 Tap 开始语音，再次单击 Tap 结束语音，可在语音手势设置中修改。仅与输入手势重叠时，输入框内优先执行输入功能；其他手势按应用优先、全局兜底执行。语音处理期间仍可取消本次操作。"}
                 ]
                 Control {
                     required property var modelData

@@ -322,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
             elif result.get("input_source_restored"):
                 print("已安装并启用，已恢复 Mythlink 输入法。")
             else:
-                print("已安装并启用语音输入法。请点入文本框后双击 tap，或从菜单栏选择 Mythlink。")
+                print("已安装并启用语音输入法。请点入文本框后触发开始语音手势，或从菜单栏选择 Mythlink。")
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         print(str(exc), file=sys.stderr)

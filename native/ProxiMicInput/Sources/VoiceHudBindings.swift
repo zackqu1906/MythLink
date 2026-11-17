@@ -22,7 +22,7 @@ struct VoiceHudBindings: Equatable {
         "double-index-pinch": "双食指捏合", "double-middle-pinch": "双中指捏合"
     ]
     private(set) var actions: [String: [String]] = [
-        "undo": ["swipe-left"], "confirm": ["double-tap"], "end": ["tap"], "switch_mode": ["swipe-right"],
+        "undo": ["swipe-left"], "confirm": ["tap"], "end": ["tap"], "switch_mode": ["swipe-right"],
         "send": ["swipe-up"], "polish": ["swipe-down"]
     ]
 

@@ -85,6 +85,15 @@ def kinds(posts):
     return [e['kind'] for e in posts]
 
 
+def test_clipboard_recommendation_suppresses_sdk_click_but_keeps_pointer(pointer):
+    worker, _, posts, context, captured = pointer
+    context[0] = ('clipboard-offer', 'clipboard')
+    worker.submit(click(time.monotonic()))
+    worker.submit(movement())
+    until(lambda: bool(posts))
+    assert kinds(posts) == ['move'] and not captured
+
+
 @pytest.fixture
 def drag_records(caplog):
     caplog.set_level(logging.INFO, logger=diagnostics.__name__)
@@ -107,15 +116,18 @@ def begin_drag(worker, posts):
     return start
 
 
-def test_normal_motion_never_turns_into_drag_during_a_pause(pointer):
-    worker, _, posts, *_ = pointer
+@pytest.mark.parametrize('phase', ['closed', 'capture'])
+def test_normal_motion_never_turns_into_drag_during_a_pause(pointer, phase):
+    worker, _, posts, context, _ = pointer
+    context[0] = (0, phase)
     worker.submit(contact())
     worker.submit(movement())
     until(lambda: kinds(posts) == ['move'])
     time.sleep(.42)
     worker.submit(movement())
     until(lambda: len(posts) == 2)
-    assert kinds(posts) == ['move', 'move'] and worker.drag.state == 'moving'
+    assert kinds(posts) == ['move', 'move']
+    assert worker.drag.state == ('moving' if phase == 'closed' else 'idle')
 
 
 def test_contact_holds_through_movement_and_releases_at_last_position(pointer):
@@ -209,6 +221,8 @@ def test_every_interruption_releases_without_another_move(pointer, reason, drag_
                               end_timestamp=time.monotonic(), timestamp=time.monotonic()-1))
     until(lambda: kinds(posts) == ['down', 'drag', 'up'])
     assert mouse._drag_up is None
+    # stop() releases natively on the caller; the worker logs its end later.
+    until(lambda: len(drag_records()) == 2)
     started, ended = drag_records()
     assert started['stage'] == 'start' and ended['stage'] == 'end'
     assert started['drag_id'] == ended['drag_id']
@@ -526,20 +540,24 @@ def test_real_sdk_engine_contact_and_preview_reach_pointer_adapter(monkeypatch):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize('scenario', ['normal_move', 'dwell_drag', 'double_tap'])
+@pytest.mark.parametrize('scenario', ['normal_move', 'dwell_drag', 'double_tap', 'capture_dwell_motion', 'capture_move', 'capture_double_tap'])
 def test_real_sdk_sequence_to_native_pointer(monkeypatch, scenario):
     async def run():
         mouse, posts = native()
         now = [time.monotonic()]
         monkeypatch.setattr(time, 'monotonic', lambda: now[0])
+        captured = []
+        context = ((123, 1, 0), 'capture') if scenario.startswith('capture_') else (0, 'closed')
         worker = TouchpadMouseOutput(connection=threading.Event(), gain=1, clicks=True, invert_y=False,
-            on_ready=lambda: None, on_end=lambda *_: None, raw2=True)
+            on_ready=lambda: None, on_end=lambda *_: None, raw2=True, click_context=lambda: context,
+            on_capture_click=captured.append)
         worker.mouse = mouse
         worker.activate()
         def emit(event):
             from proximic_ring.touchpad.click_diagnostics import ClickTrace
-            trace = ClickTrace(event) if event.kind == 'click' and not event.is_preview else None
-            value = worker._raw2_event(event, (0, 'closed'), trace)
+            trace = ClickTrace(event) if event.kind == 'click' and (
+                not event.is_preview or context[1] == 'capture') else None
+            value = worker._raw2_event(event, context, trace)
             if value:
                 worker._apply([value])
         engine, Recognition, receiver = sdk_engine(emit, monkeypatch)
@@ -549,20 +567,24 @@ def test_real_sdk_sequence_to_native_pointer(monkeypatch, scenario):
             for frame in range(250):
                 stamp = base + frame*5_000_000
                 now[0] = stamp/1e9
-                first = 15 <= frame < (220 if scenario in {'normal_move', 'dwell_drag'} else 27)
-                second = scenario == 'double_tap' and 44 <= frame < 56
-                moving = (scenario == 'normal_move' and 30 <= frame < 95 or
-                          scenario == 'dwell_drag' and 120 <= frame < 210)
+                first = 15 <= frame < (220 if not scenario.endswith('double_tap') else 27)
+                second = scenario.endswith('double_tap') and 44 <= frame < 56
+                moving = (scenario in {'normal_move', 'capture_move'} and 30 <= frame < 95 or
+                          scenario in {'dwell_drag', 'capture_dwell_motion'} and 120 <= frame < 210)
                 engine.recognize(Recognition(frame, stamp, stamp, .4 if moving else 0, 0,
                                              float(first or second), 0), stamp)
                 if receiver.delivery.task is not None:
                     await receiver.delivery.task
-            if scenario == 'normal_move':
+            if scenario in {'normal_move', 'capture_move', 'capture_dwell_motion'}:
                 assert posts and set(kinds(posts)) == {'move'}
             elif scenario == 'dwell_drag':
-                assert kinds(posts)[0] == 'down' and posts[0]['count'] == 1
-                assert set(kinds(posts)[1:-1]) == {'drag'}
+                beginning = kinds(posts).index('down')
+                assert beginning == 0
+                assert posts[beginning]['count'] == 1
+                assert set(kinds(posts)[beginning+1:-1]) == {'drag'}
                 assert kinds(posts)[-1] == 'up'
+            elif scenario == 'capture_double_tap':
+                assert not posts and captured == [context, context]
             else:
                 assert kinds(posts) == ['down', 'up', 'down', 'up']
                 assert [e['count'] for e in posts] == [1, 1, 2, 2]
@@ -570,3 +592,52 @@ def test_real_sdk_sequence_to_native_pointer(monkeypatch, scenario):
         finally:
             mouse.disable()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('dwell_enabled', [True, False])
+@pytest.mark.parametrize('dwell_ms', [300, 600])
+def test_capture_motion_and_dwell_never_press_or_select(pointer, dwell_enabled, dwell_ms):
+    worker, mouse, posts, context, captured = pointer
+    context[0] = ((123, 1, 0), 'capture')
+    worker.configure(clicks=True, double_click=True, right_click=True, scroll=True,
+                     scroll_gain=1, dwell_drag=dwell_enabled, dwell_ms=dwell_ms)
+    start = contact()
+    worker.submit(start)
+    worker.submit(movement(dx=1, dy=0))
+    until(lambda: kinds(posts) == ['move'])
+    time.sleep(dwell_ms / 1000 + .03)
+    worker.submit(movement(dx=7, dy=0))
+    until(lambda: kinds(posts) == ['move', 'move'])
+    end = time.monotonic()
+    worker.submit(replace(start, phase='END', end_timestamp=end, timestamp=end))
+    time.sleep(.03)
+    assert not captured and mouse._drag_up is None and worker.drag.state == 'idle'
+    # Only formal SDK clicks select points, even after a long contact/movement.
+    event = click(time.monotonic())
+    worker.submit(event)
+    worker.submit(event)
+    until(lambda: captured == [context[0]])
+    worker.submit(click(time.monotonic(), identifier=1, count=2))
+    until(lambda: captured == [context[0], context[0]])
+    assert kinds(posts) == ['move', 'move'] and mouse._drag_up is None
+
+
+@pytest.mark.parametrize('count', [1, 2])
+@pytest.mark.parametrize('destination', ['same_capture', 'new_capture', 'closed'])
+def test_capture_preview_and_final_click_pair_are_not_replayed(pointer, count, destination):
+    worker, _, posts, context, captured = pointer
+    first_context = ((123, 1, 0), 'capture')
+    context[0] = first_context
+    preview = click(time.monotonic(), preview=True)
+    worker.submit(preview)
+    worker.submit(preview)
+    until(lambda: captured == [first_context])
+    if destination == 'new_capture': context[0] = ((123, 2, 0), 'capture')
+    elif destination == 'closed': context[0] = (2, 'closed')
+    final = replace(preview, is_preview=False, count=count, timestamp=time.monotonic())
+    worker.submit(final)
+    worker.submit(final)
+    worker.submit(movement())
+    until(lambda: kinds(posts) and kinds(posts)[-1] == 'move')
+    assert kinds(posts) == ['move']  # No delayed native click after leaving capture.
+    assert captured == [first_context] * (2 if count == 2 and destination == 'same_capture' else 1)

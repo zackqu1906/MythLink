@@ -256,7 +256,7 @@ def test_tutorial_demo_is_not_device_completion(inline_ui, tmp_path):
     QMetaObject.invokeMethod(tutorial, "close")
 
 
-def test_voice_practice_ui_never_sends_to_ime_and_leaving_cancels(inline_ui, monkeypatch):
+def test_voice_audio_test_leaves_editor_independent_and_leaving_cancels(inline_ui, monkeypatch):
     import numpy as np
     from PySide6.QtCore import QObject
     from PySide6.QtTest import QTest
@@ -271,14 +271,18 @@ def test_voice_practice_ui_never_sends_to_ime_and_leaving_cancels(inline_ui, mon
     practice = controller.voicePractice
     config = PracticeConfiguration("ring", "", True, "volcengine", ASRBackendSettings(), LLMSettings(), controller._gesture_bindings)
     monkeypatch.setattr(practice, "_configuration", lambda: config)
-    monkeypatch.setattr(practice, "_recognize", lambda token, *args: practice._result.emit(token, "dictation", "仅在练习框内", ""))
+    monkeypatch.setattr(practice, "_recognize", lambda *args: pytest.fail("Audio test must not recognize text"))
+    editor = root.findChild(QObject, "voiceTrialEditor")
+    editor.setProperty("text", "普通文本框")
     before = list(bridge.messages)
-    click(root, "voicePracticeStartButton")
+    click(root, "voiceAudioTestButton")
     assert practice.recording
+    assert not editor.property("readOnly")
     practice.consume_audio(np.full(8000, .1, dtype=np.float32))
-    click(root, "voicePracticeStartButton")
+    click(root, "voiceAudioTestButton")
     QTest.qWait(100)
-    assert root.findChild(QObject, "voiceTrialEditor").property("text") == "仅在练习框内"
+    assert editor.property("text") == "普通文本框"
+    assert practice.audioAvailable and not practice.active
     assert bridge.messages == before
     click(root, "mainNav4")
     assert not practice.active and not practice.processing

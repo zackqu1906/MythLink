@@ -44,9 +44,11 @@ function actionDetails(action, applicationScope, applicationName, platform) {
     if (action.voiceAction) return "语音输入 · 可与应用和全局映射重叠，输入框内优先执行。"
         + "\n仅在全局默认中修改；同一功能可绑定多个手势，选择后自动保存。"
     if (action.category) {
-        return {application:"来自「" + applicationName + "」的菜单和场景预设。",system:"Mythlink 内置功能，如窗口选择、滚动和 Agent。",voice:"调整听写、定稿、润色和编辑的输入手势。",shortcut:"macOS 系统组合键，或你自己录制的快捷键。"}[action.category] || ""
+        return {application:"来自「" + applicationName + "」的菜单和场景预设。",system:"打开应用、截图、粘贴、窗口选择、滚动和 Agent 等系统功能。",voice:"调整听写、定稿、润色和编辑的输入手势。",shortcut:"macOS 系统组合键，或你自己录制的快捷键。"}[action.category] || ""
     }
     if (!action.id) return applicationScope ? "移除此处的覆盖，回退到应用默认或全局配置。" : "解除此手势的全局绑定，保留应用内的独立配置。"
+    if (action.id === "open_application") return "选择本机应用；触发手势后打开它，已打开时切换到该应用。\n最近选择的 5 个应用会保留在系统功能中，供所有全局手势使用。"
+    if (action.applicationBundle) return "打开所选应用；已打开时切换到该应用。\n可再次选择「打开应用」更换目标。"
     var preset = presetFor(action, platform)
     if (preset) return preset.description + (isSystemMenu(action) ? "\n系统菜单：" + action.path : "\nmacOS 默认组合键；如已在系统中改键，请录入实际组合键。")
     if (action.systemShortcut || isSystemMenu(action)) return "系统菜单：" + action.path + "\n由 macOS 处理此组合键。"
@@ -56,6 +58,8 @@ function actionDetails(action, applicationScope, applicationName, platform) {
     if (!applicationScope) return {
         show_menu:"显示当前手势及其对应功能的提示面板。",
         window_selector:"打开窗口选择界面，选择要切换到的窗口。",
+        screen_capture:"点击第一个角，移动光标预览，再点击对角确定选区；支持任意方向，第三次点击开始重选。左滑或再次触发开启手势可退出，右滑保存 PNG、复制图片并退出；冲突时优先执行截图内置操作，单击或双击绑定用左滑退出。\n保存位置可在设置 → 界面与通用中修改。",
+        clipboard_paste:"在当前应用粘贴剪贴板中的图片、文字等内容。截图保存并复制后，切到邮件等支持图片粘贴的位置，再触发此手势即可粘贴图片。",
         scroll_up:"向上滚动当前页面或可滚动内容。",
         scroll_down:"向下滚动当前页面或可滚动内容。",
         workflow_recommendations:"打开下一步推荐列表，选择任务交给 Agent。",

@@ -24,8 +24,14 @@ class InputFocus:
     native_target: object = None
 
 
-def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_fallback=None):
-    """Run on the gesture worker. Source selection and replies share a deadline.
+def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
+                      activation_timeout=1.5, native_fallback=None):
+    """Run on the gesture worker, reserving focus time after source activation.
+
+    A live client uses only the focus budget. An inactive source gets one
+    separately bounded selection attempt. Its process, connection and IMK
+    activation can then settle within the combined startup and focus budget.
+    Neither polling nor selection can extend that fixed total upper bound.
 
     A bound client's invalid selection is nontext. Outside an explicitly
     supplied native fallback, an absent client or timeout stays unavailable.
@@ -34,6 +40,7 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
     """
     started = time.monotonic()
     deadline = started + timeout
+    total_deadline = deadline + activation_timeout
     origin = foreground()
     epoch = bridge.epoch
 
@@ -108,13 +115,22 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8, native_
                     break
                 if select_source is None:
                     return result("unavailable", "unknown_focus")
-                remaining = deadline - time.monotonic()
+                activation_deadline = min(total_deadline, time.monotonic() + activation_timeout)
+                remaining = activation_deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 # Inactive means our IMK does not own the editor yet, not that
                 # the editor is absent. Select once, then require fresh proof.
                 select_source(origin[1], timeout=remaining)
+                if changed():
+                    return unavailable("foreground_or_connection_changed")
+                if time.monotonic() >= activation_deadline:
+                    return unavailable("input_method_timeout")
                 selected = True
+                # A TIS selection receipt can precede process launch and IMK
+                # preparation. Keep their remaining startup allowance instead
+                # of treating source selection as proof of readiness.
+                deadline = total_deadline
             else:
                 time.sleep(min(.02, max(0, deadline - time.monotonic())))
     except TimeoutError:

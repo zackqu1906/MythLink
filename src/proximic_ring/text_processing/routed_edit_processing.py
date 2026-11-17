@@ -7,15 +7,19 @@ import re
 from .edit_response import apply_edit_response
 from .edit_tool import EDIT_MODE_FULL
 from .model import (LLM_PROVIDER_VOLCENGINE, validate_edit_target_text,
-                    ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant)
+                    ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant)
 from .processing_common import LLMResponseProcessingError, _text_output_budget
 from .routed_edit_prompts import routed_edit_prompt
 from .task_routing import EDIT_TASK_LABELS, EditPlan, available_edit_tasks
 
 
-def routed_edit_model_input(utterance, editable_text, screen_context=None):
-    return {"utterance": str(utterance or "").strip(), "editable_text": editable_text,
-            "screen_context": screen_context or {}}
+def routed_edit_model_input(utterance, editable_text, screen_context=None, saved_context=None):
+    result = {"utterance": str(utterance or "").strip(), "editable_text": editable_text,
+              "screen_context": screen_context or {}}
+    if saved_context is not None:
+        from ..screenshots.context import saved_context_text
+        result["saved_context"] = saved_context_text(saved_context)
+    return result
 
 
 def parse_routed_edit_response(raw, target):
@@ -45,7 +49,7 @@ def parse_routed_edit_response(raw, target):
 
 class RoutedEditTextProcessingMixin:
     def process_routed_edit_with_trace(self, text, settings, target_text, screen_context=None,
-                                      *, variant=ROUTED_EDIT_SIX_CLASS):
+                                      *, variant=ROUTED_EDIT_SIX_CLASS, saved_context=None):
         settings.validate()
         if (not settings.enabled or settings.provider != LLM_PROVIDER_VOLCENGINE
                 or not settings.model.lower().startswith("deepseek")):
@@ -55,8 +59,8 @@ class RoutedEditTextProcessingMixin:
             raise ValueError("本次编辑口述为空")
         target = validate_edit_target_text(target_text, allow_empty=True)
         variant = normalize_routed_edit_variant(variant)
-        boundary_only = variant == ROUTED_EDIT_BOUNDARY
-        model_input = routed_edit_model_input(raw, target, screen_context)
+        boundary_only = variant in ROUTED_EDIT_BODY_VARIANTS
+        model_input = routed_edit_model_input(raw, target, screen_context, saved_context)
         # Detach the exact serialized input from mutable capture/evidence data.
         model_input = json.loads(json.dumps(model_input, ensure_ascii=False))
         output = ""

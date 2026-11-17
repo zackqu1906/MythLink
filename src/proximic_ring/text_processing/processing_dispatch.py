@@ -55,11 +55,14 @@ def process_automatic(processor, request, cancelled=lambda: False):
 def process_routed_edit(processor, request, cancelled=lambda: False):
     """Manual edit intent: resolve the same OCR frame, then one LLM call."""
     context = resolve_model_context(request.screen_context, cancelled=cancelled)
+    from ..screenshots.context import resolve_saved_context
+    saved = resolve_saved_context(request.saved_context, cancelled=cancelled)
     if cancelled():
         raise RuntimeError("编辑已取消")
+    options = {"saved_context": saved} if request.saved_context is not None else {}
     text, raw, model_input, plan = processor.process_routed_edit_with_trace(
         request.raw_text, request.settings, request.target_text, context,
-        variant=request.routed_edit_variant)
+        variant=request.routed_edit_variant, **options)
     return ProcessingOutput(text, raw, model_input, task_type=EDIT, edit_plan=plan, screen_context=context)
 
 

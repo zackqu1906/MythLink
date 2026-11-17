@@ -20,7 +20,7 @@ def test_defaults_match_sdk_and_current_assignments():
 
     assert set(GESTURE_LABELS) == set(GESTURE_NAMES.values()) | {"double-tap", "double-index-pinch", "double-middle-pinch"}
     bindings = GestureBindings()
-    assert bindings.confirm == ("double-tap", "")
+    assert bindings.confirm == ("tap", "")
     assert bindings.end == ("tap", "")
     assert bindings.undo == ("swipe-left", "")
     assert bindings.switch_mode == ("swipe-right", "")
@@ -39,21 +39,25 @@ def test_legacy_confirm_bindings_keep_toggle_until_controller_migration():
     assert GestureBindings.from_json(json.dumps(old)).end == ("tap", "")
 
 
-def test_saved_single_tap_default_migrates_to_double_start_single_end(tmp_path, monkeypatch):
+@pytest.mark.parametrize("start", ["tap", "double-tap", "snap", ""])
+@pytest.mark.parametrize("aliases_migrated", [False, True])
+def test_saved_start_choice_survives_legacy_migrations(tmp_path, monkeypatch, start, aliases_migrated):
     controller = _controller(tmp_path, monkeypatch)
     try:
-        controller._settings.setValue("input/gestureBindings", GestureBindings(confirm=("tap", "")).to_json())
-        controller._settings.setValue("gestures/appDefaultsMigrated", True)
+        assert controller.gestureBindings["confirm"] == controller.gestureBindings["end"] == ["tap", ""]
+        controller._settings.setValue("input/gestureBindings", GestureBindings(confirm=(start, "")).to_json())
+        controller._settings.setValue("gestures/appDefaultsMigrated", aliases_migrated)
         controller._settings.setValue("gestures/doubleTapDefaultMigrated", False)
     finally:
         _close(controller)
     migrated = _controller(tmp_path, monkeypatch)
     try:
-        assert migrated.gestureBindings["confirm"] == ["double-tap", ""]
+        assert migrated.gestureBindings["confirm"] == [start, ""]
         assert migrated.gestureBindings["end"] == ["tap", ""]
-        assert migrated.confirmGestureHint == "双击 tap"
+        assert migrated.confirmGestureHint == GestureBindings(confirm=(start, "")).confirm_hint
         assert migrated.endGestureHint == "单击 tap"
         assert not migrated.setGestureBinding("undo", 1, "tap")
+        assert migrated.setGestureBinding("confirm", 0, "double-tap")
         assert migrated.setGestureBinding("end", 0, "double-tap")
         assert migrated.setGestureBinding("undo", 1, "tap")
         assert migrated.gestureBindings["undo"] == ["tap", ""]
@@ -79,7 +83,7 @@ def test_down_defaults_to_polish_but_can_be_reassigned(tmp_path, monkeypatch):
 @pytest.mark.parametrize("changes", [
     {"confirm": ("tap", "tap")},
     {"confirm": ("tap", "swipe-left")},
-    {"undo": ("double-tap", "")},
+    {"undo": ("tap", "")},
     {"switch_mode": ("swipe-left", "")},
     {"undo": tuple(["snap"] * 15)},
     {"undo": ("empty", "")},

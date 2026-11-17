@@ -143,3 +143,90 @@ def test_own_window_keeps_qt_available_during_imk_revalidation(imk_route, monkey
     assert sent == [('safari', 'Ctrl+Shift+Tab')]
     assert calls and all(thread != gui for thread in calls)
     QCoreApplication.processEvents()
+
+
+@pytest.mark.parametrize('gesture,expected', [
+    ('swipe-left', ('cancel', {})),
+    ('swipe-down', ('polish', {'restore_raw_on_undo': True})),
+])
+def test_own_text_editor_ring_action_keeps_gui_available_for_imk(imk_route, monkeypatch, gesture, expected):
+    import os
+    import threading
+    from PySide6.QtCore import QObject, Signal, Qt, QThread
+    c, service, inline, backend, sent, messages, _, data = imk_route
+    backend.target = replace(backend.target, pid=os.getpid(), bundle='')
+    data['front'] = ('', os.getpid())
+    data['state'].update(application='', ready=True, selection=[5, 0])
+    inline._view.update(application='', phase='dictated')
+    gui = QCoreApplication.instance().thread()
+
+    class Responder(QObject):
+        requested = Signal(object)
+
+        def __init__(self):
+            super().__init__()
+            self.requested.connect(lambda done: done.set(), Qt.QueuedConnection)
+
+    responder = Responder()
+    reads = []
+    def read_focus(*, timeout):
+        reads.append(QThread.currentThread())
+        done = threading.Event()
+        responder.requested.emit(done)
+        return dict(data['state']) if done.wait(timeout) else None
+    monkeypatch.setattr(inline._bridge, 'focus_state', read_focus)
+    # Capture runs on the firmware worker; dispatch runs on Qt's GUI thread.
+    worker = threading.Thread(target=lambda: request(c, gesture, deliver=False))
+    worker.start()
+    deadline = time.monotonic() + 1
+    while (worker.is_alive() or not messages) and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(.001)
+    worker.join(.5)
+    assert messages == [expected]
+    assert not sent
+    assert reads and all(thread != gui for thread in reads)
+
+
+@pytest.mark.parametrize('change', [
+    'selection', 'client', 'utterance', 'epoch', 'foreground', 'timeout',
+    'settings', 'connection', 'disconnect', 'generation', 'closed', 'expired',
+])
+def test_own_text_editor_drops_undo_if_target_changes_during_validation(imk_route, monkeypatch, change):
+    import os
+    import threading
+    c, service, inline, backend, sent, messages, _, data = imk_route
+    backend.target = replace(backend.target, pid=os.getpid(), bundle='')
+    data['front'] = ('', os.getpid())
+    data['state'].update(application='', ready=True, selection=[5, 0])
+    inline._view.update(application='', phase='dictated')
+    request(c, 'swipe-left', deliver=False)
+    entered, released = threading.Event(), threading.Event()
+    def read_focus(*, timeout):
+        entered.set()
+        released.wait(timeout)
+        return None if change == 'timeout' else dict(data['state'])
+    monkeypatch.setattr(inline._bridge, 'focus_state', read_focus)
+    QCoreApplication.processEvents()
+    assert entered.wait(.5)
+    if change == 'selection': data['state']['selection'] = [0, 0]
+    if change == 'client': inline._client_id = data['state']['client_id'] = 'other'
+    if change == 'utterance': inline._utterance_id = data['state']['utterance_id'] = 'other'
+    if change == 'epoch': inline._bridge.epoch = 'other'
+    if change == 'foreground': data['front'] = ('other.app', 99)
+    if change == 'settings': service._generation += 1
+    if change == 'connection': c._disconnect_event = threading.Event()
+    if change == 'disconnect': c._disconnect_event.set()
+    if change == 'generation': c.ringGestures._generation += 1
+    if change == 'closed': service.close()
+    if change == 'expired':
+        now = time.monotonic
+        monkeypatch.setattr(time, 'monotonic', lambda: now() + 2)
+    released.set()
+    deadline = time.monotonic() + .5
+    while time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        if service._input_actions._active is None:
+            break
+        time.sleep(.001)
+    assert not messages and not sent

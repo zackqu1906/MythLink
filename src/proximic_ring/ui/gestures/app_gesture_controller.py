@@ -47,6 +47,7 @@ class AppGestureEvent:
     capture_reason: str = field(default="", compare=False)
     input_method_target: tuple | None = None
     input_focus: object = None
+    input_validated_at: float = field(default=0.0, compare=False)
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ class AppGestureController(QObject):
         self._last_dispatch = None
         from ..desktop.browser_action_queue import BrowserActionQueue
         self._browser_actions = BrowserActionQueue(self)
+        self._input_actions = BrowserActionQueue(self)
         self._last_browser_submit = None
         self._wechat_info = {"detected": False, "message": "选择微信后自动识别菜单语言", "version": ""}
         self._menu_generation = 0
@@ -675,6 +677,10 @@ class AppGestureController(QObject):
                         options = {"allow_activation": False,
                                    "native_fallback": lambda front: self._passive_outside_target(name, front)}
                     start_focus = inline.capture_start_focus(**options)
+                    # Source startup precedes the dispatch queue. Age the
+                    # freshly checked target from here; queued events still
+                    # expire after one second and retain their generation.
+                    created = time.monotonic()
                 if start_focus is None:
                     raise SceneActionError("input_method_not_ready")
                 if start_focus is not None:
@@ -784,6 +790,49 @@ class AppGestureController(QObject):
         # Retained legacy profiles must not silently override global bindings.
         return None
 
+    def defer_input_gesture(self, event, connection, continuation):
+        target = event.input_method_target
+        if (event.route != "input" or not target or len(target) != 6
+                or target[4] != os.getpid() or event.input_validated_at
+                or (event.speech_owned and self.owner._ring_gestures.speech_busy())):
+            return False
+        inline = self.owner._inline_input
+
+        def valid():
+            return (self._override_stop_reason(event)
+                    or ("old_connection" if connection is not self.owner._disconnect_event else "")
+                    or ("disconnecting" if connection.is_set() else "")
+                    or ("runtime_inactive" if not self.owner._runtime_active or not self.owner._connected else ""))
+
+        def work():
+            # IMK calls back into this process to query its QML text editor.
+            # Waiting on the GUI thread prevents that reply and always times out.
+            return inline.same_gesture_target(target), time.monotonic()
+
+        def complete(result, error):
+            reason = valid() or (getattr(error, "reason", "") if error else "")
+            if reason or error or not result or not result[0]:
+                self._stop_trace(event, reason or "input_method_focus_changed")
+                inline.finish_resumed_gesture()
+                return
+            continuation(replace(event, input_validated_at=result[1]))
+
+        if not self._input_actions.submit(work, valid, complete):
+            self._stop_trace(event, "input_validation_pending")
+            inline.finish_resumed_gesture()
+        return True
+
+    def _same_input_target(self, target, validated_at=0.0):
+        inline = self.owner._inline_input
+        if validated_at:
+            # This receipt is limited to the just-completed live read. Recheck
+            # identity and foreground on Qt without issuing a second blocking
+            # IMK read. The native command still validates text before writing.
+            return bool(target and len(target) == 6 and target[4] == os.getpid()
+                        and 0 <= time.monotonic() - validated_at < .2
+                        and inline.gesture_target_is_current(target))
+        return inline.same_gesture_target(target)
+
     def input_event_valid(self, event):
         if self._override_stop_reason(event):
             self._stop_trace(event, self._override_stop_reason(event))
@@ -792,7 +841,7 @@ class AppGestureController(QObject):
         if event.speech_owned and self.owner._ring_gestures.speech_busy():
             return True
         if event.input_method_target is not None:
-            valid = self.owner._inline_input.same_gesture_target(event.input_method_target)
+            valid = self._same_input_target(event.input_method_target, event.input_validated_at)
             if not valid:
                 self._stop_trace(event, "input_method_focus_changed")
             return valid
@@ -944,7 +993,7 @@ class AppGestureController(QObject):
                 self.notify("听写输入框尚未就绪，请稍后重新触发手势")
                 return True
             try:
-                same_target = (inline.same_gesture_target(event.input_method_target)
+                same_target = (self._same_input_target(event.input_method_target, event.input_validated_at)
                                if event.input_method_target is not None else
                                self.backend.same_target(target, require_focus=True))
             except Exception:
@@ -964,7 +1013,7 @@ class AppGestureController(QObject):
             self._dispatch_polish(event, restore_raw_on_undo=original != "finish_then_send")
             return True
         self._dispatch(action, actions[action], target, trace_id=event.trace_id,
-                       input_method_target=event.input_method_target)
+                       input_method_target=event.input_method_target, input_validated_at=event.input_validated_at)
         return True
 
     def _dispatch_polish(self, event, *, restore_raw_on_undo):
@@ -978,7 +1027,7 @@ class AppGestureController(QObject):
             self.notify("本句已润色")
             return
         try:
-            same_target = (inline.same_gesture_target(event.input_method_target)
+            same_target = (self._same_input_target(event.input_method_target, event.input_validated_at)
                            if event.input_method_target is not None else
                            self.backend.same_target(target, require_focus=True))
         except Exception:
@@ -992,7 +1041,8 @@ class AppGestureController(QObject):
             self.dismissNotice()
             self.owner._event_log("APP_GESTURE", app=bundle, action="polish", result="requested")
 
-    def _dispatch(self, action, binding, target, *, trace_id="", input_method_target=None, input_focus=None):
+    def _dispatch(self, action, binding, target, *, trace_id="", input_method_target=None, input_focus=None,
+                  input_validated_at=0.0):
         trace_id = trace_id or new_trace_id()
         signature = (target.bundle, target.pid, action, target.scene, target.page_key,
                      target.document_key, binding.shortcut)
@@ -1004,7 +1054,7 @@ class AppGestureController(QObject):
         try:
             if input_method_target is not None:
                 inline = self.owner._inline_input
-                valid = (inline.same_gesture_target(input_method_target) if len(input_method_target) == 6
+                valid = (self._same_input_target(input_method_target, input_validated_at) if len(input_method_target) == 6
                          else inline.capture_gesture_target() == input_method_target)
                 if not valid:
                     raise RuntimeError("输入目标已变化，未发送快捷键")
@@ -1167,6 +1217,7 @@ class AppGestureController(QObject):
 
     def close(self):
         self._browser_actions.close()
+        self._input_actions.close()
         self._catalog.close()
         app = QCoreApplication.instance()
         if app is not None:

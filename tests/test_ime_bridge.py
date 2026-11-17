@@ -180,6 +180,26 @@ def test_context_is_fresh_and_truncated_only_for_asr(bridge):
     stream.close(); sock.close()
 
 
+def test_clipboard_palette_ack_works_without_active_input_method_client(bridge):
+    server, messages = bridge
+    sock, stream = connect(server)
+    try:
+        epoch = receive(stream)['epoch']
+        offer = dict(type='clipboard_offer', token='offer', revision=17,
+                     foreground_pid=42, rect=[10, 20, 40, 20])
+        assert server.send(offer)
+        assert receive(stream) == {**offer, 'epoch': epoch}
+        acknowledgement = dict(type='clipboard_offer_state', epoch=epoch, token='offer', visible=True)
+        send(stream, {**acknowledgement, 'epoch': 'stale', 'token': 'wrong'})
+        send(stream, acknowledgement)
+        wait_until(lambda: acknowledgement in messages)
+        assert not server._state and not any(m.get('token') == 'wrong' for m in messages)
+        assert server.send(dict(type='clipboard_dismiss', token='offer'))
+        assert receive(stream)['type'] == 'clipboard_dismiss'
+    finally:
+        stream.close(); sock.close()
+
+
 @pytest.mark.mac_only
 def test_unavailable_context_does_not_reuse_previous_field(bridge):
     server, _ = bridge

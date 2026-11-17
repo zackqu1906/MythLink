@@ -328,16 +328,47 @@ UiScrollView {
                     ListView {
                         id: applicationTabs
                         objectName: "gestureApplicationTabs"
-                        Layout.fillWidth: true; Layout.preferredHeight: 36
+                        Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.preferredHeight: 36
                         orientation: ListView.Horizontal; spacing: 8; clip: true
                         model: page.applicationTabsModel
                         interactive: contentWidth > width
+                        boundsBehavior: Flickable.StopAtBounds
+                        function scrollWheel(event) {
+                            var pixels = event.pixelDelta
+                            var hasPixels = pixels.x !== 0 || pixels.y !== 0
+                            var delta = hasPixels
+                                ? (Math.abs(pixels.x) > Math.abs(pixels.y) ? pixels.x : pixels.y)
+                                : (Math.abs(event.angleDelta.x) > Math.abs(event.angleDelta.y)
+                                    ? event.angleDelta.x : event.angleDelta.y) / 120 * 60
+                            event.accepted = true
+                            if (delta === 0) return
+                            // Accumulate wheel notches; trackpads already supply smooth pixel deltas.
+                            var start = !hasPixels && applicationWheelAnimation.running
+                                ? applicationWheelAnimation.to : contentX
+                            applicationWheelAnimation.stop()
+                            cancelFlick()
+                            var destination = Math.max(originX, Math.min(originX + Math.max(0, contentWidth - width), start - delta))
+                            if (hasPixels) contentX = destination
+                            else {
+                                applicationWheelAnimation.to = destination
+                                applicationWheelAnimation.start()
+                            }
+                        }
+                        NumberAnimation {
+                            id: applicationWheelAnimation
+                            target: applicationTabs; property: "contentX"
+                            duration: 140; easing.type: Easing.OutCubic
+                        }
+                        onDraggingChanged: if (dragging) applicationWheelAnimation.stop()
                         currentIndex: {
                             for (var i = 0; i < model.length; ++i)
                                 if (page.applicationScope && model[i].value === page.selectedApp) return i
                             return -1
                         }
-                        onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+                        onCurrentIndexChanged: {
+                            applicationWheelAnimation.stop()
+                            if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+                        }
                         ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AlwaysOff }
                         delegate: FigmaAction {
                             id: appTab
@@ -357,6 +388,12 @@ UiScrollView {
                             contentItem: Item {
                                 ApplicationIcon { anchors.centerIn: parent; width: 28; height: 28; bundle: modelData.value; applicationPath: modelData.path || ""; label: modelData.label }
                             }
+                        }
+                        MouseArea {
+                            parent: applicationTabs
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            onWheel: function(wheel) { applicationTabs.scrollWheel(wheel) }
                         }
                     }
                     FigmaAction {

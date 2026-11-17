@@ -50,6 +50,7 @@ class TouchpadMouseOutput:
         self._stream_key = None
         self._input_gap_at = 0.
         self._seen_clicks = deque(maxlen=256)
+        self._capture_previews = deque(maxlen=256)
         self._last_scroll_hint = None
         self._drag_context = None
         self.drag = TouchpadDrag(self._release_drag, lambda: self._notify_gesture('dwell-drag-ready'),
@@ -104,7 +105,10 @@ class TouchpadMouseOutput:
         if event.kind not in {"move", "click", "pointer_contact"} and not (
                 self.clicks and event.kind == "contact" and event.state == "reset"):
             return  # Stroke metadata must not occupy the pointer's bounded queue.
-        trace = ClickTrace(event) if event.kind == 'click' and not getattr(event, 'is_preview', False) else None
+        # Capture uses the SDK's already-classified first click immediately;
+        # waiting for double-click pairing would lose its original position.
+        trace = ClickTrace(event) if event.kind == 'click' and (
+            not getattr(event, 'is_preview', False) or self.click_context()[1] == 'capture') else None
         blocked = self._blocked_reason()
         if blocked:
             if trace: trace.finish(blocked)
@@ -259,6 +263,11 @@ class TouchpadMouseOutput:
                             self._finish_click(trace, 'click_context_changed' if submitted_context != context
                                                else 'selector_' + context[1])
                             continue
+                        if context[1] == 'clipboard':
+                            # Firmware tap starts voice. Its SDK mouse click
+                            # must not dismiss the recommendation first.
+                            self._finish_click(trace, 'clipboard_owns_input')
+                            continue
                         if context[1] == 'capture':
                             # The screenshot canvas owns the tap, even when
                             # normal mouse clicks are disabled. Flush motion
@@ -349,7 +358,8 @@ class TouchpadMouseOutput:
                  (tuple(e['stream']) == self._stream_key and
                   (e['kind'] != 'scroll' or self._features[3]))]
         batch = [e for e in batch if 'drag_context' not in e or
-                 (e['drag_context'] == self._drag_context and self._features[7] and self.drag.held)]
+                 (e['drag_context'] == self._drag_context and
+                  self._features[7] and self.click_context()[1] == 'closed' and self.drag.held)]
         batch = [e for e in batch if e['kind'] != 'scroll' or
                  e.get('scroll_inverted', self._features[5]) == self._features[5]]
         if not batch or self._blocked_reason():
@@ -479,8 +489,8 @@ class TouchpadMouseOutput:
                 self.swipe.contact(event)
             else:
                 self.swipe.reset()
-            eligible = (not blocked and context == submitted_context and context[1] == 'closed'
-                        and self._features[7] and 0 <= age <= .2)
+            eligible = (not blocked and context == submitted_context and
+                        context[1] == 'closed' and self._features[7] and 0 <= age <= .2)
             if not eligible:
                 reason = ('contact_event_expired' if not 0 <= age <= .2 else
                           'input_owner_changed' if context != submitted_context or context[1] != 'closed'
@@ -497,10 +507,13 @@ class TouchpadMouseOutput:
             self._finish_click(trace, 'mouse_queue_expired', queue_limit_ms=limit*1000)
             return
         singles, doubles, right, scroll, gain, invert_scroll, horizontal_swipe, _, _ = self._features
-        if getattr(event, 'is_preview', False):
+        preview = getattr(event, 'is_preview', False)
+        if preview and (trace is None or self.click_context()[1] != 'capture'):
+            self._finish_click(trace, 'click_context_changed')
             return
         if trace:
-            click_id = (key, event.click_id)
+            identity = (key, event.click_id)
+            click_id = (identity, preview)
             if click_id in self._seen_clicks:
                 self._finish_click(trace, 'duplicate_click')
                 return
@@ -512,11 +525,24 @@ class TouchpadMouseOutput:
                 self._finish_click(trace, 'drag_owns_contact', outcome='routed')
                 return
             context = self.click_context()
+            preview_owner = next((owner for seen, owner in self._capture_previews if seen == identity), None)
+            if not preview and preview_owner is not None:
+                # The final single confirms an already-consumed first click.
+                # A final double contributes only its second click, and only
+                # to the same capture. Never replay either into the app below.
+                if event.count == 1 or context != preview_owner:
+                    self._finish_click(trace, 'capture_click_already_consumed', outcome='routed')
+                    return
             if context != submitted_context or context[1] in {'loading', 'activating'}:
                 self._finish_click(trace, 'click_context_changed')
                 return
+            if context[1] == 'clipboard':
+                self._finish_click(trace, 'clipboard_owns_input')
+                return
             if context[1] == 'capture':
                 if event.button == 'left' and self.on_capture_click:
+                    if preview:
+                        self._capture_previews.append((identity, context))
                     self.on_capture_click(context)
                     self._finish_click(trace, 'capture_callback_requested', outcome='routed')
                 else:
@@ -536,6 +562,7 @@ class TouchpadMouseOutput:
                 self._send_click(trace, event)
         elif event.mode == 'TWO_FINGER':
             self.drag.cancel('two_finger', event)
+            if self.click_context()[1] == 'capture': return
             dy, direction = ((event.dy, None) if not horizontal_swipe or self.click_context()[1] != 'closed'
                              else self.swipe.move(event))
             if self.swipe.axis is not None:
@@ -558,7 +585,7 @@ class TouchpadMouseOutput:
             if value is None:
                 return
             kind, dx, dy, begin_drag = value
-            if begin_drag:
+            if begin_drag and self.click_context()[1] != 'capture':
                 self._notify_gesture('dwell-drag-started')
             return dict(kind=kind, dx=dx, dy=dy, begin_drag=begin_drag,
                         stream=list(key), expires_at=event.timestamp+.2,

@@ -7,16 +7,21 @@ from .prompts import SCREEN_CONTEXT_RULES, CHARACTER_CLARIFICATION_RULES
 from .task_routing import EDIT_TASK_LABELS, available_edit_tasks
 from .model import ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant
 from .boundary_edit_prompt import BOUNDARY_EDIT_PROMPT, BOUNDARY_EDIT_PROMPT_VERSION
+from .general_edit_prompt import GENERAL_EDIT_VARIANTS, GENERAL_EDIT_PROMPT_VERSION, general_edit_prompt
 
 ROUTED_EDIT_PROMPT_VERSION = "manual-edit-single-pass-natural-v5-boundaries-and-autonomy"
 
 
 def routed_edit_prompt_version(variant=ROUTED_EDIT_SIX_CLASS):
+    if variant in GENERAL_EDIT_VARIANTS:
+        return GENERAL_EDIT_PROMPT_VERSION + "/" + variant
     return (BOUNDARY_EDIT_PROMPT_VERSION if normalize_routed_edit_variant(variant) == ROUTED_EDIT_BOUNDARY
             else ROUTED_EDIT_PROMPT_VERSION)
 
 
 def routed_edit_prompt(target, variant=ROUTED_EDIT_SIX_CLASS):
+    if variant in GENERAL_EDIT_VARIANTS:
+        return general_edit_prompt(variant)
     return (BOUNDARY_EDIT_PROMPT if normalize_routed_edit_variant(variant) == ROUTED_EDIT_BOUNDARY
             else single_pass_prompt(target))
 

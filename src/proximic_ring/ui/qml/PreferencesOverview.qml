@@ -125,7 +125,7 @@ ColumnLayout {
     PreferenceSection {
         Layout.fillWidth: true; title: "更多设置"
         PreferenceRow {
-            Layout.fillWidth: true; title: "界面与通用"; description: "手势提示、浮窗大小与菜单栏状态。"; linked: true
+            Layout.fillWidth: true; title: "界面与通用"; description: "手势提示、浮窗大小、截图保存位置与菜单栏状态。"; linked: true
             FigmaAction { objectName: "settingsGeneralEntry"; text: "前往设置"; navigation: true; onClicked: pane.generalRequested() }
         }
         PreferenceRow {

@@ -59,7 +59,7 @@ def test_detected_scene_hides_other_actions_then_restores_app_modes_on_exit(pres
         show(backend.target)
     assert len(views) == 2 and views[0] == views[1]
     assert views[0]["modeTitle"] == "放映"
-    assert {orb["key"] for orb in views[0]["orbs"]} == {"swipe-left", "swipe-right", "tap", "double-tap", "swipe-up", "swipe-down"}
+    assert {orb["key"] for orb in views[0]["orbs"]} == {"swipe-left", "swipe-right", "tap", "swipe-up", "swipe-down", "clench"}
     assert any(orb["scope"] == "global" for orb in views[0]["orbs"])
     defaults = []
     ring.showRequested.connect(lambda mode, message: defaults.append(mode))
