@@ -74,6 +74,8 @@ private final class StrokeSelectionPathView: NSView {
     override var isFlipped: Bool { true }
     var cells: [String: NSRect] = [:]
     var clearTarget = NSRect.zero
+    var correctionTarget = NSRect.zero
+    var correctionEnabled = false
     private var origin: [Double] = []
     private var points: [[Double]] = []
     private var direction = ""
@@ -120,6 +122,12 @@ private final class StrokeSelectionPathView: NSView {
             let outward = max(0, min(1, (-dx - 3 * threshold) / (clearDistance - 3 * threshold)))
             boundedX += (Double(clearTarget.minX) + 10 - boundedX) * outward
             boundedY += (Double(clearTarget.midY) - boundedY) * outward
+        } else if name == "right", correctionEnabled {
+            let approach = max(0, min(1, (dx - threshold) / (2 * threshold)))
+            boundedX += (Double(target.maxX) - boundedX) * approach
+            let outward = max(0, min(1, (dx - 3 * threshold) / (clearDistance - 3 * threshold)))
+            boundedX += (Double(correctionTarget.maxX) - 10 - boundedX) * outward
+            boundedY += (Double(correctionTarget.midY) - boundedY) * outward
         }
         return NSPoint(x: boundedX, y: boundedY)
     }
@@ -156,25 +164,28 @@ private final class StrokeClearPullView: FlippedView {
     private let arrow = NSImageView()
     private let label = NSTextField(labelWithString: "清空")
     private var progress = 0.0
+    private let correction: Bool
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        identifier = NSUserInterfaceItemIdentifier("strokeClearPull")
+    init(correction: Bool = false) {
+        self.correction = correction
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier(correction ? "strokeCorrectionPull" : "strokeClearPull")
         wantsLayer = true
-        layer?.shadowColor = NSColor(hex: 0x9C2F2A).cgColor
+        layer?.shadowColor = NSColor(hex: correction ? 0x234CDB : 0x9C2F2A).cgColor
         layer?.shadowRadius = 5
         layer?.shadowOffset = .zero
         surface.wantsLayer = true
         surface.layer?.cornerRadius = 16
         surface.layer?.masksToBounds = true
-        surface.layer?.backgroundColor = NSColor(hex: 0xFCE9E6).cgColor
+        surface.layer?.backgroundColor = NSColor(hex: correction ? 0xE9EFFF : 0xFCE9E6).cgColor
         surface.layer?.borderWidth = 1
-        surface.layer?.borderColor = NSColor(hex: 0xC2413B).cgColor
-        fill.identifier = NSUserInterfaceItemIdentifier("strokeClearPullFill")
+        surface.layer?.borderColor = NSColor(hex: correction ? 0x345EE5 : 0xC2413B).cgColor
+        fill.identifier = NSUserInterfaceItemIdentifier(correction ? "strokeCorrectionPullFill" : "strokeClearPullFill")
         fill.wantsLayer = true
         surface.addSubview(fill)
-        arrow.identifier = NSUserInterfaceItemIdentifier("strokeClearArrow")
-        arrow.image = NSImage(systemSymbolName: "chevron.left.2", accessibilityDescription: "向左外拉")?
+        arrow.identifier = NSUserInterfaceItemIdentifier(correction ? "strokeCorrectionArrow" : "strokeClearArrow")
+        arrow.image = NSImage(systemSymbolName: correction ? "chevron.right.2" : "chevron.left.2",
+                              accessibilityDescription: correction ? "向右外拉" : "向左外拉")?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold))
         arrow.imageScaling = .scaleProportionallyUpOrDown
         label.alignment = .center
@@ -187,13 +198,15 @@ private final class StrokeClearPullView: FlippedView {
 
     func update(progress: Double, armed: Bool, deleteBefore: Bool = false) {
         self.progress = armed ? 1 : progress.isFinite ? min(1, max(0, progress)) : 0
-        fill.layer?.backgroundColor = NSColor(hex: armed ? 0x9C2F2A : 0xEDABA5).cgColor
+        fill.layer?.backgroundColor = NSColor(hex: correction ? (armed ? 0x234CDB : 0xAABCF2)
+                                                             : (armed ? 0x9C2F2A : 0xEDABA5)).cgColor
         layer?.shadowOpacity = armed ? 0.28 : 0
-        let ink = armed ? NSColor.white : NSColor(hex: 0xA6322C)
+        let ink = armed ? NSColor.white : NSColor(hex: correction ? 0x234CDB : 0xA6322C)
         arrow.contentTintColor = ink
         label.textColor = ink
-        label.stringValue = deleteBefore ? "删除前文" : "清空"
-        setAccessibilityLabel((armed ? "抬手" : "继续向左外拉") + (deleteBefore ? "删除前文" : "清空笔画"))
+        label.stringValue = correction ? "修正" : deleteBefore ? "删除前文" : "清空"
+        setAccessibilityLabel((armed ? "抬手" : correction ? "继续向右外拉" : "继续向左外拉")
+            + (correction ? "修正前文" : deleteBefore ? "删除前文" : "清空笔画"))
         needsLayout = true
     }
 
@@ -201,7 +214,8 @@ private final class StrokeClearPullView: FlippedView {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         surface.frame = bounds
-        fill.frame = NSRect(x: bounds.width * (1 - progress), y: 0, width: bounds.width * progress, height: bounds.height)
+        fill.frame = NSRect(x: correction ? 0 : bounds.width * (1 - progress), y: 0,
+                            width: bounds.width * progress, height: bounds.height)
         layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: 16, cornerHeight: 16, transform: nil)
         CATransaction.commit()
         arrow.frame = NSRect(x: (bounds.width - 24) / 2, y: 9, width: 24, height: 20)
@@ -343,6 +357,14 @@ final class StrokeCandidatePanel {
     private let trail = StrokeTraceView()
     private let selectionPath = StrokeSelectionPathView()
     private let clearPull = StrokeClearPullView()
+    private let correctionPull = StrokeClearPullView(correction: true)
+    private let correctionScope = NSTextField(wrappingLabelWithString: "")
+    private var correctionEnabled = false
+    private var correctionText = ""
+    private var correctionMessage = ""
+    private var correctionBusy = false
+    private var correctionCanUndo = false
+    private var correcting = false
     private var anchor = ActionPanelAnchor()
     private var showing = false
     private var code = ""
@@ -353,7 +375,23 @@ final class StrokeCandidatePanel {
     private var clearing = false
     private(set) var placedAboveCaret = false
     var isVisible: Bool { showing && panel.isVisible }
-    var needsPosition: Bool { showing && (anchor.needsCaret || !panel.isVisible) }
+    private var scopeVisible: Bool {
+        correctionEnabled && ((phase == "selecting" && selectionDirection == "right") || correctionBusy
+            || (correctionCanUndo && code.isEmpty) || !correctionText.isEmpty)
+    }
+    private var scopeHeight: CGFloat {
+        guard correctionEnabled else { return 0 }
+        let text = correctionScope.stringValue as NSString
+        let height = text.boundingRect(with: NSSize(width: Self.gridSide - 20, height: 1000),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .semibold)]).height
+        return max(38, ceil(height) + 16)
+    }
+    private var displaySize: NSSize {
+        NSSize(width: Self.menuSize.width + (correctionEnabled ? Self.clearGutter : 0),
+               height: Self.menuSize.height + scopeHeight)
+    }
+    var needsPosition: Bool { showing && (anchor.needsCaret || !panel.isVisible || panel.frame.size != displaySize) }
 
     init() {
         panel = StrokePalette(contentRect: NSRect(origin: .zero, size: Self.menuSize),
@@ -400,9 +438,19 @@ final class StrokeCandidatePanel {
         content.frame = NSRect(origin: .zero, size: Self.menuSize)
         content.addSubview(choices)
         content.addSubview(clearPull)
+        content.addSubview(correctionPull)
         content.addSubview(selectionPath)
         content.addSubview(hint)
         content.addSubview(exitHint)
+        correctionScope.identifier = NSUserInterfaceItemIdentifier("strokeCorrectionScope")
+        correctionScope.font = .systemFont(ofSize: 14, weight: .semibold)
+        correctionScope.textColor = NSColor(hex: 0x234CDB)
+        correctionScope.drawsBackground = true
+        correctionScope.backgroundColor = NSColor(hex: 0xE9EFFF)
+        correctionScope.isSelectable = false
+        content.addSubview(correctionScope)
+        selectionPath.correctionTarget = NSRect(x: Self.clearGutter + Self.gridSide - 8,
+            y: Self.cellFrame(row: 1, column: 2).midY - 29, width: Self.clearGutter, height: 58)
         panel.contentView = content
         layoutHint()
     }
@@ -422,7 +470,7 @@ final class StrokeCandidatePanel {
             let glyph = glyphs.first { $0["character"] == value }
             cell.set(character: value, glyph: glyph, chosen: index == selected)
         }
-        refreshHint()
+        refreshHint(); layoutHint()
         anchor.update(utteranceID: "stroke", editing: false, currentSize: panel.frame.size)
         showing = true
     }
@@ -430,22 +478,35 @@ final class StrokeCandidatePanel {
     /// Live two-finger selection feedback; phase is idle/writing/holding/selecting.
     func selection(phase value: String, progress: Double, direction: String,
                    origin: [Double], points: [[Double]], selectDistance: Double,
-                   clearArmed: Bool = false, clearDistance: Double = 30, clearProgress: Double = 0) {
+                   clearArmed: Bool = false, clearDistance: Double = 30, clearProgress: Double = 0,
+                   correctionArmed: Bool = false, correctionProgress: Double = 0) {
         phase = value
         selectionDirection = direction
         self.progress = progress.isFinite ? min(100, max(0, progress)) : 0
         let selecting = value == "selecting"
         clearing = selecting && direction == "left" && clearArmed
+        correcting = selecting && direction == "right" && correctionEnabled && correctionArmed
         choices.interactionColor = selecting ? NSColor(hex: clearing ? 0x9C2F2A : direction == "left" ? 0xC2413B : 0x345EE5) : nil
         let target = selecting ? (direction.isEmpty ? "center" : direction) : ""
         cells.forEach { $0.set(active: $0.direction == target); $0.setClearing(clearing, deleteBefore: code.isEmpty) }
         clearPull.isHidden = !selecting || direction != "left"
         clearPull.update(progress: clearProgress, armed: clearing, deleteBefore: code.isEmpty)
+        correctionPull.isHidden = !selecting || direction != "right" || !correctionEnabled
+        correctionPull.update(progress: correctionProgress, armed: correcting)
         trail.isHidden = selecting
         selectionPath.isHidden = !selecting
         selectionPath.update(origin: origin, points: selecting ? points : [], direction: direction,
                              threshold: selectDistance, clearDistance: clearDistance)
         refreshHint()
+        layoutHint()
+    }
+
+    func correction(enabled: Bool, text: String, message: String, busy: Bool, canUndo: Bool) {
+        correctionEnabled = enabled; correctionText = text; correctionMessage = message
+        correctionBusy = busy; correctionCanUndo = canUndo
+        selectionPath.correctionEnabled = enabled
+        if !enabled { correctionPull.isHidden = true; correcting = false }
+        refreshHint(); layoutHint()
     }
 
     private func refreshHint() {
@@ -454,23 +515,40 @@ final class StrokeCandidatePanel {
             hint.stringValue = clearing ? (code.isEmpty ? "抬手删除前文 · 拉回取消" : "抬手清空 · 拉回取消")
                 : selectionDirection == "left" ? (code.isEmpty ? "抬手退格 · 外拉删除前文" : "抬手删除 · 继续外拉可清空")
                 : selectionDirection.isEmpty ? "已识别双指 · 滑动选字" : "双指选字 · 抬手确认"
+            if correctionEnabled && selectionDirection == "right" {
+                hint.stringValue = !code.isEmpty ? "请先确认正在书写的字" : correcting
+                    ? "抬手修正前文 · 拉回取消" : "继续向右外拉可修正前文"
+            }
         case "holding": hint.stringValue = "保持不动 · \(Int(progress.rounded()))%"
         case "writing": hint.stringValue = "书写中 · 抬手结束"
         default:
-            hint.stringValue = !hasCandidates && code.isEmpty ? "笔画输入" : tapHint
+            hint.stringValue = correctionEnabled && code.isEmpty && !correctionMessage.isEmpty ? correctionMessage
+                : !hasCandidates && code.isEmpty ? "笔画输入" : tapHint
         }
+        correctionScope.stringValue = !correctionText.isEmpty ? "修正用词「\(correctionText)」"
+            : !code.isEmpty ? "请先确认正在书写的字"
+            : correctionMessage.isEmpty ? "尚未确认手写词" : correctionMessage
+        let highlight = correcting && !correctionText.isEmpty
+        correctionScope.backgroundColor = NSColor(hex: highlight ? 0x234CDB : 0xE9EFFF)
+        correctionScope.textColor = highlight ? .white : NSColor(hex: 0x234CDB)
+        correctionScope.setAccessibilityLabel(correctionScope.stringValue)
+        if scopeVisible && hint.stringValue == correctionScope.stringValue { hint.stringValue = "" }
         hint.textColor = phase == "selecting" ? NSColor(hex: selectionDirection == "left" ? 0xC2413B : 0x234CDB) : .secondaryLabelColor
         hint.font = phase == "selecting" ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)
     }
 
     private func layoutHint() {
-        // The hint sits on the side away from the caret so the grid stays adjacent to it.
+        // Put the correction scope next to the caret, on either side of the grid.
         // Flipped content: y = 0 is the top edge.
-        let gridY: CGFloat = placedAboveCaret ? Self.hintHeight : 0
+        let gridY: CGFloat = placedAboveCaret ? Self.hintHeight : scopeHeight
         choices.frame.origin = NSPoint(x: Self.clearGutter, y: gridY)
-        selectionPath.frame = NSRect(x: 0, y: gridY, width: Self.menuSize.width, height: Self.gridSide)
+        selectionPath.frame = NSRect(x: 0, y: gridY, width: displaySize.width, height: Self.gridSide)
         clearPull.frame = selectionPath.clearTarget.offsetBy(dx: 0, dy: gridY)
-        let hintY: CGFloat = placedAboveCaret ? 4 : Self.gridSide + 4
+        correctionPull.frame = selectionPath.correctionTarget.offsetBy(dx: 0, dy: gridY)
+        correctionScope.isHidden = !scopeVisible
+        correctionScope.frame = NSRect(x: Self.clearGutter + 8, y: placedAboveCaret ? Self.hintHeight + Self.gridSide + 6 : 0,
+                                      width: Self.gridSide - 16, height: max(0, scopeHeight - 6))
+        let hintY: CGFloat = placedAboveCaret ? 4 : Self.gridSide + scopeHeight + 4
         hint.frame = NSRect(x: Self.clearGutter + 6, y: hintY, width: Self.gridSide - 12, height: 16)
         exitHint.frame = NSRect(x: Self.clearGutter + 6, y: hintY + 16, width: Self.gridSide - 12, height: 14)
     }
@@ -499,13 +577,15 @@ final class StrokeCandidatePanel {
             return
         }
         let bounds = screen.visibleFrame.insetBy(dx: 6, dy: 6)
-        let size = Self.menuSize
-        let (origin, above) = Self.placement(caret: caret, bounds: bounds, size: size, gap: InputPaletteStyle.caretGap)
+        let size = displaySize
+        let (origin, above) = Self.placement(caret: caret.offsetBy(dx: correctionEnabled ? Self.clearGutter / 2 : 0, dy: 0),
+                                           bounds: bounds, size: size, gap: InputPaletteStyle.caretGap)
         if above != placedAboveCaret {
             placedAboveCaret = above
             layoutHint()
         }
         panel.setContentSize(size)
+        layoutHint()
         panel.setFrameOrigin(anchor.place(origin, size: size))
         panel.level = NSWindow.Level(rawValue: max(Int(clientLevel) + 1, NSWindow.Level.popUpMenu.rawValue))
         panel.orderFrontRegardless()

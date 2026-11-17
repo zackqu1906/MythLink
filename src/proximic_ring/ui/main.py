@@ -7,6 +7,9 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    from ..platforms.macos.mac_app_activation import require_gui_session
+
+    require_gui_session()
     from ..runtime_paths import configure_runtime_environment, resource_root
 
     configure_runtime_environment()

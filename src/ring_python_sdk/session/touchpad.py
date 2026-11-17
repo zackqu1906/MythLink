@@ -53,7 +53,10 @@ class TouchpadMixin:
             from ring_python_sdk.touchpad.stream import TouchpadStream
             client, rx_uuid = self.client, self.rx_uuid
             if protocol == 'raw2':
-                from ring_python_sdk.touchpad.raw2 import Raw2Stream
+                if self.connection_backend == 'process':
+                    from ring_python_sdk.process.touchpad import ProcessTouchpad as Raw2Stream
+                else:
+                    from ring_python_sdk.touchpad.raw2 import Raw2Stream
                 stream = Raw2Stream(self, on_event, on_stats=on_stats,
                                     duration_s=duration_s, on_end=self._touchpad_finished,
                                     on_pointer_move=on_pointer_move, on_discarded_event=on_discarded_event)

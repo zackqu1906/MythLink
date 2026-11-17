@@ -21,6 +21,7 @@ def test_non_macos_does_not_load_appkit(monkeypatch):
 
 def test_rejected_activation_policy_is_not_silently_ignored(monkeypatch):
     monkeypatch.setattr(mac_app_activation.sys, "platform", "darwin")
+    monkeypatch.setattr(mac_app_activation, "require_gui_session", lambda: None)
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(
         NSApplication=SimpleNamespace(sharedApplication=lambda: SimpleNamespace(
             activationPolicy=lambda: 0,
@@ -34,6 +35,7 @@ def test_rejected_activation_policy_is_not_silently_ignored(monkeypatch):
 @pytest.mark.parametrize("background, policy", [(True, 1), (False, 0)])
 def test_already_correct_policy_needs_no_transition(monkeypatch, background, policy):
     monkeypatch.setattr(mac_app_activation.sys, "platform", "darwin")
+    monkeypatch.setattr(mac_app_activation, "require_gui_session", lambda: None)
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(
         NSApplication=SimpleNamespace(sharedApplication=lambda: SimpleNamespace(
             activationPolicy=lambda: policy,
@@ -41,6 +43,46 @@ def test_already_correct_policy_needs_no_transition(monkeypatch, background, pol
         NSApplicationActivationPolicyAccessory=1,
         NSApplicationActivationPolicyRegular=0))
     mac_app_activation.configure_app_activation(background=background)
+
+
+@pytest.mark.mac_only
+@pytest.mark.parametrize("denied_service", [None, b"com.apple.coreservices.launchservicesd",
+                                         b"com.apple.windowserver.active"])
+def test_gui_preflight_checks_services_and_releases_ports(monkeypatch, denied_service):
+    import ctypes
+    from unittest.mock import Mock
+
+    system = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    def lookup(bootstrap, service, port):
+        if service == denied_service:
+            return 1100
+        port._obj.value = 123
+        return 0
+    system.bootstrap_look_up = Mock(side_effect=lookup)
+    system.mach_port_deallocate = Mock(return_value=0)
+    monkeypatch.setattr(ctypes, "CDLL", lambda path: system)
+    if denied_service is None:
+        mac_app_activation.require_gui_session()
+        assert system.mach_port_deallocate.call_count == 2
+    else:
+        monkeypatch.setitem(sys.modules, "AppKit", None)
+        with pytest.raises(RuntimeError, match="图形会话"):
+            mac_app_activation.configure_app_activation(background=True)
+        assert system.mach_port_deallocate.call_count == (
+            0 if denied_service.endswith(b"launchservicesd") else 1)
+
+
+def test_ui_rejects_unavailable_desktop_before_initializing_runtime(monkeypatch):
+    from proximic_ring.ui.main import main
+    from proximic_ring import runtime_paths
+
+    def denied():
+        raise RuntimeError("无法访问图形会话")
+    monkeypatch.setattr(mac_app_activation, "require_gui_session", denied)
+    monkeypatch.setattr(runtime_paths, "configure_runtime_environment",
+                        lambda: pytest.fail("UI runtime started before desktop preflight"))
+    with pytest.raises(RuntimeError, match="图形会话"):
+        main([])
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="native macOS activation")

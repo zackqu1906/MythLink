@@ -137,6 +137,14 @@ ScrollView {
                     Accessible.name: "笔画模式双指单击"
                     onActivated: page.touchpad.twoFingerAction = currentIndex === 0 ? "space" : "candidate"
                 }
+                Label { text: "双指右拉到底修正前文"; color: theme.text }
+                FigmaSwitch {
+                    objectName: "handwritingCorrectionSwitch"
+                    checked: page.touchpad.handwritingCorrectionEnabled
+                    enabled: page.touchpad.externalStrokeSupported && page.touchpad.raw2Supported
+                    Accessible.name: "双指右拉到底修正前文"
+                    onToggled: page.touchpad.handwritingCorrectionEnabled = checked
+                }
             }
             StrokeInputBox {
                 width: parent.width; height: implicitHeight

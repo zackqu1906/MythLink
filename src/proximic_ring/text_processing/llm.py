@@ -84,6 +84,19 @@ class OpenAICompatibleTextProcessor(
             content = "\n".join(content.splitlines()[1:-1])
         return validated_hotwords(json.loads(content), before, after)
 
+    def locate_handwriting_correction(self, original: str, handwriting: str, settings: LLMSettings) -> str:
+        from .handwriting_correction import HANDWRITING_CORRECTION_PROMPT, validate_handwriting_match
+        if not original or len(original) > 16384 or not handwriting.strip() or len(handwriting) > 64:
+            raise ValueError('前文或手写词范围无效')
+        settings = replace(settings, enabled=True, timeout_s=min(settings.timeout_s, 20.0))
+        settings.validate()
+        if normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL and settings.local_auto_start:
+            self._ensure_local_server(settings)
+        response = self._request_chat(settings, system_prompt=HANDWRITING_CORRECTION_PROMPT,
+            user_content=json.dumps(dict(original=original, handwriting=handwriting), ensure_ascii=False),
+            temperature=0.0, max_tokens=512, require_complete=True)
+        return validate_handwriting_match(original, handwriting, response)
+
 
     def _process_edit_with_retry(
         self,

@@ -17,7 +17,8 @@ import uuid
 
 PROTOCOL = 1
 MAX_MESSAGE = 8 * 1024 * 1024
-STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared"})
+STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared",
+                          "stroke_correction_state", "stroke_correction_requested", "stroke_correction_key"})
 SUSPENSION_REPLIES = frozenset({"input_suspended", "input_resumed"})
 
 

@@ -42,6 +42,7 @@ UiScrollView {
             actionText: page.controller.inlineInput.installing ? "处理中…"
                         : versionState === "not_installed" ? "立即安装" : "立即更新"
             enabled: !page.controller.inlineInput.installing
+            onVisibleChanged: if (!visible) installationRequested = false
             onActivated: {
                 installationRequested = true
                 page.controller.inlineInput.installInputMethod()

@@ -144,6 +144,54 @@ precondition(clearPull.accessibilityLabel() == "抬手删除前文")
 precondition(hint.intrinsicContentSize.width <= hint.frame.width, "delete-before hint must fit")
 precondition(panel.frame.size == stationaryWindow.size && bar.frame == stationaryGrid)
 try screenshot("delete-before")
+palette.correction(enabled: true, text: "清华大学人机交互研究实验室", message: "", busy: false, canUndo: false)
+palette.position(caret: middle, clientLevel: 0)
+let correctionWindow = panel.frame, correctionGrid = bar.frame
+let correctionPull = find("strokeCorrectionPull", in: content)!
+let correctionFill = find("strokeCorrectionPullFill", in: content)!
+let scope = find("strokeCorrectionScope", in: content) as! NSTextField
+precondition(scope.stringValue == "修正用词「清华大学人机交互研究实验室」" && !scope.isHidden)
+palette.selection(phase: "selecting", progress: 100, direction: "right", origin: [0, 0],
+                  points: [[0, 0], [18, 0], [24, 0]], selectDistance: 6, correctionProgress: 0.5)
+content.layoutSubtreeIfNeeded()
+precondition(!correctionPull.isHidden && correctionFill.frame.width == correctionPull.frame.width / 2)
+precondition(correctionFill.frame.minX == 0, "right pull must fill from left to right")
+precondition(panel.frame == correctionWindow && bar.frame == correctionGrid, "right pull moved the grid")
+precondition(!scope.frame.intersects(bar.frame), "word scope overlapped the candidate grid")
+precondition(!palette.placedAboveCaret && scope.frame.minY == 0 && scope.frame.maxY <= bar.frame.minY,
+             "below the caret, the handwriting scope must precede the grid")
+precondition(scope.backgroundColor == NSColor(srgbRed: 233 / 255, green: 239 / 255, blue: 1, alpha: 1), "word highlighted before reaching correction")
+try screenshot("correction-pulling")
+palette.selection(phase: "selecting", progress: 100, direction: "right", origin: [0, 0],
+                  points: [[0, 0], [18, 0], [30, 0]], selectDistance: 6, correctionArmed: true)
+content.layoutSubtreeIfNeeded()
+precondition(correctionFill.frame.width == correctionPull.frame.width && correctionPull.layer!.shadowOpacity > 0)
+precondition(hint.stringValue == "抬手修正前文 · 拉回取消" && correctionPull.accessibilityLabel() == "抬手修正前文")
+precondition(scope.textColor == .white && scope.backgroundColor == NSColor(srgbRed: 35 / 255, green: 76 / 255, blue: 219 / 255, alpha: 1),
+             "the entire confirmed handwriting must highlight at the right endpoint")
+try screenshot("correction-armed")
+palette.selection(phase: "selecting", progress: 100, direction: "right", origin: [0, 0],
+                  points: [[0, 0], [30, 0], [24, 0]], selectDistance: 6, correctionProgress: 0.5)
+precondition(scope.textColor != .white && scope.backgroundColor == NSColor(srgbRed: 233 / 255, green: 239 / 255, blue: 1, alpha: 1),
+             "pulling back must remove the handwriting highlight")
+palette.selection(phase: "selecting", progress: 100, direction: "right", origin: [0, 0],
+                  points: [[0, 0], [30, 0]], selectDistance: 6, correctionArmed: true)
+palette.correction(enabled: true, text: String(repeating: "这是需要完整显示的手写词", count: 5), message: "", busy: false, canUndo: false)
+palette.position(caret: low, clientLevel: 0)
+content.layoutSubtreeIfNeeded()
+precondition(palette.placedAboveCaret && scope.frame.height > 60 && scope.frame.minY >= bar.frame.maxY
+             && scope.frame.maxY == content.bounds.height, "above the caret, long scope must wrap below the grid next to the input")
+try screenshot("correction-long-scope")
+palette.selection(phase: "idle", progress: 0, direction: "", origin: [], points: [], selectDistance: 6)
+palette.correction(enabled: true, text: "", message: "青华 → 清华 · 左滑撤销", busy: false, canUndo: true)
+palette.position(caret: middle, clientLevel: 0)
+precondition(scope.stringValue == "青华 → 清华 · 左滑撤销" && !scope.isHidden && hint.stringValue.isEmpty,
+             "correction result and gesture undo hint must appear once")
+try screenshot("correction-undo")
+palette.update(code: "一", candidates: ["一"], selected: 0)
+precondition(scope.isHidden && !hint.stringValue.contains("撤销"), "new ink must not advertise correction undo")
+palette.correction(enabled: false, text: "", message: "", busy: false, canUndo: false)
+precondition(correctionPull.isHidden && scope.isHidden, "disabled correction retained an affordance")
 let trace = Mirror(reflecting: palette).children.first { $0.label == "trail" }!.value as! NSView
 RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8))
 precondition(trace.alphaValue == 0, "completed stroke failed to fade")

@@ -90,6 +90,7 @@ class TouchpadController(QObject):
         self._mode = "pointer"
         self._single_finger_action = str(owner._settings.value('touchpad/singleFingerAction', 'space'))
         self._two_finger_action = str(owner._settings.value('touchpad/twoFingerAction', 'candidate'))
+        self._handwriting_correction_enabled = owner._settings.value('touchpad/handwritingCorrection', False, type=bool)
         if self._single_finger_action not in TAP_ACTIONS: self._single_finger_action = 'space'
         if self._two_finger_action not in TAP_ACTIONS: self._two_finger_action = 'candidate'
         for key in ("touchpad/inputMode", "touchpad/strokeGesture", "touchpad/strokeEnabled"):
@@ -135,6 +136,8 @@ class TouchpadController(QObject):
             app.applicationStateChanged.connect(self._visibility_changed)
         from .stroke_session_controller import StrokeSessionController
         self.strokeSession = StrokeSessionController(self)
+        from .handwriting_correction import HandwritingCorrection
+        self._handwriting_correction = HandwritingCorrection(self)
         owner._inline_input.strokeCommitted.connect(self._stroke_committed)
         owner._inline_input.strokeInvalidated.connect(self._invalidate_strokes)
         self.sourceReady.connect(self.attach, Qt.QueuedConnection)
@@ -274,7 +277,28 @@ class TouchpadController(QObject):
     def strokeCode(self): return " ".join(SYMBOLS[x] for x in self._code)
 
     @Property(bool, notify=changed)
-    def strokeCommitPending(self): return bool(self._pending_stroke_commit)
+    def strokeCommitPending(self): return bool(self._pending_stroke_commit or self._handwriting_correction.state.get('busy'))
+
+    @Property(bool, notify=changed)
+    def handwritingCorrectionEnabled(self): return self._handwriting_correction_enabled
+
+    @handwritingCorrectionEnabled.setter
+    def handwritingCorrectionEnabled(self, enabled):
+        self._handwriting_correction_enabled = bool(enabled)
+        self.owner._settings.setValue('touchpad/handwritingCorrection', self._handwriting_correction_enabled)
+        self._handwriting_correction.reset()
+        self.owner._inline_input.send_stroke('stroke_correction_configure', enabled=bool(enabled))
+        self.changed.emit()
+
+    @Property(str, notify=changed)
+    def handwritingCorrectionText(self): return str(self._handwriting_correction.state.get('text') or '')
+
+    @Property(str, notify=changed)
+    def handwritingCorrectionMessage(self): return str(self._handwriting_correction.state.get('message') or '')
+
+    @Property(bool, notify=changed)
+    def handwritingCorrectionCanUndo(self):
+        return bool(self._handwriting_correction.state.get('can_undo') and not self._code and not self.strokeCommitPending)
 
     @Property(bool, notify=changed)
     def fuzzyMatching(self): return self._fuzzy_matching
@@ -454,7 +478,7 @@ class TouchpadController(QObject):
             self._insert_symbol(symbol)
 
     def _insert_symbol(self, symbol):
-        if symbol not in (*PUNCTUATION, ' ') or not self.strokeSession.allow_input() or self._pending_stroke_commit:
+        if symbol not in (*PUNCTUATION, ' ') or not self.strokeSession.allow_input() or self.strokeCommitPending:
             return
         if self._speech_busy():
             return
@@ -835,7 +859,7 @@ class TouchpadController(QObject):
 
     @Slot(str)
     def addStroke(self, category):
-        if category not in SYMBOLS or self._pending_stroke_commit: return
+        if category not in SYMBOLS or self.strokeCommitPending: return
         if self._mode != "stroke" and (self.active or not self._local_stroke_input): return
         if self._speech_busy():
             self._commit_message = "请先完成或取消当前语音输入／改写，再输入笔画。"
@@ -857,7 +881,7 @@ class TouchpadController(QObject):
     @Slot()
     def deleteOne(self):
         """Delete one pending stroke; otherwise send the editor's Backspace."""
-        if self._pending_stroke_commit or not self.strokeSession.allow_input(): return
+        if self.strokeCommitPending or not self.strokeSession.allow_input(): return
         if self._code:
             self.undoStroke()
         else:
@@ -865,7 +889,7 @@ class TouchpadController(QObject):
 
     def clearStrokesOrDeleteBefore(self):
         """A long left pull clears pending ink, or the editor's prefix when empty."""
-        if self._pending_stroke_commit or not self.strokeSession.allow_input(): return
+        if self.strokeCommitPending or not self.strokeSession.allow_input(): return
         if self._code:
             self.clearStrokes()
         else:
@@ -933,7 +957,7 @@ class TouchpadController(QObject):
         self._select_candidate(index)
 
     def _select_candidate(self, index, *, suffix=''):
-        if self._pending_stroke_commit:
+        if self.strokeCommitPending:
             return
         if self._speech_busy():
             self._commit_message = "请先完成或取消当前语音输入／改写，再选择候选字。"
@@ -1175,7 +1199,8 @@ class TouchpadController(QObject):
                 on_two_finger_tap=lambda: self._post(run, 'two_finger_tap', (output, None)),
                 raw2=run.protocol == 'raw2',
                 contact_classifier=trial_contact,
-                two_finger_classifier=two_finger_selection,
+                two_finger_classifier=lambda points, **options: two_finger_selection(points,
+                    correction_enabled=self._handwriting_correction_enabled, **options),
                 on_tap_contact=lambda value: self._post(run, 'contact_tap', (output, value)),
                 on_selection=lambda value: self._post(run, 'selection', (output, value)),
                 on_selection_state=lambda value: self._post(run, 'selection_state', (output, value)),
@@ -1416,6 +1441,8 @@ class TouchpadController(QObject):
                     output.pointer_after_step = run.last_move_step
                     output.activate()
         elif kind in {"stroke", "trace", "gesture", "contact_tap", "two_finger_tap", "selection", "selection_state"} and self._state == "running" and run.mode == "stroke":
+            if self._handwriting_correction.state.get('busy'):
+                return
             output, payload = value
             if output is not run.output:
                 return
@@ -1441,7 +1468,8 @@ class TouchpadController(QObject):
                 elif kind == 'selection':
                     self._selection_state = {}
                     self._sync_external_selection()
-                    decision = trial_selection(payload['decision'])
+                    decision = trial_selection(dict(payload['decision'], correction_armed=
+                        self.handwritingCorrectionEnabled and payload['decision'].get('correction_armed', False)))
                     self._trial_event('gesture', action=decision['action'], target=decision.get('target'))
                     if decision['action'] == 'select':
                         self.selectCandidate(decision['target'])
@@ -1451,6 +1479,8 @@ class TouchpadController(QObject):
                         self.deleteOne()
                     elif decision['action'] == 'clear-all':
                         self.clearStrokesOrDeleteBefore()
+                    elif decision['action'] == 'correct-text':
+                        self._handwriting_correction.request()
                     if decision['action'] != 'cancel-selection' and decision.get('direction'):
                         self.selectionCommitted.emit(decision['direction'])
                     self.selectionChanged.emit()
@@ -1547,7 +1577,9 @@ class TouchpadController(QObject):
                 run.diagnostics.note('stroke_waiting_commit')
             elif kind == "gesture" and not self._pending_stroke_commit:
                 name = getattr(payload, "name", "")
-                if name == "swipe-right": self._move_candidate(1)
+                if name == "swipe-left" and self.handwritingCorrectionCanUndo:
+                    self._handwriting_correction.undo()
+                elif name == "swipe-right": self._move_candidate(1)
                 elif name == "swipe-left": self._move_candidate(-1)
                 elif name == "swipe-up": self.undoStroke()
                 elif name == "swipe-down": self.clearStrokes()
@@ -1729,6 +1761,7 @@ class TouchpadController(QObject):
 
     def close(self):
         self._closed = True
+        self._handwriting_correction.close()
         self._finish_trial('window_closed')
         self._correction.close()
         self.strokeSession.close()

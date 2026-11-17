@@ -618,7 +618,9 @@ class InlineInputController(QObject):
                                 origin=list(display.get('origin') or []), points=list(display.get('points') or [])[:201],
                                 select_distance=float(select_distance), clear_armed=bool(state.get('clear_armed')),
                                 clear_distance=float(state.get('clear_distance') or 30.),
-                                clear_progress=float(state.get('clear_progress') or 0.))
+                                clear_progress=float(state.get('clear_progress') or 0.),
+                                correction_armed=bool(state.get('correction_armed')),
+                                correction_progress=float(state.get('correction_progress') or 0.))
 
     def stroke_backspace(self, origin, *, to_start=False):
         """Send the editor's own Backspace only with fresh proof of this stroke target."""
@@ -1290,6 +1292,10 @@ class InlineInputController(QObject):
         if kind == 'clipboard_offer_state':
             if message.get('epoch') == self._epoch:
                 self.clipboardEvent.emit(dict(message))
+            return
+        if str(kind).startswith('stroke_correction_'):
+            if message.get('epoch') == self._epoch:
+                self.strokeEvent.emit(dict(message))
             return
         if kind in {"state", "stroke_ready", "stroke_cleared", "stroke_ink_cleared", "disconnected", "connected"}:
             if kind == "connected" or message.get("epoch") == self._epoch:

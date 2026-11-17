@@ -169,7 +169,7 @@ class ConnectionMixin:
                 print(f"Session dir: {self.session_dir}")
 
             print(f"Connecting {self.target_name!r} ({self.target_address}) ...")
-            if self.connection_backend == 'sdk':
+            if self.connection_backend in {'sdk', 'process'}:
                 from .sdk_transport import connect_session
                 try:
                     for attempt in range(2):
@@ -252,7 +252,7 @@ class ConnectionMixin:
         if not self.target_address:
             return False
 
-        if self.connection_backend == 'sdk':
+        if self.connection_backend in {'sdk', 'process'}:
             # Resolve the selected device, then run the same validated SDK
             # connection path. Never fall back to the legacy handshake.
             return await self.connect_target(self.target_address)

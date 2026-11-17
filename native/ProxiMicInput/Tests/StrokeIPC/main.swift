@@ -69,6 +69,21 @@ let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
 let editor = LocalEditor()
 let controller = ProxiMicInputController()
+final class LocalSelection: PrefixSelectionDriver {
+    var metadata: [String: Any] { [:] }
+    func begin(_ operation: String) {}
+    func record(_ event: [String: Any]) {}
+    func validateTarget(current: () -> Bool) -> Bool { current() }
+    func readSelection(current: () -> Bool) -> NSRange? { current() ? editor.selection : nil }
+    func select(_ range: NSRange, from caret: NSRange, current: () -> Bool) -> PrefixSelectionAttempt {
+        guard current(), editor.selection == caret, isValidRange(range, length: editor.text.utf16.count) else {
+            return .uncertain("target_changed")
+        }
+        editor.selection = range
+        return .submitted
+    }
+}
+controller.makeSelectionDriver = { _, _, _ in LocalSelection() }
 let service = IMEService.shared
 let receive = service.transport.onMessage
 func palette() -> StrokeCandidatePanel? {
@@ -83,7 +98,7 @@ service.transport.onMessage = { message in
        glyphs.contains(where: { !($0["png"] ?? "").isEmpty }), let palette = palette() {
         let panel = Mirror(reflecting: palette).children.first { $0.label == "panel" }?.value as? NSPanel
         func images(in view: NSView) -> Int {
-            if view.identifier?.rawValue == "strokeClearArrow" { return 0 }
+            if ["strokeClearArrow", "strokeCorrectionArrow"].contains(view.identifier?.rawValue ?? "") { return 0 }
             let own = (view as? NSImageView)?.image == nil ? 0 : 1
             return own + view.subviews.reduce(0) { $0 + images(in: $1) }
         }
@@ -94,6 +109,9 @@ service.transport.onMessage = { message in
         print("STROKE_GLYPHS_RENDERED")
     }
     switch message["type"] as? String {
+    case "test_snapshot":
+        service.send(["type": "pong", "event": "test_snapshot", "text": editor.text,
+                      "selection": [editor.selection.location, editor.selection.length]])
     case "stroke_selection":
         if let palette = palette(), let panel = Mirror(reflecting: palette).children.first(where: { $0.label == "panel" })?.value as? NSPanel,
            let content = panel.contentView {
@@ -105,6 +123,13 @@ service.transport.onMessage = { message in
             let pull = find("strokeClearPull", in: content)!, fill = find("strokeClearPullFill", in: content)!
             service.send(["type": "pong", "event": "test_pull_feedback", "visible": !pull.isHidden,
                           "progress": fill.frame.width / pull.frame.width])
+            let right = find("strokeCorrectionPull", in: content)!, rightFill = find("strokeCorrectionPullFill", in: content)!
+            let scope = find("strokeCorrectionScope", in: content) as! NSTextField
+            service.send(["type": "pong", "event": "test_correction_feedback", "visible": !right.isHidden,
+                          "progress": right.frame.width > 0 ? rightFill.frame.width / right.frame.width : 0,
+                          "scope": scope.stringValue, "scope_visible": !scope.isHidden,
+                          "scope_highlighted": scope.textColor == NSColor.white
+                              && scope.backgroundColor == NSColor(srgbRed: 35 / 255, green: 76 / 255, blue: 219 / 255, alpha: 1)])
         }
     case "test_select_to_start", "test_backspace":
         let selecting = message["type"] as? String == "test_select_to_start"

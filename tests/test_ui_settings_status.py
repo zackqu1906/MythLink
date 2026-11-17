@@ -127,8 +127,8 @@ def test_update_completion_rereads_version_even_when_the_installer_reports_succe
 def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     inline_ui, installer, monkeypatch, tmp_path, size
 ):
-    controller, _, _, root, _ = inline_ui
-    value, _, calls = installer
+    controller, _, _, root, event = inline_ui
+    value, state, calls = installer
     monkeypatch.setattr(installer_module, "InputMethodInstaller", lambda: value)
     bundle(value.destination, installer_module.BUNDLE_ID, 'old', ('0.9.0', '1'))
     root.resize(*size)
@@ -138,20 +138,21 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     notice = root.findChild(QObject, 'homeInputMethodNotice')
     button = root.findChild(QObject, 'homeInputMethodNoticeButton')
     assert notice.property('visible') and '待更新' in notice.property('message')
+    assert button.property('visible') and button.property('text') == '立即更新'
     position = button.mapToScene(QPointF())
     assert 0 <= position.x() and position.x() + button.width() <= root.width()
     assert 0 <= position.y() and position.y() + button.height() <= root.height()
     shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(shots / f'home-input-method-update-{size[0]}.png'))
-    assert button.property('visible') and button.property('text') == '立即更新'
     # Home uses the same installer guard and explains why a live input blocks updating.
+    dialog = root.findChild(QObject, 'runtimeSettingsDialog')
     QMetaObject.invokeMethod(button, 'click')
     assert not controller.inlineInput.installing
     assert '先结束当前语音' in notice.property('message')
+    assert not calls and not dialog.property('visible')
     QMetaObject.invokeMethod(root.findChild(QObject, 'runtimeSettingsButton'), 'click')
     QTest.qWait(160)
-    dialog = root.findChild(QObject, 'runtimeSettingsDialog')
     assert dialog.property('visible')
     assert root.findChild(QObject, 'settingsInputMethodButton').property('visible')
     QMetaObject.invokeMethod(dialog, 'close')
@@ -167,12 +168,34 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     # A success message alone must not hide a still-outdated installed bundle.
     controller.inlineInput._installation_finished('已安装并启用')
     assert notice.property('visible')
-    target = value.destination / 'Contents/Info.plist'
-    target.write_bytes((value.source / 'Contents/Info.plist').read_bytes())
-    controller.inlineInput._installation_finished('已安装并启用')
-    assert not notice.property('visible')
+    # Exercise the actual installer worker: rollback on failure, then a successful retry.
+    event(phase='idle', ready=False)
+    for failure in ('register', ''):
+        state['fail'] = failure
+        QMetaObject.invokeMethod(button, 'click')
+        assert controller.inlineInput.installing
+        assert not button.property('enabled')
+        assert button.property('text') == '处理中…'
+        assert notice.property('message') == controller.inlineInput.installationMessage
+        for _ in range(100):
+            QTest.qWait(10)
+            if not controller.inlineInput.installing:
+                break
+        assert not controller.inlineInput.installing and not dialog.property('visible')
+        assert button.property('enabled')
+        if failure:
+            assert notice.property('visible')
+            assert '安装未完成' in notice.property('message')
+            assert 'test registration failure' in notice.property('message')
+            assert (value.destination / 'marker').read_text() == 'old'
+        else:
+            assert not notice.property('visible')
+            assert (value.destination / 'marker').read_text() == 'new'
+    assert calls
+    calls.clear()
     # Returning home also catches an installation changed outside this window.
     root.setProperty('currentPage', 1)
+    target = value.destination / 'Contents/Info.plist'
     info = plistlib.loads(target.read_bytes())
     info['CFBundleVersion'] = '2'
     target.write_bytes(plistlib.dumps(info))

@@ -184,10 +184,16 @@ class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, Stat
     )
 
     def __post_init__(self) -> None:
-        if self.connection_backend not in {'legacy', 'sdk'}:
-            raise ValueError('connection_backend must be legacy or sdk')
+        if self.connection_backend not in {'legacy', 'sdk', 'process'}:
+            raise ValueError('connection_backend must be legacy, sdk or process')
         if self.data_root is not None:
             set_data_dir(self.data_root)
+
+    @property
+    def process_diagnostics(self) -> dict | None:
+        """Worker PIDs, queue losses and timing maxima; None for in-process backends."""
+        runtime = getattr(self._sdk_transport, 'runtime', None)
+        return runtime.diagnostics if runtime is not None else None
 
     def _seg_path(self, key: str, default_name: str) -> Path:
         assert self.session_dir is not None

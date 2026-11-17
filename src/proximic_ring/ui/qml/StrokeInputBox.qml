@@ -22,6 +22,10 @@ Item {
         if (state.phase === "selecting") {
             if (state.clear_armed) return touchpad.strokeCode.length ? "抬手清空 · 拉回取消" : "抬手删除前文 · 拉回取消"
             if (state.direction === "left") return touchpad.strokeCode.length ? "抬手删除 · 继续外拉可清空" : "抬手退格 · 外拉删除前文"
+            if (state.direction === "right" && touchpad.handwritingCorrectionEnabled) {
+                if (touchpad.strokeCode.length) return "请先确认正在书写的字"
+                return state.correction_armed ? "抬手修正前文 · 拉回取消" : "继续向右外拉可修正前文"
+            }
             return state.direction ? "双指选字 · 抬手确认" : "已识别双指 · 滑动选字"
         }
         if (state.phase === "writing") return "书写中 · 抬手结束"
@@ -40,7 +44,7 @@ Item {
     readonly property int bodyGap: compact ? 12 : 16
     // Keep the whole selection card inside one viewport where possible.
     readonly property real menuSide: {
-        const available = Math.max(0, selectionCard.width - 2 * cardMargin - selectionMenu.clearPullGutter
+        const available = Math.max(0, selectionCard.width - 2 * cardMargin - selectionMenu.clearPullGutter - selectionMenu.correctionPullGutter
                                       - (tutorialBeside ? tutorialWidth + bodyGap : 0))
         // A stacked tutorial takes height from the menu.
         const stacked = tutorialOpen && !tutorialBeside ? tutorial.implicitHeight + bodyGap : 0
@@ -426,6 +430,28 @@ Item {
                     }
                 }
 
+                Rectangle {
+                    id: correctionScope
+                    objectName: "strokeCorrectionScope"
+                    readonly property bool highlighted: selectionMenu.correcting && box.touchpad.handwritingCorrectionText.length > 0
+                    Layout.fillWidth: true; Layout.preferredHeight: correctionScopeText.implicitHeight + 20
+                    visible: box.touchpad.handwritingCorrectionEnabled &&
+                        ((box.touchpad.selectionState.phase === "selecting" && box.touchpad.selectionState.direction === "right")
+                         || box.touchpad.handwritingCorrectionCanUndo)
+                    radius: 8; color: highlighted ? "#234CDB" : "#E9EFFF"
+                    border.color: highlighted ? "#234CDB" : "#AABCF2"
+                    Text {
+                        id: correctionScopeText
+                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                        text: box.touchpad.handwritingCorrectionText.length ? "修正用词「" + box.touchpad.handwritingCorrectionText + "」"
+                            : box.touchpad.handwritingCorrectionMessage || "请在目标文本框中使用修正"
+                        font.pixelSize: 16; font.weight: Font.DemiBold; color: correctionScope.highlighted ? "white" : "#234CDB"
+                        wrapMode: Text.WrapAnywhere
+                        textFormat: Text.PlainText
+                        Accessible.role: Accessible.StaticText; Accessible.name: text
+                    }
+                }
+
                 GridLayout {
                     objectName: "strokeSelectionBody"
                     // Center the pair, or stack the tutorial above a centered menu.
@@ -443,7 +469,7 @@ Item {
                     }
                     Item {
                         Layout.alignment: Qt.AlignHCenter | Qt.AlignTop
-                        Layout.preferredWidth: box.menuSide + selectionMenu.clearPullGutter
+                        Layout.preferredWidth: box.menuSide + selectionMenu.clearPullGutter + selectionMenu.correctionPullGutter
                         Layout.preferredHeight: box.menuSide
                         StrokeSelectionMenu {
                             id: selectionMenu
@@ -502,7 +528,7 @@ Item {
                     objectName: "strokeCommitMessage"
                     Layout.fillWidth: true; Layout.minimumWidth: 0
                     text: box.touchpad.state === "error" ? box.touchpad.message : box.touchpad.commitMessage
-                    visible: text.length > 0
+                    visible: text.length > 0 && (!correctionScope.visible || text !== correctionScopeText.text)
                     font.pixelSize: 11
                     color: box.touchpad.state === "error" || text.indexOf("失败") >= 0 ? "#B54756" : box.mutedInk
                     wrapMode: Text.Wrap

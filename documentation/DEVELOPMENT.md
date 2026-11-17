@@ -11,6 +11,8 @@ bash scripts/setup-macos.sh
 bash scripts/start-ui.sh
 ```
 
+完整 macOS 界面和原生桌面测试需要访问当前图形会话，应从普通终端运行；在 Codex 中运行时使用允许桌面访问的执行环境。受限沙箱中的启动会在加载界面前明确失败，避免 AppKit 中止及反复生成崩溃转储。后台控制进程若异常中止，会停止自动重启，修正启动环境后重新启动 Mythlink。
+
 Windows PowerShell：
 
 ```powershell

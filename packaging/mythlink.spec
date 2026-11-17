@@ -73,6 +73,7 @@ if notices.is_file():
     datas.append((str(notices), "."))
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
+hiddenimports += collect_submodules("ring_python_sdk.process")
 hiddenimports += collect_submodules('smpclient') + collect_submodules('smp')
 if platform.system() == "Darwin":
     hiddenimports += ["Vision", "CoreML", "ring_mac_sdk.model", "onnxruntime"]

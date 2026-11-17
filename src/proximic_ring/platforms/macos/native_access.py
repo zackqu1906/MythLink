@@ -1,4 +1,4 @@
-"""Restartable macOS control channel. The UI/audio host never needs to restart.
+"""Restartable macOS control channel for permission changes without a UI restart.
 
 Only the same executable is launched, over private inherited pipes. A denied
 worker is discarded because CoreGraphics can cache its negative preflight for
@@ -11,12 +11,14 @@ from dataclasses import replace
 import json
 import os
 import select
+import signal
 import subprocess
 import sys
 import threading
 import time
 
 from .mac_permissions import MacPermissionError, PermissionState
+from .mac_app_activation import require_gui_session
 from ...diagnostics.scene_diagnostics import SceneActionError, safe_data
 
 
@@ -28,6 +30,7 @@ class NativeAccessChannel:
         self._buffer = b""
         self._sequence = 0
         self._diagnostics = threading.local()
+        self._aborted = False
 
     @property
     def last_diagnostic(self):
@@ -37,6 +40,9 @@ class NativeAccessChannel:
         if self._process is not None and self._process.poll() is None:
             return
         self._stop()
+        if self._aborted:
+            raise RuntimeError("macOS 控制进程异常中止，已停止自动重启，请重新启动 Mythlink。")
+        require_gui_session()
         if getattr(sys, "frozen", False):
             args = [sys.executable, "--native-access-worker"]
         else:
@@ -72,6 +78,10 @@ class NativeAccessChannel:
             process.kill()
             process.wait(timeout=0.3)
         finally:
+            # Permission polling must not turn one native abort into hundreds
+            # of restarts and inherited Crashpad memory dumps.
+            if process.returncode == -signal.SIGABRT:
+                self._aborted = True
             process.stdin.close()
             process.stdout.close()
             if getattr(process, 'stderr', None) is not None:

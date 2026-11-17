@@ -201,6 +201,9 @@ final class ProxiMicInputController: IMKInputController {
     private var strokeCandidates: [String] = []
     private var strokeActive = false
     private var strokeSessionID = ""
+    private var strokeCorrectionEnabled = false
+    private var strokeCorrectionSeed: EditorTextRange?
+    private var strokeCorrection: StrokeTextCorrection?
     private var isWriting = false
     private var lastError = ""
     private var lastContext: EditorSnapshot?
@@ -290,6 +293,9 @@ final class ProxiMicInputController: IMKInputController {
         strokeCandidates = []
         strokeActive = false
         strokeSessionID = ""
+        strokeCorrection?.invalidate("")
+        strokeCorrection = nil
+        strokeCorrectionSeed = nil
         undoHistory.configure(enabled: service.multiUndoEnabled)
         undoHistory.configureRedo(enabled: service.redoEnabled)
         undoSourceUtteranceID = nil
@@ -304,6 +310,8 @@ final class ProxiMicInputController: IMKInputController {
             previous.strokeCandidates = []
             previous.strokeActive = false
             previous.strokeSessionID = ""
+            previous.strokeCorrection?.invalidate("")
+            previous.strokeCorrection = nil
             previous.invalidate("已切换输入框")
         }
         guard service.activation.owns(self, lease) else { return }
@@ -366,11 +374,18 @@ final class ProxiMicInputController: IMKInputController {
                 ["client_id": self?.currentClientID ?? "", "utterance_id": self?.session?.utteranceID ?? ""]
             })
         nextAdapter.configureKeyDelivery({ [weak self] command, count, tag, reply in
-            guard let self, self.activated, self.ownsActivation, self.session?.active == true else { reply("输入会话已结束"); return }
+            guard let self, self.activated, self.ownsActivation,
+                  self.session?.active == true || self.strokeCorrection?.busy == true else { reply("输入会话已结束"); return }
             let id = UUID().uuidString
             self.compatibilityKeyReply = (id, reply)
-            self.sendEvent("wechat_key", extra: ["request_id": id, "command": command, "count": count,
-                                                 "event_tag": tag, "application": bundle])
+            if self.strokeActive {
+                IMEService.shared.send(["type": "stroke_correction_key", "client_id": self.currentClientID,
+                    "stroke_session": self.strokeSessionID, "request_id": id, "command": command, "count": count,
+                    "event_tag": tag, "application": bundle])
+            } else {
+                self.sendEvent("wechat_key", extra: ["request_id": id, "command": command, "count": count,
+                                                     "event_tag": tag, "application": bundle])
+            }
         }, selectionDriver: selectionDriver)
         let clipboardReader = ClipboardBodyReader(NativeClipboardReadEnvironment(
             pid: foregroundPID, bundle: bundle,
@@ -464,6 +479,7 @@ final class ProxiMicInputController: IMKInputController {
         }
         if adapter?.clipboardReadInProgress == true { adapter?.clipboardReader?.cancel() }
         if event.type == .leftMouseDown {
+            strokeCorrection?.invalidate("光标已移动，未继续关联手写词")
             clearStroke(ending: strokeSessionID.isEmpty)
             if session?.active == true || undoHistory.enabled || adapter?.clientOperationPending == true {
                 invalidate("鼠标操作已接管本句")
@@ -471,12 +487,24 @@ final class ProxiMicInputController: IMKInputController {
             return false
         }
         guard event.type == .keyDown else { return false }
-        clearStroke(ending: strokeSessionID.isEmpty)
         if let compatibility = adapter?.pendingCompatibility,
            compatibility.acceptsKey(code: Int(event.keyCode), command: event.modifierFlags.contains(.command),
                                     shift: event.modifierFlags.contains(.shift),
                                     otherModifiers: !event.modifierFlags.intersection([.control, .option]).isEmpty,
                                     tag: event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) { return false }
+        if strokeActive, strokeCode.isEmpty, event.keyCode == 6,
+           event.modifierFlags.intersection([.command, .shift, .control, .option]) == [.command],
+           strokeCorrection?.canUndo == true {
+            isWriting = true
+            strokeCorrection?.undoCorrection()
+            isWriting = false
+            return true
+        }
+        if strokeActive, strokeCode.isEmpty, event.keyCode == 51,
+           event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty {
+            strokeCorrection?.backspace()
+        } else { strokeCorrection?.invalidate("键盘输入已接管，未继续关联手写词") }
+        clearStroke(ending: strokeSessionID.isEmpty)
         guard let session else { return false }
         if matches(IMEService.shared.cancelShortcut, event: event),
            session.active || (session.phase == .undone && undoHistory.count > 0) {
@@ -926,6 +954,9 @@ final class ProxiMicInputController: IMKInputController {
         if ending {
             strokeActive = false
             strokeSessionID = ""
+            strokeCorrection?.invalidate("")
+            strokeCorrection = nil
+            strokeCorrectionSeed = nil
             strokePanel?.hide()
         } else {
             strokePanel?.update(code: "", candidates: [], selected: 0)
@@ -949,6 +980,25 @@ final class ProxiMicInputController: IMKInputController {
         if type != "stroke_begin", token != strokeSessionID { return }
         if type == "stroke_end" { clearStroke(notify: false); return }
         if type == "stroke_clear" { clearStroke(notify: false, ending: token.isEmpty); return }
+        if type == "stroke_correction_configure" {
+            configureStrokeCorrection(message["enabled"] as? Bool == true, adapter: adapter)
+            return
+        }
+        if type == "stroke_correction_result" {
+            isWriting = true
+            strokeCorrection?.apply(id: message["request_id"] as? String ?? "",
+                fragment: message["original_text"] as? String ?? "", error: message["error"] as? String ?? "")
+            isWriting = false
+            return
+        }
+        if type == "stroke_correction_key_result" {
+            guard let reply = compatibilityKeyReply, strokeCorrection?.busy == true,
+                  message["request_id"] as? String == reply.id else { return }
+            compatibilityKeyReply = nil
+            reply.callback((message["error"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+            return
+        }
+        if strokeCorrection?.busy == true { return }
         guard !isWriting, !adapter.clientOperationPending,
               session?.hasComposition != true, session?.awaitingReadback != true else { return }
         if let session, [.listening, .finishing, .editing, .polishing].contains(session.phase) { return }
@@ -970,10 +1020,12 @@ final class ProxiMicInputController: IMKInputController {
             panel.hide()
             strokeActive = true
             strokeSessionID = token
+            strokeCorrectionSeed = StrokeTextCorrection.precedingText(in: context)
             if strokePanel == nil { strokePanel = StrokeCandidatePanel() }
             strokePanel?.exitGestureLabel = String((message["gesture_label"] as? String ?? "双指双击").prefix(20))
             strokePanel?.tapHint = String((message["tap_hint"] as? String ?? "单指空格 · 双指首选").prefix(40))
             strokePanel?.update(code: "", candidates: [], selected: 0)
+            configureStrokeCorrection(message["correction_enabled"] as? Bool == true, adapter: adapter)
             tick()
             guard activated, ownsActivation, currentClientID == clientID, strokeSessionID == token else { return }
             guard strokePanel?.isVisible == true else {
@@ -1030,7 +1082,21 @@ final class ProxiMicInputController: IMKInputController {
                                    selectDistance: message["select_distance"] as? Double ?? 3,
                                    clearArmed: message["clear_armed"] as? Bool ?? false,
                                    clearDistance: message["clear_distance"] as? Double ?? 30,
-                                   clearProgress: message["clear_progress"] as? Double ?? 0)
+                                   clearProgress: message["clear_progress"] as? Double ?? 0,
+                                   correctionArmed: message["correction_armed"] as? Bool ?? false,
+                                   correctionProgress: message["correction_progress"] as? Double ?? 0)
+        case "stroke_correction_undo":
+            guard strokeActive, strokeCode.isEmpty, strokeCorrection?.canUndo == true else { return }
+            isWriting = true
+            strokeCorrection?.undoCorrection()
+            isWriting = false
+        case "stroke_correction_request":
+            guard strokeCode.isEmpty else {
+                publishStrokeCorrection(message: "请先确认正在书写的字"); return
+            }
+            if let correction = strokeCorrection {
+                correction.request(message["request_id"] as? String ?? "")
+            } else { publishStrokeCorrection(message: "请将光标放在前文之后，再进入手写") }
         case "stroke_commit":
             let request = message["request_id"] as? String ?? ""
             let value = message["text"] as? String ?? ""
@@ -1042,6 +1108,10 @@ final class ProxiMicInputController: IMKInputController {
                 && (!strokeCode.isEmpty || (strokeActive && !token.isEmpty))
             var prefix: String?
             if accepted {
+                let probe = adapter.probe()
+                let insertion = isValidRange(probe.markedRange) && probe.markedRange.length > 0
+                    ? probe.markedRange : probe.selection
+                guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
                 isWriting = true
                 adapter.commit(value)
                 isWriting = false
@@ -1053,6 +1123,8 @@ final class ProxiMicInputController: IMKInputController {
                 strokePanel?.trace(points: [], finished: false, style: [:])
                 prefix = adapter.strokeContext()
                 guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
+                strokeCorrection?.recordCommit(value, word: candidateWithSpace ? String(value.dropLast()) : value,
+                                               replacing: insertion)
             }
             var result: [String: Any] = ["type": "stroke_result", "client_id": clientID,
                                     "request_id": request, "stroke_session": token, "success": accepted,
@@ -1061,6 +1133,49 @@ final class ProxiMicInputController: IMKInputController {
             IMEService.shared.send(result)
         default: break
         }
+    }
+
+    private func configureStrokeCorrection(_ enabled: Bool, adapter: NativeInputClient) {
+        strokeCorrection?.invalidate("")
+        strokeCorrection = nil
+        strokeCorrectionEnabled = enabled
+        if enabled, let preceding = strokeCorrectionSeed {
+            let clientID = currentClientID, token = strokeSessionID
+            let correction = StrokeTextCorrection(preceding: preceding, client: adapter, owns: { [weak self, weak adapter] in
+                guard let self, let adapter else { return false }
+                return self.activated && self.ownsActivation && self.adapter === adapter
+                    && self.currentClientID == clientID && self.strokeSessionID == token && self.strokeActive
+            })
+            guard activated, ownsActivation, currentClientID == clientID, strokeSessionID == token,
+                  self.adapter === adapter else { return }
+            strokeCorrection = correction
+            correction.onChanged = { [weak self, weak correction] in
+                guard let self, self.strokeCorrection === correction else { return }
+                self.publishStrokeCorrection()
+            }
+            correction.onRequest = { [weak self, weak correction] id, original, word in
+                guard let self, self.strokeCorrection === correction, self.ownsActivation else { return }
+                IMEService.shared.send(["type": "stroke_correction_requested", "client_id": clientID,
+                    "stroke_session": token, "request_id": id, "original": original, "handwriting": word])
+            }
+        }
+        publishStrokeCorrection()
+    }
+
+    private func publishStrokeCorrection(message: String? = nil) {
+        guard activated, ownsActivation, strokeActive else { return }
+        let correction = strokeCorrection
+        let word = correction?.word ?? ""
+        let hint = message ?? correction?.message ?? (strokeCorrectionEnabled ? "请将光标放在前文之后，再进入手写" : "")
+        let range = correction?.handwritingRange
+        strokePanel?.correction(enabled: strokeCorrectionEnabled, text: word, message: hint,
+                                busy: correction?.busy == true, canUndo: correction?.canUndo == true)
+        IMEService.shared.send(["type": "stroke_correction_state", "client_id": currentClientID,
+            "stroke_session": strokeSessionID, "text": word, "message": hint,
+            "range": range.map { [$0.location, $0.length] } ?? [],
+            "busy": correction?.busy == true,
+            "available": correction?.valid == true && correction?.preceding.text.isEmpty == false,
+            "can_undo": correction?.canUndo == true])
     }
 
     private func wire(_ next: CompositionSession) {
@@ -1273,6 +1388,12 @@ final class ProxiMicInputController: IMKInputController {
         guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
         selectionPolls += 1
         if strokeActive {
+            if !isWriting {
+                isWriting = true
+                strokeCorrection?.advance()
+                isWriting = false
+            }
+            guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
             if strokePanel?.needsPosition == true {
                 strokePanel?.position(caret: adapter.caret(compositionLength: (strokeCode as NSString).length, trace: false),
                                       clientLevel: adapter.client.windowLevel())

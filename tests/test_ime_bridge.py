@@ -318,7 +318,8 @@ def test_ui_ready_probe_reaches_host_but_asr_context_stays_private(bridge, prefi
 
 
 @pytest.mark.mac_only
-@pytest.mark.parametrize("kind", ["stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared"])
+@pytest.mark.parametrize("kind", ["stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared",
+                                  "stroke_correction_state", "stroke_correction_requested", "stroke_correction_key"])
 def test_stroke_replies_cross_transport_with_request_and_epoch_intact(bridge, kind):
     server, messages = bridge
     sock, stream = connect(server)

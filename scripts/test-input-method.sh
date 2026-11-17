@@ -39,6 +39,11 @@ xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CompositionSession.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Tests/main.swift" -o "$BUILD_ROOT/transaction-tests"
 "$BUILD_ROOT/transaction-tests"
+xcrun swiftc -swift-version 5 -module-cache-path "$BUILD_ROOT/module-cache" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/CompositionSession.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Sources/StrokeTextCorrection.swift" \
+  "$TASK_ROOT/native/ProxiMicInput/Tests/StrokeCorrection/main.swift" -o "$BUILD_ROOT/stroke-correction-tests"
+"$BUILD_ROOT/stroke-correction-tests"
 xcrun swiftc -swift-version 5 -O -module-cache-path "$BUILD_ROOT/module-cache" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CompositionSession.swift" \
   "$TASK_ROOT/native/ProxiMicInput/Sources/CompositionUndoHistory.swift" \
