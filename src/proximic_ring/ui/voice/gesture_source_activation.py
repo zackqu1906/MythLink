@@ -122,6 +122,8 @@ class GestureSourceActivation(QObject):
             source.event.connect(lambda message: self._event(request, source, message))
             if request.restore_source:
                 source.restore(request.origin, request.restore_source, BUNDLE_ID + '.dictation')
+            elif request.recovering:
+                source.recover(request.origin)
             elif request.expected_source:
                 def borrow(previous):
                     if previous is not None and (request.cancelled.is_set() or time.monotonic() >= request.deadline
@@ -130,7 +132,7 @@ class GestureSourceActivation(QObject):
                     request.on_borrow(previous)
                 source.start_probe(request.origin, request.expected_source, borrow)
             else:
-                (source.recover if request.recovering else source.start)(request.origin)
+                source.start(request.origin)
         except Exception as exc:
             self._finish(request, str(exc))
 

@@ -74,12 +74,11 @@ def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, r
         original = read(backend.current)
         if not original or original not in allowed or backend.foreground() != origin:
             raise RuntimeError('无法确认原输入法或前台应用')
-        if original in {BUNDLE_ID, target}:
-            return None  # A temporary probe can ping this source without cycling it.
     shortcut = None
     # For a temporary loan, avoid cycling through an intermediate keyboard:
     # a failed probe cannot distinguish that source from a manual user choice.
-    if on_borrow is None or len(allowed) <= 2:
+    # An already selected but inactive client needs native focus recovery.
+    if on_borrow is None or (len(allowed) <= 2 and original not in {BUNDLE_ID, target}):
         try:
             shortcut = backend.shortcut()
         except InputSourceUnavailable as exc:

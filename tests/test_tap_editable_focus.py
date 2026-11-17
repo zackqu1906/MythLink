@@ -44,10 +44,17 @@ def tap_probe(route, monkeypatch):
                 raise TimeoutError("Source changed, but selection receipt expired")
     monkeypatch.setattr(system_input_source, "SystemInputSources", Sources)
 
+    def recover(origin, *, timeout, expected_source, on_borrow):
+        assert origin == state["front"] and expected_source == state["source"] == VOICE
+        assert 0 < timeout <= .8
+        actions.append("recover")
+        return VOICE
+    monkeypatch.setattr(inline._gesture_source_activation, "activate", recover)
+
     def focus_state(**_):
         if state["outcome"] == "initial_timeout":
             return None
-        if not state["already_ready"] and not state["activation_attempted"]:
+        if not state["already_ready"] and not actions:
             return {"ready": False, "client_id": "", "application": ""}
         if not state["already_ready"] and not state["waited"]:
             state["waited"] = True
@@ -107,7 +114,17 @@ def test_already_selected_mythlink_does_not_cycle_or_invent_an_original(tap_prob
     state.update(source=VOICE, already_ready=already_ready, outcome=outcome)
     inline.set_auto_return_input_source(True)
     assert ring_tap(controller, "tap", deliver=False) is (outcome == "ready")
-    assert not actions and not restores and inline._source_return.probe is None
+    assert actions == ([] if already_ready else ["recover"])
+    assert not restores and inline._source_return.probe is None
+
+
+@pytest.mark.parametrize("outcome", ["ipc_timeout", "missing_client", "not_ready", "app_changed", "pid_changed", "epoch_changed"])
+def test_selected_source_recovery_still_requires_fresh_editor_proof(tap_probe, outcome):
+    controller, inline, state, actions, restores = tap_probe
+    state.update(front=("com.apple.mail", 42), source=VOICE, outcome=outcome)
+    assert not ring_tap(controller, "tap", deliver=False)
+    assert actions == ["recover"] and not restores
+    assert inline._pending_gesture_focus is None and inline._source_return.probe is None
 
 
 def test_no_live_ipc_reply_never_uses_cached_readiness_or_changes_source(tap_probe):

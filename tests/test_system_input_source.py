@@ -83,17 +83,29 @@ def test_temporary_probe_records_original_before_a_switch_that_times_out(shortcu
     assert recorded == ['abc'] and sources.selected == 'voice'
 
 
-@pytest.mark.parametrize('original', ['', 'unknown', 'voice'])
+@pytest.mark.parametrize('original', ['', 'unknown'])
 def test_temporary_probe_with_no_external_original_does_not_switch(original):
     sources = Sources([original])
     options = dict(timeout=.2, native_activate=lambda *_, **__: pytest.fail('unexpected helper'),
                    on_borrow=lambda _: pytest.fail('unexpected borrow'))
-    if original == 'voice':
-        assert cycle_to_source(sources, ORIGIN, 'voice', **options) is None
-    else:
-        with pytest.raises(RuntimeError):
-            cycle_to_source(sources, ORIGIN, 'voice', **options)
+    with pytest.raises(RuntimeError):
+        cycle_to_source(sources, ORIGIN, 'voice', **options)
     assert not sources.advances
+
+
+@pytest.mark.parametrize('source_count', [2, 3])
+def test_selected_inactive_source_uses_guarded_native_recovery_without_cycling(source_count):
+    sources = Sources(['voice'])
+    sources.sources = lambda **_: {'abc', 'voice'} if source_count == 2 else {'abc', 'pinyin', 'voice'}
+    calls = []
+    def activate(origin, *, timeout, expected_source, on_borrow):
+        calls.append((origin, expected_source))
+        assert 0 < timeout <= .2
+        return 'voice'
+    assert cycle_to_source(sources, ORIGIN, 'voice', timeout=.2, native_activate=activate,
+                           remember_source=True,
+                           on_borrow=lambda _: pytest.fail('recovery borrowed another keyboard')) == 'voice'
+    assert calls == [(ORIGIN, 'voice')] and not sources.advances
 
 
 def test_temporary_probe_rechecks_original_before_launching_helper():

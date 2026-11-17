@@ -36,6 +36,7 @@ class Source(QObject):
         self.cancelled = False
 
     def start(self, origin): self.calls.append(('start', origin))
+    def start_probe(self, origin, expected, on_borrow): self.calls.append(('probe', origin, expected))
     def recover(self, origin): self.calls.append(('recover', origin))
     def restore(self, origin, previous, expected): self.calls.append(('restore', origin, previous, expected))
     def cancel(self): self.cancelled = True
@@ -87,11 +88,14 @@ def test_native_selection_keeps_gui_responsive_and_releases_helper(activation):
     assert not gate._pending
 
 
-def test_already_selected_inactive_client_recovers_once_with_remaining_budget(activation):
+@pytest.mark.parametrize('guarded', [False, True])
+def test_already_selected_inactive_client_recovers_once_with_remaining_budget(activation, guarded):
     gate, data = activation
-    thread, result = worker(lambda: gate.activate(ORIGIN, timeout=.5))
+    options = dict(expected_source='voice', on_borrow=lambda _: pytest.fail('unexpected borrow')) if guarded else {}
+    thread, result = worker(lambda: gate.activate(ORIGIN, timeout=.5, **options))
     until(lambda: bool(data['sources']))
     first = data['sources'][0]
+    assert first.calls == ([('probe', ORIGIN, 'voice')] if guarded else [('start', ORIGIN)])
     time.sleep(.015)
     first.event.emit({'event': 'selected', 'already_selected': True})
     second = data['sources'][1]
