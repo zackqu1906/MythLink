@@ -75,12 +75,12 @@ def select_region(capture):
     assert capture.phase == 'preview'
 
 
-def test_button_trace_preview_attach_and_explicit_send(capture):
+@pytest.mark.parametrize('gesture', ['tap', 'swipe-right'])
+def test_button_trace_preview_attach_and_explicit_send(capture, gesture):
     from PySide6.QtCore import QPointF, Qt
     from PySide6.QtGui import QImage
     from PySide6.QtTest import QTest
     owner, cap, overlay, sent, root = capture; agent = owner.agent
-    gesture = 'swipe-right'
     task = overlay.windows['task']
     button = visual_child(task.rootObject(), 'agentCaptureButton')
     assert button.isVisible() and button.isEnabled()
@@ -199,7 +199,7 @@ def test_late_worker_and_permission_failure_restore_task(capture, monkeypatch):
     assert '屏幕录制' in owner.agent.errorMessage and overlay.windows['task'].isVisible() and not sent
 
 
-def test_existing_pointer_is_reused_tap_deduplicated_and_context_released(capture):
+def test_existing_pointer_selects_corners_and_tap_confirms_attachment(capture):
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtGui import QCursor
     from PySide6.QtTest import QTest
@@ -214,7 +214,7 @@ def test_existing_pointer_is_reused_tap_deduplicated_and_context_released(captur
     assert output.options['click_context']() == cap.pointer_context
     QCursor.setPos(QPoint(50, 40))
     owner.agent.filter_gesture(SimpleNamespace(name='tap'), owner._disconnect_event)
-    QTest.qWait(10); assert cap.phase == 'locating'  # Duplicate firmware tap ignored.
+    QTest.qWait(10); assert cap.phase == 'locating'  # Nothing to confirm yet.
     output.options['on_capture_click'](cap.pointer_context); QTest.qWait(10)
     assert cap.phase == 'selecting'  # One SDK tap fixes exactly one corner.
     window = cap.windows[0]
@@ -223,7 +223,10 @@ def test_existing_pointer_is_reused_tap_deduplicated_and_context_released(captur
     QTest.mouseClick(window, Qt.LeftButton, pos=QPoint(150, 140))
     assert cap.phase == 'preview' and not pointer.strokeSession.engaged
     assert cap.pointer_context == pointer_context
-    cap.cancel()
+    assert 'tap / 右滑加入输入框' in window.hint.text()
+    owner.agent.filter_gesture(SimpleNamespace(name='tap'), owner._disconnect_event)
+    QTest.qWait(20)
+    assert not cap.active and len(owner.agent.inputAttachments) == 1
     assert pointer.active and source.stops == 0 and pointer._capture_target is None
     assert output.options['click_context']() != original_context
     pointer.stop(); QTest.qWait(20)

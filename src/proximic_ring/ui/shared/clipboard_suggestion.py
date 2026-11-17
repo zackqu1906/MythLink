@@ -13,6 +13,13 @@ from ..desktop.browser_action_queue import BrowserActionQueue
 
 
 @dataclass
+class ClipboardCandidate:
+    revision: int
+    expires: float
+    accepted_apps: set = field(default_factory=set)
+
+
+@dataclass
 class ClipboardOffer:
     token: str
     field: object
@@ -31,7 +38,8 @@ class ClipboardSuggestionController(QObject):
     _prepareVoice = Signal(object, object)
     _voiceResult = Signal(str)
 
-    def __init__(self, owner, router, *, backend=None, revision=None, enabled=None):
+    def __init__(self, owner, router, *, backend=None, revision=None, enabled=None,
+                 clock=time.monotonic):
         super().__init__(router)
         self.owner, self.router = owner, router
         self._enabled = (sys.platform == 'darwin' and QGuiApplication.platformName() == 'cocoa'
@@ -41,6 +49,14 @@ class ClipboardSuggestionController(QObject):
             from ...platforms.macos.clipboard_suggestion import clipboard_revision
             revision = clipboard_revision
         self._revision = revision
+        self._clock = clock
+        self._candidate = None
+        # The pasteboard exposes a change count, not the original copy time.
+        # Do not treat unknown-age content present at launch as freshly copied.
+        try:
+            self._observed_revision = revision() if self._enabled else None
+        except Exception:
+            self._observed_revision = None
         self._offer = None
         self._seen = OrderedDict()
         self._closed = False
@@ -100,7 +116,7 @@ class ClipboardSuggestionController(QObject):
                           A.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(mask, local)]
 
     def _user_input(self, *, keyboard=True):
-        self._quiet_until = time.monotonic() + .35
+        self._quiet_until = self._clock() + .35
         self._typed_field = self._focus_key
         try:
             self._typing_revision = self._revision() if keyboard else None
@@ -117,16 +133,16 @@ class ClipboardSuggestionController(QObject):
         offer, self._offer = self._offer, None
         if offer:
             if offer.voice_requested:
-                self._pointer_guard = (offer.token, time.monotonic() + .5)
+                self._pointer_guard = (offer.token, self._clock() + .5)
             offer.cancelled.set()
             self._send('clipboard_dismiss', token=offer.token)
 
     @property
     def pointer_context(self):
         offer = self._offer
-        if offer and offer.shown and time.monotonic() < offer.expires:
+        if offer and offer.shown and self._clock() < offer.expires:
             return (offer.token, 'clipboard')
-        if self._pointer_guard and time.monotonic() < self._pointer_guard[1]:
+        if self._pointer_guard and self._clock() < self._pointer_guard[1]:
             return (self._pointer_guard[0], 'clipboard')
         return None
 
@@ -137,12 +153,21 @@ class ClipboardSuggestionController(QObject):
         return self._backend.capture()
 
     def poll(self):
-        if not self._available():
-            self.dismiss(); return
-        now = time.monotonic()
+        if self._closed or not self._enabled:
+            return
+        now = self._clock()
         try:
             revision = self._revision()
         except Exception:
+            self.dismiss(); return
+        if revision != self._observed_revision:
+            self._observed_revision = revision
+            self._candidate = ClipboardCandidate(revision, now + 60) if revision is not None else None
+            self._seen.clear()
+        candidate = self._candidate
+        # Observe copies even while voice, screenshots, or a disconnected ring
+        # prevent displaying offers. Entering an editor must not restart the age.
+        if candidate is None or now >= candidate.expires or not self._available():
             self.dismiss(); return
         if self._offer and (revision != self._offer.revision or now >= self._offer.expires):
             self.dismiss()
@@ -154,7 +179,8 @@ class ClipboardSuggestionController(QObject):
         def complete(focused, error):
             self._polling = False
             if (generation != self._generation or not self._available()
-                    or epoch != self.owner._inline_input._bridge.epoch):
+                    or epoch != self.owner._inline_input._bridge.epoch
+                    or candidate is not self._candidate or self._clock() >= candidate.expires):
                 return
             if error or focused is None:
                 self.dismiss(); return
@@ -171,18 +197,20 @@ class ClipboardSuggestionController(QObject):
                 return
             if self._offer and focused.key != self._offer.field.key:
                 self.dismiss()
-            if self._offer or self._seen.get(focused.key) == revision:
+            if (self._offer or self._seen.get(focused.key) == revision
+                    or self._app_key(focused) in candidate.accepted_apps):
                 return
             offer = ClipboardOffer(uuid.uuid4().hex, focused, revision, epoch,
-                                   self.owner._disconnect_event, time.monotonic() + 5)
+                                   self.owner._disconnect_event, min(self._clock() + 5, candidate.expires))
             if self._send('clipboard_offer', token=offer.token, revision=revision,
                           foreground_pid=focused.target.pid, rect=list(focused.rect)):
                 self._offer = offer
-                self._seen[focused.key] = revision
-                self._seen.move_to_end(focused.key)
-                while len(self._seen) > 256:
-                    self._seen.popitem(last=False)
         self._queue.submit(self._capture, lambda: 'closed' if self._closed else '', complete)
+
+    @staticmethod
+    def _app_key(focused):
+        bundle = getattr(focused.target, 'bundle', '')
+        return ('bundle', bundle) if bundle else ('pid', focused.target.pid)
 
     def _native_event(self, message):
         offer = self._offer
@@ -190,8 +218,14 @@ class ClipboardSuggestionController(QObject):
                 or message.get('token') != offer.token):
             return
         if message.get('visible') and not offer.cancelled.is_set():
+            if self._clock() >= offer.expires:
+                self.dismiss(); return
             offer.shown = True
-            offer.expires = time.monotonic() + 5
+            offer.expires = min(self._clock() + 5, self._candidate.expires)
+            self._seen[offer.field.key] = offer.revision
+            self._seen.move_to_end(offer.field.key)
+            while len(self._seen) > 256:
+                self._seen.popitem(last=False)
         elif offer.voice_requested or (offer.accepting and not offer.cancelled.is_set()):
             return  # The acceptance itself hides the palette before posting Cmd+V.
         else:
@@ -201,7 +235,7 @@ class ClipboardSuggestionController(QObject):
         """Firmware-thread gate, before mappings or touchpad click delivery."""
         offer = self._offer
         name = str(getattr(event, 'name', ''))
-        if (not offer or not offer.shown or time.monotonic() >= offer.expires
+        if (not offer or not offer.shown or self._clock() >= offer.expires
                 or connection is not offer.connection or connection.is_set()
                 or name not in {'tap', 'swipe-right'}):
             return False
@@ -234,9 +268,14 @@ class ClipboardSuggestionController(QObject):
             return
         if offer.cancelled.is_set() or not self._available():
             self.dismiss(); return
+        if self._clock() >= offer.expires:
+            self.dismiss(); return
+        candidate = self._candidate
         def complete(result, error):
             if offer is not self._offer or offer.cancelled.is_set():
                 return
+            if result and not error and candidate is self._candidate:
+                candidate.accepted_apps.add(self._app_key(offer.field))
             self.dismiss()
             if error:
                 self.owner._app_gestures.notify('粘贴未完成，请在当前输入框重试')

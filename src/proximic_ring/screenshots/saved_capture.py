@@ -102,7 +102,7 @@ class SavedCaptureController(ScreenCaptureController):
         self._source_app = None
         gesture = self.owner._global_gesture_bindings.screen_capture
         # Built-in screenshot actions win over an overlapping global binding.
-        self.exit_gesture = gesture if gesture not in ('tap', 'double-tap', 'swipe-left', 'swipe-right') else ''
+        self.exit_gesture = gesture if gesture not in ('tap', 'swipe-left', 'swipe-right') else ''
         if sys.platform == 'darwin' and QGuiApplication.platformName() == 'cocoa':
             from AppKit import NSWorkspace
             self._source_app = NSWorkspace.sharedWorkspace().frontmostApplication()

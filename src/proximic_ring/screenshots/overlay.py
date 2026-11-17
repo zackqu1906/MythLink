@@ -90,7 +90,7 @@ class CaptureOverlay(QWidget):
         layout.addLayout(information, 1)
         self.confirm = QPushButton(controller.confirm_label)
         self.confirm.setObjectName('captureConfirm')
-        self.confirm.setToolTip('右滑' + controller.confirm_label.rstrip(' →'))
+        self.confirm.setToolTip(controller.confirm_hint)
         self.confirm.clicked.connect(controller.confirm)
         layout.addWidget(self.confirm)
         for button in (self.back, self.confirm):

@@ -60,7 +60,7 @@ class ScreenCaptureController(QObject):
         return ((id(self), self.epoch, self.pointer_revision), phase)
 
     confirm_label = '保存并复制 →'
-    confirm_hint = '右滑保存并复制后退出'
+    confirm_hint = 'tap / 右滑保存并复制后退出'
 
     @property
     def exit_context(self):
@@ -74,7 +74,7 @@ class ScreenCaptureController(QObject):
 
     @property
     def preview_hint(self):
-        return f'再次点击开始重选\n{self.confirm_hint}'
+        return f'点击画面重新选区\n{self.confirm_hint}'
 
     def can_start(self, key):
         return not self.owner._ring_gestures.speech_busy()
@@ -213,11 +213,9 @@ class ScreenCaptureController(QObject):
         if name == 'swipe-left' or (self.exit_gesture and name == self.exit_gesture):
             self._input.emit(self.exit_context, 'exit-capture', connection, time.monotonic())
             return True
-        # Active Touchpad emits an SDK click as well as a firmware tap. Only
-        # the SDK click selects corners or activates toolbar buttons.
-        pointer = self.owner._touchpad.active
-        if name != 'tap' or not pointer:
-            self._input.emit(self.context, name, connection, time.monotonic())
+        # Ring gestures and pointer clicks are separate inputs. The tap
+        # gesture confirms; SDK pointer clicks select corners or use buttons.
+        self._input.emit(self.context, name, connection, time.monotonic())
         return True  # Even unmapped gestures cannot reach voice/app shortcuts.
 
     def pointer_click(self, context):
@@ -231,7 +229,7 @@ class ScreenCaptureController(QObject):
                                                 or connection.is_set()))): return
         if name == 'exit-capture':
             self.cancel()
-        elif name in ('tap', 'pointer-click'):
+        elif name == 'pointer-click':
             point = QCursor.pos()
             for window in self.windows:
                 if window.geometry().contains(point):
@@ -241,7 +239,7 @@ class ScreenCaptureController(QObject):
                     elif not window.toolbar.geometry().contains(window.mapFromGlobal(point)):
                         self.select_point(window.index, point.x(), point.y())
                     break
-        elif name == 'swipe-right': self.confirm()
+        elif name in ('tap', 'swipe-right'): self.confirm()
         elif name == 'swipe-left': self.back()
 
     def _refresh(self):

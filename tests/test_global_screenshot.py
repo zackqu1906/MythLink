@@ -76,6 +76,43 @@ def test_two_clicks_reselect_save_and_copy_only_after_confirmation(screenshot):
     assert list(root.glob('*.png')) == paths
 
 
+@pytest.mark.parametrize('gesture', ['tap', 'swipe-right'])
+@pytest.mark.parametrize('pointer_active', [False, True])
+def test_confirmation_gestures_are_independent_of_pointer_clicks(screenshot, gesture, pointer_active):
+    from PySide6.QtGui import QCursor
+    from test_ui_touchpad import prepare
+    owner, cap, _, root = screenshot
+    if pointer_active:
+        pointer, source = prepare(owner)
+        pointer.start(); QTest.qWait(20)
+        source.future.set_result(None); QTest.qWait(20)
+    start(cap)
+    window = cap.windows[0]
+    QCursor.setPos(40, 50)
+    cap.consume(SimpleNamespace(name=gesture), owner._disconnect_event)
+    QTest.qWait(10)
+    assert cap.phase == 'locating' and cap.selection is None
+    QTest.mouseClick(window, Qt.LeftButton, pos=QPoint(40, 50))
+    QTest.mouseMove(window, QPoint(200, 160))
+    cap.consume(SimpleNamespace(name=gesture), owner._disconnect_event)
+    QTest.qWait(10)
+    assert cap.phase == 'selecting' and not root.exists()
+    stale = cap.context
+    QTest.mouseClick(window, Qt.LeftButton, pos=QPoint(200, 160))
+    cap._handle_input(stale, gesture, owner._disconnect_event, time.monotonic())
+    assert cap.phase == 'preview' and not root.exists()
+    # Gesture confirmation must save even with the cursor over the exit button.
+    QCursor.setPos(window.back.mapToGlobal(window.back.rect().center()))
+    cap.consume(SimpleNamespace(name=gesture), owner._disconnect_event)
+    QTest.qWait(20)
+    assert not cap.active
+    saved, = root.glob('*.png')
+    assert QGuiApplication.clipboard().image() == QImage(str(saved))
+    if pointer_active:
+        assert pointer.active
+        pointer.stop(); QTest.qWait(20)
+
+
 def test_failed_save_keeps_preview_and_existing_clipboard(screenshot, monkeypatch):
     from proximic_ring.screenshots import saved_capture
     _, cap, _, root = screenshot
@@ -187,7 +224,7 @@ def test_screenshot_owns_gestures_before_global_and_voice_actions(screenshot):
     assert owner.touchpad.blocksVoice
     assert not owner._recognition_event.is_set()
     assert not owner.ringGestures.accepts(previous)
-    for name in ('double-tap', 'swipe-up', 'snap'):
+    for name in ('tap', 'double-tap', 'swipe-up', 'snap'):
         assert not owner.ringGestures.filter(SimpleNamespace(name=name), False, owner._disconnect_event)
     QTest.qWait(20)
     assert cap.active and cap.phase == 'locating'
@@ -210,7 +247,9 @@ def test_two_click_hints_follow_selection_not_touchpad_dwell(screenshot):
     assert window.title.text() == '点击另一个角' and '移动光标预览' in window.hint.text()
     assert not window.confirm.isEnabled()
     QTest.mouseClick(window, Qt.LeftButton, pos=QPoint(200, 160))
-    assert '再次点击开始重选' in window.hint.text() and '左滑退出' in window.back.text()
+    assert '点击画面重新选区' in window.hint.text() and '左滑退出' in window.back.text()
+    assert 'tap / 右滑保存并复制后退出' in window.hint.text()
+    assert window.confirm.toolTip() == cap.confirm_hint
     assert window.confirm.isEnabled()
 
 
@@ -230,28 +269,18 @@ def test_left_swipe_discards_selection_and_exits(screenshot, phase):
 
 
 @pytest.mark.parametrize('gesture', GESTURE_LABELS)
-def test_bound_gesture_exits_except_builtin_selection_and_save(screenshot, gesture):
-    from PySide6.QtGui import QCursor
+def test_bound_gesture_exits_except_builtin_save(screenshot, gesture):
     owner, cap, _, root = screenshot
     assert owner.ringGestures.setGlobalGestureAction(gesture, 'screen_capture')
     start(cap)
-    expected = ('左滑退出' if gesture in ('tap', 'double-tap', 'swipe-left', 'swipe-right') else
+    expected = ('左滑退出' if gesture in ('tap', 'swipe-left', 'swipe-right') else
                 f'左滑 / {GESTURE_LABELS[gesture]}退出')
     assert cap.exit_hint == expected and expected in cap.windows[0].back.text()
     select_region(cap)
-    if gesture in ('tap', 'double-tap'):
-        QCursor.setPos(80, 90)
-        cap.pointer_click(cap.pointer_context)  # Built-in selection wins.
-        QTest.qWait(10)
-        assert cap.phase == 'selecting' and not root.exists()
     assert not owner.ringGestures.filter(SimpleNamespace(name=gesture), False, owner._disconnect_event)
     QTest.qWait(30)
-    if gesture in ('tap', 'double-tap'):
-        assert cap.active and not root.exists()
-        cap.consume(SimpleNamespace(name='swipe-left'), owner._disconnect_event)
-        QTest.qWait(20)
     assert not cap.active
-    assert bool(list(root.glob('*.png'))) == (gesture == 'swipe-right')
+    assert bool(list(root.glob('*.png'))) == (gesture in ('tap', 'swipe-right'))
 
 
 def test_exit_survives_selection_phase_change_but_not_new_capture(screenshot):

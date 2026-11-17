@@ -58,7 +58,7 @@ function actionDetails(action, applicationScope, applicationName, platform) {
     if (!applicationScope) return {
         show_menu:"显示当前手势及其对应功能的提示面板。",
         window_selector:"打开窗口选择界面，选择要切换到的窗口。",
-        screen_capture:"点击第一个角，移动光标预览，再点击对角确定选区；支持任意方向，第三次点击开始重选。左滑或再次触发开启手势可退出，右滑保存 PNG、复制图片并退出；冲突时优先执行截图内置操作，单击或双击绑定用左滑退出。\n保存位置可在设置 → 界面与通用中修改。",
+        screen_capture:"用光标点击第一个角，移动预览，再点击对角确定选区；支持任意方向，第三次点击开始重选。tap 手势或右滑保存 PNG、复制图片并退出。左滑或再次触发开启手势可退出；冲突时优先执行截图内置操作，绑定 tap 或右滑时用左滑退出。\n保存位置可在设置 → 界面与通用中修改。",
         clipboard_paste:"在当前应用粘贴剪贴板中的图片、文字等内容。截图保存并复制后，切到邮件等支持图片粘贴的位置，再触发此手势即可粘贴图片。",
         scroll_up:"向上滚动当前页面或可滚动内容。",
         scroll_down:"向下滚动当前页面或可滚动内容。",
