@@ -294,6 +294,20 @@ class RingGestureController(QObject):
         proximity = getattr(self.owner, "_proximity", None)
         return proximity is not None and proximity.gestures_blocked
 
+    def allow_immediate_end_tap(self):
+        owner = self.owner
+        agent = owner._agent.sessions.active
+        if (self.session_blocked() or self._selector.blocked.is_set() or self._screenshot.active
+                or self._clipboard_suggestion._offer is not None or owner._voice_practice.active
+                or owner._touchpad.blocksVoice or owner._touchpad.strokeSession.engaged
+                or agent.workspaceActive or agent.captureActive or agent.history_recommendations.visible
+                or agent.recommendations.owns_input_focus()):
+            return False
+        service = owner._app_gestures
+        return not (owner._global_gesture_bindings.action_for("double-tap")
+                    or service.inputSourceGesture == "double-tap"
+                    or service.foreground_has_binding("double-tap"))
+
     def lock_state_changed(self):
         blocked = self.session_blocked()
         if blocked == self._session_was_blocked:
@@ -346,6 +360,9 @@ class RingGestureController(QObject):
         if self.session_blocked():
             observe_gesture(self.owner, identity, status="not_triggered")
             return False
+        preview = getattr(self.owner, "_dictation_preview", None)
+        if preview is not None and preview.consume(name, connection, audio_busy=audio_busy):
+            return False
         if self._clipboard_suggestion.consume(event, connection):
             return False
         if self._screenshot.consume(event, connection):
@@ -393,6 +410,8 @@ class RingGestureController(QObject):
             if start_focus is not None and start_focus.status == "text" and len(start_focus.target or ()) == 6:
                 observe_gesture(self.owner, identity, application=start_focus.target[3], focus="text")
                 inline.pin_start_focus(start_focus.target, confirmed)
+                if preview is not None:
+                    preview.next_sentence()
                 return True
         routed = service.envelope(event, audio_busy=audio_busy,
                                   start_focus=start_focus, input_only=input_only, end_only=end_only)
@@ -405,6 +424,8 @@ class RingGestureController(QObject):
             if end_only or len(routed.input_method_target or ()) != 6:
                 return False
             self.owner._inline_input.pin_start_focus(routed.input_method_target, routed.created)
+            if preview is not None:
+                preview.next_sentence()
             return True
         transition = None
         if (routed.route == "outside" and global_action == "window_selector"

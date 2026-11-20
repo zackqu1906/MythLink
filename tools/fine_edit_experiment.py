@@ -9,8 +9,8 @@ from pathlib import Path
 import re
 
 from proximic_ring.text_processing.automatic_prompts import EDIT_BASE_PROMPT, EDIT_COMBINATION_RULES
-from proximic_ring.text_processing.prompts import SCREEN_CONTEXT_RULES
-from proximic_ring.text_processing.routed_edit_prompts import replace_once, ROUTED_EDIT_PROMPT_MODULES
+from proximic_ring.text_processing.prompts import CHARACTER_CLARIFICATION_RULES, SCREEN_CONTEXT_RULES
+from tools.check_llm_single_pass_edit import replace_once
 from proximic_ring.text_processing.edit_response import apply_edit_response
 from proximic_ring.text_processing.edit_tool import EDIT_MODE_FULL
 from proximic_ring.text_processing.routed_edit_processing import routed_edit_model_input
@@ -36,8 +36,10 @@ def fine_prompt(target):
     combination = replace_once(EDIT_COMBINATION_RULES,
         '只提交最终完整正文，不输出操作计划或中间稿。',
         '正文部分只提交最终完整正文，不输出操作计划或中间稿。')
-    # Retain the current application's character-grounding instructions verbatim.
-    spelling_rules = ROUTED_EDIT_PROMPT_MODULES['modify'].split('\n', 1)[1]
+    # Preserve the spelling instructions used in this experiment's fine arm.
+    spelling_rules = replace_once(CHARACTER_CLARIFICATION_RULES,
+        "若词内有多个同音候选且上下文不能唯一确定，保留对应原文，不任挑一个，也不从词外猜字。",
+        "若词内有多个同音候选，结合完整词、原文、上下文和常见用法选择最合理的字，完成对应修改。")
     modules = '\n\n'.join('【' + t['label'] + '】' + t['rule'] +
         ('\n' + spelling_rules if k == 'spelling' else '') for k, t in tasks.items())
     return '\n\n'.join([

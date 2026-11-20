@@ -48,6 +48,14 @@ class Dispatcher:
 
     def handle(self, message):
         operation = message["operation"]
+        if operation == "preview_undo_caret":
+            from .wechat_native_keys import _post_preview_undo_caret
+            moved = _post_preview_undo_caret(message["pid"], message["event_tag"], message["expires"])
+            return {"result": moved}
+        if operation == "system_undo":
+            from .wechat_native_keys import _post_system_undo_direct
+            _post_system_undo_direct(message["pid"], message["event_tag"])
+            return {"result": None}
         if operation == "application_candidates":
             from ...desktop.application_menus import application_candidates
             return {"result": application_candidates(host_pid=self.host_pid)}

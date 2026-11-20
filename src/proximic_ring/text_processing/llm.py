@@ -244,6 +244,7 @@ class OpenAICompatibleTextProcessor(
         max_tokens: int,
         edit_tool: dict[str, Any] | None = None,
         require_complete: bool = False,
+        disable_reasoning: bool = False,
         preserve_whitespace: bool = False,
         allow_empty_text: bool = False,
     ) -> str | dict[str, Any]:
@@ -318,6 +319,11 @@ class OpenAICompatibleTextProcessor(
                 "temperature": float(temperature),
                 "max_tokens": int(max_tokens),
             }
+            if disable_reasoning:
+                if provider == LLM_PROVIDER_LOCAL:
+                    request_body["chat_template_kwargs"] = {"enable_thinking": False}
+                else:
+                    request_body["reasoning_effort"] = "none"
             if edit_tool is not None:
                 request_body["tools"] = [edit_tool]
                 # There is exactly one edit tool. llama.cpp and compatible
@@ -350,7 +356,12 @@ class OpenAICompatibleTextProcessor(
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("大模型 API 返回了无法解析的数据") from exc
 
-        if require_complete and (not isinstance(payload, dict) or payload.get("status") != "completed"):
+        if require_complete and not use_ark_responses and disable_reasoning:
+            choices = payload.get("choices") if isinstance(payload, dict) else None
+            completed = bool(choices and isinstance(choices[0], dict) and choices[0].get("finish_reason") == "stop")
+        else:
+            completed = isinstance(payload, dict) and payload.get("status") == "completed"
+        if require_complete and not completed:
             raise LLMResponseProcessingError("大模型回复未完整结束，未应用编辑", self._model_output_text(payload))
         if edit_tool is not None:
             expected_name = edit_tool["function"]["name"]

@@ -1,6 +1,7 @@
 """Shared gestures use IMK; AX missing focus must neither block nor grant input."""
 from dataclasses import replace
 from types import SimpleNamespace
+import threading
 import time
 
 import pytest
@@ -154,6 +155,7 @@ def test_own_text_editor_ring_action_keeps_gui_available_for_imk(imk_route, monk
     import threading
     from PySide6.QtCore import QObject, Signal, Qt, QThread
     c, service, inline, backend, sent, messages, _, data = imk_route
+    inline.automatic_polish = False  # This fixture mocks gesture dispatch, not IPC configuration.
     backend.target = replace(backend.target, pid=os.getpid(), bundle='')
     data['front'] = ('', os.getpid())
     data['state'].update(application='', ready=True, selection=[5, 0])
@@ -230,3 +232,78 @@ def test_own_text_editor_drops_undo_if_target_changes_during_validation(imk_rout
             break
         time.sleep(.001)
     assert not messages and not sent
+
+
+@pytest.mark.parametrize("own_editor", [False, True])
+def test_system_undo_posts_to_routed_pid_without_rechecking_focus(imk_route, monkeypatch, own_editor):
+    import os
+    from proximic_ring.platforms.macos import wechat_native_keys
+
+    c, service, inline, backend, sent, messages, _, data = imk_route
+    origin = ("", os.getpid()) if own_editor else data["front"]
+    data["front"] = inline._sentence_origin = origin
+    inline._view.update(ready=True, application=origin[0], phase="edited",
+                        can_system_undo=True, system_undo_trial=True, host_undo_tag=91)
+    def unexpected(*args, **kwargs):
+        pytest.fail("system undo re-read the editor or target")
+    monkeypatch.setattr(inline._bridge, "focus_state", unexpected)
+    monkeypatch.setattr(inline, "same_gesture_target", unexpected)
+    monkeypatch.setattr(backend, "capture", unexpected)
+    posts = []
+    monkeypatch.setattr(wechat_native_keys, "post_system_undo", lambda pid, tag: posts.append((pid, tag)))
+    envelope = service.envelope(SimpleNamespace(name="swipe-left"))
+    assert envelope.route == "input" and envelope.system_undo_tag == 91
+    monkeypatch.setattr(inline, "_foreground_identity", unexpected)
+    c._apply_gesture(envelope, c._disconnect_event)
+    assert posts == [(origin[1], 91)] and not sent
+    assert messages == [("system_undo_posted", {"event_tag": 91, "error": ""})]
+
+
+def test_system_undo_foreground_timeout_drops_even_a_late_match(imk_route, monkeypatch):
+    from proximic_ring.platforms.macos import wechat_native_keys
+
+    _, service, inline, backend, sent, messages, _, data = imk_route
+    inline._sentence_origin = data["front"]
+    inline._view.update(ready=True, phase="edited", can_system_undo=True, system_undo_trial=True, host_undo_tag=91)
+    release, finished = threading.Event(), threading.Event()
+    reads, posted, outcomes = [], [], []
+
+    def stalled_read():
+        reads.append(1)
+        release.wait(2)
+        finished.set()
+        return data["front"]
+
+    monkeypatch.setattr(inline, "_foreground_identity", stalled_read)
+    monkeypatch.setattr(inline, "capture_start_focus", lambda **_: pytest.fail("retried via IMK"))
+    monkeypatch.setattr(backend, "capture", lambda **_: pytest.fail("retried via AX"))
+    monkeypatch.setattr(wechat_native_keys, "post_system_undo", lambda *args: posted.append(args))
+    monkeypatch.setattr(service, "_trace", lambda _, stage, reason, **kw: outcomes.append((stage, reason)))
+    swipe = SimpleNamespace(name="swipe-left")
+    started = time.monotonic()
+    try:
+        assert service.envelope(swipe).route == "ignored"
+        assert time.monotonic() - started < .4
+        assert ("outcome", "foreground_check_timeout") in outcomes
+        assert service.envelope(swipe).route == "ignored" and len(reads) == 1
+        assert ("outcome", "foreground_check_busy") in outcomes
+    finally:
+        release.set()
+    assert finished.wait(.5)
+    assert not posted and not sent and not messages
+
+
+def test_system_undo_requires_the_original_foreground_pid(imk_route, monkeypatch):
+    from proximic_ring.platforms.macos import wechat_native_keys
+
+    c, service, inline, _, sent, messages, _, data = imk_route
+    inline._sentence_origin = (data["front"][0], data["front"][1] + 1)
+    inline._view.update(ready=True, phase="edited", can_system_undo=True, system_undo_trial=True, host_undo_tag=91)
+    data["state"].update(ready=True, selection=[0, 0])
+    posted = []
+    monkeypatch.setattr(wechat_native_keys, "post_system_undo", lambda *args: posted.append(args))
+    event = service.envelope(SimpleNamespace(name="swipe-left"))
+    assert event.route == "ignored"
+    c._apply_gesture(event, c._disconnect_event)
+    inline.cancel()
+    assert not posted and not sent and not messages

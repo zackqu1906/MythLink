@@ -176,6 +176,87 @@ final class VoiceHudSpinner: NSView {
     }
 }
 
+final class VoiceHudUndoCheck: NSView {
+    let stroke = CAShapeLayer()
+    private struct Receipt: Equatable {
+        let utterance: String
+        let revision: Int
+    }
+    private var pending: Receipt?
+    private var displayed: Receipt?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        stroke.fillColor = nil
+        stroke.lineCap = .round
+        stroke.lineJoin = .round
+        layer?.addSublayer(stroke)
+        isHidden = true
+        setAccessibilityElement(false)
+        updateColor()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColor()
+    }
+
+    private func updateColor() {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        stroke.strokeColor = dark
+            ? NSColor(srgbRed: 81/255, green: 170/255, blue: 125/255, alpha: 1).cgColor
+            : NSColor(srgbRed: 22/255, green: 114/255, blue: 73/255, alpha: 1).cgColor
+    }
+
+    override func layout() {
+        super.layout()
+        let side = min(bounds.width, bounds.height)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0.18 * side, y: 0.50 * side))
+        path.addLine(to: CGPoint(x: 0.41 * side, y: 0.27 * side))
+        path.addLine(to: CGPoint(x: 0.83 * side, y: 0.75 * side))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        stroke.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        stroke.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        stroke.lineWidth = 0.12 * side
+        stroke.path = path
+        CATransaction.commit()
+    }
+
+    func show(utterance: String, revision: Int) {
+        isHidden = false
+        let receipt = Receipt(utterance: utterance, revision: revision)
+        pending = receipt == displayed ? nil : receipt
+    }
+
+    func playIfVisible(reducedMotion: Bool? = nil) {
+        guard let pending, window?.isVisible == true, !NSApp.isHidden else { return }
+        displayed = pending
+        self.pending = nil
+        guard !(reducedMotion ?? VoiceHudMotion.reduced) else {
+            stroke.removeAnimation(forKey: "draw")
+            return
+        }
+        let draw = CABasicAnimation(keyPath: "strokeEnd")
+        draw.fromValue = 0
+        draw.toValue = 1
+        draw.duration = 1
+        draw.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // Let Core Animation start on the next committed frame of the visible panel.
+        stroke.add(draw, forKey: "draw")
+    }
+
+    func hide() {
+        pending = nil
+        guard !isHidden else { return }
+        isHidden = true
+        stroke.removeAnimation(forKey: "draw")
+    }
+}
+
 final class VoiceHudProgress: NSImageView {
     func setAnimating(_ active: Bool) {
         isHidden = !active

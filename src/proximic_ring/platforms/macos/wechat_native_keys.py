@@ -30,6 +30,43 @@ def send_codex_key(command: str, count: int, event_tag: int) -> None:
     send_input_method_key("com.openai.codex", command, count, event_tag)
 
 
+def send_system_undo(application: str, count: int, event_tag: int, *, expected_pid: int) -> None:
+    if type(expected_pid) is not int or expected_pid <= 0 or type(count) is not int or count != 0:
+        raise ValueError("系统撤销需要已确认的目标进程")
+    _send_key("system_undo", 0, event_tag, application, expected_pid=expected_pid)
+
+
+def post_system_undo(pid: int, event_tag: int) -> None:
+    from .native_access import native_access
+    native_access().call("system_undo", pid=pid, event_tag=event_tag)
+
+
+def _post_system_undo_direct(pid: int, event_tag: int) -> None:
+    import Quartz
+    if type(pid) is not int or pid <= 0 or type(event_tag) is not int or not 0 < event_tag <= 1 << 50:
+        raise ValueError("无效的系统撤销按键")
+    require_post_event_access()
+    _post_key_pair(Quartz, pid, 6, Quartz.kCGEventFlagMaskCommand, event_tag)
+
+
+def _post_preview_undo_caret(pid: int, event_tag: int, expires: float) -> bool:
+    import time
+    import Quartz
+    from .mac_workspace import frontmost_application
+    if (type(pid) is not int or pid <= 0 or type(event_tag) is not int
+            or not (1 << 52) < event_tag < (1 << 52) + (1 << 50)
+            or type(expires) not in (float, int) or not 0 < expires - time.monotonic() <= .3):
+        return False
+    front = frontmost_application()
+    if front is None or front.processIdentifier() != pid:
+        return False
+    require_post_event_access()
+    if time.monotonic() >= expires:
+        return False
+    _post_key_pair(Quartz, pid, 124, 0, event_tag)
+    return True
+
+
 def send_stroke_backspace(application: str, pid: int) -> None:
     """One Backspace, after the stroke controller proves its live IMK client."""
     import uuid
@@ -71,7 +108,10 @@ def _send_key(command: str, count: int, event_tag: int, bundle: str, *, expected
 
 def _send_key_direct(command: str, count: int, event_tag: int, bundle: str, *, expected_pid=None) -> None:
     label = "微信" if bundle == "com.tencent.xinWeChat" else "输入法"
-    if command not in {"select_all", "select_to_start", "select_previous", "delete", "caret_from_end", "caret_to_end", "caret_backward", "caret_forward"}:
+    if command == "system_undo":
+        if count != 0 or type(expected_pid) is not int or expected_pid <= 0:
+            raise ValueError("系统撤销需要已确认的目标进程")
+    elif command not in {"select_all", "select_to_start", "select_previous", "delete", "caret_from_end", "caret_to_end", "caret_backward", "caret_forward"}:
         raise ValueError(f"{label}兼容命令无效")
     if type(count) is not int or not 0 <= count <= 512:
         raise ValueError(f"{label}光标移动范围无效")
@@ -94,7 +134,7 @@ def _send_key_direct(command: str, count: int, event_tag: int, bundle: str, *, e
         raise RuntimeError("输入目标进程已变化，未发送快捷键")
     require_post_event_access()
     command_mask = Quartz.kCGEventFlagMaskCommand
-    keys = {"select_all": [(0, command_mask)],
+    keys = {"system_undo": [(6, command_mask)], "select_all": [(0, command_mask)],
             "select_to_start": [(126, command_mask | Quartz.kCGEventFlagMaskShift)],
             "select_previous": [(123, Quartz.kCGEventFlagMaskShift)] * count,
             "delete": [(51, 0)], "caret_from_end": [(125, command_mask)] + [(123, 0)] * count,
@@ -106,14 +146,17 @@ def _send_key_direct(command: str, count: int, event_tag: int, bundle: str, *, e
         if (current is None or (current.bundleIdentifier() or "") != bundle
                 or current.processIdentifier() != pid):
             raise RuntimeError(f"{label}输入目标已切换，已停止快捷键")
-        events = []
-        for pressed in (True, False):
-            event = Quartz.CGEventCreateKeyboardEvent(None, code, pressed)
-            if event is None:
-                raise RuntimeError(f"无法创建{label}快捷键")
-            Quartz.CGEventSetFlags(event, flags)
-            Quartz.CGEventSetIntegerValueField(event, Quartz.kCGEventSourceUserData, event_tag)
-            events.append(event)
-        # Never leave a modifier/key held when key-up allocation fails.
-        for event in events:
-            Quartz.CGEventPostToPid(pid, event)
+        _post_key_pair(Quartz, pid, code, flags, event_tag)
+
+
+def _post_key_pair(quartz, pid, code, flags, event_tag):
+    events = []
+    for pressed in (True, False):
+        event = quartz.CGEventCreateKeyboardEvent(None, code, pressed)
+        if event is None:
+            raise RuntimeError("无法创建输入法快捷键")
+        quartz.CGEventSetFlags(event, flags)
+        quartz.CGEventSetIntegerValueField(event, quartz.kCGEventSourceUserData, event_tag)
+        events.append(event)
+    for event in events:
+        quartz.CGEventPostToPid(pid, event)

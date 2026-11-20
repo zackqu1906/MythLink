@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QFont, QImage, QPainter
 from PySide6.QtTest import QTest
 
-from proximic_ring.text_processing.model import ROUTED_EDIT_BOUNDARY
+from proximic_ring.text_processing.model import ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS
 from test_inline_ui import inline_ui, _recording_test_begin_edit
 from test_routed_edit import settings
 
@@ -25,9 +25,9 @@ def crop():
 
 @pytest.mark.parametrize('inline_ui', [{
     'input/routingMode': 'manual_routed_edit',
-    'input/routedEditVariant': ROUTED_EDIT_BOUNDARY,
+    'input/routedEditVariant': variant,
     'input/ocrContextEnabled': False,
-}], indirect=True)
+} for variant in (ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY)], indirect=True)
 def test_saved_crop_display_and_request_are_independent_of_live_ocr(inline_ui, tmp_path, monkeypatch):
     owner, _, requests, root, event = inline_ui
     capture = owner.ringGestures.screenshot

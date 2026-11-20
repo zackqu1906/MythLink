@@ -22,10 +22,12 @@ class InputFocus:
     reason: str = ""
     elapsed_ms: float = 0
     native_target: object = None
+    require_selection: bool = True
 
 
 def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
-                      activation_timeout=1.5, native_fallback=None):
+                      activation_timeout=1.5, native_fallback=None, require_selection=True,
+                      refresh_context=None):
     """Run on the gesture worker, reserving focus time after source activation.
 
     A live client uses only the focus budget. An inactive source gets one
@@ -33,8 +35,9 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
     activation can then settle within the combined startup and focus budget.
     Neither polling nor selection can extend that fixed total upper bound.
 
-    A bound client's invalid selection is nontext. Outside an explicitly
-    supplied native fallback, an absent client or timeout stays unavailable.
+    Range-dependent gestures require a selection; voice needs a ready client.
+    Outside an explicitly supplied native fallback, an absent client or timeout
+    stays unavailable.
     The fallback may allow unknown focus in a confirmed presentation; its
     exact native window and scene must also be revalidated before dispatch.
     """
@@ -47,13 +50,14 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
     def result(status, reason="", state=None, native_target=None):
         target = None
         if state is not None:
+            selection = state.get("selection")
             target = (*(str(state.get(key) or "") for key in
                         ("epoch", "client_id", "utterance_id", "application")),
-                      origin[1], tuple(state["selection"]))
+                      origin[1], tuple(selection) if isinstance(selection, (list, tuple)) else ())
         elif native_target is not None:
             target = (epoch, "", "", origin[0], origin[1], ())
         return InputFocus(status, target, reason, round((time.monotonic() - started) * 1000, 2),
-                          native_target)
+                          native_target, require_selection)
 
     def changed():
         return foreground() != origin or bool(epoch and bridge.epoch != epoch)
@@ -80,6 +84,7 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
     if not origin or origin[1] <= 0:
         return result("unavailable", "target_unavailable")
     selected = False
+    refreshed = False
     try:
         while time.monotonic() < deadline:
             if not epoch:
@@ -93,7 +98,25 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
             if time.monotonic() >= deadline:
                 break
             if state and state.get("application") == origin[0] and state.get("client_id"):
-                if state.get("ready") and valid_selection(state.get("selection")):
+                if state.get("ready") and (not require_selection or valid_selection(state.get("selection"))):
+                    if (not require_selection and absent_selection(state.get("selection"))
+                            and not refreshed and refresh_context is not None
+                            and state.get('context_key_supported')
+                            and deadline - time.monotonic() > .12):
+                        refreshed = True
+                        # MailMaster can report NSNotFound until a key wakes its body editor.
+                        try:
+                            prepared = refresh_context(origin, state=state,
+                                                       timeout=min(.35, deadline - time.monotonic() - .02))
+                        except Exception:
+                            prepared = None
+                        if changed():
+                            return unavailable('foreground_or_connection_changed')
+                        if prepared is not None:
+                            if not prepared.state:
+                                return unavailable('input_context_' + prepared.outcome)
+                            return result('text', state=prepared.state)
+                        continue
                     return result("text", state=state)
                 if absent_selection(state.get("selection")):
                     if select_source is None:
@@ -178,6 +201,7 @@ def same_input_focus(bridge, foreground, proof, *, timeout=.2):
         if proof.status == "nontext":
             return absent_selection(selection)
         return bool(proof.status == "text" and state.get("ready")
-                    and valid_selection(selection) and tuple(selection) == target[5])
+                    and (not proof.require_selection or
+                         (valid_selection(selection) and tuple(selection) == target[5])))
     except Exception:
         return False

@@ -7,8 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from proximic_ring.text_processing.llm import OpenAICompatibleTextProcessor
-from proximic_ring.text_processing.model import LLMSettings, TextProcessingRequest, INPUT_ROUTING_ROUTED_EDIT
-from proximic_ring.text_processing.routed_edit_processing import parse_routed_edit_response
+from proximic_ring.text_processing.model import (
+    INPUT_ROUTING_ROUTED_EDIT, LLMSettings, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS, TextProcessingRequest,
+)
 from proximic_ring.text_processing.routed_edit_prompts import single_pass_prompt
 from proximic_ring.text_processing.worker import TextProcessingWorker
 from test_shared_voice_capture import raw_capture, finish_asr
@@ -33,6 +34,7 @@ def processor_returning(text, *, status="completed"):
     ("", "分类：按目标创作\n正文：你好。", ("compose",), "你好。"),
     ("旧文", "分类：修改\n正文：", ("modify",), ""),
     (" 原文 \n", "分类：修改\n正文：\n 新文 \n", ("modify",), " 新文 \n"),
+    (" 原文 \n", "分类：修改 、 插入  \r\n\r\n正文：\r\n 新文 \n", ("modify","insert"), " 新文 \n"),
     ("旧", "分类：格式整理\n正文：\n  新\n正文：内层文字  \n", ("format",), "  新\n正文：内层文字  \n"),
 ])
 def test_one_request_returns_plan_and_exact_body(source, output, tasks, body):
@@ -50,7 +52,6 @@ def test_one_request_returns_plan_and_exact_body(source, output, tasks, body):
 @pytest.mark.parametrize("output,source", [
     ("分类：修改、释字拼写\n正文：新", "旧"),
     ("分类：修改、修改\n正文：新", "旧"),
-    ("分类：修改\n正文：新", ""),
     ("分类：无可执行编辑\n正文：新", "旧"),
     ("分类：无可执行编辑\n正文：旧", "旧"),
     ("分类：无可执行编辑、润色\n正文：旧", "旧"),
@@ -75,18 +76,38 @@ def test_incomplete_response_and_unconfigured_model_do_not_write_or_fallback():
 
 
 def test_prompt_treats_manual_intent_as_confirmed_for_every_available_category():
+    from proximic_ring.text_processing.boundary_edit_prompt import BOUNDARY_EDIT_PROMPT, manual_edit_rules
     from proximic_ring.text_processing.routed_edit_prompts import ROUTED_EDIT_TASK_RULES
+    assert manual_edit_rules(classified=False) in BOUNDARY_EDIT_PROMPT
     for source in ("原文", ""):
         prompt=single_pass_prompt(source)
-        for task,rules in ROUTED_EDIT_TASK_RULES.items():
-            assert (rules in prompt)==(task!="modify" or bool(source))
+        assert all(rule in prompt for rule in ROUTED_EDIT_TASK_RULES.values())
+        assert manual_edit_rules(classified=True) in prompt
         for abstention in ("无可执行编辑", "排除条件", "选 skip", "保留对应原文", "不执行该项操作", "目标语言缺失且无法确定时不猜测"):
             assert abstention not in prompt
         assert "从本次可用类别中选择至少一项，并完成编辑" in prompt
-        assert "所有类别都按已经确认的编辑目标主动执行" in prompt
         assert "只执行用户实际要求且你选中的任务" in prompt
-        assert "不得把聊天历史当作 editable_text" in prompt
         assert "submit_text_edit" not in prompt and "不要 JSON" in prompt
+
+
+@pytest.mark.parametrize("variant", [ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY])
+@pytest.mark.parametrize("instruction,screen,saved", [
+    ("把刚复制的通知中的周二改成周三", {}, "周二开会。"),
+    ("把屏幕上通知的周二改成周三", {"messages": [{"speaker": "other", "text": "周二开会。"}]}, "周五发货。"),
+    ("按保存的日期改屏幕上的通知", {"messages": [{"speaker": "other", "text": "周二开会。"}]}, "改期至周三"),
+    ("把我说的这句改一个字，周二开会，周二改成周三", {}, ""),
+])
+def test_empty_input_can_correct_referenced_text(variant, instruction, screen, saved):
+    body = "周三开会。"
+    classified = variant == ROUTED_EDIT_SIX_CLASS
+    reply = "分类：修改\n正文：\n" + body if classified else body
+    processor, calls = processor_returning(reply)
+    final, raw, model_input, plan = processor.process_routed_edit_with_trace(
+        instruction, settings(), "", screen, variant=variant, saved_context=saved)
+    assert final == body and raw == reply and len(calls) == 1
+    assert (plan.tasks if plan else None) == (("modify",) if classified else None)
+    assert json.loads(calls[0]["input"][1]["content"][0]["text"]) == model_input == {
+        "utterance": instruction, "editable_text": "", "screen_context": screen, "saved_context": saved}
 
 
 def test_worker_filters_ocr_once_and_history_keeps_actual_plan(tmp_path):

@@ -76,7 +76,7 @@ from ..voice.interaction_associations import (
 from ..voice.modification_dataset import ModificationDatasetCollector
 from ..runtime_paths import app_data_root, is_frozen, resource_root
 from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_SIX_CLASS,
-    ROUTED_EDIT_VARIANT_LABELS, normalize_routed_edit_variant)
+    ROUTED_EDIT_VARIANT_LABELS, selectable_routed_edit_variant)
 from ..text_processing import (
     DEFAULT_ARK_API_KEY_ENV,
     DEFAULT_ARK_BASE_URL,
@@ -342,6 +342,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     reconnectAvailabilityChanged = Signal()
     inputModeChanged = Signal()
     inputRoutingModeChanged = Signal()
+    automaticPolishChanged = Signal()
     textProcessingChanged = Signal()
     audioSettingsChanged = Signal()
     _audioConfiguring = Signal(object)
@@ -498,17 +499,23 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             )
         )
         self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
-        self._routed_edit_variant = normalize_routed_edit_variant(
-            self._settings.value("input/routedEditVariant", ROUTED_EDIT_SIX_CLASS))
+        saved_variant = self._settings.value("input/routedEditVariant", ROUTED_EDIT_SIX_CLASS)
+        self._routed_edit_variant = selectable_routed_edit_variant(saved_variant)
+        if self._routed_edit_variant != saved_variant:
+            self._settings.setValue("input/routedEditVariant", self._routed_edit_variant)
         self._ocr_context_enabled = self._bool_setting("input/ocrContextEnabled", True)
         self._settings.remove("input/modeCorrectionShortcut")
         self._gesture_settings_error = ""
         self._settings.remove("input/multiUndoEnabled")
-        legacy_history_mode = "retry" if self._bool_setting("input/redoEnabled", True) else "undo"
-        self._history_action_mode = str(self._settings.value("input/historyActionMode", legacy_history_mode))
-        if self._history_action_mode not in {"undo", "next", "retry"}:
-            self._history_action_mode = legacy_history_mode
-        self._settings.setValue("input/historyActionMode", self._history_action_mode)
+        from .voice.inline_controller import DEFAULT_AUTOMATIC_POLISH, DEFAULT_HISTORY_ACTION_MODE, InlineInputController
+        history_default = DEFAULT_HISTORY_ACTION_MODE
+        has_legacy_redo = self._settings.contains("input/redoEnabled")
+        if has_legacy_redo:
+            history_default = "retry" if self._bool_setting("input/redoEnabled", True) else "undo"
+        saved_mode = str(self._settings.value("input/historyActionMode", history_default))
+        self._history_action_mode = saved_mode if saved_mode in {"undo", "next", "retry", "system_retry"} else history_default
+        if has_legacy_redo or saved_mode != self._history_action_mode:
+            self._settings.setValue("input/historyActionMode", self._history_action_mode)
         self._settings.remove("input/redoEnabled")
         self._auto_return_input_source = self._bool_setting("input/autoReturnInputSource", False)
         try:
@@ -887,11 +894,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 error or "", latency
             ),
         )
-        from .voice.inline_controller import InlineInputController
         self._inline_input = InlineInputController(self, enabled=inline_input_enabled)
         self._inline_input.set_auto_return_input_source(self._auto_return_input_source)
         self._init_automatic_voice()
         self._init_voice_capture()
+        from .voice.dictation_preview import DictationPreviewController
+        self._dictation_preview = DictationPreviewController(self)
+        self._inline_input.set_automatic_polish(self._bool_setting("input/automaticPolish", DEFAULT_AUTOMATIC_POLISH))
         self._inline_input.began.connect(self._begin_voice_capture)
         from .voice.tutorial_controller import VoiceTutorialController
         self._voice_tutorial = VoiceTutorialController(self._inline_input, self)
@@ -1533,6 +1542,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Property("QVariantList", notify=voiceHistoryChanged)
     def voiceHistoryEntries(self) -> list[dict[str, object]]:
         return list(self._voice_history_entries)
+
+    @Property("QVariantList", notify=voiceHistoryChanged)
+    def recentVoiceHistoryEntries(self):
+        return self._voice_history_entries[:10]
+
+    @Property(int, notify=voiceHistoryChanged)
+    def voiceHistoryCount(self):
+        return len(self._voice_history_entries)
 
     @Property(QObject, constant=True)
     def exportSelection(self):
@@ -2652,6 +2669,18 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         label = "修改" if mode == INPUT_MODE_EDIT else "输入"
         self._append_log(f"输入模式已切换为：{label}")
 
+    @Property(bool, notify=automaticPolishChanged)
+    def automaticPolish(self):
+        return self._inline_input.automatic_polish
+
+    @automaticPolish.setter
+    def automaticPolish(self, enabled):
+        if bool(enabled) != self.automaticPolish:
+            self._dictation_preview.dismiss()
+            self._inline_input.set_automatic_polish(enabled)
+            self._settings.setValue("input/automaticPolish", bool(enabled))
+            self.automaticPolishChanged.emit()
+
     @Property(str, notify=inputRoutingModeChanged)
     def inputRoutingMode(self) -> str:
         return self._input_routing_mode
@@ -2686,7 +2715,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @routedEditVariant.setter
     def routedEditVariant(self, value: str) -> None:
-        variant = normalize_routed_edit_variant(value)
+        variant = selectable_routed_edit_variant(value)
         if variant == self._routed_edit_variant:
             return
         previous = self._routed_edit_variant
@@ -2744,7 +2773,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @historyActionMode.setter
     def historyActionMode(self, value: str) -> None:
-        if value not in {"undo", "next", "retry"} or value == self._history_action_mode:
+        if value not in {"undo", "next", "retry", "system_retry"} or value == self._history_action_mode:
             return
         self._history_action_mode = value
         self._settings.setValue("input/historyActionMode", value)
@@ -3940,6 +3969,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                     asr_gain_db_provider=lambda: self._asr_gain_db,
                     stage1_threshold_provider=lambda: self._stage1_threshold,
                     gesture_bindings_provider=lambda: self._gesture_bindings,
+                    allow_immediate_end_tap=self._ring_gestures.allow_immediate_end_tap,
                     automatic_routing_provider=self._automatic_session_enabled,
                     audio_settings=audio_changes,
                     on_ring_source=lambda source: self._touchpad.sourceReady.emit(source, gesture_connection),
@@ -4678,6 +4708,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._inline_input.close()
         self.dismissRingDisconnectNotice()
         self._cancel_pending_text_processing()
+        self._dictation_preview.close()
         self._text_processing_worker.close(wait=False)
         self._hotwords.close()
         self._quit_wait_ticks = 0
@@ -4837,8 +4868,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             # before final ASR was queued. Keep this worker-thread check as an
             # idempotent fallback for nonstandard sinks/callers.
             self._suspend_recognition_for_interaction()
+        # Persist the final before a result handler can settle its history row,
+        # but queue the editor update before refreshing the history UI.
+        history_entry = None
         try:
-            self._modification_dataset.record_asr_update(update)
+            if update.is_final:
+                history_entry = self._modification_dataset.record_asr_update(update, defer_history=True)
+            else:
+                self._modification_dataset.record_asr_update(update)
         except BaseException as exc:
             print(f"[dataset] ASR update was not saved: {exc}")
         self._runtimeUpdate.emit(
@@ -4847,6 +4884,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             str(update.error or ""),
             session_id,
         )
+        if history_entry is not None:
+            self._voiceHistorySaved.emit(history_entry)
 
     @Slot(str)
     def _apply_runtime_status(self, message: str) -> None:
@@ -5705,7 +5744,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             edit_plan=edit_plan,
             routing_mode=routing_mode,
             reexecuted=reexecuted,
-            routed_edit_variant=normalize_routed_edit_variant(routed_edit_variant),
+            routed_edit_variant=selectable_routed_edit_variant(routed_edit_variant),
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
@@ -7117,6 +7156,23 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 return
         if app_event.route != "input":
             self._ring_gestures.handle_outside(app_event, connection)
+            return
+        if app_event.system_undo_tag:
+            # The input route has already selected the process. Post before
+            # updating history or notifying the IME, including for our own Qt editor.
+            record_id = getattr(event, "record_id", "")
+            posted = self._inline_input.post_system_undo(app_event.input_method_target, app_event.system_undo_tag,
+                                                       record_id=record_id)
+            inline = self._inline_input
+            interaction = (self._voice_history.interaction_id_for_session(inline._session_id)
+                           if inline._session_id > 0 and app_event.sentence == self._app_gestures.sentence() else "")
+            self._event_log("GESTURE_ACTION", gesture=name, record_id=record_id, action=ACTION_UNDO,
+                            reason="dispatched" if posted else "post_failed",
+                            device_timestamp_ms=getattr(event, "timestamp_ms", None),
+                            _live_message="[手势] 撤销" if posted else "[手势] 撤销投递失败")
+            from ..gestures.history import observe_gesture
+            observe_gesture(self, record_id, action="撤销", status="triggered" if posted else "not_triggered",
+                            voice_interaction_id=interaction, voice_application=app_event.input_method_target[3])
             return
         if not self._app_gestures.input_event_valid(app_event):
             return

@@ -10,7 +10,7 @@ from .model import (LLM_PROVIDER_VOLCENGINE, validate_edit_target_text,
                     ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant)
 from .processing_common import LLMResponseProcessingError, _text_output_budget
 from .routed_edit_prompts import routed_edit_prompt
-from .task_routing import EDIT_TASK_LABELS, EditPlan, available_edit_tasks
+from .task_routing import EDIT_TASK_LABELS, EditPlan
 
 
 def routed_edit_model_input(utterance, editable_text, screen_context=None, saved_context=None):
@@ -24,7 +24,7 @@ def routed_edit_model_input(utterance, editable_text, screen_context=None, saved
 
 def parse_routed_edit_response(raw, target):
     """Accept the two observed body layouts, never repair unknown categories."""
-    match = re.fullmatch(r"分类：([^\r\n]+)\r?\n正文：([\s\S]*)", raw) if isinstance(raw, str) else None
+    match = re.fullmatch(r"分类：([^\r\n]+)\r?\n(?:[ \t]*\r?\n)*正文：([\s\S]*)", raw) if isinstance(raw, str) else None
     if not match:
         raise ValueError("编辑结果缺少分类行或正文标记")
     labels, body = match.groups()
@@ -32,15 +32,13 @@ def parse_routed_edit_response(raw, target):
         body = body[2:]
     elif body.startswith("\n"):
         body = body[1:]
-    if labels == "无可执行编辑":
+    if labels.strip() == "无可执行编辑":
         raise ValueError("用户已确认编辑，但模型未选择编辑类别")
     inverse = {label: key for key, label in EDIT_TASK_LABELS.items()}
-    names = labels.split("、")
+    names = [name.strip() for name in labels.split("、")]
     if any(name not in inverse for name in names):
         raise ValueError("模型返回了约定六类之外的编辑类别")
     plan = EditPlan(tuple(inverse[name] for name in names))
-    if not set(plan.tasks) <= set(available_edit_tasks(target)):
-        raise ValueError("空原文不能选择修改任务")
     # Reuse full-body validation (including prompt leak checks), without
     # requiring the model to emit JSON or making a second model request.
     body = apply_edit_response(target, {"modified_text": body}, EDIT_MODE_FULL)

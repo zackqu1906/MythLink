@@ -8,6 +8,7 @@ final class ActionPanel: NSObject {
     private let progress = VoiceHudProgress()
     private let statusSymbol = NSImageView()
     private let spinner = VoiceHudSpinner(frame: .zero)
+    private let undoCheck = VoiceHudUndoCheck(frame: .zero)
     private let cancelButton = VoiceHudHint(action: "undo")
     private let convertButton = VoiceHudHint(action: "switch_mode")
     private let polishHint = VoiceHudHint(action: "polish")
@@ -41,6 +42,7 @@ final class ActionPanel: NSObject {
     var positioningDiagnostics: [String: Any] {
         ["shown": shouldShow, "visible": panel.isVisible, "application_hidden": NSApp.isHidden, "needs_position": needsPosition,
          "frozen": anchor.heldOrigin != nil, "frame": CaretDiagnostics.rect(panel.frame),
+         "fallback": anchor.usingFallback,
          "anchor_caret": anchor.caret.map(CaretDiagnostics.rect) ?? []]
     }
     var onCancel: (() -> Void)?
@@ -78,7 +80,8 @@ final class ActionPanel: NSObject {
         statusSymbol.image = VoiceHudAssets.image("listening-waveform")
         let symbolSlot = NSView()
         spinner.identifier = NSUserInterfaceItemIdentifier("voiceProcessingSpinner")
-        for view in [statusSymbol, spinner] {
+        undoCheck.identifier = NSUserInterfaceItemIdentifier("voiceUndoCheck")
+        for view in [statusSymbol, spinner, undoCheck] {
             view.translatesAutoresizingMaskIntoConstraints = false
             symbolSlot.addSubview(view)
             NSLayoutConstraint.activate([
@@ -231,7 +234,7 @@ final class ActionPanel: NSObject {
     }
 
     func update(_ session: CompositionSession, historyDepth: Int = 0, redoAvailable: Bool = false, redoEnabled: Bool = true,
-                retryAvailable: Bool = false, historyActionMode: String = "next") {
+                retryAvailable: Bool = false, historyActionMode: String = "next", manualPolish: Bool = true) {
         anchor.update(utteranceID: session.utteranceID,
                       editing: session.phase == .editing || session.phase == .polishing ||
                           (session.automaticMode && (session.phase == .finishing ||
@@ -249,7 +252,7 @@ final class ActionPanel: NSObject {
         automatic = session.automaticMode
         finishAvailable = automatic && session.phase == .listening && session.automaticStage.isEmpty
         let pendingDictation = [.listening, .finishing].contains(session.phase) && !session.editRequested
-        polishAvailable = !automatic && (pendingDictation || session.canPolish)
+        polishAvailable = manualPolish && !automatic && (pendingDictation || session.canPolish)
         polishDetail = pendingDictation ? "结束听写并润色本句" : "润色本句"
         retryMode = historyActionMode == "retry"
         historyMode = (retryMode || redoEnabled) && session.historyReady
@@ -273,13 +276,21 @@ final class ActionPanel: NSObject {
             statusSymbol.setAccessibilityLabel("已完成")
             statusSymbol.isHidden = false
         }
+        if !presentation.isError, !busy, session.completedUndoRevision == session.revision,
+           session.phase == .undone || session.phase == .dictated {
+            statusSymbol.isHidden = true
+            undoCheck.show(utterance: session.utteranceID, revision: session.revision)
+        } else {
+            undoCheck.hide()
+        }
         cancelDetail = session.cancelLabel
-        cancelAvailable = session.canCancel || (session.phase == .undone && historyDepth > 0)
+        cancelAvailable = session.canSystemUndo || session.canCancel || (session.phase == .undone && historyDepth > 0)
         editAvailable = session.canEdit || (retryMode ? retryAvailable : redoAvailable)
         refreshHints()
         shouldShow = true
         fitVisibleActions()
-        if animateState { VoiceHudMotion.transition(stack) }
+        if animateState && undoCheck.isHidden { VoiceHudMotion.transition(stack) }
+        undoCheck.playIfVisible()
         if let origin = anchor.heldOrigin, panel.frame.origin != origin { panel.setFrameOrigin(origin) }
         if [.dictated, .edited, .undone, .interrupted, .error].contains(session.phase) {
             dismissTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in self?.hide() }
@@ -287,6 +298,7 @@ final class ActionPanel: NSObject {
     }
 
     func showSent() {
+        undoCheck.hide()
         finishAvailable = false
         dismissTimer?.invalidate()
         let animateState = panel.isVisible
@@ -309,6 +321,7 @@ final class ActionPanel: NSObject {
     }
 
     func showNotice(_ text: String) {
+        undoCheck.hide()
         finishAvailable = false
         dismissTimer?.invalidate()
         visualState = "notice"
@@ -328,6 +341,7 @@ final class ActionPanel: NSObject {
     func showLearnedHotwords(_ words: [String]) {
         let words = words.prefix(8).map { String($0.prefix(40)) }.filter { !$0.isEmpty }
         guard !words.isEmpty else { return }
+        undoCheck.hide()
         status.stringValue = words.count == 1 ? "已收录 · \(words[0])" : "已收录 \(words.count) 个热词"
         status.toolTip = "已收录热词：" + words.joined(separator: "、") + "。从下一句开始优先使用。"
         status.setAccessibilityLabel(status.toolTip)
@@ -346,7 +360,18 @@ final class ActionPanel: NSObject {
         guard shouldShow else { return }
         // Some clients temporarily stop returning geometry while waiting for
         // a result. Keep this utterance's anchor even across temporary hides.
-        guard let caret = anchor.observe(caret), let screen = NSScreen.screens.first(where: { $0.frame.intersects(caret.insetBy(dx: -1, dy: -1)) }) else {
+        // Selection and candidate geometry are optional for dictation. Keep
+        // recording/error feedback visible on the current screen when neither
+        // the live caret nor this utterance's previous caret is available.
+        // This is only a presentation anchor, never an editor range or focus proof.
+        let fallbackScreen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main
+        let fallback = fallbackScreen.map { screen in
+            NSRect(x: screen.visibleFrame.midX - panel.frame.width / 2,
+                   y: screen.visibleFrame.minY + panel.frame.height + InputPaletteStyle.caretGap + 40,
+                   width: 1, height: 1)
+        }
+        guard let caret = anchor.observe(caret, fallback: fallback),
+              let screen = NSScreen.screens.first(where: { $0.frame.intersects(caret.insetBy(dx: -1, dy: -1)) }) else {
             panel.orderOut(nil)
             return
         }
@@ -366,9 +391,11 @@ final class ActionPanel: NSObject {
             if NSApp.isHidden { NSApp.unhideWithoutActivation() }
             panel.orderFrontRegardless()
         }
+        undoCheck.playIfVisible()
     }
 
     func hide() {
+        undoCheck.hide()
         resizeTimer?.invalidate()
         resizeTimer = nil
         if let resizeTarget { panel.setContentSize(resizeTarget) }

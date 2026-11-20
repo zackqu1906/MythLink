@@ -89,7 +89,7 @@ test("Invalid or zero-length marked ranges never trigger a clearing write") {
     }
 }
 
-final class TextViewClient: CompositionClient {
+class TextViewClient: CompositionClient {
     let view: NSTextView
     let complete: Bool
     init(_ view: NSTextView, complete: Bool = true) { self.view = view; self.complete = complete }
@@ -121,6 +121,55 @@ final class TextViewClient: CompositionClient {
         replace(range, with: text)
         if let restoringCaret { view.setSelectedRange(NSRange(location: restoringCaret, length: 0)) }
     }
+}
+
+private final class UndoableEditor: NSTextView {
+    private let history = UndoManager()
+    override var undoManager: UndoManager? { history }
+}
+
+private final class SelectedTextViewClient: TextViewClient {
+    override func replaceEditing(_ range: NSRange, with text: String, restoringCaret: Int?) {
+        view.setSelectedRange(range)
+        view.insertText(text, replacementRange: unspecifiedRange)
+        if let restoringCaret { view.setSelectedRange(NSRange(location: restoringCaret, length: 0)) }
+    }
+}
+
+test("AppKit native undo restores committed instruction and the next retry replaces it once") {
+    let view = UndoableEditor(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
+    view.allowsUndo = true
+    view.string = "明天三点"
+    view.setSelectedRange(NSRange(location: 4, length: 0))
+    view.undoManager!.removeAllActions()
+    let session = try! CompositionSession(client: SelectedTextViewClient(view), utteranceID: "trial", sequence: 1)
+    session.systemUndoTrial = true
+    session.hostUndoTag = 91
+    var requests = 0
+    session.onEdit = { source, raw, _ in
+        check(source == "明天三点" && raw == "改到四点" && !view.hasMarkedText(), "model received incomplete input")
+        requests += 1
+    }
+    session.update("改到四点", final: false)
+    session.convert()
+    session.update("改到四点", final: true)
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+    session.applyEdit(text: "明天四点", revision: session.revision, error: nil)
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+    check(view.string == "明天四点" && view.undoManager!.canUndo, "edited text missing from native undo")
+    session.systemUndo { ack in view.undoManager!.undo(); ack(nil) }
+    check(view.string == "明天三点改到四点" && session.canRetryEdit && requests == 1, "unexpected native undo grouping")
+    let returned = view.selectedRange()
+    if returned.length == 0 {
+        check(session.takeRestoredReplacementSelection() == nil, "moved an already collapsed edit caret")
+    } else {
+        check(session.takeRestoredReplacementSelection() == returned, "missed the restored edit selection")
+        view.moveRight(nil)
+    }
+    check(view.selectedRange() == NSRange(location: 8, length: 0), "caret did not return to the instruction end")
+    session.retryEdit()
+    session.applyEdit(text: "明天下午四点", revision: session.revision, error: nil)
+    check(requests == 2 && session.phase == .edited && view.string == "明天下午四点", "AppKit retry failed")
 }
 
 test("Real NSTextView retains instruction until model result and restores dictation on cancellation") {
@@ -176,6 +225,36 @@ for complete in [true, false] {
             check(view.string == "前😀旧字后缀" && session.phase == .undone, "native sentence undo failed")
         }
     }
+}
+
+for automatic in [true, false] {
+    test("Background preview leaves real editor ready; accepting and undo are sentence-scoped: automatic=\(automatic)") {
+        let view = editor("前😀后缀", selection: NSRange(location: 3, length: 0))
+        let session = try! CompositionSession(client: TextViewClient(view), utteranceID: "preview", sequence: 1)
+        session.automaticMode = automatic
+        var commits = 0
+        session.onDictationCommitted = { commits += 1 }
+        session.update("下班以后", final: true)
+        let revision = session.revision
+        check(commits == 1 && session.phase == .dictated && view.string == "前😀下班以后后缀", "preview modified or blocked raw commit")
+        check(session.beforeDictationCursor == "前😀", "selection suffix leaked into model context")
+        session.acceptSuggestion("过期", originalText: "下班以后", revision: revision + 1)
+        session.acceptSuggestion("过期", originalText: "上一句", revision: revision)
+        check(view.string == "前😀下班以后后缀" && session.phase == .dictated, "accepted stale preview")
+        session.acceptSuggestion("下班以后来拿。", originalText: "下班以后", revision: revision)
+        check(view.string == "前😀下班以后来拿。后缀" && session.polished, "accept failed: \(session.error)")
+        session.cancel()
+        check(view.string == "前😀下班以后后缀" && !session.polished && commits == 1, "undo lost raw or restarted generation")
+    }
+}
+test("Preview accept rechecks edited text with unchanged insertion point") {
+    let view = editor("前", selection: NSRange(location: 1, length: 0))
+    let session = try! CompositionSession(client: TextViewClient(view), utteranceID: "stale", sequence: 1)
+    session.update("甲", final: true)
+    view.string = "前乙"
+    view.setSelectedRange(NSRange(location: 2, length: 0))
+    session.acceptSuggestion("甲。", originalText: "甲", revision: session.revision)
+    check(view.string == "前乙" && !session.polished, "stale preview wrote over changed text")
 }
 
 print("\(passed) native commit tests passed")

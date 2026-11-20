@@ -596,6 +596,7 @@ class RecognitionRuntime:
         asr_gain_db_provider: Callable[[], float] | None = None,
         stage1_threshold_provider: Callable[[], float] | None = None,
         gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
+        allow_immediate_end_tap: Callable[[], bool] | None = None,
         automatic_routing_provider: Callable[[], bool] | None = None,
         gesture_filter: Callable[[object, bool], bool] | None = None,
         utterance_commands=None,
@@ -847,12 +848,22 @@ class RecognitionRuntime:
                 try:
                     from proximic_ring.gestures.firmware_gestures import FirmwareGestureWorker
 
+                    def current_bindings():
+                        return gesture_bindings_provider() if gesture_bindings_provider else self.settings.gesture_bindings
+
+                    def can_end_tap_now():
+                        if not (end_on_gesture and recognition_event.is_set()
+                                and getattr(controller, "accepts_tap_end", False)):
+                            return False
+                        bindings = current_bindings()
+                        return ("tap" in bindings.end
+                                and all("double-tap" not in names for names in bindings.as_dict().values())
+                                and allow_immediate_end_tap())
+
                     def dispatch_gesture(event: object) -> None:
-                        bindings = (
-                            gesture_bindings_provider() if gesture_bindings_provider
-                            else self.settings.gesture_bindings
-                        )
+                        bindings = current_bindings()
                         name = str(getattr(event, "name", ""))
+                        end_only = getattr(event, "end_only", False)
                         live_microphone = current_microphone()
                         accepted = (
                             gestures_enabled.is_set()
@@ -888,7 +899,7 @@ class RecognitionRuntime:
                                 )
                             )
                             if can_request:
-                                if gesture_control:
+                                if gesture_control and not end_only:
                                     requested_action = controller.request_gesture_toggle(
                                         prepare_gesture_start,
                                         allow_start=is_start_endpoint,
@@ -904,12 +915,16 @@ class RecognitionRuntime:
                                     else "recognition_gate_closed"
                                 )
                         # Record firmware output before application state gating.
+                        received_at = getattr(event, "received_at", None)
                         on_state("[GESTURE_RECOGNIZED] " + json.dumps({
                             "record_id": getattr(event, "record_id", ""),
                             "name": getattr(event, "name", ""),
                             "confidence": getattr(event, "confidence", None),
                             "device_timestamp_ms": getattr(event, "timestamp_ms", None),
                             "forwarded": accepted,
+                            "immediate_end": end_only,
+                            "received_to_route_ms": (round((time.monotonic() - received_at) * 1000, 1)
+                                                     if received_at is not None else None),
                             "reason": (
                                 "runtime_stopped" if not accepted else
                                 "global_mode_route" if global_handled else
@@ -923,7 +938,7 @@ class RecognitionRuntime:
                             action_label = {"start": "准备本句" if prepare_gesture_start else "开始本句",
                                             "cancel_start": "取消准备", "end": "结束本句"}[requested_action]
                             on_state(f"[手势] {name} → {action_label}")
-                        if accepted and not global_handled and not is_confirm_endpoint and on_gesture is not None:
+                        if accepted and not global_handled and not end_only and not is_confirm_endpoint and on_gesture is not None:
                             on_gesture(
                                 BoundGestureEvent(event, bindings)
                                 if gesture_bindings_provider else event
@@ -944,6 +959,8 @@ class RecognitionRuntime:
                             dispatch_gesture(event)
 
                     gesture_worker = FirmwareGestureWorker(on_gesture=publish_gesture)
+                    if allow_immediate_end_tap is not None:
+                        gesture_worker.can_end_tap_immediately = can_end_tap_now
                     gesture_worker.start()
                     source.gesture_observer = gesture_worker.submit
                     source.gesture_state_observer = on_gesture_health

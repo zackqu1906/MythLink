@@ -128,7 +128,7 @@ class NativeAccessChannel:
                 self._diagnostics.value = {"operation": operation, "reason": "channel_timeout" if isinstance(exc, TimeoutError)
                     else "channel_protocol_error" if isinstance(exc, (ValueError, json.JSONDecodeError)) else "channel_disconnected",
                     "error_type": type(exc).__name__, "delivery": "unknown" if operation in {
-                        "shortcut", "touchpad_apply", "browser_action"} else "not_sent"}
+                        "shortcut", "system_undo", "preview_undo_caret", "touchpad_apply", "browser_action"} else "not_sent"}
                 # Delivery may already have happened. Never retry a write.
                 self._stop()
                 raise

@@ -13,7 +13,7 @@ from proximic_ring.audio.ring import RingAudioSource
 
 @pytest.mark.parametrize("automatic", [False, True])
 @pytest.mark.parametrize("confirm_name,slot,live", [
-    ("double-tap", 0, False), ("tap", 0, False), ("snap", 1, False), ("swipe-left", 0, True),
+    ("double-tap", 0, False), ("tap", 0, False), ("tap", 0, True), ("snap", 1, False), ("swipe-left", 0, True),
     ("swipe-up", 1, True),
     ("clench", 0, False), ("index-pinch", 1, True), ("middle-pinch", 0, False),
     ("circle-clockwise", 1, False), ("circle-counterclockwise", 0, True),
@@ -31,6 +31,8 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
     remaining = [name for name in GESTURE_LABELS if name != confirm_name]
     configured = GestureBindings(confirm=confirms, end=confirms,
                                  undo=tuple(remaining[:2]), switch_mode=tuple(remaining[2:4]), send=(), polish=())
+    if confirm_name == "tap" and live:
+        configured = GestureBindings()
     if automatic:
         from dataclasses import replace
         # Former manual conversion has the exact same audio END behavior.
@@ -42,6 +44,7 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
 
         def __init__(self, *, on_gesture):
             state["gesture_callback"] = on_gesture
+            state["dispatcher"] = self
 
         error = None
         def start(self): pass
@@ -50,9 +53,12 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
         def snapshot(self): return {}
 
     def tap(name=None):
-        thread = threading.Thread(target=lambda: state["gesture_callback"](
-            SimpleNamespace(name=name or (confirm_name if automatic and state["bindings"] is configured else next(item for item in state["bindings"].confirm if item)), confidence=0.99)
-        ))
+        if name is None:
+            name = (confirm_name if automatic and state["bindings"] is configured
+                    else next(item for item in state["bindings"].confirm if item))
+        event = SimpleNamespace(name=name, confidence=.99,
+                                end_only=name == "tap" and state["dispatcher"].can_end_tap_immediately())
+        thread = threading.Thread(target=state["gesture_callback"], args=(event,))
         thread.start()
         thread.join(1)
         assert not thread.is_alive()
@@ -91,10 +97,14 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
         def read(self, frames):
             self.read_count += 1
             if self.read_count == 1:
+                assert not state["dispatcher"].can_end_tap_immediately()
                 tap()  # Idle tap cannot finish the imminent first ACTIVATE.
             elif self.read_count in (2, 3):
                 state["bindings"] = configured  # Live edit without a reconnect.
                 assert state["gate"].active and not finals
+                expected_fast_end = ("tap" in configured.end and
+                                     all("double-tap" not in pair for pair in configured.as_dict().values()))
+                assert state["dispatcher"].can_end_tap_immediately() == expected_fast_end
                 assert len(detector_calls) == 1
                 if self.read_count == 3 and confirm_name != "tap":
                     tap("tap")  # Former endpoint now belongs to a GUI action.
@@ -152,6 +162,7 @@ def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypa
         on_started=lambda: None, on_session_ended=recognition.clear,
         on_gesture=actions.append,
         gesture_bindings_provider=(lambda: state["bindings"]) if live else None,
+        allow_immediate_end_tap=lambda: True,
         automatic_routing_provider=lambda: automatic,
     )
     if confirm_name == "tap":
@@ -218,6 +229,17 @@ def test_desktop_runtime_enables_tap_while_other_gesture_actions_remain_independ
     controller._streaming_repo = ""
     controller._asr_backend = "volcengine"
     assert controller._runtime_settings().to_namespace().asr_end_on_tap is True
+
+
+def test_fast_end_policy_respects_other_gesture_owners(controller, monkeypatch):
+    router = controller._ring_gestures
+    assert router.allow_immediate_end_tap()
+    monkeypatch.setattr(controller._app_gestures, "foreground_has_binding", lambda name: name == "double-tap")
+    assert not router.allow_immediate_end_tap()
+    monkeypatch.setattr(controller._app_gestures, "foreground_has_binding", lambda name: False)
+    router._screenshot.active = True
+    assert not router.allow_immediate_end_tap()
+    router._screenshot.active = False
 
 
 def test_gesture_conversion_and_undo_use_existing_availability(controller, monkeypatch):

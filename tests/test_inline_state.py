@@ -1,5 +1,6 @@
 """Metadata and interruption routing without a native client or target app."""
 import json
+import time
 
 import pytest
 from PySide6.QtCore import QCoreApplication
@@ -50,6 +51,65 @@ def receive(controller, kind="state", **fields):
         "client_id": controller._client_id, "utterance_id": controller._utterance_id,
         **fields,
     })
+
+
+def test_preview_undo_caret_requires_live_revision_and_is_sent_once(component, monkeypatch):
+    from proximic_ring.platforms.macos.native_access import native_access
+    c, _ = component
+    calls = []
+    monkeypatch.setattr(native_access(), "call", lambda kind, **params: calls.append((kind, params)) or True)
+    c.begin()
+    c._sentence_origin = ("test.editor", 42)
+    receive(c, phase="undone", ready=True, application="test.editor", revision=7,
+            system_undo_trial=True, can_system_undo=True, host_undo_tag=91)
+    fields = dict(event_tag=(1 << 52) + 91, host_undo_tag=91, revision=7, expires=time.monotonic() + .25)
+    for invalid in [dict(client_id="other"), dict(revision=6), dict(host_undo_tag=90), dict(expires=0)]:
+        receive(c, "preview_undo_caret", **{**fields, **invalid})
+    assert not calls
+    receive(c, "preview_undo_caret", **fields)
+    receive(c, "preview_undo_caret", **fields)
+    assert calls == [("preview_undo_caret", dict(pid=42, event_tag=fields["event_tag"], expires=fields["expires"]))]
+    # A model retry keeps the utterance ID and creates a new undo revision.
+    receive(c, phase="undone", ready=True, revision=11, system_undo_trial=True, can_system_undo=True, host_undo_tag=91)
+    receive(c, "preview_undo_caret", **fields)
+    for _ in range(2):
+        receive(c, "preview_undo_caret", **{**fields, "revision": 11})
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(('selection', 'keys_per_tap'), [([22, 0], 0), ([-1, -1], 1)])
+def test_only_unknown_focus_uses_a_handshake_and_reads_do_not_repeat_it(component, monkeypatch, selection, keys_per_tap):
+    from proximic_ring.voice.ime.context_preparation import InputContextPreparation
+    c, _ = component
+    front = ('test.editor', 42)
+    monkeypatch.setattr(c, '_foreground_identity', lambda: front)
+    bridge = c._bridge
+    bridge.epoch, bridge.connected = c._epoch, True
+    state = dict(epoch=c._epoch, client_id=c._client_id, utterance_id='', ready=True,
+                 application=front[0], selection=selection, context_key_supported=True)
+    bridge.focus_state = lambda **_: dict(state)
+    keys = []
+    def refresh(*_, timeout):
+        keys.append(timeout)
+        return False
+    bridge.prepare_focus = InputContextPreparation(bridge, refresh=refresh).prepare
+    bridge.asr_context = lambda *, foreground: foreground()
+    assert c.context_provider() == front and not keys
+    proof = c.capture_start_focus(require_editable=True)
+    assert proof.status == 'text' and len(keys) == keys_per_tap
+    c.pin_start_focus(proof.target, time.monotonic())
+    assert c.begin()
+    assert c.context_provider() == c.context_provider() == front and len(keys) == keys_per_tap
+    c.capture_start_focus(require_editable=True)
+    assert len(keys) == 2 * keys_per_tap
+
+
+def test_begin_on_known_client_sends_begin_without_pre_read_handshake(component, monkeypatch):
+    c, _ = component
+    monkeypatch.setattr(c, '_foreground_identity', lambda: ('test.editor', 42))
+    c._bridge.prepare_focus = lambda *_, **kw: pytest.fail("unrequested focus handshake")
+    assert c.begin()
+    assert any(m['type'] == 'begin' and m['client_id'] == 'client-one' for m in c._bridge.messages)
 
 
 @pytest.mark.parametrize('enabled', [True, False])
@@ -360,7 +420,10 @@ def test_wechat_keys_require_current_transaction_and_are_not_replayed(component,
     controller, _ = component
     calls = []
     # Keep the real WeChat entry whitelist in the IPC integration path.
-    monkeypatch.setattr(wechat_native_keys, "_send_key", lambda *args: calls.append(args))
+    def capture_key(command, count, tag, bundle, *, expected_pid):
+        assert expected_pid is None
+        calls.append((command, count, tag, bundle))
+    monkeypatch.setattr(wechat_native_keys, "_send_key", capture_key)
     assert controller.begin()
     receive(controller, phase="editing", ready=True, application="com.tencent.xinWeChat")
     fields = dict(request_id="key-one", command=command, count=count, event_tag=123,
@@ -984,3 +1047,44 @@ def test_historical_retry_does_not_relabel_newer_audio_as_an_edit(component):
     receive(c, phase="editing", ready=True, revision=1, edit_requested=True, retry_source_utterance_id=old)
     receive(c, phase="edited", ready=True, revision=1, retry_source_utterance_id=old)
     assert intents == [11]
+
+
+def test_system_undo_negotiates_legacy_retry_and_checks_origin_before_posting(component, monkeypatch):
+    from proximic_ring.platforms.macos import wechat_native_keys
+    c, _ = component
+    origin = ("test.editor", 42)
+    monkeypatch.setattr(c, "_foreground_identity", lambda: origin)
+    deliveries = []
+    monkeypatch.setattr(wechat_native_keys, "send_system_undo",
+                        lambda *args, **kw: deliveries.append((args, kw)))
+    c.configure(history_action_mode="system_retry")
+    assert c._bridge.messages[-1]["history_action_mode"] == "retry"
+    assert c.begin() and c._bridge.messages[-1]["system_undo_trial"]
+    receive(c, phase="listening", ready=True, undo_history_depth=0, system_undo_trial=True)
+    c._edit_replays[c._utterance_id] = object()
+    receive(c, phase="undone", ready=True, can_system_undo=True, system_undo_trial=True, system_undo_pending=True,
+            can_retry_edit=True, edit_retry_version=1)
+    assert c.canUndo and c.canRetryEdit
+    fields = dict(application=origin[0], command="system_undo", count=0, event_tag=123)
+    receive(c, "wechat_key", request_id="one", **fields)
+    receive(c, "wechat_key", request_id="one", **fields)
+    assert deliveries == [(("test.editor", 0, 123), {"expected_pid": 42})]
+    monkeypatch.setattr(c, "_foreground_identity", lambda: ("test.editor", 43))
+    receive(c, "wechat_key", request_id="two", **fields)
+    assert len(deliveries) == 1 and c._bridge.messages[-1]["error"]
+    # B102 ignores the optional BEGIN flag and reports its usual dictated phase after undo.
+    receive(c, phase="dictated", ready=True, system_undo_trial=False, can_retry_edit=True)
+    assert c.canRetryEdit
+
+
+def test_system_retry_keeps_source_return_compatible_and_discards_older_replay(component):
+    c, _ = component
+    c.configure(history_action_mode="system_retry")
+    c.set_auto_return_input_source(True)
+    assert c._send_begin()
+    assert "system_undo_trial" not in c._bridge.messages[-1]
+    c.set_auto_return_input_source(False)
+    assert c.begin()
+    c._edit_replays["previous-sentence"] = object()
+    receive(c, phase="listening", ready=True, undo_history_depth=0, system_undo_trial=True)
+    assert not c._edit_replays and not c.canRetryEdit

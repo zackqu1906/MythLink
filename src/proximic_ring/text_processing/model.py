@@ -27,8 +27,8 @@ ROUTED_EDIT_SIX_CLASS = "six_class_v5"
 ROUTED_EDIT_BOUNDARY = "boundary_only_v1"
 
 ROUTED_EDIT_VARIANT_LABELS = {
-    ROUTED_EDIT_SIX_CLASS: "六分类 v5",
-    ROUTED_EDIT_BOUNDARY: "无分类边界 v1",
+    ROUTED_EDIT_SIX_CLASS: "六分类",
+    ROUTED_EDIT_BOUNDARY: "无分类边界",
     **{key: value[0] for key, value in GENERAL_EDIT_VARIANTS.items()},
 }
 ROUTED_EDIT_BODY_VARIANTS = frozenset({ROUTED_EDIT_BOUNDARY, *GENERAL_EDIT_VARIANTS})
@@ -60,6 +60,12 @@ def normalize_input_routing_mode(value: str) -> str:
 def normalize_routed_edit_variant(value: str) -> str:
     variant = str(value or "").strip().lower()
     return variant if variant in ROUTED_EDIT_VARIANT_LABELS else ROUTED_EDIT_SIX_CLASS
+
+
+def selectable_routed_edit_variant(value: str) -> str:
+    """Map retired general preferences to the supported direct-body editor."""
+    variant = normalize_routed_edit_variant(value)
+    return ROUTED_EDIT_BOUNDARY if variant in GENERAL_EDIT_VARIANTS else variant
 
 
 def normalize_llm_provider(value: str) -> str:

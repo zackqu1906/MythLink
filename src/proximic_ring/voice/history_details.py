@@ -121,7 +121,7 @@ def _routed_classification(request):
                       for part in _list(item.get('content')) if isinstance(part, dict)
                       and part.get('type') == 'output_text')
     match = re.match(r'^分类：([^\r\n]{1,160})(?:\r?\n|$)', raw)
-    return match[1] if match else ''
+    return '、'.join(name.strip() for name in match[1].split('、')) if match else ''
 
 
 def _edit_classification(request, *, routed, legacy_plan=None):
@@ -320,6 +320,48 @@ def history_details(directory: Path, record: dict) -> dict:
                 ('正在识别屏幕文字…' if capture.get('status') == 'pending' else
                  _error(capture.get('reason')) or '未取得屏幕文字'),
                 model='系统文字识别', latency=capture.get('ocr_ms'))]))
+    preview = _dict(record.get('dictation_preview'))
+    if preview:
+        reason = preview.get('reason', '')
+        reasons = {
+            'next_sentence': '已开始下一句', 'user_input': '键盘或鼠标已接管',
+            'target_changed': '输入框、原句或光标发生变化', 'mode_changed': '已切换润色方式',
+            'caret_unavailable': '无法确认光标位置或前台输入框', 'range_unverified': '无法核对本句替换范围',
+            'unchanged': '结果与原句相同', 'empty': '模型返回空文字',
+            'multiple_lines': '模型返回多行', 'structured_output': '模型返回了结构化数据',
+            'preview_unavailable': '无法在光标旁完整显示', 'write_unconfirmed': '替换未通过写入校验',
+            'no_write_receipt': '未收到写入回执', 'generation_failed': '模型调用或上下文准备失败',
+            'closed': '应用已退出', 'disconnected': '输入法连接已断开', 'applied': '已验证替换',
+            'cancel': '用户撤销', 'end_input': '本句已发送或输入已结束', 'stroke_update': '已开始笔画输入',
+            'redo': '已重做', 'retry_edit': '已重新编辑', 'input_notice': '输入提示已接管', 'reset': '输入会话已重置'}
+        generation = {'pending': '等待生成回执', 'completed': '已生成', 'not_started': '未开始模型调用',
+                      'failed': '生成失败', 'closed_without_result': '退出时尚无生成结果'}.get(preview.get('generation'), '未记录')
+        lines = [generation]
+        for key, label in (('model_ms', '模型调用'), ('elapsed_ms', '定稿至生成结束'),
+                           ('shown_after_ms', '定稿至显示'), ('eligible_ms', '建议有效时间')):
+            value = preview.get(key)
+            if isinstance(value, (int, float)):
+                lines.append(f'{label} {value / 1000:.2f} 秒')
+        if preview.get('in_time') is False:
+            lines.append('未在有效期内生成')
+        elif reason == 'next_sentence' and preview.get('generation') in {'pending', 'not_started'}:
+            lines.append('下一句开始时尚无生成结果')
+        lines.append('预览已显示' if preview.get('shown') else '预览未显示')
+        if preview.get('accept_requested'):
+            lines.append('用户已下滑')
+        lines.append('已采用' if preview.get('applied') is True else
+                     '是否采用尚无回执' if preview.get('applied') is None else '未采用')
+        if reason:
+            lines.append(('规则拦截 · ' if preview.get('rule_blocked') else '') + reasons.get(reason, reason))
+        error = preview.get('generation_error') or preview.get('detail')
+        if error:
+            lines.append(str(error))
+        output = preview.get('output')
+        sections.append(section('dictation_preview', '自动润色预览', [
+            item('preview_status', ' · '.join(lines)),
+            item('preview_output', output if output else '（空文本）' if output == '' else '（无生成结果）',
+                 description='模型生成结果', model=preview.get('model', ''))]))
+
     sections.append(screenshot_section)
     if preparation or edit_record:
         sections.append(context_section)

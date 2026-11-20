@@ -2,7 +2,7 @@
 
 Cross-process TISSelectInputSource can immediately deactivate the new client.
 The system shortcut preserves the target application's window focus. Selection
-is only a prerequisite: the caller must still verify a fresh IMK client/range.
+is only a prerequisite: the caller must still verify a fresh IMK client.
 """
 import ctypes
 import threading
@@ -60,7 +60,7 @@ def _read_on_main_queue(read, *, timeout):
 
 
 def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, remember_source=False,
-                    on_borrow=None):
+                    on_borrow=None, on_selected=None):
     """At most one source cycle, sharing the caller's activation deadline."""
     deadline = time.monotonic() + timeout
 
@@ -75,15 +75,14 @@ def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, r
         if not original or original not in allowed or backend.foreground() != origin:
             raise RuntimeError('无法确认原输入法或前台应用')
     shortcut = None
-    # For a temporary loan, avoid cycling through an intermediate keyboard:
-    # a failed probe cannot distinguish that source from a manual user choice.
-    # An already selected but inactive client needs native focus recovery.
-    if on_borrow is None or (len(allowed) <= 2 and original not in {BUNDLE_ID, target}):
-        try:
-            shortcut = backend.shortcut()
-        except InputSourceUnavailable as exc:
-            if exc.reason != 'input_method_source_shortcut_unavailable' or native_activate is None:
-                raise
+    # Preserve the editor's first responder, including with 3+ keyboards and
+    # an inactive selected client. The helper's app focus hop loses MailMaster's
+    # body focus even though it successfully reactivates the original app.
+    try:
+        shortcut = backend.shortcut()
+    except InputSourceUnavailable as exc:
+        if exc.reason != 'input_method_source_shortcut_unavailable' or native_activate is None:
+            raise
     if shortcut is None:
         # A disabled/missing shortcut is a machine preference, not a voice
         # prerequisite. Use the existing native activation transaction before
@@ -125,7 +124,7 @@ def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, r
             backend.advance(shortcut, origin)
         else:
             def before_key_down():
-                if read(backend.current) != original or backend.foreground() != origin:
+                if read(backend.current) != current or backend.foreground() != origin:
                     raise RuntimeError('前台应用或输入法已变化')
                 on_borrow(original)
             backend.advance(shortcut, origin, before_key_down=before_key_down)
@@ -135,6 +134,9 @@ def cycle_to_source(backend, origin, target, *, timeout, native_activate=None, r
                 raise RuntimeError('前台应用已变化')
             next_source = read(backend.current)
             if next_source != current:
+                if next_source in allowed and (next_source == target or next_source not in visited):
+                    if on_selected is not None:
+                        on_selected(next_source)
                 if next_source == target:
                     return previous if remember_source else None
                 if next_source not in allowed or next_source in visited:
@@ -291,7 +293,7 @@ class SystemInputSources:
 
 
 def activate_voice_input_source(pid, *, timeout=.8, native_activate=None, remember_source=False,
-                                on_borrow=None):
+                                on_borrow=None, on_selected=None):
     deadline = time.monotonic() + timeout
     backend = SystemInputSources()
     origin = backend.foreground()
@@ -299,4 +301,4 @@ def activate_voice_input_source(pid, *, timeout=.8, native_activate=None, rememb
         raise RuntimeError('前台应用已变化')
     return cycle_to_source(backend, origin, BUNDLE_ID + '.dictation',
                            timeout=max(0, deadline - time.monotonic()), native_activate=native_activate,
-                           remember_source=remember_source, on_borrow=on_borrow)
+                           remember_source=remember_source, on_borrow=on_borrow, on_selected=on_selected)

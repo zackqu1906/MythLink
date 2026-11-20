@@ -11,8 +11,14 @@ from test_app_gestures import route
 from test_inline_state import component, receive
 
 
-def test_recording_down_waits_for_final_once_and_never_sends(route):
-    c, service, inline, _, sent, messages, emit = route
+@pytest.fixture
+def manual_polish_route(route):
+    route[2].set_automatic_polish(False)
+    return route
+
+
+def test_recording_down_waits_for_final_once_and_never_sends(manual_polish_route):
+    c, service, inline, _, sent, messages, emit = manual_polish_route
     inline._view.update(phase="listening", has_composition=True)
     emit("swipe-down")
     emit("swipe-down")
@@ -25,8 +31,8 @@ def test_recording_down_waits_for_final_once_and_never_sends(route):
     assert not sent and service._pending is None
 
 
-def test_down_recognized_before_commit_preserves_recording_undo(route):
-    c, service, inline, _, sent, messages, _ = route
+def test_down_recognized_before_commit_preserves_recording_undo(manual_polish_route):
+    c, service, inline, _, sent, messages, _ = manual_polish_route
     from types import SimpleNamespace
     inline._view.update(phase="listening", has_composition=True)
     event = service.envelope(SimpleNamespace(name="swipe-down"))
@@ -36,8 +42,8 @@ def test_down_recognized_before_commit_preserves_recording_undo(route):
 
 
 @pytest.mark.parametrize("change", ["cancel", "convert", "focus", "app", "empty", "error", "disconnect", "settings", "sentence", "timeout"])
-def test_pending_polish_cannot_escape_sentence(route, change):
-    c, service, inline, backend, sent, messages, emit = route
+def test_pending_polish_cannot_escape_sentence(manual_polish_route, change):
+    c, service, inline, backend, sent, messages, emit = manual_polish_route
     inline._view.update(phase="listening", has_composition=True)
     emit("swipe-down")
     if change == "cancel": emit("swipe-left")
@@ -56,8 +62,8 @@ def test_pending_polish_cannot_escape_sentence(route, change):
 
 
 @pytest.mark.parametrize("phase", ["idle", "editing", "edited", "polishing", "undone", "interrupted", "error"])
-def test_down_requires_current_dictation(route, phase):
-    _, _, inline, _, sent, messages, emit = route
+def test_down_requires_current_dictation(manual_polish_route, phase):
+    _, _, inline, _, sent, messages, emit = manual_polish_route
     inline._view.update(phase=phase)
     emit("swipe-down")
     assert not messages and not sent
@@ -101,6 +107,7 @@ def test_worker_preserves_polish_mode_and_failure_fallback():
 
 def test_inline_polish_does_not_confirm_edit_intent_and_drops_stale_result(component):
     inline, _ = component
+    inline.set_automatic_polish(False)
     inline.begin()
     receive(inline, phase="dictated", ready=True, raw="raw", revision=2)
     requested, edits = [], []
@@ -120,8 +127,8 @@ def test_inline_polish_does_not_confirm_edit_intent_and_drops_stale_result(compo
     assert inline._bridge.messages == before
 
 
-def test_app_controller_submits_polish_even_if_automatic_dictation_llm_is_disabled(route, monkeypatch):
-    c, _, inline, _, sent, messages, _ = route
+def test_app_controller_submits_polish_even_if_automatic_dictation_llm_is_disabled(manual_polish_route, monkeypatch):
+    c, _, inline, _, sent, messages, _ = manual_polish_route
     requests = []
     monkeypatch.setattr(c._text_processing_worker, "submit", requests.append)
     c._llm_enabled = False

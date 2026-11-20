@@ -21,7 +21,7 @@ class FakeBridge:
     def close(self):
         pass
 
-    def asr_context(self):
+    def asr_context(self, *, foreground):
         return {"status": "unavailable", "source": "input_method"}
 
 
@@ -540,7 +540,7 @@ def test_history_is_always_enabled_and_retired_setting_is_removed(inline_ui):
 
 
 @pytest.mark.parametrize("inline_ui,expected", [
-    ({}, "retry"), ({"input/redoEnabled": True}, "retry"),
+    ({}, "system_retry"), ({"input/redoEnabled": True}, "retry"),
     ({"input/redoEnabled": False}, "undo"),
     ({"input/historyActionMode": "next", "input/redoEnabled": True}, "next"),
 ], indirect=["inline_ui"])
@@ -549,7 +549,7 @@ def test_history_mode_migration_and_persistence_keep_undo(inline_ui, expected):
     controller, bridge, _, root, event = inline_ui
     control = root.findChild(QObject, "historyActionModeCombo")
     assert control is not None
-    assert control.property("currentIndex") == ["undo", "next", "retry"].index(expected)
+    assert control.property("currentIndex") == ["undo", "next", "retry", "system_retry"].index(expected)
     assert controller.historyActionMode == expected
     assert not controller._settings.contains("input/redoEnabled")
     event(phase="undone", ready=True, undo_history_depth=2, can_redo=True, redo_history_depth=1)
@@ -724,13 +724,14 @@ def test_conversion_uses_sentence_snapshot_and_native_revision(inline_ui):
 
 
 @pytest.mark.parametrize("subtask", ["dictation", "modify", "compose", "insert"])
-@pytest.mark.parametrize("cleanup", [True, False])
-def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeypatch, subtask, cleanup):
+@pytest.mark.parametrize("cleanup,preview", [(True, False), (False, False), (True, True)])
+def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeypatch, subtask, cleanup, preview):
     from proximic_ring.text_processing.task_routing import EditPlan
     task = "dictation" if subtask == "dictation" else "edit"
     plan = None if task == "dictation" else EditPlan((subtask,))
     from proximic_ring.text_processing import InputModeRoutingResult
     controller, bridge, requests, _, event = inline_ui
+    controller.automaticPolish = preview
     component = controller._inline_input
     routes = []
     context = {"source": "screen_ocr", "status": "ok", "coverage": "visible_only",
@@ -761,7 +762,7 @@ def test_automatic_lane_has_no_conversion_or_speculative_edit(inline_ui, monkeyp
     r = routes[0]
     controller._apply_input_mode_routed(InputModeRoutingResult(r.request_id, 2, r.raw_text,
         "dictation" if task == "dictation" else "edit", .1, task_type=task, screen_context=context, edit_plan=plan))
-    if task == "dictation" and not cleanup:
+    if task == "dictation" and (preview or not cleanup):
         assert not requests and not controller._automatic_dictations
         assert not controller._pending_mode_routes and not controller._pending_text_requests
         assert bridge.messages[-1]["type"] == "update" and bridge.messages[-1]["final"]
@@ -844,6 +845,21 @@ def test_cancel_live_dictation_discards_audio_and_late_final(inline_ui):
     controller._apply_runtime_update("取消后的结果", True, "", 1)
     assert len(bridge.messages) == count
     assert controller._recognition_event.is_set()
+
+
+def test_final_reaches_editor_before_history_refresh(inline_ui):
+    from types import SimpleNamespace
+    import numpy as np
+
+    controller, bridge, _, _, _ = inline_ui
+    controller._modification_dataset.record_audio(1, np.zeros(320, np.float32))
+    notified = []
+    controller._voiceHistorySaved.connect(lambda _: notified.append(
+        any(message.get("type") == "update" and message.get("final") for message in bridge.messages)))
+    controller._publish_update(SimpleNamespace(session_id=1, text="定稿", is_final=True, error=""))
+    assert notified == [True]
+    assert controller.voiceHistoryCount == 1
+    assert controller.recentVoiceHistoryEntries == controller.voiceHistoryEntries[:10]
 
 
 def test_publish_duplicate_final_does_not_suspend_recognition_again(inline_ui):

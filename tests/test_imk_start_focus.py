@@ -31,6 +31,56 @@ def setup_probe(reply=None):
     return bridge, data, select
 
 
+@pytest.mark.parametrize('refreshed_selection', [[1, 0], [-1, -1]])
+def test_voice_refreshes_unknown_client_before_pinning_target(refreshed_selection):
+    stale = {**state(), 'selection': [-1, -1], 'context_key_supported': True}
+    bridge, data, select = setup_probe(stale)
+    refreshed = []
+    def refresh(origin, *, timeout, state):
+        refreshed.append(origin)
+        data['reply'] = {**stale, 'client_id': 'body-after-key', 'selection': refreshed_selection}
+    proof = probe_input_focus(bridge, lambda: data['front'], select, require_selection=False,
+                              refresh_context=refresh)
+    assert refreshed == [FRONT]
+    assert proof.status == 'text' and proof.target[1] == 'body-after-key'
+    assert proof.target[-1] == tuple(refreshed_selection)
+    assert not data['selected']
+
+
+def test_context_refresh_cannot_pin_another_app():
+    bridge, data, select = setup_probe({**state(), 'selection': [-1, -1], 'context_key_supported': True})
+    def refresh(origin, *, timeout, state):
+        data['front'] = ('other.app', 43)
+    proof = probe_input_focus(bridge, lambda: data['front'], select, require_selection=False,
+                              refresh_context=refresh)
+    assert proof.status == 'unavailable' and proof.target is None
+
+
+@pytest.mark.parametrize('selection', [[0, 0], [83, 0], [3, 4]])
+def test_voice_uses_reported_selection_without_refreshing(selection):
+    bridge, data, select = setup_probe({**state(), 'selection': selection, 'context_key_supported': True})
+    def refresh(*args, **kwargs):
+        pytest.fail('known selection triggered F20')
+    proof = probe_input_focus(bridge, lambda: FRONT, select, require_selection=False,
+                              refresh_context=refresh)
+    assert proof.status == 'text' and proof.target[-1] == tuple(selection)
+    assert not data['selected']
+
+
+def test_optional_context_refresh_timeout_preserves_unknown_range_dictation(focus_clock):
+    unknown = {**state(), 'selection': [-1, -1], 'context_key_supported': True}
+    bridge, data, select = setup_probe(unknown)
+    calls = []
+    def refresh(origin, *, timeout, state):
+        calls.append(timeout)
+        focus_clock.sleep(timeout)
+        raise TimeoutError
+    proof = probe_input_focus(bridge, lambda: FRONT, select, require_selection=False,
+                              refresh_context=refresh)
+    assert proof.status == 'text' and proof.target[-1] == (-1, -1)
+    assert len(calls) == 1 and proof.elapsed_ms < 800
+
+
 @pytest.fixture
 def focus_clock(monkeypatch):
     from proximic_ring.voice.ime import focus_probe
@@ -330,7 +380,7 @@ def test_unconflicted_first_start_needs_proof_and_unknown_focus_stays_quiet(rout
         assert inline._pending_gesture_focus[0] == proof
 
 
-@pytest.mark.parametrize('change', ['client', 'selection', 'epoch', 'not_ready'])
+@pytest.mark.parametrize('change', ['client', 'epoch', 'not_ready'])
 def test_begin_ack_cannot_follow_changed_focus_proof(component, change):
     c, _ = component
     c._startup_focus_target = ('e', 'c', '', BUNDLE, 42, (3, 0))
@@ -347,6 +397,30 @@ def test_matching_begin_focus_does_not_require_prior_sentence(component):
     c._startup_focus_target = ('e', 'c', '', BUNDLE, 42, (3, 0))
     c._begin_origin = FRONT
     assert c._input_client_ready(state())
+
+
+def test_voice_start_accepts_unreadable_selection_but_keeps_client_proof(component, monkeypatch):
+    from proximic_ring.voice.ime.focus_probe import same_input_focus
+    from test_inline_state import receive
+    c, _ = component
+    monkeypatch.setattr(c, '_foreground_identity', lambda: FRONT)
+    reply = {**state(), 'epoch': c._epoch, 'client_id': c._client_id, 'selection': [-1, -1]}
+    c._bridge.epoch = c._epoch
+    c._bridge.connected = True
+    c._bridge.focus_state = lambda **_: reply
+    proof = c.capture_start_focus(require_editable=True)
+    assert proof.status == 'text'
+    assert same_input_focus(c._bridge, c._foreground_identity, proof)
+    c.pin_start_focus(proof.target, time.monotonic())
+    began = []
+    c.began.connect(lambda: began.append(True))
+    assert c.begin(auto_select=True)
+    receive(c, **{k: v for k, v in reply.items() if k not in {'epoch', 'client_id'}},
+            phase='idle', request_id=c._startup_focus_request)
+    receive(c, ready=True, phase='listening', application=BUNDLE, selection=[-1, -1])
+    assert began == [True] and not c.error
+    reply['client_id'] = 'another-editor'
+    assert not same_input_focus(c._bridge, c._foreground_identity, proof)
 
 
 @pytest.mark.parametrize('reported_utterance', ['previous', 'unrelated'])
@@ -399,14 +473,11 @@ def test_native_begin_intermediate_idle_waits_for_validated_ack(component, monke
     assert c._reply_stage == 'begin' and not c.error and not began
     receive(c, ready=True, phase='listening', application=BUNDLE,
             **({'selection': ack_selection} if ack_selection is not None else {}))
-    assert bool(began) == (ack_selection == [3, 0])
-    if not began:
-        assert '已变化' in c.error
-        assert c._bridge.messages[-1]['type'] == 'reset'
+    assert began == [True] and not c.error
 
 
 @pytest.mark.parametrize('live_selection', [[5, 0], [8, 0], [-1, -1], None])
-def test_next_sentence_uses_live_caret_instead_of_previous_original_snapshot(component, monkeypatch, live_selection):
+def test_next_sentence_requires_correlated_client_reply_not_document_selection(component, monkeypatch, live_selection):
     from test_inline_state import receive
     c, _ = component
     monkeypatch.setattr(c, '_foreground_identity', lambda: FRONT)
@@ -426,10 +497,6 @@ def test_next_sentence_uses_live_caret_instead_of_previous_original_snapshot(com
     assert not c.error and not any(m['type'] == 'begin' for m in c._bridge.messages)
     receive(c, ready=True, phase='dictated', utterance_id='finished-sentence',
             application=BUNDLE, selection=live_selection, request_id=ping['request_id'])
-    if live_selection != [5, 0]:
-        assert '已变化' in c.error and not began
-        assert not any(m['type'] == 'begin' for m in c._bridge.messages)
-        return
     assert c._reply_stage == 'begin'
     # A retried focus reply may arrive after BEGIN; it cannot roll startup back.
     receive(c, ready=True, phase='dictated', utterance_id='finished-sentence',

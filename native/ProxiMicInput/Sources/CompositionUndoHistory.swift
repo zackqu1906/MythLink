@@ -108,7 +108,7 @@ final class CompositionUndoHistory {
             }
         }
         if let record = current {
-            guard snapshot.selection == record.selection, snapshot.startError == nil else { clear(); return }
+            guard snapshot.selection == record.selection, isValidRange(snapshot.selection) else { clear(); return }
             // Reuse the mandatory BEGIN snapshot if it includes this range;
             // do not make another native read or scan earlier history entries.
             let range = record.editedText.map {

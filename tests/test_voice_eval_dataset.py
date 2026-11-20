@@ -70,8 +70,8 @@ def test_user_requested_dictation_exclusion_and_complete_editing_oracles(master)
         for e in c['editing_expectations']:
             assert e['requirements']
             assert e['reference_text'] is not None or e['checks']
-    assert len(master['cases']) == 699
-    assert len(binary) == 697 and len(editing) == 538
+    assert len(master['cases']) == 748
+    assert len(binary) == 721 and len(editing) == 538
 
 
 def test_six_class_is_multilabel_and_has_no_dictation(master):
@@ -140,6 +140,44 @@ def test_model_input_never_exposes_answers_or_metadata(master):
     assert c['input']['context']['messages'] == []
 
 
+def test_fragment_completion_stays_separate_from_editing_and_hides_references(master):
+    filters = json.loads(corpus.DEFAULT_SUBSETS.read_text())['subsets']['fragment_completion']
+    cases = corpus.select_cases(master, **filters)
+    assert len(cases) == 24
+    paired = {}
+    for case in cases:
+        oracle = case['special_annotations']['fragment_completion']
+        assert oracle['requirement'] and oracle['reference']
+        assert case['split'] == 'development' and case['labels']['intent'] == 'dictation'
+        assert not case['applicability']['editing'] and case['editing_expectations'] == []
+        payload = corpus.model_input(case)
+        assert set(payload) == {'utterance', 'editable_text', 'screen_context'}
+        assert payload['screen_context'] == case['input']['context']
+        if oracle['pair']:
+            paired.setdefault(oracle['pair'], []).append((payload, oracle))
+    assert len(paired) == 4
+    for (left, lhs), (right, rhs) in paired.values():
+        assert left['utterance'] == right['utterance'] and left['editable_text'] == right['editable_text']
+        assert left['screen_context'] != right['screen_context'] and lhs['reference'] != rhs['reference']
+
+
+def test_merged_asr_subset_preserves_observation_pair_and_hides_targets(master):
+    from tools.check_asr_recovery_fragments import trials_for
+    filters = json.loads(corpus.DEFAULT_SUBSETS.read_text())['subsets']['asr_recovery_and_fragments']
+    subset = corpus.subset_document(master, filters)
+    assert len(subset['cases']) == 49
+    cases = {c['id']: c for c in trials_for(subset)}
+    assert len(cases) == 50 and sum(c['observation'] for c in cases.values()) == 2
+    for row in cases.values():
+        assert set(row['input']) == {'asr_final', 'scene', 'context', 'before_cursor'}
+    a, b = cases['asr-v2-O01'], cases['asr-v2-O02']
+    assert a['input'] == b['input'] and a['reference'] != b['reference']
+    raw = by_id(master, 'asr-v2-E03')
+    assert raw['evaluation_scope'] == 'asr_final' and not any(raw['applicability'].values())
+    with pytest.raises(ValueError, match='no downstream routing labels'):
+        corpus.legacy_cases([raw], 'routing')
+
+
 def test_multiturn_uses_actual_outputs_and_not_gold_references(master):
     c = by_id(master, 'ablation-T15')
     assert not c['applicability']['binary'] and not c['applicability']['six_class']
@@ -186,7 +224,7 @@ def test_cli_subsets_and_legacy_loader_compatibility(master, tmp_path):
     routing = tmp_path/'routing.json'
     assert corpus.main(['export', '--task', 'binary', '--format', 'routing', '--output', str(routing)]) == 0
     from tools.clef_cases import load_cases
-    assert len(load_cases(routing)) == 697
+    assert len(load_cases(routing)) == 721
     editing = tmp_path/'editing.json'
     assert corpus.main(['export', '--task', 'editing', '--kind', 'single', '--format', 'editing', '--output', str(editing)]) == 0
     from tools.check_automatic_edit_generation import load_cases as load_editing

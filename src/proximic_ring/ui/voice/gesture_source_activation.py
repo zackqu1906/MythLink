@@ -66,11 +66,15 @@ class GestureSourceActivation(QObject):
         with self._restore_lock:
             return not self._closed and ticket is not None and ticket is self._restore_ticket
 
-    def restore_if_unused(self, origin, previous, ticket, *, timeout=.5):
+    def restore_if_unused(self, origin, previous, ticket, *, timeout=.5,
+                          expected_source=BUNDLE_ID + '.dictation'):
         """Return a failed probe's loan only while its original request owns it."""
-        if not isinstance(previous, str) or not previous or previous in {BUNDLE_ID, BUNDLE_ID + '.dictation'}:
+        if (not isinstance(previous, str) or not previous or previous == expected_source
+                or (previous in {BUNDLE_ID, BUNDLE_ID + '.dictation'}
+                    and expected_source in {BUNDLE_ID, BUNDLE_ID + '.dictation'})):
             return False
-        request = _Request(origin, time.monotonic() + timeout, restore_source=previous)
+        request = _Request(origin, time.monotonic() + timeout, restore_source=previous,
+                           expected_source=expected_source)
         with self._restore_lock:
             if ticket is None or ticket is not self._restore_ticket:
                 return False
@@ -121,7 +125,7 @@ class GestureSourceActivation(QObject):
             request.source = source
             source.event.connect(lambda message: self._event(request, source, message))
             if request.restore_source:
-                source.restore(request.origin, request.restore_source, BUNDLE_ID + '.dictation')
+                source.restore(request.origin, request.restore_source, request.expected_source)
             elif request.recovering:
                 source.recover(request.origin)
             elif request.expected_source:

@@ -137,6 +137,8 @@ def test_automatic_dictation_cleanup_switch_is_visible_and_only_changes_its_pref
     from PySide6.QtTest import QTest
     controller, bridge, _, root, _ = inline_ui
     monkeypatch.setattr(controller._text_processing_worker, "warmup_router", lambda: None)
+    assert controller.automaticPolish
+    controller.automaticPolish = False
     controller.inputRoutingMode = "auto"
     root.resize(*size); root.show()
     dialog = root.findChild(QObject, "runtimeSettingsDialog")

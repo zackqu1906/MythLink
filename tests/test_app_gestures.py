@@ -48,6 +48,7 @@ def test_default_profiles_roundtrip_and_no_project_picker():
 
 def test_down_is_reserved_for_polish(route):
     c, service, inline, _, sent, messages, emit = route
+    inline.set_automatic_polish(False)  # Exercise the manual polish binding.
     assert service.setBinding("codex", "next", "swipe-down", "Cmd+Shift+]", True)
     emit("swipe-down")
     assert not messages and not sent

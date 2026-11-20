@@ -16,6 +16,7 @@ def desktop(monkeypatch):
     monkeypatch.setattr(keys, "_send_key", keys._send_key_direct)
     monkeypatch.setattr(keys, "_refresh_workspace", lambda: None)
     state = SimpleNamespace(bundle="com.tencent.xinWeChat", pid=42, permission=True, sent=[])
+    monkeypatch.setitem(sys.modules, "ApplicationServices", SimpleNamespace(AXIsProcessTrusted=lambda: state.permission))
     app = SimpleNamespace(bundleIdentifier=lambda: state.bundle, processIdentifier=lambda: state.pid)
     workspace = SimpleNamespace(frontmostApplication=lambda: app)
     monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(
@@ -325,3 +326,49 @@ def test_keyup_allocation_failure_posts_nothing(desktop):
     with pytest.raises(RuntimeError, match="无法创建"):
         send_wechat_key("select_all", 0, 456)
     assert not state.sent
+
+
+@pytest.mark.parametrize("bundle", ["com.tencent.xinWeChat", "com.apple.TextEdit", ""])
+def test_system_undo_is_one_command_z_for_original_process(desktop, bundle):
+    from proximic_ring.platforms.macos.wechat_native_keys import send_system_undo
+    state, _ = desktop
+    state.bundle = bundle
+    send_system_undo(bundle, 0, 123, expected_pid=42)
+    assert [(p, e["code"], e["pressed"], e["flags"], e["tag"]) for p, e in state.sent] == [
+        (42, 6, True, 256, 123), (42, 6, False, 256, 123)]
+    state.sent.clear()
+    with pytest.raises(RuntimeError):
+        send_system_undo(bundle, 0, 123, expected_pid=43)
+    with pytest.raises(ValueError):
+        send_system_undo(bundle, 1, 123, expected_pid=42)
+    assert not state.sent
+
+
+def test_direct_system_undo_uses_only_the_routed_pid(desktop, monkeypatch):
+    from proximic_ring.platforms.macos import wechat_native_keys as keys
+    from proximic_ring.platforms.macos.native_access_worker import Dispatcher
+
+    state, _ = desktop
+    state.pid = 99
+    monkeypatch.setattr(keys, "_refresh_workspace", lambda: pytest.fail("unexpected foreground query"))
+    monkeypatch.setattr(sys.modules["AppKit"].NSWorkspace, "sharedWorkspace",
+                        lambda: pytest.fail("unexpected application query"))
+    dispatcher = Dispatcher.__new__(Dispatcher)
+    assert dispatcher.handle({"operation": "system_undo", "pid": 42, "event_tag": 123}) == {"result": None}
+    assert [(p, e["code"], e["pressed"], e["flags"], e["tag"]) for p, e in state.sent] == [
+        (42, 6, True, 256, 123), (42, 6, False, 256, 123)]
+
+
+def test_preview_undo_caret_posts_one_unmodified_right_to_original_pid(desktop):
+    import time
+    from proximic_ring.platforms.macos.native_access_worker import Dispatcher
+    state, _ = desktop
+    dispatcher = Dispatcher.__new__(Dispatcher)
+    tag = (1 << 52) + 91
+    request = dict(operation="preview_undo_caret", pid=42, event_tag=tag, expires=time.monotonic() + .25)
+    for invalid in [dict(pid=43), dict(event_tag=0), dict(expires=0)]:
+        assert dispatcher.handle({**request, **invalid}) == {"result": False}
+    assert not state.sent
+    assert dispatcher.handle(request) == {"result": True}
+    assert [(p, e["code"], e["pressed"], e["flags"], e["tag"]) for p, e in state.sent] == [
+        (42, 124, True, 0, tag), (42, 124, False, 0, tag)]

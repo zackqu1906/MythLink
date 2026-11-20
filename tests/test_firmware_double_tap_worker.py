@@ -56,6 +56,35 @@ def test_single_tap_waits_for_pair_window_then_uses_normal_route():
         worker.close()
 
 
+def test_immediate_end_discards_its_second_tap_then_restores_normal_pairing():
+    import threading
+    delivered = threading.Event()
+    events = []
+
+    def collect(event):
+        events.append((event.name, event.end_only))
+        delivered.set()
+
+    worker = FirmwareGestureWorker(on_gesture=collect)
+    worker.can_end_tap_immediately = lambda: not events
+    worker.start()
+    try:
+        worker.submit(trigger(1, 1000))
+        assert delivered.wait(.15)
+        assert events == [("tap", True)]
+        worker.submit(trigger(1, 1000))  # retransmission
+        worker.submit(trigger(2, 1150))
+        worker.submit(trigger(3, 2000))
+        worker.submit(trigger(4, 2150))
+        assert wait_for(lambda: len(events) == 2)
+        assert events == [("tap", True), ("double-tap", False)]
+        worker.submit(trigger(5, 3000))
+        assert wait_for(lambda: len(events) == 3)
+        assert events[-1] == ("tap", False)
+    finally:
+        worker.close()
+
+
 def test_other_confirmed_gesture_resolves_pending_single_in_order():
     events = []
     worker = FirmwareGestureWorker(on_gesture=lambda event: events.append(event.name))

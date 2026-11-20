@@ -15,12 +15,44 @@ final class IMEService {
     static let shared = IMEService()
     let transport = IPCClient()
     let activation = InputActivation<ProxiMicInputController>()
+    let contextKey = InputContextKey()
     var activeController: ProxiMicInputController? { activation.current }
     var activationForegroundPID: () -> pid_t = { NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0 }
+    var inputContextForeground: () -> (application: String, pid: pid_t)? = {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        return (app.bundleIdentifier ?? "", app.processIdentifier)
+    }
     private(set) var epoch: String?
     var cancelShortcut = "Esc"
     var gestureHints = VoiceHudBindings()
     var hudAppearance = VoiceHudAppearance()
+    var automaticPolish = false // Older hosts keep the manual command.
+    private(set) var suggestion: DictationSuggestion?
+
+    func clearSuggestion(token: String? = nil, reason: String = "target_changed") {
+        guard let offer = suggestion, token == nil || token == offer.token else { return }
+        suggestion = nil
+        offer.close()
+        send(["type": "dictation_preview_state", "token": offer.token, "visible": false, "reason": reason])
+    }
+
+    func beginSuggestion(_ session: CompositionSession, adapter: NativeInputClient, caret: NSRect?) -> String? {
+        clearSuggestion(reason: "next_sentence")
+        guard automaticPolish, let front = inputContextForeground(), let caret,
+              front.application == (adapter.client.bundleIdentifier() ?? "") else { return nil }
+        let offer = DictationSuggestion(session: session, pid: front.pid, caret: caret)
+        suggestion = offer
+        offer.observe { [weak self, weak offer] in
+            guard let self, let offer, self.suggestion === offer, self.inputContextForeground()?.pid == front.pid else { return false }
+            if self.activeController?.ownsSuggestion(offer) == true { return true }
+            return self.suspendedInput?.session.utteranceID == offer.utterance &&
+                self.suspendedInput?.session.revision == offer.revision && offer.suspendedFieldUnchanged()
+        } invalidated: { [weak self, weak offer] reason in
+            if let offer { self?.clearSuggestion(token: offer.token, reason: reason) }
+        }
+        return offer.token
+    }
+
     let multiUndoEnabled = true
     var historyMode: HistoryActionMode = .retry
     var redoEnabled: Bool { historyMode == .next }
@@ -42,7 +74,9 @@ final class IMEService {
         transport.onMessage = { [weak self] in self?.receive($0) }
         transport.onDisconnect = { [weak self] in
             guard let self else { return }
+            self.clearSuggestion()
             self.epoch = nil
+            self.contextKey.cancel()
             self.suspendedInput = nil
             self.noticePanel.hide()
             self.hideClipboardSuggestion()
@@ -74,15 +108,51 @@ final class IMEService {
         if type == "welcome" {
             guard message["protocol"] as? Int == 1, let next = message["epoch"] as? String, !next.isEmpty else { return }
             if epoch != next {
+                automaticPolish = false
+                clearSuggestion()
+                contextKey.cancel()
                 suspendedInput = nil
                 activeController?.hostConnected()
             }
             epoch = next
-            if let active = activeController { active.sendState(includeSnapshot: true) }
+            if let active = activeController { active.sendState(includeSnapshot: true, metadataOnly: true) }
             else { inactiveState() }
             return
         }
         guard let epoch, message["epoch"] as? String == epoch else { return }
+        if type == "prepare_input_context" {
+            guard let request = message["request_id"] as? String else { return }
+            let front = inputContextForeground()
+            let armed = (message["application"] as? String == front?.application
+                && message["foreground_pid"] as? Int32 == front?.pid
+                && activeController?.permitsContextKey == true)
+                && contextKey.arm(id: request, tag: message["event_tag"] as? Int64 ?? 0, epoch: epoch,
+                                  application: front?.application ?? "", pid: front?.pid ?? 0)
+            send(["type": "input_context_prepared", "request_id": request, "armed": armed])
+            return
+        }
+        if type == "cancel_input_context" {
+            if let request = message["request_id"] as? String { contextKey.cancel(id: request) }
+            return
+        }
+        if type == "dictation_preview_dismiss" {
+            if let token = message["token"] as? String { clearSuggestion(token: token, reason: "dismissed") }
+            return
+        }
+        if type == "dictation_preview_result" {
+            guard let offer = suggestion, offer.token == message["token"] as? String else { return }
+            guard let text = message["text"] as? String, offer.show(text) else {
+                clearSuggestion(token: offer.token, reason: offer.stillValid() ? "preview_unavailable" : "target_changed")
+                return
+            }
+            activeController?.hideDictationHUD()
+            send(["type": "dictation_preview_state", "token": offer.token, "visible": true])
+            return
+        }
+        if type == "begin" || type == "stroke_update" || type == "input_notice" ||
+            (["end_input", "cancel", "system_undo_posted", "redo", "retry_edit"].contains(type) && message["utterance_id"] as? String == suggestion?.utterance) {
+            clearSuggestion(reason: type == "begin" ? "next_sentence" : type)
+        }
         if type == "clipboard_dismiss" {
             if let token = message["token"] as? String {
                 if clipboardToken == token { clipboardToken = "" }
@@ -140,6 +210,11 @@ final class IMEService {
             return // Presentation only: never reconfigure shortcuts, undo or a sentence.
         }
         if type == "configure" {
+            if let enabled = message["automatic_polish"] as? Bool, automaticPolish != enabled {
+                automaticPolish = enabled
+                if !enabled { clearSuggestion(reason: "mode_changed") }
+                activeController?.refreshPolishHUD()
+            }
             if let value = message["cancel_shortcut"] as? String { cancelShortcut = value }
             // Ignore the retired multi_undo_enabled preference from older hosts.
             let mode = (message["history_action_mode"] as? String).flatMap(HistoryActionMode.init(rawValue:))
@@ -162,12 +237,34 @@ final class IMEService {
         }
         if type == "ping" {
             let request = message["request_id"] as? String
-            if let active = activeController { active.sendState(includeSnapshot: true, requestID: request) }
+            if let active = activeController {
+                active.sendState(includeSnapshot: true, requestID: request,
+                                 metadataOnly: message["capture_context"] as? Bool != true)
+            }
             else { inactiveState(requestID: request) }
             return
         }
         guard let active = activeController else { inactiveState(); return }
         active.receive(message)
+    }
+
+    func consumeContextKey(_ event: NSEvent, sender: Any?) -> Bool {
+        let tag = event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0
+        guard event.type == .keyDown, contextKey.consumes(code: event.keyCode, tag: tag) else { return false }
+        guard let request = contextKey.take(tag: tag), request.epoch == epoch,
+              let input = sender as? IMKTextInput, input.bundleIdentifier() == request.application else { return true }
+        // Event dispatch may create a new controller whose 25 ms activation
+        // preparation is still pending. Reply from that settled active client,
+        // never from the controller that happened to receive this event.
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
+            guard let self, self.epoch == request.epoch,
+                  let front = self.inputContextForeground(),
+                  front.pid == request.pid, front.application == request.application else { return }
+            if let active = self.activeController {
+                active.sendState(includeSnapshot: true, requestID: request.id, metadataOnly: true)
+            } else { self.inactiveState(requestID: request.id) }
+        }
+        return true
     }
 }
 
@@ -180,7 +277,19 @@ final class ProxiMicInputController: IMKInputController {
     }
     private var adapter: NativeInputClient?
     private let sessionLifetime = CompositionSessionLifetime()
+    private var applyingSuggestion: (token: String, session: CompositionSession, text: String)?
     private var resumedInputToken: String?
+
+    private func reportSuggestionWrite(interrupted: Bool = false) {
+        guard let pending = applyingSuggestion else { return }
+        let current = pending.session
+        guard interrupted || session !== current || current.phase != .polishing else { return }
+        applyingSuggestion = nil
+        let applied = !interrupted && current === session && current.phase == .dictated && current.polished && current.raw == pending.text
+        IMEService.shared.send(["type": "dictation_preview_state", "token": pending.token, "visible": false,
+            "reason": applied ? "applied" : "write_unconfirmed", "detail": current.error])
+    }
+
     private var session: CompositionSession? {
         get { sessionLifetime.current }
         set { sessionLifetime.current = newValue; resumedInputToken = nil }
@@ -211,13 +320,38 @@ final class ProxiMicInputController: IMKInputController {
     private var rejectedBeginID: String?
     private var pendingBeginID: String?
     private var compatibilityKeyReply: (id: String, callback: (String?) -> Void)?
+    private var earlySystemUndo: UUID?
+    private static let undoCaretMarker: Int64 = 1 << 52
+    private var undoCaretKey: (tag: Int64, revision: Int, range: NSRange, expires: TimeInterval)?
+    private var systemUndoKey: (tag: Int64, expires: TimeInterval)?
     private let undoHistory = CompositionUndoHistory()
     private var undoSourceUtteranceID: String?
     private var preservingHistory = false
 
     var isUnboundIdleClient: Bool {
         activated && !preparingActivation && session == nil
-            && (lastContext == nil || lastContext?.startError != nil)
+            && lastContext == nil
+    }
+
+    var permitsContextKey: Bool {
+        activated && ownsActivation && !preparingActivation && !isWriting && !strokeActive
+            && pendingBeginID == nil && adapter?.clipboardReadInProgress != true
+            && adapter?.clientOperationPending != true
+            && session?.hasComposition != true && session?.awaitingReadback != true
+            && !(session.map { [.listening, .finishing, .editing, .polishing].contains($0.phase) } ?? false)
+    }
+
+    func hideDictationHUD() { panel.hide() }
+
+    func refreshPolishHUD() {
+        if session != nil { changed() }
+    }
+
+    func ownsSuggestion(_ offer: DictationSuggestion) -> Bool {
+        guard activated, ownsActivation, let session, let adapter,
+              session.utteranceID == offer.utterance, session.revision == offer.revision,
+              session.canSuggestReplacement, session.raw == offer.raw else { return false }
+        return adapter.selection() == session.previewSelection
     }
 
     func configureGestureHints() {
@@ -239,7 +373,7 @@ final class ProxiMicInputController: IMKInputController {
 
     func configureUndoHistory(_ enabled: Bool) {
         undoHistory.configure(enabled: enabled)
-        if let session, [.dictated, .edited].contains(session.phase) {
+        if let session, !session.systemUndoTrial, [.dictated, .edited].contains(session.phase) {
             undoHistory.settled(session, sourceUtteranceID: undoSourceUtteranceID)
         }
         if activated { changed() }
@@ -421,7 +555,7 @@ final class ProxiMicInputController: IMKInputController {
         guard service.activation.owns(self, lease) else { return }
         preparingActivation = false
         traceLifecycle("activate_prepared")
-        sendState(includeSnapshot: true)
+        sendState(includeSnapshot: true, metadataOnly: true)
     }
 
     private func retireActivation(_ event: String, reason: String) {
@@ -471,13 +605,59 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        if let event, IMEService.shared.consumeContextKey(event, sender: sender) {
+            traceLifecycle("context_key_consumed")
+            return true
+        }
         guard activated, ownsActivation, let event else { return false }
+        if event.type == .keyDown, event.keyCode == 124, !event.isARepeat,
+           event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty {
+            let tag = event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0
+            let ours = tag >> 50 == Self.undoCaretMarker >> 50
+            if let key = undoCaretKey, key.tag == tag || (tag == 0 && ProcessInfo.processInfo.systemUptime < key.expires) {
+                undoCaretKey = nil
+                let current = session
+                let matches = adapter?.selection() == key.range && self.session === current &&
+                    current?.phase == .undone && current?.revision == key.revision &&
+                    current?.hostUndoTag == key.tag - Self.undoCaretMarker &&
+                    ProcessInfo.processInfo.systemUptime < key.expires
+                if matches || ours { return !matches }
+            } else if ours { return true } // A delayed tagged key belongs to a retired editor.
+        }
+        // ⌘Z belongs to the editor. The host delivery receipt and the editor's
+        // key event travel on separate channels and may arrive in either order.
+        if event.type == .keyDown, event.keyCode == 6, !event.isARepeat,
+           event.modifierFlags.intersection([.command, .shift, .control, .option]) == [.command] {
+            let tag = event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0
+            if let key = systemUndoKey, ProcessInfo.processInfo.systemUptime < key.expires,
+               tag == key.tag || tag == 0 {
+                systemUndoKey = nil
+                return false
+            }
+            if let session, let hostTag = session.hostUndoTag {
+                if tag == hostTag { return false }
+                if tag == 0, session.canSystemUndo {
+                    // Qt can strip the tag. Deliver immediately; only cleanup of
+                    // an unmatched physical keyboard event waits for the receipt.
+                    let token = UUID()
+                    earlySystemUndo = token
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak session] in
+                        guard let self, let session, self.session === session, self.earlySystemUndo == token else { return }
+                        self.invalidate("键盘输入已接管本句")
+                    }
+                    return false
+                }
+            }
+        }
         IMEService.shared.hideClipboardSuggestion()
         if event.type == .keyDown,
            let handling = adapter?.clipboardKeyHandling(tag: event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) {
             return handling
         }
         if adapter?.clipboardReadInProgress == true { adapter?.clipboardReader?.cancel() }
+        if event.type == .leftMouseDown || event.type == .keyDown {
+            IMEService.shared.clearSuggestion(reason: "user_input")
+        }
         if event.type == .leftMouseDown {
             strokeCorrection?.invalidate("光标已移动，未继续关联手写词")
             clearStroke(ending: strokeSessionID.isEmpty)
@@ -487,7 +667,7 @@ final class ProxiMicInputController: IMKInputController {
             return false
         }
         guard event.type == .keyDown else { return false }
-        if let compatibility = adapter?.pendingCompatibility,
+        if !event.isARepeat, let compatibility = adapter?.pendingCompatibility,
            compatibility.acceptsKey(code: Int(event.keyCode), command: event.modifierFlags.contains(.command),
                                     shift: event.modifierFlags.contains(.shift),
                                     otherModifiers: !event.modifierFlags.intersection([.control, .option]).isEmpty,
@@ -507,7 +687,7 @@ final class ProxiMicInputController: IMKInputController {
         clearStroke(ending: strokeSessionID.isEmpty)
         guard let session else { return false }
         if matches(IMEService.shared.cancelShortcut, event: event),
-           session.active || (session.phase == .undone && undoHistory.count > 0) {
+           session.active || session.canSystemUndo || (session.phase == .undone && undoHistory.count > 0) {
             cancelCurrentOrHistory()
             return true
         }
@@ -516,7 +696,11 @@ final class ProxiMicInputController: IMKInputController {
             invalidate("键盘输入已接管本句")
             return false
         }
-        guard session.active else { undoHistory.clear(); sendState(); return false }
+        guard session.active else {
+            if session.systemUndoTrial { invalidate("键盘输入已接管本句") }
+            else { undoHistory.clear(); sendState() }
+            return false
+        }
         if (event.keyCode == 36 || event.keyCode == 76), [.listening, .finishing].contains(session.phase) {
             perform { $0.finish() }
             return true
@@ -543,6 +727,11 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     func invalidate(_ reason: String, preservingUndo: Bool = false) {
+        reportSuggestionWrite(interrupted: true)
+        systemUndoKey = nil
+        earlySystemUndo = nil
+        undoCaretKey = nil
+        session?.retireSystemUndo()
         resumedInputToken = nil
         preservingHistory = preservingUndo
         defer { preservingHistory = false }
@@ -680,12 +869,17 @@ final class ProxiMicInputController: IMKInputController {
             guard ownsBegin() else { return }
             lastLifecycleEvent = "begin"
             traceLifecycle("begin_snapshot")
+            guard ownsBegin() else { return }
             do {
                 let next = try CompositionSession(client: adapter, utteranceID: utteranceID, sequence: sequence)
+                next.systemUndoTrial = message["system_undo_trial"] as? Bool == true
+                if next.systemUndoTrial, message["host_posts_undo"] as? Bool == true {
+                    next.hostUndoTag = Int64.random(in: 1..<(1 << 50))
+                }
                 next.automaticMode = message["automatic_mode"] as? Bool ?? false
                 next.routedEditMode = !next.automaticMode && (message["routed_edit_mode"] as? Bool ?? false)
                 guard ownsBegin() else { return }
-                if session == nil, undoHistory.enabled, let saved = service.suspendedInput,
+                if !next.systemUndoTrial, session == nil, undoHistory.enabled, let saved = service.suspendedInput,
                    saved.token == token, saved.history != nil, saved.application == activationApplication,
                    saved.client === adapter.client, saved.session.utteranceID != utteranceID {
                     // A new sentence owns its own BEGIN snapshot. Only the undo stack crosses the handoff.
@@ -697,7 +891,7 @@ final class ProxiMicInputController: IMKInputController {
                 }
                 // Release the snapshot's shared array before BEGIN appends to potentially long history.
                 if service.suspendedInput?.token == token { service.suspendedInput = nil }
-                undoHistory.begin(next.original)
+                if next.systemUndoTrial { undoHistory.clear() } else { undoHistory.begin(next.original) }
                 undoSourceUtteranceID = nil
                 session = next
                 lastContext = next.original
@@ -763,6 +957,15 @@ final class ProxiMicInputController: IMKInputController {
             panel.showLearnedHotwords(words)
             return // Presentation only; no text write, session update or readback.
         }
+        if type == "system_undo_posted" {
+            guard let tag = session.hostUndoTag, message["event_tag"] as? Int64 == tag else { return }
+            let failure = (message["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            systemUndoKey = failure == nil && earlySystemUndo == nil
+                ? (tag, ProcessInfo.processInfo.systemUptime + 0.5) : nil
+            earlySystemUndo = nil
+            session.systemUndo { $0(failure) }
+            return
+        }
         if type == "cancel" {
             cancelCurrentOrHistory()
             return
@@ -778,7 +981,11 @@ final class ProxiMicInputController: IMKInputController {
         if type == "wechat_key_result" {
             guard let reply = compatibilityKeyReply, message["request_id"] as? String == reply.id else { return }
             compatibilityKeyReply = nil
-            reply.callback((message["error"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+            let failure = (message["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            if session.systemUndoPending, let key = systemUndoKey {
+                systemUndoKey = failure == nil ? (key.tag, ProcessInfo.processInfo.systemUptime + 0.5) : nil
+            }
+            reply.callback(failure)
             return
         }
         perform { session in
@@ -801,7 +1008,24 @@ final class ProxiMicInputController: IMKInputController {
             case "convert": session.convert()
             case "finish": session.finish()
             case "finish_dictation": session.finishAsDictation()
-            case "polish": session.polish(restoringRawOnUndo: message["restore_raw_on_undo"] as? Bool ?? true)
+            case "accept_dictation_preview":
+                let service = IMEService.shared
+                guard let token = message["token"] as? String else { return }
+                guard service.automaticPolish, let offer = service.suggestion, token == offer.token,
+                      offer.isVisible, self.ownsSuggestion(offer), offer.stillValid() else {
+                    service.clearSuggestion(token: token, reason: "target_changed")
+                    service.send(["type": "dictation_preview_state", "token": token, "visible": false, "reason": "write_unconfirmed"])
+                    return
+                }
+                let text = offer.text
+                self.applyingSuggestion = (token, session, text)
+                service.clearSuggestion(token: token, reason: "applying")
+                session.acceptSuggestion(text, originalText: offer.raw, revision: offer.revision)
+                self.reportSuggestionWrite()
+            case "polish":
+                if !IMEService.shared.automaticPolish {
+                    session.polish(restoringRawOnUndo: message["restore_raw_on_undo"] as? Bool ?? true)
+                }
             case "polish_result":
                 if let revision = message["revision"] as? Int {
                     let result = message["text"] as? String ?? ""
@@ -935,7 +1159,7 @@ final class ProxiMicInputController: IMKInputController {
             configureGestureHints()
             panel.update(next, historyDepth: undoHistory.count, redoAvailable: undoHistory.canRedo && next.historyReady,
                          redoEnabled: undoHistory.redoEnabled, retryAvailable: next.canRetryEdit,
-                         historyActionMode: IMEService.shared.historyMode.rawValue)
+                         historyActionMode: IMEService.shared.historyMode.rawValue, manualPolish: !IMEService.shared.automaticPolish)
         } catch {
             if service.suspendedInput?.token == token { service.suspendedInput = nil }
             IMEService.shared.send(suspensionReply("input_resumed", token: token,
@@ -1007,9 +1231,9 @@ final class ProxiMicInputController: IMKInputController {
             guard !token.isEmpty, !strokeActive || token == strokeSessionID else { return }
             let context = try? adapter.snapshotForBeginning()
             guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
-            guard let context, context.startError == nil else {
+            guard let context, isValidRange(context.selection) else {
                 IMEService.shared.send(["type": "stroke_ready", "client_id": clientID, "stroke_session": token,
-                                        "success": false, "error": context?.startError ?? "请先点入可编辑的文本框"])
+                                        "success": false, "error": "请先点入可编辑的文本框"])
                 return
             }
             // Only completed voice bookkeeping is retired. No voice BEGIN,
@@ -1179,11 +1403,14 @@ final class ProxiMicInputController: IMKInputController {
     }
 
     private func wire(_ next: CompositionSession) {
+        adapter?.pendingCompatibility?.systemUndoTrial = next.systemUndoTrial
         let isCurrent = { [weak self, weak next] in
             guard let self, let next else { return false }
             return self.activated && self.ownsActivation && self.session === next
         }
-        next.onChanged = { [weak self] in if isCurrent() { self?.changed() } }
+        next.onChanged = { [weak self] in
+            if isCurrent() { self?.reportSuggestionWrite(); self?.changed() }
+        }
         next.onFinishAudio = { [weak self] in if isCurrent() { self?.sendEvent("finish_audio") } }
         next.onInterrupted = { [weak self] reason in
             if isCurrent() {
@@ -1193,7 +1420,9 @@ final class ProxiMicInputController: IMKInputController {
         }
         next.onSettled = { [weak self] phase, text in
             if isCurrent(), let self, let session = self.session {
-                self.undoHistory.settled(session, sourceUtteranceID: self.undoSourceUtteranceID)
+                if !session.systemUndoTrial {
+                    self.undoHistory.settled(session, sourceUtteranceID: self.undoSourceUtteranceID)
+                }
                 guard isCurrent() else { return }
                 self.sendEvent("settled", extra: ["phase": phase, "text": text])
             }
@@ -1203,6 +1432,18 @@ final class ProxiMicInputController: IMKInputController {
             self?.sendEvent("edit_requested", extra: ["original": original, "instruction": instruction,
                 "revision": revision, "retry_edit": self?.session?.retryingEdit ?? false])
         }
+        next.onDictationCommitted = { [weak self, weak next] in
+            guard isCurrent(), let self, let next, IMEService.shared.automaticPolish,
+                  let adapter = self.adapter else { return }
+            let caret = next.canSuggestReplacement ? adapter.caret(compositionLength: 0) : nil
+            guard isCurrent() else { return }
+            if let token = IMEService.shared.beginSuggestion(next, adapter: adapter, caret: caret) {
+                self.sendEvent("dictation_preview_requested", extra: ["token": token, "before_cursor": next.beforeDictationCursor])
+            } else {
+                self.sendEvent("dictation_preview_requested", extra: ["token": UUID().uuidString,
+                    "before_cursor": next.beforeDictationCursor, "blocked": next.canSuggestReplacement ? "caret_unavailable" : "range_unverified"])
+            }
+        }
         next.onPolish = { [weak self] text, revision in
             guard isCurrent() else { return }
             self?.sendEvent("polish_requested", extra: ["text": text, "revision": revision])
@@ -1211,6 +1452,26 @@ final class ProxiMicInputController: IMKInputController {
 
     private func cancelCurrentOrHistory() {
         guard activated, ownsActivation, !isWriting, let current = session, let adapter else { return }
+        if current.systemUndoTrial {
+            if [.dictated, .edited, .undone].contains(current.phase) {
+                guard current.canSystemUndo else { return }
+                IMEService.shared.clearSuggestion(reason: "undo")
+                let id = UUID().uuidString
+                let tag = Int64.random(in: 1..<(1 << 50))
+                current.systemUndo { reply in
+                    compatibilityKeyReply = (id, reply)
+                    systemUndoKey = (tag, ProcessInfo.processInfo.systemUptime + 1.5)
+                    sendEvent("wechat_key", extra: ["request_id": id, "command": "system_undo", "count": 0,
+                                                    "event_tag": tag, "application": activationApplication])
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                        guard let self, let pending = self.compatibilityKeyReply, pending.id == id else { return }
+                        self.compatibilityKeyReply = nil
+                        pending.callback("系统撤销未返回发送回执")
+                    }
+                }
+            } else { perform { $0.cancel() } }
+            return
+        }
         if current.phase == .undone, let record = undoHistory.pop() {
             let restored = CompositionSession(client: adapter, undo: record,
                                               utteranceID: current.utteranceID,
@@ -1275,7 +1536,7 @@ final class ProxiMicInputController: IMKInputController {
 
     @discardableResult
     func sendState(includeSnapshot: Bool = false, requestID: String? = nil, failedUtteranceID: String? = nil,
-                   reply: [String: Any]? = nil) -> Bool {
+                   reply: [String: Any]? = nil, metadataOnly: Bool = false) -> Bool {
         guard activated, ownsActivation, !preparingActivation, !stateReadInProgress, let adapter,
               !adapter.clipboardReadInProgress else { return false }
         // IMK reads can pump the run loop; coalesce nested host pings instead
@@ -1285,7 +1546,9 @@ final class ProxiMicInputController: IMKInputController {
         let stateClientID = currentClientID
         let replySession = session
         let context: EditorSnapshot?
-        if strokeActive, includeSnapshot, requestID != nil {
+        if metadataOnly, requestID == nil, let session, session.active { context = session.original }
+        else if metadataOnly { context = try? adapter.focusSnapshot() }
+        else if strokeActive, includeSnapshot, requestID != nil {
             // A Backspace focus probe needs the current selection, not the entry snapshot.
             context = EditorSnapshot(text: nil, selection: adapter.startingSelection(), markedRange: unspecifiedRange,
                                      selectedText: nil, documentAccess: false)
@@ -1298,8 +1561,9 @@ final class ProxiMicInputController: IMKInputController {
         if includeSnapshot, requestID == nil { lastContext = context }
         let complete = context?.complete ?? false
         let access = context?.documentAccess ?? false
-        // Starting requires a usable selection, never a previous IME's mark.
-        let targetError = context?.startError ?? (context == nil ? "请先点入可编辑的文本框" : nil)
+        // An activated client may support preedit/commit without exposing its
+        // document selection. Range-dependent operations check their own proof.
+        let targetError = context == nil ? "请先点入可编辑的文本框" : nil
         let recovering = session.map { $0.phase == .error && ($0.hasComposition || $0.awaitingReadback) } ?? false
         let ready = IMEService.shared.epoch != nil && targetError == nil && !recovering
         needsIdleTargetRefresh = !ready
@@ -1313,6 +1577,7 @@ final class ProxiMicInputController: IMKInputController {
         guard activated, ownsActivation, currentClientID == stateClientID, self.adapter === adapter,
               reply == nil || session === replySession else { return false }
         var state: [String: Any] = ["type": "state", "ready": ready,
+                                    "context_key_supported": permitsContextKey,
                                     "client_id": currentClientID, "utterance_id": rejectedBeginID ?? session?.utteranceID ?? failedUtteranceID ?? "",
                                     "phase": session?.phase.rawValue ?? (failedUtteranceID == nil ? "idle" : "error"),
                                     "application": application,
@@ -1329,7 +1594,11 @@ final class ProxiMicInputController: IMKInputController {
                                     "native_build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unbundled",
                                     "client_read_diagnostics": adapter.lastReadDiagnostics,
                                     "capabilities": capabilities, "can_convert": session?.canEdit ?? false,
-                                    "can_cancel": (session?.canCancel ?? false) || (session?.phase == .undone && undoHistory.count > 0),
+                                    "system_undo_trial": session?.systemUndoTrial ?? false,
+                                    "host_undo_tag": session?.hostUndoTag ?? 0,
+                                    "system_undo_pending": session?.systemUndoPending ?? false,
+                                    "can_system_undo": session?.canSystemUndo ?? false,
+                                    "can_cancel": (session?.canSystemUndo ?? false) || (session?.canCancel ?? false) || (session?.phase == .undone && undoHistory.count > 0),
                                     "undo_history_depth": undoHistory.count,
                                     "can_redo": undoHistory.canRedo && (session?.historyReady ?? false),
                                     "redo_history_depth": undoHistory.redoCount,
@@ -1371,7 +1640,7 @@ final class ProxiMicInputController: IMKInputController {
         configureGestureHints()
         panel.update(session, historyDepth: undoHistory.count, redoAvailable: undoHistory.canRedo && session.historyReady,
                      redoEnabled: undoHistory.redoEnabled, retryAvailable: session.canRetryEdit,
-                     historyActionMode: IMEService.shared.historyMode.rawValue)
+                     historyActionMode: IMEService.shared.historyMode.rawValue, manualPolish: !IMEService.shared.automaticPolish)
         tick()
     }
 
@@ -1409,6 +1678,16 @@ final class ProxiMicInputController: IMKInputController {
             }
         }
         guard let session else { return }
+        if !isWriting, let tag = session.hostUndoTag, let range = session.takeRestoredReplacementSelection(),
+           activated, ownsActivation, currentClientID == clientID, self.session === session {
+            let eventTag = Self.undoCaretMarker + tag
+            let expires = ProcessInfo.processInfo.systemUptime + 0.25
+            undoCaretKey = (eventTag, session.revision, range, expires)
+            // B106 hosts already accept this selection-collapse message.
+            IMEService.shared.send(["type": "preview_undo_caret", "client_id": clientID,
+                "utterance_id": session.utteranceID, "revision": session.revision,
+                "host_undo_tag": tag, "event_tag": eventTag, "expires": expires])
+        }
         if !isWriting, session.awaitingReadback || (session.phase == .error && session.hasComposition && selectionPolls % 15 == 0) {
             isWriting = true
             session.advanceReadback()
@@ -1419,10 +1698,10 @@ final class ProxiMicInputController: IMKInputController {
             session.checkSelection()
             isWriting = false
         }
-        guard session.active || (session.phase == .undone && (undoHistory.count > 0 || undoHistory.redoCount > 0)) else { return }
+        guard session.active || session.canSystemUndo || (session.phase == .undone && (undoHistory.count > 0 || undoHistory.redoCount > 0)) else { return }
         let trace = CaretDiagnostics.shared.shouldSample()
         let length = session.hasComposition ? (session.raw as NSString).length : 0
-        if panel.needsPosition {
+        if panel.needsPosition && IMEService.shared.suggestion?.isVisible != true {
             panel.position(caret: adapter.caret(compositionLength: length, trace: trace), clientLevel: adapter.client.windowLevel())
         }
         if trace {

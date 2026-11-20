@@ -18,6 +18,21 @@ from .processing_common import LLMResponseProcessingError, _text_output_budget
 
 
 class ManualTextProcessingMixin:
+    def suggest_dictation(self, settings, text, before_cursor, context):
+        """One complete plain-text answer, using the utterance's frozen context."""
+        import json
+        from .dictation_preview_prompt import DICTATION_PREVIEW_PROMPT
+
+        settings.validate()
+        if settings.provider == LLM_PROVIDER_LOCAL and settings.local_auto_start:
+            self._ensure_local_server(replace(settings, local_reasoning="off"))
+        payload = {"asr_final": text, "before_cursor": before_cursor,
+                   "scene": context.get("scene", ""), "context": context.get("context", "")}
+        output = self._request_chat(settings, system_prompt=DICTATION_PREVIEW_PROMPT,
+            user_content=json.dumps(payload, ensure_ascii=False), temperature=0, max_tokens=2048,
+            require_complete=True, disable_reasoning=True, allow_empty_text=settings.provider == "volcengine")
+        return output.strip() if isinstance(output, str) else ""
+
     def polish_with_trace(self, text: str, settings: LLMSettings) -> tuple[str, str]:
         """Polish only this utterance; never enter instruction editing/racing."""
         settings.validate()

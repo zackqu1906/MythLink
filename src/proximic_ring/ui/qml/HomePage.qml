@@ -209,7 +209,7 @@ UiScrollView {
                     objectName: "homeVoiceHistoryList"
                     anchors.fill: parent
                     spacing: 12
-                    model: page.controller.voiceHistoryEntries.slice(0, 10)
+                    model: page.controller.recentVoiceHistoryEntries
                     clip: true; boundsBehavior: Flickable.StopAtBounds
                     flickableDirection: Flickable.VerticalFlick
                     // Fit three complete rows, including variable-length text, while
