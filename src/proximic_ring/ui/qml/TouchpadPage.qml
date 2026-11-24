@@ -90,7 +90,7 @@ ScrollView {
                     Label {
                         objectName: "touchpadRunStatus"
                         Layout.fillWidth: true; wrapMode: Text.Wrap
-                        text: page.touchpad.inputMode === "voice" ? "单指双击回到光标控制"
+                        text: page.touchpad.inputMode === "voice" ? page.touchpad.voiceModeSwitchGestureLabel + "回到光标控制"
                             : page.touchpad.active ? "已启用 · " + (page.touchpad.inputMode === "stroke" ? "正在书写笔画" : "正在控制鼠标 · 可同时使用 Ring 或电脑麦克风") : "开启后可控制鼠标，同时使用 Ring 或电脑麦克风。"
                         color: theme.muted; font.pixelSize: 13
                     }
@@ -276,7 +276,7 @@ ScrollView {
                     Label {
                         Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted
                         text: page.touchpad.raw2Supported
-                            ? (page.touchpad.windowsInputPrototype ? "单指双击切换语音和触摸板。触摸板模式下，点入文本框后双指双击进入或退出笔画输入。" : page.touchpad.externalStrokeSupported ? "点入输入框，双指双击进入或退出笔画输入。单指双击为鼠标双击；双指单击稍候触发右键。" : "双指双击进入或退出试写。单指双击为鼠标双击；双指单击稍候触发右键。")
+                            ? (page.touchpad.windowsInputPrototype ? page.touchpad.voiceModeSwitchGestureLabel + "切换语音和触摸板。触摸板模式下，点入文本框后双指双击进入或退出笔画输入。" : page.touchpad.externalStrokeSupported ? "点入输入框，双指双击进入或退出笔画输入。单指双击为鼠标双击；双指单击稍候触发右键。" : "双指双击进入或退出试写。单指双击为鼠标双击；双指单击稍候触发右键。")
                             : "当前平台使用兼容触摸板，暂不支持新版双指滚动和独立点击设置。笔画输入可在书写区使用。"
                     }
                 }

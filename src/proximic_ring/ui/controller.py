@@ -37,7 +37,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from ..asr import ASRBackendCache
 from ..asr.backends.bailian import STREAMING_MODEL as BAILIAN_STREAMING_MODEL
 from ..audio.microphone import SYSTEM_DEFAULT_MICROPHONE, input_device_choices
-from ..ring_devices import ring_family
+from ..ring_devices import R1_TAP_ALIASES, matches_tap_gesture, ring_family
 from ..voice.app_runtime import (
     ASR_GAIN_DB_DEFAULT,
     ASR_GAIN_DB_MAX,
@@ -3084,22 +3084,28 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             if normalized != bindings and not legacy_r1 and not self._settings.contains(backup_key):
                 self._settings.setValue(backup_key, bindings.to_json())
             bindings = normalized
-            pinch_reserved = (self._settings.value("gestures/inputSourceGesture") == "index-pinch"
-                              or any("index-pinch" in names for action, names in bindings.as_dict().items()
-                                     if action not in {"confirm", "end"}))
-            if (legacy_r1 or migrate_ringo) and not pinch_reserved:
-                tap_gestures = {"tap", "double-tap"} if legacy_r1 else {"tap"}
-                bindings = replace(bindings, **{
-                    action: getattr(defaults, action) for action in ("confirm", "end")
-                    if getattr(bindings, action)[0] in tap_gestures
-                })
+            if legacy_r1 or migrate_ringo:
+                reserved = {name for action, names in bindings.as_dict().items()
+                            if action not in {"confirm", "end"} for name in names}
+                reserved.add(self._settings.value("gestures/inputSourceGesture", ""))
+                updates = {}
+                for action in ("confirm", "end"):
+                    primary = getattr(bindings, action)[0]
+                    pinch = R1_TAP_ALIASES.get(primary)
+                    if pinch and pinch not in reserved:
+                        if legacy_r1:
+                            updates[action] = (pinch, "")
+                        elif primary == "tap":
+                            updates[action] = getattr(defaults, action)
+                bindings = replace(bindings, **updates)
         if migrate_ringo:
             self._settings.setValue("gestures/ringoPinchDefaultMigrated", True)
         if new_r1_profile or migrate_aliases or bindings.to_json() != saved:
             self._settings.setValue(key, bindings.to_json())
 
         if sys.platform == "win32" and os.environ.get("MYTHLINK_WINDOWS_TSF") == "1":
-            gestures = {action: tuple("" if name == "double-tap" else name for name in names)
+            gestures = {action: tuple("" if matches_tap_gesture(name, self._device_family, "double-tap")
+                                      else name for name in names)
                         for action, names in bindings.as_dict().items()}
             if not any(gestures["confirm"]):
                 for action in gestures:
@@ -3110,7 +3116,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                     for name in names if name}
             if not any(gestures["end"]):
                 start = next(name for name in gestures["confirm"] if name)
-                gestures["end"] = ("tap" if "tap" not in used else start, "")
+                preferred = defaults.end[0]
+                gestures["end"] = (preferred if preferred not in used else start, "")
             bindings = GestureBindings(**gestures)
         return bindings
 
@@ -3148,7 +3155,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         }
         used.add(self._app_gestures.inputSourceGesture)
         if self._touchpad.windowsInputPrototype:
-            used.add("double-tap")
+            used.update(name for name in GESTURE_LABELS
+                        if matches_tap_gesture(name, self._device_family, "double-tap"))
         return [{"value": "", "label": "未设置"}] + [
             {"value": name, "label": label}
             for name, label in GESTURE_LABELS.items() if name not in used
@@ -3177,8 +3185,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
-            if self._touchpad.windowsInputPrototype and name == "double-tap":
-                raise ValueError("单指双击用于切换语音和触摸板模式")
+            if self._touchpad.windowsInputPrototype and matches_tap_gesture(name, self._device_family, "double-tap"):
+                raise ValueError(f"{GESTURE_LABELS[name]}用于切换语音和触摸板模式")
             if action not in self._gesture_bindings.as_dict() or slot not in (0, 1):
                 raise ValueError("无效的手势设置位置")
             bindings = replace(self._gesture_bindings, **{action: (name, "")})
@@ -3232,6 +3240,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     def setVoiceGestureAction(self, gesture, action):
         from .gestures.voice_gesture_mapping import with_action
         try:
+            if action and self._touchpad.windowsInputPrototype and matches_tap_gesture(gesture, self._device_family, "double-tap"):
+                raise ValueError(f"{GESTURE_LABELS[gesture]}用于切换语音和触摸板模式")
             bindings = with_action(self._gesture_bindings, gesture, action)
             self._app_gestures.validate_voice(bindings)
         except ValueError as exc:
@@ -3889,6 +3899,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._load_device_audio_preferences()
         if self._gesture_bindings_key != previous_gesture_key:
             self._set_active_gesture_bindings(self._load_gesture_bindings())
+            self._app_gestures.catalog.discoveryChanged.emit()
         self.microphoneDevicesChanged.emit()
         self.audioSettingsChanged.emit()
         self.settingsChanged.emit()

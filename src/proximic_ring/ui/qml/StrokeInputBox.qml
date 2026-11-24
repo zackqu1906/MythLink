@@ -130,7 +130,7 @@ Item {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.alignment: Qt.AlignVCenter
                 text: box.touchpad.strokePreparing ? "正在准备笔画输入…"
                     : box.touchpad.active && box.touchpad.inputMode === "stroke" ? "笔画输入中 · " + box.touchpad.strokeGestureLabel + "回到鼠标"
-                    : box.touchpad.inputMode === "voice" ? "语音模式 · 单指双击回到光标控制"
+                    : box.touchpad.inputMode === "voice" ? "语音模式 · " + box.touchpad.voiceModeSwitchGestureLabel + "回到光标控制"
                     : box.touchpad.active ? "鼠标模式 · 点击「开始试写」进入笔画"
                     : "点击「开始试写」用 Ring 写笔画，也可键入试写"
                 font.pixelSize: 12; color: theme.muted

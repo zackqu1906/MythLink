@@ -3,6 +3,13 @@
 import re
 
 
+R1_TAP_ALIASES = {"tap": "index-pinch", "double-tap": "double-index-pinch"}
+
+
+def matches_tap_gesture(name: str, family: str, tap: str = "tap") -> bool:
+    return name == tap or (family == "R1" and name == R1_TAP_ALIASES[tap])
+
+
 def ring_family(name: str, pnp_id: bytes | None = None) -> str:
     # R1-PC prioritizes the advertised DIS product ID over the display name.
     if pnp_id == bytes.fromhex("02 39 3a 31 52"):

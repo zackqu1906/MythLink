@@ -122,6 +122,50 @@ def test_pointer_and_stroke_use_separate_movement_without_restarting_stream(inli
     tp.stop(); QTest.qWait(20)
 
 
+def test_r1_keeps_stroke_page_and_routes_motion_to_its_stroke_output(inline_ui, monkeypatch):
+    from PySide6.QtCore import QObject
+    from PySide6.QtTest import QTest
+
+    c, _, _, root, event = inline_ui
+    c._device_family = 'R1'
+    c._utterance_active = False
+    c._pending_inline_audio_start = None
+    c._interaction_state = 'idle'
+    event(phase='interrupted', ready=True, composing=False, writing=False,
+          edit_requested=False, awaiting_readback=False)
+    tp, source = prepare(c)
+    source.ring_family = 'R1'
+    tp.stroke_output_factory = Output
+    monkeypatch.setattr(tp, '_prepare_raw2_heap', lambda: None)
+    root.setProperty('currentPage', 3)
+    QTest.qWait(50)
+    assert tp.strokeSupported and tp.raw2Supported
+    assert root.findChild(QObject, 'strokeModeButton').property('visible')
+    tp.start(); QTest.qWait(20)
+    source.future.set_result(None); QTest.qWait(20)
+    tp.setInputMode('stroke'); QTest.qWait(20)
+    assert tp.inputMode == 'stroke' and tp._run.output.options['r1']
+    delivered = []
+    tp._run.output.submit_pointer = delivered.append
+    move = SimpleNamespace(kind='move', step=1)
+    source.starts[0]['on_pointer_move'](move)
+    assert delivered == [move]
+    tp.stop(); QTest.qWait(20)
+
+
+def test_windows_tap_mode_switch_accepts_double_pinch_for_r1(inline_ui):
+    c, *_ = inline_ui
+    tp, _ = prepare(c)
+    tp._windows_ime = True
+    calls = []
+    tp._modeSwitch.connect(calls.append)
+    pinch = SimpleNamespace(name='double-index-pinch')
+    assert not tp.consume_gesture(pinch, c._disconnect_event)
+    c._device_family = 'R1'
+    assert tp.consume_gesture(pinch, c._disconnect_event)
+    assert calls == [c._disconnect_event]
+
+
 @pytest.mark.parametrize('size', [(1440, 940), (940, 700)])
 def test_raw2_feature_switches_are_live_persisted_and_visible(inline_ui, tmp_path, size):
     from PySide6.QtCore import QObject, QMetaObject, QPointF

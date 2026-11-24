@@ -25,6 +25,7 @@ from ...touchpad.click_diagnostics import ClickTrace
 from ...touchpad.touchpad_strokes import TouchpadStrokeOutput
 from ...diagnostics.diagnostic_log import RotatingDiagnosticLog
 from ...runtime_paths import app_data_root
+from ...ring_devices import matches_tap_gesture
 from ...touchpad.stroke.stroke_input import StrokeDictionary, SYMBOLS, NAMES
 from ...touchpad.stroke.stroke_display import TRAIL_STYLE, normalized_trace
 from ...touchpad.stroke.stroke_common import common_characters
@@ -220,14 +221,20 @@ class TouchpadController(QObject):
             self.setInputMode("pointer")
             self.start()
 
-    @Property(bool, notify=changed)
-    def strokeSupported(self): return getattr(self._source, 'ring_family', '') != 'R1'
+    @Property(bool, constant=True)
+    def strokeSupported(self): return self.supported
+
+    @Property(str, notify=changed)
+    def voiceModeSwitchGestureLabel(self):
+        return "双次食指捏合" if self.owner._device_family == 'R1' else "单指双击"
 
     @Property(bool, constant=True)
     def macPermissionsRequired(self): return sys.platform == "darwin"
 
     @Property(bool, notify=changed)
     def raw2Supported(self):
+        if getattr(self._source, 'ring_family', '') == 'R1':
+            return self.supported
         if sys.platform == 'darwin':
             return platform.machine() == 'arm64'
         from ring_python_sdk.touchpad.raw2_model import windows_raw2_enabled
@@ -782,11 +789,12 @@ class TouchpadController(QObject):
         if connection is not self.owner._disconnect_event or connection.is_set():
             return False
         run = self._run
-        if self._windows_ime and getattr(event, "name", "") == "double-tap":
+        name = getattr(event, 'name', '')
+        if self._windows_ime and matches_tap_gesture(name, self.owner._device_family, 'double-tap'):
             # Raw2 pointer mode also observes the same physical gesture. Let
             # its contact detector own the pair while that stream is active.
             if ((run is None or run.mode == "stroke" or run.protocol != "raw2")
-                    and (run is None or time.monotonic() >= run.switch_gesture_until)):
+                    or name != 'double-tap') and (run is None or time.monotonic() >= run.switch_gesture_until):
                 self._modeSwitch.emit(connection)
             return True
         if (run is not None and connection is self._connection
@@ -954,7 +962,7 @@ class TouchpadController(QObject):
             run.output.start()
         else:
             self._sync_voice_gate()
-        self._message = ("语音输入模式，单指双击回到光标控制。" if mode == 'voice' else
+        self._message = (f"语音输入模式，{self.voiceModeSwitchGestureLabel}回到光标控制。" if mode == 'voice' else
                          "用 Ring 书写笔画，轻触确认候选字。" if mode == "stroke"
                          else "用 Ring 移动指针，点击「停止触摸板」结束。")
         self.changed.emit()
@@ -1389,7 +1397,7 @@ class TouchpadController(QObject):
                 on_tap=lambda: None,  # Complete single-finger contacts own the configured action.
                 on_double_click=double_click,
                 on_two_finger_tap=lambda: self._post(run, 'two_finger_tap', (output, None)),
-                raw2=run.protocol == 'raw2',
+                raw2=run.protocol == 'raw2', r1=getattr(run.source, 'ring_family', '') == 'R1',
                 contact_classifier=trial_contact,
                 two_finger_classifier=lambda points, **options: two_finger_selection(points,
                     correction_enabled=self.handwritingCorrectionActive, **options),
@@ -1611,7 +1619,12 @@ class TouchpadController(QObject):
                 run.output.activate()
                 run.output_ready = True
                 self._state = "running"
-                self._message = "准备中，稍后即可书写笔画。" if run.mode == "stroke" else "准备中，稍后即可移动指针。点击「停止触摸板」结束。"
+                if getattr(run.source, 'ring_family', '') == 'R1':
+                    self._warm = True  # R1 SDK start returns after the first inference frame.
+                    self._message = ("用 Ring 书写笔画，轻触确认候选字。" if run.mode == "stroke"
+                                     else "用 Ring 移动指针，点击「停止触摸板」结束。")
+                else:
+                    self._message = "准备中，稍后即可书写笔画。" if run.mode == "stroke" else "准备中，稍后即可移动指针。点击「停止触摸板」结束。"
                 self.changed.emit()
                 if getattr(run, "local_trial_requested", False):
                     run.local_trial_requested = False
@@ -1810,7 +1823,8 @@ class TouchpadController(QObject):
                 elif name == "swipe-left": self._move_candidate(-1)
                 elif name == "swipe-up": self.undoStroke()
                 elif name == "swipe-down": self.clearStrokes()
-                elif name == "tap" and run.protocol != 'raw2' and not self._local_stroke_input:
+                elif (name == "tap" and run.protocol != 'raw2' and not self._local_stroke_input
+                      or getattr(run.source, 'ring_family', '') == 'R1' and matches_tap_gesture(name, 'R1')):
                     self.selectCandidate(self._selected)
         elif kind == "stats" and self._state == "running":
             captured_at, value, counts = value
@@ -1828,7 +1842,7 @@ class TouchpadController(QObject):
             warm = bool(ready) if ready is not None else value.warmup_frames >= 200
             if warm != self._warm:
                 self._warm = warm
-                self._message = ("语音输入模式，单指双击回到光标控制。" if run.mode == 'voice' else
+                self._message = (f"语音输入模式，{self.voiceModeSwitchGestureLabel}回到光标控制。" if run.mode == 'voice' else
                     ("用 Ring 书写笔画，轻触确认候选字。" if run.mode == "stroke" else "用 Ring 移动指针，点击「停止触摸板」结束。") if warm else "信号恢复中，正在重新准备…")
                 self.changed.emit()
         elif kind in {"ended", "stopped"}:

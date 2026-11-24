@@ -220,9 +220,11 @@ def test_r1_migrates_tap_endpoints_then_persists_its_own_gestures(tmp_path, monk
     controller = _controller(tmp_path, monkeypatch)
     try:
         bindings = controller._runtime_settings().gesture_bindings
-        assert bindings.confirm == bindings.end == ("index-pinch", "")
+        assert bindings.confirm == ("double-index-pinch", "")
+        assert bindings.end == ("index-pinch", "")
         assert bindings.undo == legacy.undo
-        assert controller.confirmGestureHint == controller.endGestureHint == "食指捏合"
+        assert controller.confirmGestureHint == "双食指捏合"
+        assert controller.endGestureHint == "食指捏合"
         assert controller.setVoiceGestureAction("clench", "start_end")
         assert GestureBindings.from_json(controller._settings.value("input/gestureBindings")) == legacy
     finally:

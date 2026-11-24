@@ -237,7 +237,7 @@ Item {
                 spacing: 18
                 Text { text: windowSelector.atApps ? "↑ ↓ ← →  选择应用" : "↑ ↓ ← →  选择窗口"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { visible: !windowSelector.atApps && Boolean(windowSelector.globalLabels.switch_mode); text: windowSelector.globalLabels.switch_mode + "  返回上级"; color: "#cccccc"; font.pixelSize: 13 }
-                Text { text: root.expandsSelection ? "单击 / Tap  展开" : "单击 / Tap  进入窗口"; color: "#f5f5f5"; font.pixelSize: 13 }
+                Text { text: windowSelector.confirmGestureLabel + (root.expandsSelection ? "  展开" : "  进入窗口"); color: "#f5f5f5"; font.pixelSize: 13 }
                 Text { visible: Boolean(windowSelector.globalLabels.window_selector); text: windowSelector.globalLabels.window_selector + "  取消窗口选择"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { visible: Boolean(windowSelector.globalLabels.show_menu); text: windowSelector.globalLabels.show_menu + "  提示环"; color: "#cccccc"; font.pixelSize: 13 }
             }

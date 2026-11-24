@@ -69,3 +69,26 @@ def test_scene_dispatch_uses_current_page_not_editor_and_cancels_stale_gestures(
     backend.target = replace(backend.target, input_context="text")
     request(c, "tap")
     assert len(sent) == 2
+
+
+def test_r1_video_default_copies_tap_to_pinch_and_respects_unbinding(presentation, monkeypatch):
+    c, service, _, backend, _, sent, _ = presentation
+    catalog = configure(service, monkeypatch, SAFARI)
+    catalog.selectScene('video')
+    assert 'index-pinch' not in catalog.bindings[SAFARI]
+    c._device_family = 'R1'
+    assert catalog.bindings[SAFARI]['index-pinch'] == catalog.bindings[SAFARI]['tap']
+    backend.target = replace(backend.target, bundle=SAFARI, scene='video', page_key='one', input_context='nontext')
+    assert not request(c, 'index-pinch') and sent == [(SAFARI, 'Space')]
+    assert catalog.setBinding(SAFARI, 'index-pinch', '')
+    assert 'index-pinch' not in catalog.bindings[SAFARI]
+    restored = ApplicationMappingController(service)
+    try:
+        assert 'scene:index-pinch' not in restored.for_scene(SAFARI, 'video')
+        assert 'scene:tap' in restored.for_scene(SAFARI, 'video')
+    finally:
+        restored.close()
+    assert catalog.restoreDefaultMappings(SAFARI)
+    assert 'index-pinch' in catalog.bindings[SAFARI]
+    assert catalog.setCustomBinding(SAFARI, 'index-pinch', '自定义', 'Cmd+K')
+    assert catalog.bindings[SAFARI]['index-pinch']['shortcut'] == 'Cmd+K'

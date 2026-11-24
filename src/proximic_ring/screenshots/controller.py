@@ -14,6 +14,7 @@ from PySide6.QtGui import QGuiApplication, QCursor
 from PySide6.QtWidgets import QPushButton
 
 from ..gestures.gesture_settings import GESTURE_LABELS
+from ..ring_devices import matches_tap_gesture
 
 from .backend import capture_screens, CapturePermissionError
 from .geometry import Selection
@@ -60,7 +61,12 @@ class ScreenCaptureController(QObject):
         return ((id(self), self.epoch, self.pointer_revision), phase)
 
     confirm_label = '保存并复制 →'
-    confirm_hint = 'tap / 右滑保存并复制后退出'
+    confirm_hint_action = '保存并复制后退出'
+
+    @property
+    def confirm_hint(self):
+        gesture = '食指捏合' if getattr(self.owner, '_device_family', '') == 'R1' else 'tap'
+        return f'{gesture} / 右滑{self.confirm_hint_action}'
 
     @property
     def exit_context(self):
@@ -239,7 +245,8 @@ class ScreenCaptureController(QObject):
                     elif not window.toolbar.geometry().contains(window.mapFromGlobal(point)):
                         self.select_point(window.index, point.x(), point.y())
                     break
-        elif name in ('tap', 'swipe-right'): self.confirm()
+        elif name == 'swipe-right' or matches_tap_gesture(name, getattr(self.owner, '_device_family', '')):
+            self.confirm()
         elif name == 'swipe-left': self.back()
 
     def _refresh(self):

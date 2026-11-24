@@ -142,3 +142,68 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
             stop.set()
             worker.result(timeout=8)
     assert calls.count(("close",)) == 1
+
+
+def test_r1_sparse_motion_reaches_stroke_recognition_and_stationary_taps():
+    import time
+
+    from proximic_ring.audio.r1_session import R1Session
+    from proximic_ring.touchpad.stroke.stroke_input import StrokeDictionary
+    from proximic_ring.touchpad.stroke.stroke_menu import trial_contact
+    from proximic_ring.touchpad.touchpad_strokes import TouchpadStrokeOutput
+
+    ready = threading.Event()
+    strokes, taps, ended = Queue(), Queue(), Queue()
+    output = TouchpadStrokeOutput(connection=threading.Event(), on_ready=ready.set,
+        on_end=lambda reason, error: ended.put(error), on_stroke=strokes.put, on_tap=lambda: None,
+        on_tap_contact=taps.put, contact_classifier=trial_contact, raw2=True, r1=True)
+    output.start()
+    try:
+        assert ready.wait(1)
+        output.activate()
+        adapter = object.__new__(R1Session)
+        stream = SimpleNamespace(status=sdk.TouchpadStatus(sdk.TouchpadStage.RUNNING, 7, 1))
+        adapter.ring = SimpleNamespace(touchpad=stream)
+        adapter._touchpad_event = output.submit
+        sequence = iter(range(1, 100))
+
+        def meta():
+            return sdk.EventMeta(7, stream.status.generation, next(sequence), time.perf_counter_ns())
+
+        def motion(step, dx, dy=0., episode=None):
+            event = sdk.Motion(meta(), step - 1, dx, dy, 'SINGLE', episode)
+            adapter._pointer_event(event, output.submit_pointer)
+
+        def edge(phase, episode, start, end=None):
+            now = time.perf_counter_ns()
+            contact = sdk.ContactRange(start - 1, now, None if end is None else end - 1,
+                                       None if end is None else now)
+            event = sdk.ContactUpdate(meta(), episode, phase, 'SINGLE', contact)
+            adapter._pointer_event(event, output.submit_pointer)
+
+        motion(102, 3.)
+        edge('BEGIN', 1, 100)
+        for step in (105, 108, 111, 114):
+            motion(step, 3., episode=1)
+        # Motion received before the confirmed END is trimmed at the edge.
+        motion(119, 0., 60., episode=1)
+        edge('END', 1, 100, 118)
+        points = strokes.get(timeout=2)
+        assert len(points) == 18 and points[2] == (3., 0.) and points[-1] == (15., 0.)
+        assert StrokeDictionary().recognize(points)['category'] == 'h'
+
+        edge('BEGIN', 2, 130)
+        edge('END', 2, 130, 141)
+        assert taps.get(timeout=2)['intent_decision']['action'] == 'tap'
+
+        edge('BEGIN', 3, 149)
+        adapter._touchpad_status(sdk.TouchpadStatus(sdk.TouchpadStage.STARTING, 7, 2))
+        stream.status = sdk.TouchpadStatus(sdk.TouchpadStage.RUNNING, 7, 2)
+        edge('END', 3, 149, 160)
+        edge('BEGIN', 1, 2)
+        edge('END', 1, 2, 12)
+        assert taps.get(timeout=2)['start_step'] == 2
+        assert taps.empty() and strokes.empty()
+    finally:
+        output.stop()
+        assert ended.get(timeout=2) is None

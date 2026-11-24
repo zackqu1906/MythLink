@@ -23,6 +23,7 @@ from ..desktop.application_launcher import ApplicationLauncher
 from ...screenshots.saved_capture import SavedCaptureController
 from .app_gesture_controller import InputSourceGestureEvent
 from ...gestures.history import observe_gesture
+from ...ring_devices import matches_tap_gesture
 
 
 @dataclass(frozen=True)
@@ -377,7 +378,11 @@ class RingGestureController(QObject):
         global_action = self.owner._global_gesture_bindings.action_for(name)
         canonical = {"show_menu": "index-pinch", "window_selector": "clench"}
         if self._selector.blocked.is_set():
-            self._selector.enqueue(canonical.get(global_action, name), connection, busy)
+            selector_name = canonical.get(global_action, name)
+            if (name != "tap" and global_action != "window_selector"
+                    and matches_tap_gesture(name, self.owner._device_family)):
+                selector_name = "tap"
+            self._selector.enqueue(selector_name, connection, busy)
             return False
         with self._lock:
             if self._transition is not None or self._scroll.applying.is_set():

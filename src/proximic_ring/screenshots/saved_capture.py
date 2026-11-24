@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QFileDialog
 from .controller import ScreenCaptureController
 from .context import SavedScreenshotContext
 from ..gestures.gesture_settings import GESTURE_LABELS
+from ..ring_devices import matches_tap_gesture
 
 DIRECTORY_KEY = 'screenshots/directory'
 
@@ -102,7 +103,8 @@ class SavedCaptureController(ScreenCaptureController):
         self._source_app = None
         gesture = self.owner._global_gesture_bindings.screen_capture
         # Built-in screenshot actions win over an overlapping global binding.
-        self.exit_gesture = gesture if gesture not in ('tap', 'swipe-left', 'swipe-right') else ''
+        self.exit_gesture = '' if gesture in ('swipe-left', 'swipe-right') or matches_tap_gesture(
+            gesture, self.owner._device_family) else gesture
         if sys.platform == 'darwin' and QGuiApplication.platformName() == 'cocoa':
             from AppKit import NSWorkspace
             self._source_app = NSWorkspace.sharedWorkspace().frontmostApplication()
