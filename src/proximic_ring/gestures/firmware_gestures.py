@@ -23,6 +23,7 @@ GESTURE_NAMES = {
     5: "tap", 6: "snap", 7: "clench", 8: "index-pinch", 9: "middle-pinch",
     12: "circle-clockwise", 13: "circle-counterclockwise",
 }
+R1_GESTURE_NAMES = {**GESTURE_NAMES, 14: "tap", 0x88: "double-index-pinch", 0x89: "double-middle-pinch"}
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,15 @@ class FirmwareGestureWorker:
         event = FirmwareGestureEvent(result.class_id, GESTURE_NAMES[result.class_id],
             result.confidence, result.center_uptime_ms if result.center_uptime_ms is not None
             else result.uptime_ms, result.seq, result)
+        self._enqueue(event, pair_on_host=True)
+
+    def submit_r1(self, result):
+        name = R1_GESTURE_NAMES.get(result.class_id)
+        if name is not None:
+            self._enqueue(FirmwareGestureEvent(result.class_id, name, result.confidence,
+                result.center_uptime_ms, result.sequence, result), pair_on_host=False)
+
+    def _enqueue(self, event, *, pair_on_host):
         with self._lock:
             if not self._started or self._closing.is_set() or self.error is not None:
                 return
@@ -86,7 +96,7 @@ class FirmwareGestureWorker:
                     self.dropped_events += 1
                 except queue.Empty:
                     pass  # The consumer may have drained it since full().
-            self._queue.put_nowait((event, self._last_received))
+            self._queue.put_nowait((event, self._last_received, pair_on_host))
 
     def _deliver(self, event):
         self.on_gesture(event)
@@ -105,7 +115,7 @@ class FirmwareGestureWorker:
                 timeout = (max(0.0, pending[1] + waits[pending[0].name] - time.monotonic())
                            if pending is not None else .05)
                 try:
-                    event, received_at = self._queue.get(timeout=timeout)
+                    event, received_at, pair_on_host = self._queue.get(timeout=timeout)
                 except queue.Empty:
                     if pending is not None and time.monotonic() >= pending[1] + waits[pending[0].name]:
                         self._deliver(pending[0])
@@ -114,6 +124,9 @@ class FirmwareGestureWorker:
                     continue
                 if self._closing.is_set():
                     break
+                if not pair_on_host:
+                    self._deliver(event)
+                    continue
                 if pending is not None and received_at > pending[1] + waits[pending[0].name]:
                     self._deliver(pending[0])
                     pending = None

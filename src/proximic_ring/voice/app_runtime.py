@@ -24,6 +24,7 @@ import numpy as np
 
 from ..asr import ASRBackendCache
 from ..audio import MicrophoneSource, RingAudioSource
+from ..audio.microphone import SYSTEM_DEFAULT_MICROPHONE
 from ..audio.reconfiguration import AudioInputPipeline
 from ..audio.live_audio_settings import LiveAudioSettings
 from ..cli import _build_detector, _build_session_controller
@@ -473,6 +474,7 @@ class RuntimeSettings:
     # Dataset capture is optional. Gesture consumers independently request IMU.
     collect_imu: bool = False
     imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
+    ring_family: str = ""
 
     def validate_voice_configuration(self) -> None:
         """Voice configuration must not gate the physical Ring connection."""
@@ -609,6 +611,10 @@ class RecognitionRuntime:
         practice_active: Callable[[], bool] | None = None,
         practice_audio_consumer: Callable[[object, bool], bool] | None = None,
     ) -> None:
+        is_r1 = self.settings.ring_family == "R1"
+        if is_r1:
+            self.settings = replace(self.settings, audio_source="microphone",
+                                    microphone_device=self.settings.microphone_device or SYSTEM_DEFAULT_MICROPHONE)
         args = self.settings.to_namespace()
         if audio_settings is not None:
             # A live pipeline owns the Windows hold hook so switching back to
@@ -645,6 +651,8 @@ class RecognitionRuntime:
             battery_observer=on_battery,
             imu_hz=imu_hz,
             **({"audio_enabled": False} if self.settings.audio_source == "microphone" else {}),
+            **({"ring_family": "R1", "pairing_observer": lambda: on_state("请确认系统蓝牙配对")}
+               if is_r1 else {}),
         )
         microphone = (
             MicrophoneSource(selection=self.settings.microphone_device)
@@ -673,17 +681,43 @@ class RecognitionRuntime:
             if on_voice_availability is not None:
                 on_voice_availability(detail)
 
+        def release_r1_voice(error):
+            nonlocal controller, detector, microphone
+            with audio_change_lock:
+                recognition_event.clear()
+                old_controller, controller = controller, None
+                detector = None
+            if input_pipeline is not None:
+                input_pipeline.close()
+                input_pipeline.controller = input_pipeline.detector = None
+            elif microphone is not None:
+                microphone.close()
+            microphone = None
+            if old_controller is not None:
+                abort = getattr(old_controller, "abort", None)
+                if callable(abort):
+                    abort()
+                old_controller.close()
+            report_voice_unavailable(error)
+
         def load_voice(*, retry=False):
             nonlocal args, detector, controller, gesture_control, end_on_gesture, asr_context_provider
             try:
-                if retry and voice_settings_provider is not None:
-                    settings = voice_settings_provider()
+                if retry:
+                    settings = voice_settings_provider() if voice_settings_provider is not None else self.settings
                     if input_pipeline is not None:
                         configuration = input_pipeline.configuration
                         settings = replace(settings, audio_source=configuration.audio_source,
                                            microphone_device=configuration.microphone_device,
                                            speech_control_mode=configuration.speech_control_mode)
                     self.settings = settings
+                mic_unavailable = getattr(source, "microphone_unavailable_reason", "")
+                if self.settings.audio_source == "ring" and mic_unavailable:
+                    report_voice_unavailable(mic_unavailable)
+                    return False
+                if not retry:
+                    # Heavy model startup can starve BLE callbacks while MIC is streaming.
+                    on_state("设备已连接，保持麦克风关闭并加载模型…")
                 self.settings.validate_voice_configuration()
                 args = self.settings.to_namespace()
                 if audio_settings is not None:
@@ -804,7 +838,7 @@ class RecognitionRuntime:
                     close_source_and_report()
                     return
                 live_microphone = current_microphone()
-                if (live_microphone is not None and live_microphone.error is not None
+                if (not is_r1 and live_microphone is not None and live_microphone.error is not None
                         and not (audio_settings is not None and audio_settings.applying)):
                     on_state(f"[AUDIO_INPUT_ERROR] {live_microphone.error}")
                     close_source_and_report()
@@ -825,13 +859,6 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
             on_connected()
-
-            # Keep MIC OFF while importing and constructing the detector/ASR.
-            # Bleak notifications are Python callbacks; heavy model startup can
-            # starve that callback path and the Ring stream was observed to stop
-            # after only 2-3 blocks.  The firmware receiver remains reliable
-            # because it starts MIC only after its lightweight UI is ready.
-            on_state("设备已连接，保持麦克风关闭并加载模型…")
 
             if disconnect_event.is_set():
                 return
@@ -945,7 +972,7 @@ class RecognitionRuntime:
 
                     gesture_worker = FirmwareGestureWorker(on_gesture=publish_gesture)
                     gesture_worker.start()
-                    source.gesture_observer = gesture_worker.submit
+                    source.gesture_observer = gesture_worker.submit_r1 if is_r1 else gesture_worker.submit
                     source.gesture_state_observer = on_gesture_health
                     gestures_enabled.set()
                     on_state('[GESTURE_SOURCE] {"source":"firmware","protocol":"26 06 / 26 07"}')
@@ -967,7 +994,7 @@ class RecognitionRuntime:
                 # Endpoints have not started yet. Keep MIC off while starting
                 # independent firmware gesture/battery traffic on this BLE link.
                 source.audio_enabled = False
-                on_state("语音暂不可用，正在启动 Ring 手势；设备将保持连接")
+                on_state("正在启动 Ring 手势…")
             else:
                 on_state("模型加载完成，正在启动电脑麦克风与 Ring 手势…" if microphone is not None
                          else "模型加载完成，正在启动并确认实时音频…")
@@ -979,12 +1006,15 @@ class RecognitionRuntime:
             if controller is not None and microphone is not None:
                 try:
                     microphone.open()
-                    if microphone.read(320) is None or disconnect_event.is_set():
+                    if (not is_r1 and microphone.read(320) is None) or disconnect_event.is_set():
                         return
                 except Exception as exc:
-                    on_state(f"[AUDIO_INPUT_ERROR] {exc}")
-                    raise
-                on_state(f"音频来源：{microphone.device_name}（电脑麦克风）；Ring 仅提供手势")
+                    if not is_r1:
+                        on_state(f"[AUDIO_INPUT_ERROR] {exc}")
+                        raise
+                    release_r1_voice(exc)
+                else:
+                    on_state(f"音频来源：{microphone.device_name}（电脑麦克风）")
             elif controller is not None:
                 on_state("音频来源：Ring 麦克风")
             if audio_settings is not None or controller is None:
@@ -1068,7 +1098,13 @@ class RecognitionRuntime:
                     if request is not None:
                         if on_audio_configuring is not None:
                             on_audio_configuring()
-                        error = input_pipeline.apply(request.configuration, disconnect_event)
+                        try:
+                            error = input_pipeline.apply(request.configuration, disconnect_event)
+                        except Exception as exc:
+                            if not is_r1 or source.error is not None:
+                                raise
+                            release_r1_voice(exc)
+                            error = str(exc)
                         if disconnect_event.is_set():
                             break
                         detector = input_pipeline.detector
@@ -1091,7 +1127,13 @@ class RecognitionRuntime:
                     if retry_voice_event is not None and retry_voice_event.is_set():
                         retry_voice_event.clear()
                         if load_voice(retry=True) and not disconnect_event.is_set() and source.error is None:
-                            input_pipeline.attach_voice(controller, detector, self.settings, disconnect_event)
+                            try:
+                                input_pipeline.attach_voice(controller, detector, self.settings, disconnect_event)
+                            except Exception as exc:
+                                if not is_r1 or source.error is not None:
+                                    raise
+                                release_r1_voice(exc)
+                                continue
                             audio_source = input_pipeline.audio_source
                             recognition_was_enabled = False
                             if on_voice_availability is not None:
@@ -1111,9 +1153,15 @@ class RecognitionRuntime:
                         block = audio_source.read(320)
                 except Exception as exc:
                     if current_microphone() is not None:
+                        if is_r1:
+                            release_r1_voice(exc)
+                            continue
                         on_state(f"[AUDIO_INPUT_ERROR] {exc}")
                     raise
                 if block is None:
+                    if is_r1 and current_microphone() is not None and not disconnect_event.is_set():
+                        release_r1_voice("电脑麦克风已停止")
+                        continue
                     break
                 if disconnect_event.is_set():
                     break

@@ -107,6 +107,7 @@ class DiscoveredBLEDevice:
     name: str
     identifier: str
     rssi: int | None = None
+    pnp_id: bytes | None = None
 
 
 async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
@@ -124,13 +125,12 @@ async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
         identifier = str(getattr(device, "address", "") or "").strip()
         if not identifier:
             return
+        key = identifier.casefold()
+        previous = by_identifier.get(key)
         name = str(
-            getattr(device, "name", None)
-            or (
-                getattr(advertisement, "local_name", None)
-                if advertisement
-                else None
-            )
+            getattr(advertisement, "local_name", None)
+            or getattr(device, "name", None)
+            or (previous.name if previous else "")
             or ""
         ).strip()
         raw_rssi = getattr(advertisement, "rssi", None) if advertisement else None
@@ -138,11 +138,13 @@ async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
             rssi = int(raw_rssi) if raw_rssi is not None else None
         except (TypeError, ValueError):
             rssi = None
-        by_identifier[identifier.casefold()] = DiscoveredBLEDevice(
+        product_id = getattr(advertisement, "service_data", {}).get("0000180a-0000-1000-8000-00805f9b34fb")
+        by_identifier[key] = DiscoveredBLEDevice(
             device=device,
             name=name,
             identifier=identifier,
             rssi=rssi,
+            pnp_id=bytes(product_id) if product_id is not None else (previous.pnp_id if previous else None),
         )
 
     # A continuous callback scanner retains advertisements that can be missed

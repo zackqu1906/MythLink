@@ -57,6 +57,28 @@ def test_dji_resolution_uses_identity_after_reorder_and_never_default_fallback(m
             module.resolve_input_device(selection)
 
 
+def test_system_default_microphone_uses_the_os_input_without_dji_selection(monkeypatch):
+    queried, opened = [], []
+
+    def query(device, kind):
+        queried.append((device, kind))
+        return {"name": "System input", "default_samplerate": 16000}
+
+    def stream(**kwargs):
+        opened.append(kwargs["device"])
+        return SimpleNamespace(start=lambda: None, abort=lambda: None, close=lambda: None)
+
+    monkeypatch.setattr(module, "_sounddevice", lambda: SimpleNamespace(
+        query_devices=query, check_input_settings=lambda **kwargs: None, InputStream=stream))
+    source = module.MicrophoneSource(selection=module.SYSTEM_DEFAULT_MICROPHONE)
+    source.open()
+    try:
+        assert queried == [(None, "input")] and opened == [None]
+        assert source.device_name == "System input"
+    finally:
+        source.close()
+
+
 def test_enumeration_includes_all_computer_inputs_and_keeps_explicit_selection(monkeypatch):
     devices = [
         dict(name="MacBook 麦克风", hostapi=0, max_input_channels=1, default_samplerate=48000),

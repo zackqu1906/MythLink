@@ -73,7 +73,7 @@ class AudioInputPipeline:
             # close() can interrupt an in-progress read during disconnect.
             self._check_connected(stop)
             microphone.open()
-            if microphone.read(320) is None:
+            if getattr(self.settings, "ring_family", "") != "R1" and microphone.read(320) is None:
                 raise RuntimeError("电脑麦克风未返回音频")
             if microphone.error is not None:
                 raise RuntimeError(str(microphone.error))
@@ -110,6 +110,9 @@ class AudioInputPipeline:
         """
         previous = self.configuration
         previous_detector = self.detector
+        mic_unavailable = getattr(self.ring, "microphone_unavailable_reason", "")
+        if mic_unavailable and configuration.audio_source == "ring" and previous.audio_source != "ring":
+            return mic_unavailable
         if self.controller is None:
             # Keep preferences editable while voice setup is incomplete. MIC
             # stays off until a successful explicit voice retry opens capture.

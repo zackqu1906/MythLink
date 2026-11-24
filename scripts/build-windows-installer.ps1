@@ -20,6 +20,8 @@ Write-Host "Building Mythlink $AppVersion"
 
 if (-not $SkipDependencyInstall) {
     & $Python -m pip install -r (Join-Path $ProjectRoot "requirements-packaging.txt")
+    & $Python (Join-Path $ProjectRoot "tools\install_r1_sdk.py")
+    if ($LASTEXITCODE -ne 0) { throw "R1 SDK installation failed." }
 }
 
 Push-Location $ProjectRoot

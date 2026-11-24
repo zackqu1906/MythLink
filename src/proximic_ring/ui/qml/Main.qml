@@ -251,6 +251,20 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: 8
 
+                FigmaAction {
+                    objectName: "deviceFilterR1"
+                    text: "R1"
+                    primary: appController.deviceSearch.trim().toLowerCase() === "r1"
+                    onClicked: appController.deviceSearch = text
+                }
+
+                FigmaAction {
+                    objectName: "deviceFilterRingo"
+                    text: "Ringo"
+                    primary: appController.deviceSearch.trim().toLowerCase() === "ringo"
+                    onClicked: appController.deviceSearch = text
+                }
+
                 FigmaTextField {
                     id: deviceSearchField
                     objectName: "deviceSearchField"

@@ -77,7 +77,7 @@ class StrokeSessionController(QObject):
         self._toggle(self.owner._disconnect_event, None, local=True)
 
     def _toggle(self, connection, event, *, local=False):
-        if (connection is not self.owner._disconnect_event or connection.is_set()
+        if (not self.tp.strokeSupported or connection is not self.owner._disconnect_event or connection.is_set()
                 or self.tp._closed or self.owner._quitting):
             return
         if self.engaged or (self.tp.active and self.tp.inputMode == "stroke"):

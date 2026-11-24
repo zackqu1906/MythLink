@@ -200,6 +200,8 @@ $Extras = if ($SkipFunASR) {
 }
 & $VenvPython -m pip install -c $ConstraintFile -e $Extras
 Assert-LastCommand "project dependency installation"
+& $VenvPython (Join-Path $ProjectRoot "tools\install_r1_sdk.py")
+Assert-LastCommand "R1 SDK installation"
 
 
 Write-Host "[8/9] Preparing the default local LLM package..."

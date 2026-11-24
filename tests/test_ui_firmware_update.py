@@ -80,6 +80,14 @@ def test_current_identity_must_match_selected_ring(updater):
     assert u.error and not u.busy and owner.disconnected == 0
 
 
+def test_r1_cannot_use_the_ringo_bundled_firmware(updater):
+    u, owner, source = updater
+    source.firmware_identity['family'] = 'R1'
+    assert not u.canStart and 'R1-PC' in u.unavailableReason
+    u.start()
+    assert owner.disconnected == 0
+
+
 @pytest.mark.parametrize('fails', [False, True])
 def test_release_exclusivity_progress_restore_and_duplicate_click(updater, monkeypatch, fails):
     u, owner, source = updater

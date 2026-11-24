@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from ring_python_sdk.core.constants import (
     CMD_INFO,
+    INFO_COMP_MIC,
     INFO_COMPONENT_COUNT,
     INFO_COMPONENT_LEN,
     INFO_COMP_LABELS,
@@ -71,6 +72,12 @@ class DeviceInfo:
         if self.fw_tweak:
             return f"{base}.{self.fw_tweak}"
         return base
+
+    @property
+    def microphone_available(self) -> bool:
+        mic = self.component(INFO_COMP_MIC)
+        # Hardware 2 is R1. Older INFO replies can omit the component entry.
+        return self.hw_rev != 2 and (mic is None or bool(mic.present))
 
     def component(self, comp_id: int) -> InfoComponent | None:
         for c in self.components:

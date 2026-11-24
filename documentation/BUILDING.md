@@ -46,6 +46,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
 
 ## 构建资源
 
+内部构建可通过 `MYTHLINK_R1_SDK_WHEEL` 指向 R1-PC 0.4.0 的本地 wheel，再运行对应平台的安装或构建脚本。R1 构建使用 Bleak 3.1 和 SMPClient 7.4，随包收集 R1 触摸板所需的 SDK 资源。私有 wheel 由内部构建环境提供。
+
 PyInstaller 配方为 `packaging/mythlink.spec`。固件 ZIP、SDK 动态库、随包检测模型、笔画词典和 UI 素材是产品资源，应保留在 Git 中。大型 ASR / 文本模型由应用按需下载，不随仓库和主安装包发布。
 
 替换固件见[固件说明](FIRMWARE.md)。浏览器构建会复制[扩展安装说明](BROWSER_EXTENSION.md)，因此 `documentation/` 需要随源码分发。

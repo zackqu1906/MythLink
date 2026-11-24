@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import importlib.util
 import os
 import platform
 import runpy
@@ -29,6 +30,9 @@ streaming_root = project_root / "third_party" / "streaming-sensevoice"
 funasr_root = project_root / "third_party" / "Fun-ASR"
 workflow_policy = runpy.run_path(str(project_root / 'packaging/legacy_workflows.py'))
 legacy_excludes = workflow_policy['excluded_modules'](source_root)
+include_r1 = bool(os.environ.get('MYTHLINK_R1_SDK_WHEEL', '').strip())
+if include_r1 and importlib.util.find_spec('ring_python_sdk_r1') is None:
+    raise RuntimeError('Install the R1-PC wheel in the packaging environment before building.')
 
 datas = [item for item in collect_data_files("proximic_ring")
          if workflow_policy['include_data'](item[0]) and '/assets/firmware/' not in Path(item[0]).as_posix()]
@@ -75,6 +79,10 @@ if notices.is_file():
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
 hiddenimports += collect_submodules("ring_python_sdk.process")
 hiddenimports += collect_submodules('smpclient') + collect_submodules('smp')
+if include_r1:
+    datas += collect_data_files('ring_python_sdk_r1', includes=['assets/ring_runtime.bin', 'assets/touchpad_material.a'])
+    binaries += collect_dynamic_libs('unicorn')
+    hiddenimports += ['unicorn.unicorn_py3.arch.arm64']
 if platform.system() == "Darwin":
     hiddenimports += ["Vision", "CoreML", "ring_mac_sdk.model", "onnxruntime"]
 if platform.system() in {"Darwin", "Windows"}:
@@ -121,7 +129,7 @@ a = Analysis(
     hookspath=[str(project_root / "packaging" / "hooks")],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=legacy_excludes + [
+    excludes=legacy_excludes + ([] if include_r1 else ['ring_python_sdk_r1']) + [
         "tkinter",
         "matplotlib",
         "IPython",

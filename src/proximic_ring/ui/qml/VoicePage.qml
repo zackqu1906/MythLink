@@ -185,7 +185,7 @@ UiScrollView {
                     Label { objectName: "voiceStatusTitle"; text: !page.controller.connected ? "请先在首页连接 Ring" : page.controller.voiceRuntimeError.length > 0 ? "语音暂不可用" : page.controller.statusTitle; color: theme.muted; font.pixelSize: 14; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     FigmaAction { objectName: "voiceHomeButton"; visible: !page.controller.connected; text: "返回首页"; onClicked: page.homeRequested() }
                 }
-                Label { objectName: "voiceStatusDetail"; Layout.fillWidth: true; visible: page.controller.voiceRuntimeError.length > 0 || page.controller.statusKind === "error"; text: page.controller.voiceRuntimeError.length > 0 ? page.controller.voiceRuntimeError + "；检查模型配置后再次开启语音，Ring 保持连接。" : page.controller.statusDetail; font.pixelSize: 14; color: theme.warning; wrapMode: Text.Wrap }
+                Label { objectName: "voiceStatusDetail"; Layout.fillWidth: true; visible: page.controller.voiceRuntimeError.length > 0 || page.controller.statusKind === "error"; text: page.controller.voiceRuntimeError || page.controller.statusDetail; font.pixelSize: 14; color: page.controller.statusKind === "error" ? theme.warning : theme.muted; wrapMode: Text.Wrap }
                 PermissionNotice { objectName: "accessibilityPermissionWarning"; Layout.fillWidth: true; actionText: ""; message: page.controller.inlineInput.permissions.accessibilityWarningText ? page.controller.inlineInput.permissions.accessibilityWarningText + " 请在设置的“系统与权限”中管理。" : "" }
             }
         }

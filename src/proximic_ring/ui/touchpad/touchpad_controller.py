@@ -176,6 +176,9 @@ class TouchpadController(QObject):
     @Property(bool, constant=True)
     def externalStrokeSupported(self): return sys.platform == "darwin"
 
+    @Property(bool, notify=changed)
+    def strokeSupported(self): return getattr(self._source, 'ring_family', '') != 'R1'
+
     @Property(bool, constant=True)
     def macPermissionsRequired(self): return sys.platform == "darwin"
 
@@ -802,6 +805,8 @@ class TouchpadController(QObject):
 
     @Slot(str)
     def setInputMode(self, mode):
+        if mode == "stroke" and not self.strokeSupported:
+            return
         if mode not in {"pointer", "stroke"} or mode == self._mode or self.busy:
             return
         if self._pending_stroke_commit or (mode == "stroke" and self._speech_busy()):
@@ -844,7 +849,7 @@ class TouchpadController(QObject):
 
     @Slot()
     def toggleLocalStrokeTrial(self):
-        if self.busy or not self._local_stroke_input or not self._local_stroke_focus:
+        if not self.strokeSupported or self.busy or not self._local_stroke_input or not self._local_stroke_focus:
             return
         if self.active and self._mode == "stroke":
             self.stop("已停止笔画试写")
@@ -1223,7 +1228,7 @@ class TouchpadController(QObject):
                 pointer_options['mouse_factory'] = lambda: WindowsSystemMouse(
                     stroke_target=lambda: dict(local=True) if self._local_stroke_focus else None)
             output = self.output_factory(**common, **pointer_options, gain=self._gain, clicks=self._clicks,
-                                         invert_y=self._invert_y, on_double_click=double_click,
+                                         invert_y=self._invert_y, on_double_click=double_click if self.strokeSupported else None,
                                          scroll=self._scroll, double_click=self._double_click,
                                          right_click=self._right_click, scroll_gain=self._scroll_gain,
                                          invert_scroll=self._invert_scroll, horizontal_swipe=self._horizontal_swipe,

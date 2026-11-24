@@ -12,6 +12,7 @@ ScrollView {
     readonly property var touchpad: controller.touchpad
     readonly property bool windowActive: Window.window ? Window.window.active : false
     property string section: "stroke"
+    readonly property bool writingSection: touchpad.strokeSupported && section === "stroke"
     readonly property bool narrow: availableWidth < 600
     readonly property real scrollGutter: scrollBar.implicitWidth + 8
     signal homeRequested()
@@ -58,7 +59,8 @@ ScrollView {
                                 text: !page.touchpad.supported ? "触摸板支持 Windows 和 macOS"
                                     : !page.controller.connected ? "连接 Ring，开始平面触控"
                                     : page.touchpad.strokePreparing ? "正在准备笔画输入"
-                                    : page.touchpad.active ? (page.touchpad.inputMode === "stroke" ? "正在书写" : "正在控制鼠标") : "光标控制与笔画输入"
+                                    : page.touchpad.active ? (page.touchpad.inputMode === "stroke" ? "正在书写" : "正在控制鼠标")
+                                    : page.touchpad.strokeSupported ? "光标控制与笔画输入" : "光标控制"
                                 font.pixelSize: 22; font.weight: Font.Medium; color: theme.text
                             }
                             Label {
@@ -73,7 +75,7 @@ ScrollView {
                             visible: page.controller.connected
                             Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
                             text: page.touchpad.state === "starting" ? "取消开启" : page.touchpad.state === "stopping" ? "正在停止…" : page.touchpad.active ? "停止触摸板" : "开启鼠标控制"
-                            primary: page.section === "pointer" && !page.touchpad.active
+                            primary: !page.writingSection && !page.touchpad.active
                             enabled: page.touchpad.active || (page.touchpad.available && !page.touchpad.busy)
                             onClicked: page.touchpad.toggle()
                         }
@@ -102,19 +104,20 @@ ScrollView {
                 width: parent.width; spacing: 8
                 FigmaAction {
                     objectName: "strokeModeButton"; text: "笔画输入"; quiet: true
-                    contentColor: page.section === "stroke" ? theme.primary : theme.muted
-                    font.weight: page.section === "stroke" ? Font.Medium : Font.Normal
+                    visible: page.touchpad.strokeSupported
+                    contentColor: page.writingSection ? theme.primary : theme.muted
+                    font.weight: page.writingSection ? Font.Medium : Font.Normal
                     onClicked: page.section = "stroke"
                 }
                 FigmaAction {
                     objectName: "pointerModeButton"; text: "鼠标设置"; quiet: true
-                    contentColor: page.section === "pointer" ? theme.primary : theme.muted
+                    contentColor: !page.writingSection ? theme.primary : theme.muted
                     onClicked: page.section = "pointer"
                 }
                 Item { Layout.fillWidth: true }
             }
             GridLayout {
-                visible: page.section === "stroke"
+                visible: page.writingSection
                 width: parent.width
                 columns: page.narrow ? 2 : 4
                 columnSpacing: 12; rowSpacing: 12
@@ -148,14 +151,14 @@ ScrollView {
             }
             StrokeInputBox {
                 width: parent.width; height: implicitHeight
-                visible: page.section === "stroke"
+                visible: page.writingSection
                 inputVisible: visible && page.visible && page.windowActive
                 viewportHeight: viewport.height
                 controller: page.controller
                 onHomeRequested: page.homeRequested()
             }
             Rectangle {
-                visible: page.section === "pointer"
+                visible: !page.writingSection
                 width: parent.width; height: settings.implicitHeight + 48
                 radius: 12; color: theme.surface; border.color: theme.line
                 ColumnLayout {
