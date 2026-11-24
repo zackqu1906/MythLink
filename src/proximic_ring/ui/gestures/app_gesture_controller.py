@@ -556,6 +556,9 @@ class AppGestureController(QObject):
 
     def foreground_identity(self):
         """Read application identity without AX focus or editor contents."""
+        inline = getattr(self.owner, "_inline_input", None)
+        if getattr(inline, "_windows", False):
+            return inline._foreground_identity()
         if sys.platform != "darwin":
             return None
         from ...platforms.macos.mac_workspace import frontmost_application

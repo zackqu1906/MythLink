@@ -80,9 +80,13 @@ def enable_proximity(c):
     return p
 
 
+@pytest.mark.parametrize('windows_tsf', [False, True], ids=['standard', 'windows-tsf'])
 @pytest.mark.parametrize('source_first', [True, False])
-def test_first_connection_enables_both_once_and_logs_actual_state(controllers, tmp_path, source_first):
+def test_first_connection_enables_both_once_and_logs_actual_state(
+    controllers, tmp_path, source_first, windows_tsf
+):
     c = controllers()
+    c.touchpad._windows_ime = windows_tsf
     source = connect(c, source_first=source_first)
     wait_until(lambda: c.touchpad.state == 'running')
     # Both choices restore independently; pointer control leaves audio available.
@@ -92,7 +96,7 @@ def test_first_connection_enables_both_once_and_logs_actual_state(controllers, t
     c._apply_runtime_started()
     c.touchpad.changed.emit()
     assert len(source.starts) == 1
-    log = (tmp_path / 'logs/diagnostic.log').read_text()
+    log = (tmp_path / 'logs/diagnostic.log').read_text(encoding='utf-8')
     assert '[EVENT INPUT_PREFERENCES_RESTORE]' in log
     assert 'voice_enabled=true touchpad_enabled=true' in log
     assert '[EVENT TOUCHPAD_STATE]' in log and 'state="running"' in log
@@ -110,9 +114,54 @@ def test_voice_setup_failure_still_restores_touchpad_without_erasing_voice_choic
     assert not c._retry_voice_event.is_set() and not c._disconnect_event.is_set()
 
 
-@pytest.mark.parametrize('voice,touchpad', [(True, True), (False, True), (True, False), (False, False)])
-def test_manual_choices_survive_disconnect_quit_and_new_app(controllers, monkeypatch, voice, touchpad):
+@pytest.mark.parametrize('source_first', [True, False])
+def test_windows_new_connection_starts_pointer_after_previous_temporary_stop(
+    controllers, monkeypatch, source_first
+):
+    import proximic_ring.ui.controller as module
+    from types import SimpleNamespace
+    monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='win32'))
     c = controllers()
+    c._settings.setValue('touchpad/enabled', False)  # Existing installs may have stopped it.
+    assert c.touchpad.autoStartOnConnect
+    first = connect(c, source_first=source_first)
+    wait_until(lambda: c.touchpad.state == 'running')
+    assert len(first.starts) == 1 and c.touchpad.inputMode == 'pointer'
+    c.touchpad.toggle()
+    wait_until(lambda: not c.touchpad.busy)
+    assert c.touchpad.autoStartOnConnect and not c.touchpad.active
+    c._apply_runtime_finished('reconnect')
+    second = connect(c, source_first=source_first)
+    wait_until(lambda: c.touchpad.state == 'running')
+    assert len(second.starts) == 1 and c.touchpad.inputMode == 'pointer'
+    c.touchpad.changed.emit()
+    assert len(second.starts) == 1
+
+
+def test_windows_startup_opt_out_is_independent_of_current_pointer_state(controllers, monkeypatch):
+    import proximic_ring.ui.controller as module
+    from types import SimpleNamespace
+    monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='win32'))
+    c = controllers()
+    connect(c)
+    wait_until(lambda: c.touchpad.state == 'running')
+    c.touchpad.autoStartOnConnect = False
+    assert c.touchpad.active
+    c._apply_runtime_finished('reconnect')
+    wait_until(lambda: c.touchpad._run is None)
+    source = connect(c)
+    QCoreApplication.processEvents()
+    assert not source.starts and not c.touchpad.active
+    assert not controllers().touchpad.autoStartOnConnect
+
+
+@pytest.mark.parametrize('windows_tsf', [False, True], ids=['standard', 'windows-tsf'])
+@pytest.mark.parametrize('voice,touchpad', [(True, True), (False, True), (True, False), (False, False)])
+def test_manual_choices_survive_disconnect_quit_and_new_app(
+    controllers, monkeypatch, voice, touchpad, windows_tsf
+):
+    c = controllers()
+    c.touchpad._windows_ime = windows_tsf
     connect(c)
     wait_until(lambda: c.touchpad.state == 'running')
     c.pauseRecognition()
@@ -123,6 +172,9 @@ def test_manual_choices_survive_disconnect_quit_and_new_app(controllers, monkeyp
     if touchpad:
         c.touchpad.toggle()
         wait_until(lambda: c.touchpad.state == 'running')
+    # Windows startup is now an explicit preference, independent of stopping
+    # the pointer in the current connection.
+    c.touchpad.autoStartOnConnect = touchpad
 
     def check_preferences(controller):
         assert controller._settings.value('input/voiceEnabled', type=bool) == voice
@@ -143,6 +195,7 @@ def test_manual_choices_survive_disconnect_quit_and_new_app(controllers, monkeyp
     QCoreApplication.processEvents()
     check_preferences(c)
     reopened = controllers()
+    reopened.touchpad._windows_ime = windows_tsf
     check_preferences(reopened)
     connect(reopened)
     if touchpad:
@@ -169,6 +222,7 @@ def test_lock_after_ready_restores_saved_switches_on_unlock(controllers, lock_ev
     c = controllers()
     c._settings.setValue('input/voiceEnabled', voice)
     c._settings.setValue('touchpad/enabled', touchpad)
+    c.touchpad.autoStartOnConnect = touchpad
     source = connect(c)
     if touchpad:
         wait_until(lambda: c.touchpad.state == 'running')
@@ -193,6 +247,7 @@ def test_reconnect_while_locked_defers_restore_until_unlock(controllers, voice, 
     c = controllers()
     c._settings.setValue('input/voiceEnabled', voice)
     c._settings.setValue('touchpad/enabled', touchpad)
+    c.touchpad.autoStartOnConnect = touchpad
     p = enable_proximity(c)
     p._process.send(dict(event='locked'))
     source = connect(c)
@@ -310,7 +365,7 @@ def test_failed_auto_start_is_logged_without_retry_loop_or_erasing_preference(co
     assert len(attempts) == 1 and not source.starts
     assert c._bool_setting('touchpad/enabled', True)
     assert c.recognitionEnabled
-    log = (tmp_path / 'logs/diagnostic.log').read_text()
+    log = (tmp_path / 'logs/diagnostic.log').read_text(encoding='utf-8')
     assert 'state="error"' in log and '辅助功能' in log
 
 

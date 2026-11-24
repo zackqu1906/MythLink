@@ -65,7 +65,8 @@ class AudioInputPipeline:
     def _open_capture(self, configuration, stop):
         self._check_connected(stop)
         if configuration.audio_source == "ring":
-            self.ring.set_audio_enabled(True)
+            if not self.settings.ring_mic_on_demand:
+                self.ring.set_audio_enabled(True)
         else:
             microphone = self._microphone_factory(selection=configuration.microphone_device)
             with self._microphone_lock:

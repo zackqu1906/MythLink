@@ -20,8 +20,18 @@ LEGACY_POLICY = dict(version=1, maxSplits=1, maxFamilies=2, distanceLimits={
     'fan': .04, 'de': .04, 'le-zi': .085, 'yi-pie-dian': .04},
     controlRatio=2., controlFloor=.02, splitCost=.65, distanceScale=.04,
     reservedSlots=2, normalFirst=True)
-POLICY = dict(LEGACY_POLICY, version=2, maxSplits=3, maxPaths=24,
+COMPONENT_POLICY = dict(LEGACY_POLICY, version=2, maxSplits=3, maxPaths=24,
     distanceLimits=dict(LEGACY_POLICY['distanceLimits'], walk=.09), walkControlFloor=.045)
+SHAPE_POLICY = dict(COMPONENT_POLICY, version=3, distanceLimits=dict(COMPONENT_POLICY['distanceLimits'],
+    **{'pie-horizontal': .034, 'mouth-tail': .029}))
+SILK_HEAD_POLICY = dict(SHAPE_POLICY, version=4, distanceLimits=dict(SHAPE_POLICY['distanceLimits'],
+    **{'silk-head': .025}))
+EXTENDED_POLICY = dict(SILK_HEAD_POLICY, version=5, distanceLimits=dict(SILK_HEAD_POLICY['distanceLimits'],
+    **{'silk-whole': .026, 'turning-head': .034, 'water-tail': .038, 'wrap-head': .034, 'hou-middle': .023}))
+RETIRED_FAMILIES = frozenset(('silk-head', 'hou-middle'))
+POLICY = dict(EXTENDED_POLICY, version=6,
+              distanceLimits={k: v for k, v in EXTENDED_POLICY['distanceLimits'].items() if k not in RETIRED_FAMILIES},
+              silkCollectedLimit=.08, silkControlRatio=.6)
 
 
 def sample_family(sample):
@@ -29,18 +39,25 @@ def sample_family(sample):
     return ('le-zi' if target in ('le', 'zi') else target) if sample['task']['kind'] == 'joined' else 'single'
 
 
+def personal_joined_model_path():
+    from ...runtime_paths import app_data_root
+    return app_data_root() / 'data' / 'models' / 'joined-strokes' / 'personal.json.gz'
+
+
 class JoinedStrokeModel:
     def __init__(self, payload):
         if payload.get('schema') != 'ring-joined-stroke-model' or payload.get('version') not in (1, 2):
             raise ValueError('不支持的连笔模型')
         self.source = deepcopy(payload['source'])
-        if payload['policy'] != POLICY and payload['policy'] != LEGACY_POLICY:
+        if payload['policy'] not in (LEGACY_POLICY, COMPONENT_POLICY, SHAPE_POLICY,
+                                     SILK_HEAD_POLICY, EXTENDED_POLICY, POLICY):
             raise ValueError('连笔模型参数与程序版本不匹配')
         self.policy = deepcopy(POLICY)
-        templates = payload['templates'] + payload.get('referenceTemplates', [])
+        templates = [t for t in payload['templates'] + payload.get('referenceTemplates', [])
+                     if t['family'] not in RETIRED_FAMILIES]
         self.labels = [t['family'] for t in templates]
         self.bank = np.asarray([t['features'] for t in templates], dtype=np.float32)
-        required = set(FAMILIES)-{'walk'} | {'single'}
+        required = set(LEGACY_POLICY['distanceLimits']) | {'single'}
         if (self.bank.shape != (len(self.labels), 4, 32) or not len(self.labels)
                 or not np.isfinite(self.bank).all() or not required <= set(self.labels)
                 or set(self.labels)-set(FAMILIES)-{'single'}):
@@ -87,7 +104,18 @@ class JoinedStrokeModel:
         for family, codes in FAMILIES.items():
             score = scores.get(family, math.inf)
             floor = POLICY['walkControlFloor'] if family == 'walk' else POLICY['controlFloor']
-            if score <= POLICY['distanceLimits'][family] and score <= max(floor, POLICY['controlRatio']*control):
+            limit = POLICY['distanceLimits'][family]
+            control_limit = max(floor, POLICY['controlRatio']*control)
+            if family == 'silk-whole' and family not in self.reference_only:
+                limit, control_limit = POLICY['silkCollectedLimit'], POLICY['silkControlRatio']*control
+            if score <= limit and score <= control_limit:
+                # A 撇接竖 needs enough lateral travel to distinguish it from
+                # an upright stroke, even with a close personal template.
+                if family == 'de' and np.ptp(query[0]) < .06*np.ptp(query[1]):
+                    continue
+                # A mouth-tail Z needs a downward connector between the horizontals.
+                if family == 'mouth-tail' and query[1, -1] < .16*np.ptp(query[0]):
+                    continue
                 options.append(dict(family=family, codes=list(codes), distance=score,
                     controlDistance=control, cost=POLICY['splitCost']+score/POLICY['distanceScale'],
                     source='reference-component' if family in self.reference_only else 'collected'))
@@ -214,6 +242,12 @@ def merge_joined_candidates(dictionary, evidence, normal_chars, normal_rows, mod
     """Combine verified component paths while preserving ordinary choices."""
     if not enabled or model is None or not any(s.get('joined_options') for s in evidence):
         return list(normal_chars), list(normal_rows)
+    from .stroke_common import common_characters
+    if (allowed is common_characters() and len(evidence) == 1 and
+            any(option['family'] == 'silk-whole' for option in evidence[0]['joined_options'])):
+        # The standalone radical is a direct choice for this contact even in
+        # common-character mode. Ordinary pen strokes still use that word list.
+        allowed = allowed | {'纟'}
     alternatives = {}
     normal_by_char = {row['char']: row for row in normal_rows}
     family_best = {}
@@ -254,20 +288,25 @@ def merge_joined_candidates(dictionary, evidence, normal_chars, normal_rows, mod
                 family_best[family_key] = (key, row['char'])
     if not alternatives:
         return list(normal_chars), list(normal_rows)
+    ranked_joined = sorted(alternatives.values(), key=lambda row: row['final_score'])
     preferred = []
     for _, char in sorted(family_best.values()):
         if char not in preferred:
             preferred.append(char)
     preferred = preferred[:POLICY['reservedSlots']]
-    first = normal_chars[:1]
-    chars = first + [c for c in preferred if c not in first]
-    chars += [c for c in normal_chars[1:] if c not in chars]
-    chars += [r['char'] for r in sorted(alternatives.values(), key=lambda r: r['final_score']) if r['char'] not in chars]
-    chars = chars[:limit]
+    first = list(normal_chars[:1])
+    reserved = [c for c in preferred if c not in first]
+    ordinary = [c for c in normal_chars[1:] if c not in reserved]
+    # Complete joined matches can share one code (e.g. 手、午、牛).
+    # Give those choices a place before the unfinished tail of the ordinary list.
+    complete = [row['char'] for row in ranked_joined if not row['_joined_key'][0]
+                and any(group['family'] in ('pie-horizontal', 'mouth-tail') for group in row['joined_groups'])]
+    chars = list(dict.fromkeys(first + reserved + ordinary[:1] + complete + ordinary[1:]
+                              + [row['char'] for row in ranked_joined]))[:limit]
     matches = []
     for char in chars:
         # Only the promoted alternative changes a normal character's glyph count.
-        if char in alternatives and (char in preferred or char not in normal_by_char):
+        if char in alternatives and (char in preferred or char in complete or char not in normal_by_char):
             match = alternatives[char]
             if char in normal_by_char:
                 match = dict(match, single_interpretation=normal_by_char[char])

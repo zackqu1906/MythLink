@@ -44,6 +44,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
 
 只修改业务代码、未修改依赖时可以使用 `-SkipDependencyInstall`。修改依赖清单后先更新开发环境。签名使用 `WINDOWS_SIGNING_CERT_SHA1` 和可选的 `WINDOWS_TIMESTAMP_URL`。
 
+### Windows TSF 输入法原型
+
+安装项目开发依赖后，使用 CMake 和 Visual Studio C++ 工具链构建 x64 DLL。MinGW-w64 可用 `-Compiler <g++.exe 的路径>`。
+
+```powershell
+.\scripts\windows-ime-prototype.ps1 -Action Build
+```
+
+在管理员 PowerShell 中执行 `-Action Install` 注册输入法。回到普通 PowerShell 执行 `-Action Run` 启用原型。若切换列表里没有 Mythlink，在 Windows 的简体中文语言选项中添加 Mythlink 键盘。
+
+更新时再次执行 `-Action Install`。安装脚本按版本保存 DLL，已加载旧 DLL 的应用在重开后使用新版。执行 `-Action Status` 可查看注册路径和当前能查询到的加载进程。
+
+在目标文本框按 Win+空格选中 Mythlink。将 Mythlink 的「语音启停方式」设为「手势启停」，开启语音识别和「输入到当前光标」。原型预留单指双击切换语音和触摸板。原本配置为双击开始听写时，原型改用上滑，结束通常为单击。触摸板默认控制鼠标，点入文本框后双指双击开启笔画九宫格。
+
+原型目标为 Windows x64 桌面文本框，支持听写和笔画。安装包和代码签名另行配置。卸载前切换到其他输入法，再在管理员 PowerShell 中执行 `-Action Uninstall`。
+
 ## 构建资源
 
 PyInstaller 配方为 `packaging/mythlink.spec`。固件 ZIP、SDK 动态库、随包检测模型、笔画词典和 UI 素材是产品资源，应保留在 Git 中。大型 ASR / 文本模型由应用按需下载，不随仓库和主安装包发布。

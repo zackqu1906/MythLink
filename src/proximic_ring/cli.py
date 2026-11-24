@@ -407,11 +407,10 @@ def _build_session_controller(
                     backend,
                     on_update=publish_streaming_update,
                     on_state=on_state,
-                    # Semantic dialog context is a Volcengine/Seed-ASR
-                    # request feature.  Never expose the focused editor text
-                    # to another backend merely because it is streaming.
+                    # The desktop runtime supplies editor context only for Seed;
+                    # Nano receives the vocabulary snapshot and uses no editor text.
                     context_provider=(
-                        asr_context_provider if name == "volcengine" else None
+                        asr_context_provider if name in {"volcengine", "funasr_nano"} else None
                     ),
                     on_context=(
                         asr_context_observer if name == "volcengine" else None

@@ -555,6 +555,20 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._gesture_bindings = GestureBindings()
             self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
             self._gesture_settings_error = "原手势设置无效，已恢复默认分配"
+        if sys.platform == "win32" and os.environ.get("MYTHLINK_WINDOWS_TSF") == "1":
+            gestures = {action: tuple("" if name == "double-tap" else name for name in names)
+                        for action, names in self._gesture_bindings.as_dict().items()}
+            if not any(gestures["confirm"]):
+                for action in gestures:
+                    if action not in {"confirm", "end"}:
+                        gestures[action] = tuple("" if name == "swipe-up" else name for name in gestures[action])
+                gestures["confirm"] = ("swipe-up", "")
+            used = {name for action, names in gestures.items() if action not in {"confirm", "end"}
+                    for name in names if name}
+            if not any(gestures["end"]):
+                start = next(name for name in gestures["confirm"] if name)
+                gestures["end"] = ("tap" if "tap" not in used else start, "")
+            self._gesture_bindings = GestureBindings(**gestures)
         try:
             self._global_gesture_bindings = GlobalGestureBindings.from_json(
                 self._settings.value(GLOBAL_BINDINGS_KEY, GlobalGestureBindings().to_json()))
@@ -1291,7 +1305,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         elif phase == "starting" and self._recognition_enabled:
             self._set_status("正在准备", f"正在连接输入法，就绪后开始收音；{self.endGestureHint}取消", "starting")
         elif phase == "listening" and self._recognition_enabled:
-            self._set_status("听写 · 可以说话", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
+            if self._ring_mic_on_demand() and not self._utterance_active:
+                self._set_status("正在开启戒指麦克风", "收到音频后即可说话", "starting")
+            else:
+                self._set_status("听写 · 可以说话", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
         elif phase == "finishing" and self._recognition_enabled:
             self._set_status("正在定稿", "正在等待本句识别结果", "processing")
         elif phase == "polishing" and self._recognition_enabled:
@@ -1363,8 +1380,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._inline_requests[self._text_request_id] = key
         self._inline_edit_requests[self._text_request_id] = (request, source)
-        if not retry and self._asr_backend == "volcengine" and options.get("routing_mode") != INPUT_ROUTING_ROUTED_EDIT:
-            self._hotwords.prepare(key, instruction, original, self._voice_llm_settings(INPUT_MODE_EDIT))
+        if not retry and request.routing_mode != INPUT_ROUTING_ROUTED_EDIT:
+            self._hotwords.prepare(key, instruction, original, request.settings)
         self._set_interaction_state("processing")
 
     def _submit_inline_polish(self, key, text, target) -> None:
@@ -3059,6 +3076,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             and {key, action} != {"confirm", "end"}
         }
         used.add(self._app_gestures.inputSourceGesture)
+        if self._touchpad.windowsInputPrototype:
+            used.add("double-tap")
         return [{"value": "", "label": "未设置"}] + [
             {"value": name, "label": label}
             for name, label in GESTURE_LABELS.items() if name not in used
@@ -3083,6 +3102,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
+            if self._touchpad.windowsInputPrototype and name == "double-tap":
+                raise ValueError("单指双击用于切换语音和触摸板模式")
             if action not in self._gesture_bindings.as_dict() or slot not in (0, 1):
                 raise ValueError("无效的手势设置位置")
             bindings = replace(self._gesture_bindings, **{action: (name, "")})
@@ -4105,6 +4126,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._set_status("笔画输入中", "语音已启用，结束书写后恢复待命", "paused")
             self._append_log("语音识别已启用，等待笔画输入结束")
             return
+        if self._ring_mic_on_demand():
+            self._set_ring_mic_idle_status()
+            return
         detail = (
             f"{self.confirmGestureHint} 开始，{self.endGestureHint} 结束本句"
             if self._speech_control_mode == "gesture"
@@ -5037,6 +5061,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             if self._ignore_asr_updates_until_next_start:
                 self._resume_recognition_after_interaction()
             return
+        if summary.startswith("[RING_MIC] 启动失败"):
+            if self._inline_audio_prepared:
+                self._inline_input.cancel()
+            self._set_status("戒指麦克风启动失败", "请松开按键或重新触发语音", "error")
+            return
         if summary.startswith("[ASR] END"):
             if self._inline_enabled() and self._ignore_asr_updates_until_next_start:
                 # END can already be in flight when the input method cancels.
@@ -5361,6 +5390,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._append_log("设备和识别组件已就绪")
         self._event_log("RUNTIME_READY", device_name=self._device_name)
         self._input_restore_connection = self._disconnect_event
+        if sys.platform == "win32":
+            # A temporary stop/mode switch belongs to the previous connection.
+            # The independent startup choice controls the new Windows session.
+            self._settings.setValue("touchpad/enabled", self._touchpad.autoStartOnConnect)
         self._input_restore_pending = {"input/voiceEnabled", "touchpad/enabled"}
         self._event_log("INPUT_PREFERENCES_RESTORE",
                         voice_enabled=self._bool_setting("input/voiceEnabled", True),
@@ -7281,8 +7314,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         return (self._hotword_legacy_epoch, "desktop", str(interaction.request_id), 0)
 
     def _learn_applied_hotwords(self, interaction):
-        if (self._asr_backend != "volcengine" or interaction is None
-                or interaction.routing_mode == INPUT_ROUTING_ROUTED_EDIT
+        if (interaction is None or interaction.routing_mode == INPUT_ROUTING_ROUTED_EDIT
                 or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None):
             return
         key = self._legacy_hotword_key(interaction)
@@ -8314,6 +8346,12 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._ptt_active = False
             return
         self._ptt_active = bool(active)
+        if self._ring_mic_on_demand():
+            if active:
+                self._set_status("正在开启戒指麦克风", "收到音频后即可说话，松开按键结束", "starting")
+            elif not self._utterance_active:
+                self._set_ring_mic_idle_status()
+            return
         if active:
             self._set_status("按键监听中", "松开后恢复自动控制", "manual")
         elif self._recognition_enabled:
@@ -8447,6 +8485,19 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         prefix = f"[{' '.join(context)}] " if context else ""
         self._append_log(prefix + str(message))
 
+    def _local_ring_mic_experiment(self) -> bool:
+        return (sys.platform == "win32" and not is_frozen()
+                and (resource_root() / ".runtime" / "ring-mic-on-demand").is_file())
+
+    def _ring_mic_on_demand(self) -> bool:
+        return self._audio_source == "ring" and self._local_ring_mic_experiment()
+
+    def _set_ring_mic_idle_status(self) -> None:
+        detail = f"{self.confirmGestureHint} 开始语音"
+        if self._push_to_talk and self._speech_control_mode != "gesture":
+            detail += "，或按住右 Alt"
+        self._set_status("等待语音触发", detail, "running")
+
     def _runtime_settings(self) -> RuntimeSettings:
         model = self._path_or_none(self._model_path)
         # Model paths are checked by the optional voice pipeline after BLE
@@ -8462,6 +8513,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         # long-lived loop on every platform.
         connection_device = None
         return RuntimeSettings(
+            ring_mic_on_demand=self._local_ring_mic_experiment(),
             asr_end_on_tap=True,
             speech_control_mode=self._speech_control_mode,
             audio_source=self._audio_source,

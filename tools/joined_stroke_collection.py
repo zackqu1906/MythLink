@@ -1,9 +1,10 @@
-"""Study labels for one physical contact that may encode two logical strokes."""
+"""Study labels for one physical contact that may encode several logical strokes."""
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import lru_cache, partial
 import hashlib
 import random
+from types import SimpleNamespace
 import uuid
 
 from selection_capture import SAMPLE_PERIOD_MS, now, validate_trace
@@ -14,6 +15,7 @@ FILE_PREFIX = 'joined-strokes'
 TITLE = '连笔补采 · 走之底第二、三笔连写（旧记录可续采）'
 INTRO = '按提示写连笔或单笔对照；动作符合提示就保存，屏幕轨迹或现有预测不准也保留。'
 HIDE_CANDIDATES = True
+REQUIRE_MOTION = True
 TRAIN_ROUNDS = EVALUATION_ROUNDS = 2
 SETUP_NOTES_LABEL = '佩戴／实际写法'
 DEFAULT_SETUP_NOTES = '请记录佩戴手指、模块朝向及走之末两笔实际连写方式；走之第一点仍单独写，验证时注明是否重新佩戴'
@@ -61,10 +63,14 @@ def _inventory_v1():
 
 
 def inventory(plan_version=PLAN_VERSION):
-    if plan_version not in (1, 2, 3):
-        raise ValueError('不支持的连笔采集计划。')
+    if plan_version in (4, 6):
+        return silk_inventory(legacy=plan_version == 4)
+    if plan_version in (5, 7):
+        return additional_inventory(legacy=plan_version == 5)
     if plan_version == 3:
         return walk_inventory()
+    if plan_version not in (1, 2):
+        raise ValueError('不支持的连笔采集计划。')
     tasks = _inventory_v1()
     if plan_version == 1:
         return tasks
@@ -121,6 +127,91 @@ def walk_inventory():
     return tasks
 
 
+def joined_task(target, context, variant, title, note, code):
+    return dict(label=f'joined-{target}-{context}-{variant}', kind='joined', target=target,
+                contextCharacter=context, variant=variant, title=title,
+                note=note+' 中间保持触桌，写完这段再抬手。',
+                expectedCodes=[code], expectedLogicalStrokes=len(code))
+
+
+def silk_inventory(*, legacy=False):
+    tasks = []
+    for context in '红线给绞':
+        for variant, title, note in (
+            ('natural', '自然写', '用平时的大小和速度。'),
+            ('small', '偏小写', '按你写得比较小的时候自然书写。'),
+            ('fast', '自然快写', '按平时较快的速度写。'),
+        ):
+            instruction = ('把两个撇折和最后一提连成一条轨迹。' if legacy else
+                           '一气写完，按日常写法自然收笔。')
+            tasks.append(joined_task('silk-whole', context, variant,
+                f'{context}的纟 · 三笔连成一笔 · {title}',
+                f'只写“{context}”左边的纟，{instruction}{note} 右边部件留空。', 'zzh'))
+    for context in '红给':
+        if legacy:
+            tasks.append(joined_task('silk-head', context, 'natural',
+                f'{context}的纟 · 前两笔对照', '只连写第一个和第二个撇折，第二个撇折完成后抬手，最后一提留空。', 'zz'))
+        else:
+            tasks.append(joined_task('silk-whole', context, 'compact',
+                f'{context}的纟 · 一笔写完 · 自然收尾', '只写左边的纟，按你平时最省力的连写方式收笔。', 'zzh'))
+    for shape, note in (
+        ('撇折', '只写纟的第一个撇折，折完就抬手。'),
+        ('撇点', '只写女的第一笔撇点，写完就抬手。'),
+    ):
+        tasks.append(dict(label=f'silk-control-{shape}', kind='fold-control', shape=shape,
+                          title=f'一笔对照 · {shape}', note=note, expectedCodes=['z'], expectedLogicalStrokes=1))
+    return tasks
+
+
+def additional_inventory(*, legacy=False):
+    alternate_hou = (joined_task('hou-middle', '后', 'natural', '后 · 第二、三笔',
+                                 '只连写长撇接横，按你平时的写法。', 'ph') if legacy else
+                     joined_task('fan', '后', 'fast', '后 · 前两笔 · 自然快写',
+                                 '只连写短撇接长撇，用平时较快的速度。', 'pp'))
+    tasks = [alternate_hou]
+    for target, context, title, note, code in (
+        ('fan', '后', '前两笔', '短撇接长撇', 'pp'),
+        ('turning-head', '印', '前两笔', '左边的撇接竖提', 'pz'),
+        ('turning-head', '仰', '右边前两笔', '卬的撇接竖提', 'pz'),
+        ('turning-head', '氏', '前两笔', '撇接竖提', 'pz'),
+        ('water-tail', '水', '最后两笔', '撇接捺', 'pn'),
+        ('de', '页', '第二、三笔', '短撇接竖', 'ps'),
+        ('wrap-head', '包', '前两笔', '撇接横折钩', 'pz'),
+        ('de', '段', '前两笔', '短撇接长竖', 'ps'),
+    ):
+        tasks.append(joined_task(target, context, 'natural', f'{context} · {title}',
+                                  f'只连写{note}，按你平时的写法。', code))
+    if legacy:
+        # Preserve the ordering used when shuffling the original plan.
+        tasks[0], tasks[1] = tasks[1], tasks[0]
+    for shape, example in (('竖提', '比的第二笔'), ('横折钩', '包的第二笔'), ('撇点', '女的第一笔')):
+        tasks.append(dict(label=f'additional-control-{shape}', kind='fold-control', shape=shape,
+                          title=f'一笔对照 · {shape}', note=f'只写{example}，写完就抬手。',
+                          expectedCodes=['z'], expectedLogicalStrokes=1))
+    return tasks
+
+
+def collection_profile(plan):
+    if plan == 'walk':
+        return None  # The original collector uses this module as its profile.
+    silk = plan == 'silk'
+    version = 6 if silk else 7
+    title = '绞丝旁一笔连写采集' if silk else '日常连笔补采'
+    rounds = 3 if silk else 2
+    notes = '记录佩戴手指和戒指朝向，可补充平时的连写方式。'
+    return SimpleNamespace(
+        PLAN_VERSION=version, FILE_PREFIX=FILE_PREFIX, TITLE=title,
+        INTRO=('只用平时的动作写提示的那一段。每次触桌记录一条轨迹，抬手后确认保存。'),
+        TRAIN_ROUNDS=rounds, EVALUATION_ROUNDS=1, HIDE_CANDIDATES=True, REQUIRE_MOTION=REQUIRE_MOTION,
+        SETUP_NOTES_LABEL=SETUP_NOTES_LABEL, DEFAULT_SETUP_NOTES=notes,
+        PLAN_HELP=('新记录默认 3 轮，含 42 条整个纟和 6 条单笔对照。' if silk else '新记录默认 2 轮，共 24 条。')
+                  + ' 按 1 开始／保存，按 2 重写。可续采原记录。',
+        COMPLETION_NOTE='已自动保存。请保留 JSON 与同名的事件文件；训练和独立验证分别建记录。',
+        inventory=inventory,
+        new_session=partial(new_session, plan_version=version),
+        validate_session=validate_session, sample_annotations=sample_annotations, trace_details=trace_details)
+
+
 @lru_cache(maxsize=1)
 def baseline():
     from importlib.resources import files
@@ -135,7 +226,7 @@ def baseline():
         assetSha256=hashes, adaptiveLearning=False)
 
 
-def new_session(participant, phase='train', rounds=TRAIN_ROUNDS, device=''):
+def new_session(participant, phase='train', rounds=TRAIN_ROUNDS, device='', *, plan_version=PLAN_VERSION):
     if (not participant.strip() or phase not in ('train', 'evaluation')
             or not isinstance(rounds, int) or isinstance(rounds, bool) or not 1 <= rounds <= 30):
         raise ValueError('请填写参与者编号，并选择1–30轮。')
@@ -143,12 +234,12 @@ def new_session(participant, phase='train', rounds=TRAIN_ROUNDS, device=''):
     rng = random.Random(session_id)
     tasks = []
     for rnd in range(1, rounds+1):
-        block = inventory()
+        block = inventory(plan_version)
         rng.shuffle(block)
         tasks.extend({**task, 'round': rnd} for task in block)
-    return dict(schema=SCHEMA, version=1, planVersion=PLAN_VERSION, sessionId=session_id,
+    return dict(schema=SCHEMA, version=1, planVersion=plan_version, sessionId=session_id,
         participant=participant.strip(), phase=phase, device=device, createdAt=now(),
-        source='ring-sdk-touchpad', setupNotes=DEFAULT_SETUP_NOTES,
+        source='ring-sdk-touchpad', setupNotes=(DEFAULT_SETUP_NOTES if plan_version <= 3 else ''),
         coordinates=dict(xPositive='right', yPositive='down', unit='sdk-displacement',
             samplePeriodMs=SAMPLE_PERIOD_MS, normalization='none'),
         baseline=baseline()[1], tasks=tasks, samples=[], rejected=[], interruptions=[], draft=None)
@@ -156,7 +247,7 @@ def new_session(participant, phase='train', rounds=TRAIN_ROUNDS, device=''):
 
 def validate_session(data):
     if (not isinstance(data, dict) or data.get('schema') != SCHEMA or data.get('version') != 1
-            or data.get('planVersion') not in (1, 2, 3) or data.get('phase') not in ('train', 'evaluation')
+            or data.get('planVersion') not in (1, 2, 3, 4, 5, 6, 7) or data.get('phase') not in ('train', 'evaluation')
             or not isinstance(data.get('participant'), str) or not data['participant'].strip()
             or not isinstance(data.get('sessionId'), str) or not isinstance(data.get('setupNotes'), str)):
         raise ValueError('不是兼容的连笔采集记录。')

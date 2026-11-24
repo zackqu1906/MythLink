@@ -135,6 +135,8 @@ class ContactCapture:
                              "stationary": length == 0})
 
     def preview(self):
+        if not self.moves:
+            return []
         x = y = 0.
         points = [(x, y)]
         for e in self.moves[1:]:

@@ -386,6 +386,9 @@ class RingGestureController(QObject):
             generation = self._generation
         service, bindings = self.owner._app_gestures, self.owner._gesture_bindings
         endpoint = name in bindings.confirm + bindings.end
+        if (endpoint and touchpad is not None and getattr(touchpad, "_windows_ime", False)
+                and touchpad.inputMode != 'voice' and (touchpad.active or touchpad.busy)):
+            return False
         if (name in bindings.switch_mode
                 and getattr(self.owner, "_automatic_session_enabled", lambda: False)()):
             endpoint = True
@@ -454,7 +457,7 @@ class RingGestureController(QObject):
         if event.capture_error and not service._override_stop_reason(event):
             reason = event.capture_reason or "capture_failed"
             service._stop_trace(event, reason)
-            service.notify(reason_message(reason) if reason.startswith("input_method_")
+            service.notify(reason_message(reason) if reason.startswith("input_method_") or reason == "windows_tsf_not_selected"
                            or reason == "foreground_or_connection_changed"
                            else "应用手势无法读取前台应用，请查看运行日志")
             return

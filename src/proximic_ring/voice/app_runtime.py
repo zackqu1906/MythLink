@@ -122,7 +122,7 @@ def _with_hotwords(context_provider, hotwords_provider):
     """Read an immutable vocabulary snapshot per utterance, even without editor context."""
     def capture():
         try:
-            context = dict(context_provider() or {})
+            context = dict(context_provider() or {}) if context_provider is not None else {}
         except Exception:
             context = {"status": "unavailable", "source": "input_method", "reason": "context_unavailable"}
         try:
@@ -131,6 +131,13 @@ def _with_hotwords(context_provider, hotwords_provider):
             context["hotwords"] = []
         return context
     return capture
+
+
+def _asr_context_provider(backend, ime_context_provider, hotwords_provider):
+    context = _volcengine_context_provider(ime_context_provider) if backend == "volcengine" else None
+    if hotwords_provider is not None and backend in {"volcengine", "funasr_nano"}:
+        return _with_hotwords(context, hotwords_provider)
+    return context
 
 
 def _volcengine_context_provider(
@@ -473,6 +480,7 @@ class RuntimeSettings:
     # Dataset capture is optional. Gesture consumers independently request IMU.
     collect_imu: bool = False
     imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
+    ring_mic_on_demand: bool = False
 
     bailian_api_host: str = ""
 
@@ -626,13 +634,7 @@ class RecognitionRuntime:
         selected_backend = self.settings.asr_backend.strip().lower().replace(
             "-", "_"
         )
-        asr_context_provider = (
-            _volcengine_context_provider(ime_context_provider)
-            if selected_backend == "volcengine"
-            else None
-        )
-        if asr_context_provider is not None and asr_hotwords_provider is not None:
-            asr_context_provider = _with_hotwords(asr_context_provider, asr_hotwords_provider)
+        asr_context_provider = _asr_context_provider(selected_backend, ime_context_provider, asr_hotwords_provider)
         # Optional dataset IMU collection is independent of firmware gestures.
         imu_hz = self.settings.imu_sample_rate_hz
         imu_buffer = (
@@ -651,7 +653,8 @@ class RecognitionRuntime:
             imu_observer=imu_buffer.append if imu_buffer is not None else None,
             battery_observer=on_battery,
             imu_hz=imu_hz,
-            **({"audio_enabled": False} if self.settings.audio_source == "microphone" else {}),
+            **({"audio_enabled": False} if self.settings.audio_source == "microphone"
+               or self.settings.ring_mic_on_demand else {}),
         )
         microphone = (
             MicrophoneSource(selection=self.settings.microphone_device)
@@ -697,10 +700,7 @@ class RecognitionRuntime:
                     args.push_to_talk = False
                 gesture_control = self.settings.speech_control_mode == "gesture"
                 end_on_gesture = bool(args.asr_end_on_tap)
-                asr_context_provider = (_volcengine_context_provider(ime_context_provider)
-                                        if args.asr[0] == "volcengine" else None)
-                if asr_context_provider is not None and asr_hotwords_provider is not None:
-                    asr_context_provider = _with_hotwords(asr_context_provider, asr_hotwords_provider)
+                asr_context_provider = _asr_context_provider(args.asr[0], ime_context_provider, asr_hotwords_provider)
                 if gesture_control:
                     on_state("纯手势启停：已跳过近点检测模型")
                     detector = None
@@ -838,10 +838,9 @@ class RecognitionRuntime:
             # starve that callback path and the Ring stream was observed to stop
             # after only 2-3 blocks.  The firmware receiver remains reliable
             # because it starts MIC only after its lightweight UI is ready.
-            on_state("设备已连接，保持麦克风关闭并加载模型…")
-
             if disconnect_event.is_set():
                 return
+            on_state("设备已连接，保持麦克风关闭并加载模型…")
             load_voice()
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error
@@ -883,8 +882,9 @@ class RecognitionRuntime:
                         global_handled = accepted and gesture_filter is not None and not gesture_filter(
                             event, bool(getattr(controller, "gesture_busy", getattr(controller, "active", False)))
                         )
-                        is_start_endpoint = end_on_gesture and bool(name) and name in bindings.confirm
-                        is_end_endpoint = end_on_gesture and bool(name) and name in bindings.end
+                        on_demand_ring = self.settings.ring_mic_on_demand and audio_source is source
+                        is_start_endpoint = (end_on_gesture or on_demand_ring) and bool(name) and name in bindings.confirm
+                        is_end_endpoint = (end_on_gesture or on_demand_ring) and bool(name) and name in bindings.end
                         if (end_on_gesture and name and name in bindings.switch_mode
                                 and automatic_routing_provider is not None and automatic_routing_provider()):
                             is_end_endpoint = True
@@ -905,11 +905,12 @@ class RecognitionRuntime:
                                 )
                             )
                             if can_request:
-                                if gesture_control and not end_only:
+                                if (gesture_control or on_demand_ring) and not end_only:
                                     requested_action = controller.request_gesture_toggle(
                                         prepare_gesture_start,
                                         allow_start=is_start_endpoint,
                                         allow_end=is_end_endpoint,
+                                        **({"explicit": True} if on_demand_ring else {}),
                                     )
                                     confirm_requested = requested_action is not None
                                 else:
@@ -991,10 +992,13 @@ class RecognitionRuntime:
                 # independent firmware gesture/battery traffic on this BLE link.
                 source.audio_enabled = False
                 on_state("语音暂不可用，正在启动 Ring 手势；设备将保持连接")
+            elif self.settings.ring_mic_on_demand and microphone is None:
+                on_state("触控测试：Ring 麦克风按需开启，请使用手势或按键开始语音")
             else:
                 on_state("模型加载完成，正在启动电脑麦克风与 Ring 手势…" if microphone is not None
                          else "模型加载完成，正在启动并确认实时音频…")
-            source.start_stream(buffer_audio=controller is not None and microphone is None)
+            source.start_stream(buffer_audio=controller is not None and microphone is None
+                                and not self.settings.ring_mic_on_demand)
             if on_ring_source is not None and not disconnect_event.is_set():
                 on_ring_source(source)
             if disconnect_event.is_set():
@@ -1024,6 +1028,21 @@ class RecognitionRuntime:
             last_gesture_health = None
             recognition_was_enabled = False
             practice_was_active = False
+            mic_start_failed = False
+            manual_recording = False
+            manual_key_consumed = False
+
+            def wants_ring_audio():
+                if practice_active is not None and practice_active():
+                    return True
+                if not recognition_event.is_set():
+                    return False
+                return (controller.active or controller.gesture_start_pending
+                        or (not manual_key_consumed and manual_key_held()))
+
+            def manual_key_held():
+                manual = getattr(controller, "manual_active", None)
+                return manual is not None and manual()
 
             def safe_to_change_audio():
                 return not bool(getattr(controller, "gesture_busy", getattr(controller, "active", False))) and not (
@@ -1032,8 +1051,11 @@ class RecognitionRuntime:
                 )
 
             def interrupt_idle_audio_read():
-                return (audio_settings is not None
-                        and audio_settings.pending and not audio_settings.applying
+                if self.settings.ring_mic_on_demand and audio_source is source:
+                    if ((cancel_utterance_event is not None and cancel_utterance_event.is_set())
+                            or not wants_ring_audio()):
+                        return True
+                return (audio_settings is not None and audio_settings.pending and not audio_settings.applying
                         and audio_settings.allowed.is_set() and safe_to_change_audio())
 
             def publish_gesture_health():
@@ -1099,6 +1121,7 @@ class RecognitionRuntime:
                         gesture_control = input_pipeline.configuration.speech_control_mode == "gesture"
                         end_on_gesture = bool(self.settings.asr_end_on_tap or gesture_control)
                         recognition_was_enabled = False
+                        mic_start_failed = manual_recording = manual_key_consumed = False
                         if audio_settings.complete(request, success=not error):
                             if on_audio_configured is not None:
                                 on_audio_configured(request, error)
@@ -1123,6 +1146,47 @@ class RecognitionRuntime:
                         continue
                     disconnect_event.wait(.05)
                     continue
+                on_demand = self.settings.ring_mic_on_demand and audio_source is source
+                if on_demand:
+                    if not manual_key_held():
+                        manual_key_consumed = False
+                    if cancel_utterance_event is not None and cancel_utterance_event.is_set():
+                        controller.discard_current()
+                        controller.cancel_pending()
+                        manual_recording = False
+                        if detector is not None:
+                            detector.reset()
+                        cancel_utterance_event.clear()
+                        on_state("[ASR] CANCELLED reason=user-request")
+                    wants_audio = wants_ring_audio()
+                    if not wants_audio:
+                        mic_start_failed = False
+                        if source.audio_enabled:
+                            source.set_audio_enabled(False)
+                            on_state("[RING_MIC] idle")
+                        if recognition_was_enabled or (not recognition_event.is_set() and controller.gesture_busy):
+                            controller.reset()
+                            if detector is not None:
+                                detector.reset()
+                            recognition_was_enabled = False
+                        publish_gesture_health()
+                        if finish_utterance_event is not None:
+                            finish_utterance_event.clear()
+                        disconnect_event.wait(.02)
+                        continue
+                    if mic_start_failed:
+                        disconnect_event.wait(.02)
+                        continue
+                    if not source.audio_enabled:
+                        started_at = time.monotonic()
+                        try:
+                            source.set_audio_enabled(True)
+                        except (RuntimeError, TimeoutError) as exc:
+                            controller.discard_current()
+                            mic_start_failed = True
+                            on_state(f"[RING_MIC] 启动失败，请松开按键或重新触发语音：{exc}")
+                            continue
+                        on_state(f"[RING_MIC] ready first_pcm_ms={(time.monotonic() - started_at) * 1000:.0f}")
                 try:
                     interruptible_read = getattr(audio_source, "read_interruptible", None)
                     if callable(interruptible_read):
@@ -1193,7 +1257,7 @@ class RecognitionRuntime:
                 if practice_was_active:
                     # A new confirm can arrive between leaving practice and
                     # this first normal block. Preserve its queued gesture START.
-                    if not gesture_control:
+                    if not gesture_control and not on_demand:
                         controller.reset()
                     if detector is not None:
                         detector.reset()
@@ -1219,7 +1283,7 @@ class RecognitionRuntime:
                         detector.reset()
                     # A gesture can be queued between enable and this first
                     # audio block. Gesture sessions have no pre-roll to reset.
-                    if not gesture_control:
+                    if not gesture_control and not on_demand:
                         controller.reset()
                 recognition_was_enabled = True
                 if detector is not None and stage1_threshold_provider is not None:
@@ -1239,11 +1303,15 @@ class RecognitionRuntime:
                 # is applied only after detection, so both ASR and the raw
                 # utterance observer/history receive the same enhanced audio.
                 was_active = bool(getattr(controller, "active", False))
+                if on_demand and manual_recording and not manual_key_held():
+                    controller.request_user_end()
+                starting_by_key = (on_demand and not manual_key_consumed and not was_active and not controller.gesture_busy
+                                   and manual_key_held())
                 # ACTIVATE is needed only to start. Once listening for tap,
                 # skip Stage2 inference entirely, keeping audio and gestures
                 # free from reject inference and its CPU/GIL scheduling cost.
                 events = (
-                    [] if gesture_control or (end_on_gesture and was_active)
+                    [] if on_demand or gesture_control or (end_on_gesture and was_active)
                     else detector.feed(block)
                 )
                 for event in events:
@@ -1262,6 +1330,9 @@ class RecognitionRuntime:
                     events,
                     block_end_monotonic_ns=block_end_monotonic_ns,
                 )
+                if on_demand:
+                    manual_recording = controller.active and (manual_recording or starting_by_key)
+                    manual_key_consumed = manual_key_consumed or (starting_by_key and controller.active)
                 if end_on_gesture and was_active and not controller.active:
                     # Reset even if a very fast final/application already
                     # reopened recognition before this loop saw the pause.

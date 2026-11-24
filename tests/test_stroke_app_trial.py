@@ -93,7 +93,7 @@ def test_two_finger_press_and_delete_have_distinct_feedback(inline_ui, tmp_path)
                 clear_progress=progress, threshold=6, clear_distance=30,
                 display=dict(origin=[0, 0], points=[[0, 0], [-distance, 0]]))
             tp.selectionChanged.emit()
-            QTest.qWait(30)
+            QTest.qWait(140)
             assert menu.property('selecting') == (phase == 'selecting')
             assert menu.property('color').name() == color
             assert pull.property('visible') == (phase == 'selecting' and direction == 'left')
@@ -125,6 +125,74 @@ def test_local_backspace_continues_before_inserted_text_and_removes_selection(in
         QMetaObject.invokeMethod(editor, 'select', Q_ARG(int, 1), Q_ARG(int, 5))
         tp.deleteOne()
         assert editor.property('text') == '前后'
+    finally:
+        tp.close()
+        QTest.qWait(20)
+
+
+def test_more_punctuation_slider_opens_and_commits_split_symbols(inline_ui, tmp_path):
+    from proximic_ring.touchpad.stroke.stroke_menu import two_finger_selection
+
+    _, _, window, tp, source = open_trial(inline_ui, (1280, 900))
+    editor = window.findChild(QObject, 'strokeTestEditor')
+    menu = window.findChild(QObject, 'strokeMorePunctuation')
+    slider = window.findChild(QObject, 'strokePunctuationPull')
+    cancel = window.findChild(QObject, 'strokeCancelPunctuation')
+    viewport = window.findChild(QObject, 'touchpadViewport')
+    try:
+        editor.forceActiveFocus()
+        tp.setLocalStrokeInput(True)
+        tp.setLocalStrokeFocus(True)
+        tp.toggleLocalStrokeTrial()
+        QTest.qWait(20)
+        source.future.set_result(None)
+        until(lambda: tp.strokeSession.phase == 'running')
+        grid = window.findChild(QObject, 'strokeSelectionMenu')
+        viewport.setProperty('contentY', max(0, grid.mapToItem(
+            viewport.property('contentItem'), QPointF()).y() - 180))
+        run = tp._run
+        points = [(0, 0), (0, -18), (0, -24)]
+        tp._receive(run, 'selection_state', (run.output, two_finger_selection(points)))
+        QTest.qWait(160)
+        assert slider.property('visible') and slider.property('progress') == .5
+        clear = window.findChild(QObject, 'strokeClearPull')
+        assert (slider.width(), slider.height()) == (cancel.width(), cancel.height()) == (clear.width(), clear.height())
+        assert (slider.property('caption'), cancel.property('caption')) == ('更多', '取消')
+        assert not menu.property('visible')
+        assert window.grabWindow().save(str(tmp_path / 'punctuation-pull.png'))
+
+        points.extend([(0, -30), (2, -39)])
+        tp._receive(run, 'selection_state', (run.output, two_finger_selection(points)))
+        QTest.qWait(260)
+        assert menu.property('visible') and not slider.property('visible')
+        def selected_symbols(item):
+            if item.property('selected') is True:
+                return [item.property('modelData')]
+            return [symbol for child in item.childItems() for symbol in selected_symbols(child)]
+        assert selected_symbols(menu) == ['”']
+        assert menu.width() < grid.width()
+        assert window.grabWindow().save(str(tmp_path / 'punctuation-open.png'))
+        final = two_finger_selection(points, finished=True)
+        tp._receive(run, 'selection', (run.output, dict(decision=final)))
+        QTest.qWait(180)
+        assert editor.property('text') == '”' and not menu.property('visible')
+
+        points = [(0, 0), (0, -30), (0, -16.5), (0, -10.5)]
+        tp._receive(run, 'selection_state', (run.output, two_finger_selection(points)))
+        QTest.qWait(240)
+        assert selected_symbols(menu) == ['——']
+        assert cancel.property('visible') and cancel.property('progress') == .5
+        assert cancel.mapToScene(QPointF()).y() >= menu.mapToScene(QPointF(0, menu.height())).y()
+        assert window.grabWindow().save(str(tmp_path / 'punctuation-cancel.png'))
+
+        points.append((0, -4.5))
+        tp._receive(run, 'selection_state', (run.output, two_finger_selection(points)))
+        QTest.qWait(180)
+        assert not menu.property('visible') and not cancel.property('visible')
+        assert grid.property('activeDirection') == 'center'
+        final = two_finger_selection(points, finished=True)
+        tp._receive(run, 'selection', (run.output, dict(decision=final)))
+        assert editor.property('text') == '”'
     finally:
         tp.close()
         QTest.qWait(20)
@@ -261,6 +329,62 @@ def test_joined_fan_is_three_contacts_and_four_strokes_in_the_app(inline_ui, mon
         QTest.qWait(20)
 
 
+def test_joined_switch_reinterprets_ink_and_controls_shallow_mouth_z(inline_ui):
+    c, _, window, tp, source = open_trial(inline_ui, (1280, 900))
+    editor = window.findChild(QObject, 'strokeTestEditor')
+    toggle = window.findChild(QObject, 'strokeJoinedToggle')
+    tp.setLocalStrokeInput(True)
+    editor.forceActiveFocus()
+    tp.setLocalStrokeFocus(True)
+    tp.setInputMode('stroke')
+    tp.start()
+    until(lambda: bool(source.starts))
+    source.future.set_result(None)
+    until(lambda: tp.state == 'running')
+    draw = tp._run.output.options['on_stroke']
+    pie = [(0, 0), (-20, 30), (30, 30)]
+    mouth = [(0, 0), (45, 0), (0, 12), (45, 12)]
+
+    def toggle_joined():
+        toggle.setProperty('checked', not toggle.property('checked'))
+        toggle.toggled.emit()
+
+    try:
+        assert toggle.property('checked')
+        toggle_joined()
+        assert not tp.joinedMatching and not toggle.property('checked')
+        assert not c._settings.value('touchpad/joinedMatching', type=bool)
+        draw(pie)
+        until(lambda: len(tp.strokeTokens) == 1)
+        assert not tp._stroke_evidence[0].get('joined_options')
+        tp.addStroke('s')
+        toggle_joined()
+        assert tp.joinedMatching and toggle.property('checked')
+        assert any(row.get('match_type') == 'joined_stroke' and row['char'] == '千'
+                   for row in tp._candidate_matches)
+        assert len(tp.strokeTokens) == 2
+        toggle_joined()
+        assert len(tp.strokeTokens) == 2
+        assert not any(row.get('match_type') == 'joined_stroke' for row in tp._candidate_matches)
+
+        tp.clearStrokes()
+        tp.addStroke('s')
+        draw(mouth)
+        until(lambda: len(tp.strokeTokens) == 2)
+        assert not tp._stroke_evidence[-1].get('joined_options')
+        assert not any(row.get('match_type') == 'joined_stroke' for row in tp._candidate_matches)
+        toggle_joined()
+        visual = next(v for v in tp.strokeCandidateVisuals if v['character'] == '口')
+        assert visual['entered'] == 3 and visual['status'] == '连笔 1→2 · 已写完'
+        tp.undoStroke()
+        assert len(tp.strokeTokens) == 1
+        draw([(0, 0), (45, 0), (0, 0), (45, 0)])
+        until(lambda: len(tp.strokeTokens) == 2)
+    finally:
+        tp.close()
+        QTest.qWait(20)
+
+
 def test_whole_character_repair_and_page_filling_guesses_reach_the_menu(inline_ui):
     from proximic_ring.touchpad.stroke.stroke_fuzzy import stroke_evidence
     window, tp = start(inline_ui)
@@ -281,7 +405,8 @@ def test_whole_character_repair_and_page_filling_guesses_reach_the_menu(inline_u
         tp._learn_writer = lambda *args: learned.append(args)
         tp.selectCandidate(tp.strokeCandidates.index('我'))
         assert window.findChild(QObject, 'strokeTestEditor').property('text') == '我' and not learned
-        # Recognized (not manual) strokes with too few matches are topped up to a full page.
+        # Candidate filling also runs for recognized strokes with fuzzy matching off.
+        tp.fuzzyMatching = False
         tp._code = 'zzzzzzzz'
         tp._stroke_evidence = [dict(stroke_evidence('z'), manual=False) for _ in tp._code]
         tp._refresh_candidates()
@@ -373,7 +498,8 @@ def test_tutorial_buttons_close_and_reopen_without_stealing_editor_focus(inline_
             QTest.qWait(80)
 
         assert tutorial.property('visible') and not open_button.property('visible')
-        for name in ('strokeTutorialWrite', 'strokeTutorialSelect', 'strokeTutorialClear', 'strokeTutorialZigzag'):
+        for name in ('strokeTutorialWrite', 'strokeTutorialSelect', 'strokeTutorialPunctuation',
+                     'strokeTutorialClear', 'strokeTutorialLeftPull'):
             assert window.findChild(QObject, name) is not None, name
         click(close_button)
         assert not tutorial.property('visible') and open_button.property('visible')

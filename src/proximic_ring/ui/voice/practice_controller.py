@@ -354,7 +354,7 @@ class VoicePracticeController(QObject):
                 if callable(setter):
                     setter(cancel)
                 context = getattr(backend, "set_session_context", None)
-                if config.backend == "volcengine" and callable(context):
+                if config.backend in {"volcengine", "funasr_nano"} and callable(context):
                     context({"hotwords": list(config.hotwords)})
                 backend.start()
                 for offset in range(0, wave.size, 3200):

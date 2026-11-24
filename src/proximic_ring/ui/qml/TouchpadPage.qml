@@ -58,6 +58,7 @@ ScrollView {
                                 text: !page.touchpad.supported ? "触摸板支持 Windows 和 macOS"
                                     : !page.controller.connected ? "连接 Ring，开始平面触控"
                                     : page.touchpad.strokePreparing ? "正在准备笔画输入"
+                                    : page.touchpad.inputMode === "voice" ? "语音输入模式"
                                     : page.touchpad.active ? (page.touchpad.inputMode === "stroke" ? "正在书写" : "正在控制鼠标") : "光标控制与笔画输入"
                                 font.pixelSize: 22; font.weight: Font.Medium; color: theme.text
                             }
@@ -87,7 +88,8 @@ ScrollView {
                     Label {
                         objectName: "touchpadRunStatus"
                         Layout.fillWidth: true; wrapMode: Text.Wrap
-                        text: page.touchpad.active ? "已启用 · " + (page.touchpad.inputMode === "stroke" ? "正在书写笔画" : "正在控制鼠标 · 可同时使用 Ring 或电脑麦克风") : "开启后可控制鼠标，同时使用 Ring 或电脑麦克风。"
+                        text: page.touchpad.inputMode === "voice" ? "单指双击回到光标控制"
+                            : page.touchpad.active ? "已启用 · " + (page.touchpad.inputMode === "stroke" ? "正在书写笔画" : "正在控制鼠标 · 可同时使用 Ring 或电脑麦克风") : "开启后可控制鼠标，同时使用 Ring 或电脑麦克风。"
                         color: theme.muted; font.pixelSize: 13
                     }
                     PermissionNotice {
@@ -95,6 +97,22 @@ ScrollView {
                         Layout.fillWidth: true
                         message: page.touchpad.macPermissionsRequired ? page.controller.inlineInput.permissions.accessibilityWarningText : ""
                         onActivated: page.controller.inlineInput.permissions.openSettings()
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: Qt.platform.os === "windows"
+                        Label {
+                            Layout.fillWidth: true
+                            text: "连接 Ring 后自动开启光标控制"
+                            font.pixelSize: 13; color: theme.text
+                            wrapMode: Text.Wrap
+                        }
+                        FigmaSwitch {
+                            objectName: "touchpadAutoStartSwitch"
+                            checked: page.touchpad.autoStartOnConnect
+                            Accessible.name: "连接 Ring 后自动开启光标控制"
+                            onToggled: page.touchpad.autoStartOnConnect = checked
+                        }
                     }
                 }
             }
@@ -141,7 +159,7 @@ ScrollView {
                 FigmaSwitch {
                     objectName: "handwritingCorrectionSwitch"
                     checked: page.touchpad.handwritingCorrectionEnabled
-                    enabled: page.touchpad.externalStrokeSupported && page.touchpad.raw2Supported
+                    enabled: page.touchpad.handwritingCorrectionSupported && page.touchpad.raw2Supported
                     Accessible.name: "双指右拉到底修正前文"
                     onToggled: page.touchpad.handwritingCorrectionEnabled = checked
                 }
@@ -151,6 +169,7 @@ ScrollView {
                 visible: page.section === "stroke"
                 inputVisible: visible && page.visible && page.windowActive
                 viewportHeight: viewport.height
+                menuViewport: viewport
                 controller: page.controller
                 onHomeRequested: page.homeRequested()
             }
@@ -254,7 +273,7 @@ ScrollView {
                     Label {
                         Layout.fillWidth: true; wrapMode: Text.Wrap; font.pixelSize: 13; color: theme.muted
                         text: page.touchpad.raw2Supported
-                            ? (page.touchpad.externalStrokeSupported ? "点入输入框，双指双击进入或退出笔画输入。单指双击为鼠标双击；双指单击稍候触发右键。" : "双指双击进入或退出试写。单指双击为鼠标双击；双指单击稍候触发右键。")
+                            ? (page.touchpad.windowsInputPrototype ? "单指双击切换语音和触摸板。触摸板模式下，点入文本框后双指双击进入或退出笔画输入。" : page.touchpad.externalStrokeSupported ? "点入输入框，双指双击进入或退出笔画输入。单指双击为鼠标双击；双指单击稍候触发右键。" : "双指双击进入或退出试写。单指双击为鼠标双击；双指单击稍候触发右键。")
                             : "当前平台使用兼容触摸板，暂不支持新版双指滚动和独立点击设置。笔画输入可在书写区使用。"
                     }
                 }

@@ -11,6 +11,7 @@ import numpy as np
 
 from ..factory import ASRBackendSettings
 from ..funasr_compat import prepare_funasr_runtime
+from ...voice.hotwords import select_hotwords
 
 
 DEFAULT_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
@@ -79,6 +80,7 @@ class FunASRNanoStreamingASR:
         self.rollback_tokens = int(rollback_tokens)
         self.use_itn = bool(use_itn)
         self.hotwords = list(hotwords or [])
+        self._session_hotwords = []
         self.final_redecode = bool(final_redecode)
 
         try:
@@ -198,6 +200,10 @@ class FunASRNanoStreamingASR:
     def start(self) -> None:
         self._reset()
 
+    def set_session_context(self, context) -> None:
+        words = context.get("hotwords") if isinstance(context, dict) else None
+        self._session_hotwords = select_hotwords(words) if isinstance(words, (list, tuple)) else []
+
     def abort(self) -> None:
         self._reset()
 
@@ -215,7 +221,7 @@ class FunASRNanoStreamingASR:
             prev_text=previous_context,
             language=self.language,
             itn=self.use_itn,
-            hotwords=self.hotwords,
+            hotwords=list(dict.fromkeys([*self.hotwords, *self._session_hotwords])),
         )
         with self._torch.inference_mode():
             result = self._model.inference([tensor], **kwargs)
