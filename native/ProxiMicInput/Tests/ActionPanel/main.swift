@@ -76,6 +76,7 @@ guard let cancelHint = find(content, "voiceHint_undo") as? VoiceHudHint,
       let polishHint = find(content, "voiceHint_polish") as? VoiceHudHint,
       let dots = find(content, "voiceProcessingDots") as? VoiceHudProgress,
       let spinner = find(content, "voiceProcessingSpinner") as? VoiceHudSpinner,
+      let undoCheck = find(content, "voiceUndoCheck") as? VoiceHudUndoCheck,
       let hudContent = find(content, "voiceHudContent") else { fatalError("missing separate hint controls") }
 check(content.bounds.height == 32, "default palette is not compact")
 check(!window.hasShadow && content.layer?.backgroundColor?.alpha == 0.68,
@@ -113,17 +114,23 @@ func checkActionFit(_ count: Int, scale: CGFloat = 0.8) {
 // true after success and must not keep the result anchored to the instruction.
 final class PanelTextClient: CompositionClient {
     let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 160))
+    var exposesRanges = true
     init() { text.string = "原文"; text.setSelectedRange(NSRange(location: 2, length: 0)) }
     func snapshot() throws -> EditorSnapshot {
-        EditorSnapshot(text: text.string, selection: text.selectedRange(), markedRange: text.markedRange(),
+        if !exposesRanges {
+            return EditorSnapshot(text: nil, selection: unspecifiedRange, markedRange: unspecifiedRange,
+                                  selectedText: nil, documentAccess: false)
+        }
+        return EditorSnapshot(text: text.string, selection: text.selectedRange(), markedRange: text.markedRange(),
             selectedText: (text.string as NSString).substring(with: text.selectedRange()), documentAccess: true)
     }
     func probe() -> CompositionProbe {
+        if !exposesRanges { return CompositionProbe(selection: unspecifiedRange, markedRange: unspecifiedRange, markedText: nil) }
         let range = text.markedRange()
         return CompositionProbe(selection: text.selectedRange(), markedRange: range,
             markedText: isValidRange(range, length: (text.string as NSString).length) ? (text.string as NSString).substring(with: range) : nil)
     }
-    func selection() -> NSRange { text.selectedRange() }
+    func selection() -> NSRange { exposesRanges ? text.selectedRange() : unspecifiedRange }
     func mark(_ value: String) {
         text.setMarkedText(value, selectedRange: NSRange(location: (value as NSString).length, length: 0), replacementRange: unspecifiedRange)
     }
@@ -231,6 +238,7 @@ check(window.frame.origin.x == newCaret.minX && window.frame.origin != oldOrigin
       "result panel stayed at the old preedit caret")
 session.cancel(); palette.update(session)
 check(session.phase == .dictated && palette.needsPosition, "undo did not resume positioning")
+check(!undoCheck.isHidden && errorSymbol.isHidden, "restoring a committed edit lost its undo confirmation")
 palette.position(caret: oldCaret, clientLevel: 0)
 check(window.frame.origin.x == oldCaret.minX, "undo panel did not follow restored dictation")
 session.interrupt("鼠标操作已接管本句")
@@ -298,6 +306,12 @@ check(label.stringValue == "已发送" && spinner.isHidden && !errorSymbol.isHid
       "sent feedback retained an operation or error state")
 check(cancelHint.isHidden && editHint.isHidden && polishHint.isHidden, "sent feedback advertised stale actions")
 try capture("sent")
+readySession.cancel()
+palette.update(readySession)
+check(!readySession.polished && !undoCheck.isHidden, "restoring a polished sentence lost its undo confirmation")
+readySession.cancel()
+palette.update(readySession)
+check(readySession.phase == .undone && !undoCheck.isHidden, "ordinary dictation undo lost its confirmation")
 let nextSession = try CompositionSession(client: PanelTextClient(), utteranceID: "after-sent", sequence: 1)
 palette.update(nextSession)
 check(label.stringValue == "听写 · 可以说话", "new session kept sent feedback")
@@ -397,3 +411,103 @@ palette.update(redoSession, redoEnabled: false, retryAvailable: true, historyAct
 check(editHint.title == "重做" && !editHint.isHidden, "retry did not advertise a fresh model request")
 palette.update(redoSession, redoEnabled: false, retryAvailable: false, historyActionMode: "retry")
 check(editHint.isHidden, "retry was offered without an edit instruction")
+redoSession.systemUndoTrial = true
+redoSession.onChanged = { palette.update(redoSession) }
+palette.position(caret: oldCaret, clientLevel: 0)
+var deliveryReceipt: ((String?) -> Void)?
+redoSession.systemUndo { deliveryReceipt = $0 }
+check(redoSession.systemUndoPending && undoCheck.isHidden, "undo animated before the delivery receipt")
+deliveryReceipt?("系统撤销未返回发送回执")
+check(undoCheck.isHidden && !errorSymbol.isHidden, "failed receipt displayed a successful undo")
+redoSession.systemUndo { $0(nil) }
+check(redoSession.phase == .undone && label.stringValue == "已撤销" && label.toolTip == "已撤销",
+      "system undo should show the same completion message as ordinary undo")
+if !VoiceHudMotion.reduced {
+    palette.hide()
+    redoSession.systemUndo { $0(nil) }
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 1.1))
+    check(!window.isVisible, "fixture unexpectedly presented the panel")
+    palette.position(caret: oldCaret, clientLevel: 0)
+    func displayedStroke(after seconds: TimeInterval) -> CGFloat {
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: seconds))
+        return undoCheck.stroke.presentation()?.strokeEnd ?? -1
+    }
+    let start = displayedStroke(after: 0.12)
+    palette.update(redoSession)
+    let middle = displayedStroke(after: 0.38)
+    let end = displayedStroke(after: 0.37)
+    let done = displayedStroke(after: 0.22)
+    print("Undo presentation stroke at 0.12/0.50/0.87/1.09 s:", start, middle, end, done)
+    check(start >= 0 && start < 0.35 && middle > start && middle < 0.8 &&
+          end > middle && end < 1 && done == 1,
+          "the visible panel must draw its check over a full second even when positioning was late")
+    redoSession.systemUndo { $0(nil) }
+    let inFlight = displayedStroke(after: 0.45)
+    redoSession.systemUndo { $0(nil) }
+    let restarted = displayedStroke(after: 0.12)
+    check(inFlight > 0.2 && restarted >= 0 && restarted < inFlight,
+          "a second successful undo should immediately restart the visible stroke")
+}
+check(!undoCheck.isHidden && errorSymbol.isHidden && spinner.isHidden &&
+      undoCheck.superview === errorSymbol.superview && undoCheck.frame == errorSymbol.frame &&
+      undoCheck.convert(undoCheck.bounds, to: content).maxX <= label.convert(label.bounds, to: content).minX,
+      "undo should use the reserved icon slot to the left of the label")
+let burstStart = CACurrentMediaTime()
+let firstRevision = redoSession.revision
+for _ in 0..<8 {
+    palette.update(redoSession)
+    check(redoSession.canSystemUndo && cancelHint.isEnabled, "animation blocked the next undo")
+    redoSession.systemUndo { $0(nil) }
+    if !VoiceHudMotion.reduced {
+        guard let draw = undoCheck.stroke.animation(forKey: "draw") as? CABasicAnimation else { fatalError("missing undo animation") }
+        check(draw.keyPath == "strokeEnd" && draw.duration == 1 &&
+              undoCheck.stroke.animationKeys() == ["draw"], "successive undos did not replace one bounded draw animation")
+    }
+}
+check(redoSession.revision == firstRevision + 8, "burst lost an undo")
+print("PASS eight consecutive undo receipts in \(Int((CACurrentMediaTime() - burstStart) * 1000)) ms")
+try capture("undo-check")
+undoCheck.show(utterance: "reduced-motion", revision: 1)
+undoCheck.playIfVisible(reducedMotion: true)
+check(!undoCheck.isHidden && undoCheck.stroke.strokeEnd == 1 && undoCheck.stroke.animation(forKey: "draw") == nil,
+      "Reduce Motion should show a static complete check")
+redoSession.systemUndo { $0(nil) }
+palette.showNotice("操作未完成")
+check(undoCheck.isHidden && undoCheck.stroke.animation(forKey: "draw") == nil, "notice retained undo feedback")
+palette.update(redoSession)
+check(!undoCheck.isHidden && undoCheck.stroke.animation(forKey: "draw") == nil, "returning to old state replayed a receipt")
+redoSession.systemUndo { $0("撤销失败") }
+check(undoCheck.isHidden && !errorSymbol.isHidden, "failure after a successful undo kept the check")
+redoSession.onChanged = nil
+print("PASS success-only undo check, stable icon slot, interruptible replay and reduced motion")
+
+// An IMK client can accept dictation without exposing ranges or geometry.
+// Its recording status must remain visible without taking keyboard focus.
+palette.hide()
+let unreadableClient = PanelTextClient()
+unreadableClient.exposesRanges = false
+let unreadableSession = try CompositionSession(client: unreadableClient, utteranceID: "no-ranges-or-caret", sequence: 1)
+let foregroundBeforeFallback = NSWorkspace.shared.frontmostApplication?.processIdentifier
+palette.update(unreadableSession)
+palette.position(caret: nil, clientLevel: 0)
+check(window.isVisible, "missing selection and caret silently hid active dictation")
+check(!window.canBecomeKey && !window.isKeyWindow &&
+      NSWorkspace.shared.frontmostApplication?.processIdentifier == foregroundBeforeFallback,
+      "fallback recording panel stole editor focus")
+check(NSScreen.screens.contains { $0.visibleFrame.contains(window.frame) }, "fallback panel is outside visible screens")
+let fallbackOrigin = window.frame.origin
+palette.position(caret: nil, clientLevel: 0)
+check(window.frame.origin == fallbackOrigin, "missing geometry moved the fallback recording panel")
+unreadableSession.update("兼容", final: false)
+unreadableSession.convert()
+check(unreadableSession.phase == .listening && !unreadableSession.error.isEmpty,
+      "range-dependent edit failure stopped dictation")
+unreadableSession.update("兼容听写", final: true)
+palette.update(unreadableSession)
+palette.position(caret: nil, clientLevel: 0)
+check(unreadableClient.text.string == "原文兼容听写" && unreadableSession.phase == .dictated && window.isVisible,
+      "missing ranges/geometry prevented dictation delivery or completion feedback")
+palette.position(caret: newCaret, clientLevel: 0)
+check(window.frame.origin.x == newCaret.minX, "restored caret did not replace fallback position")
+palette.hide()
+print("PASS no-selection/no-geometry dictation stays visible, retains focus and survives edit failure")

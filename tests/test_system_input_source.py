@@ -24,7 +24,9 @@ class Sources:
     def foreground(self): return self.front
     def sources(self, *, timeout): return {'abc', 'pinyin', 'voice'}
     def shortcut(self): return (49, 786432)
-    def advance(self, shortcut, origin):
+    def advance(self, shortcut, origin, *, before_key_down=None):
+        if before_key_down is not None:
+            before_key_down()
         self.advances += 1
         self.selected = next(self.sequence)
 
@@ -46,6 +48,46 @@ def test_repeated_source_stops_instead_of_looping_or_claiming_success():
 def test_borrow_remembers_the_first_source_not_an_intermediate_cycle():
     sources = Sources(['abc', 'pinyin', 'voice'])
     assert cycle_to_source(sources, ORIGIN, 'voice', timeout=.1, remember_source=True) == 'abc'
+
+
+@pytest.mark.parametrize('sequence', [('abc', 'pinyin', 'voice'), ('voice', 'abc', 'pinyin', 'voice')])
+def test_temporary_probe_preserves_editor_focus_with_three_keyboards(sequence):
+    sources = Sources(sequence)
+    borrowed = []
+    previous = cycle_to_source(
+        sources, ORIGIN, 'voice', timeout=.2, remember_source=True,
+        native_activate=lambda *_, **__: pytest.fail('native helper steals editor focus'),
+        on_borrow=borrowed.append)
+    assert previous == sequence[0]
+    assert borrowed == [sequence[0]] * (len(sequence) - 1)
+    assert sources.selected == 'voice'
+
+
+def test_temporary_probe_tracks_intermediate_source_when_next_switch_fails():
+    sources = Sources(['abc', 'pinyin'])
+    original_advance = sources.advance
+    selected = []
+    def advance(*args, **kwargs):
+        if sources.advances:
+            raise InputSourceUnavailable('input_method_source_modifiers_held')
+        original_advance(*args, **kwargs)
+    sources.advance = advance
+    with pytest.raises(InputSourceUnavailable):
+        cycle_to_source(sources, ORIGIN, 'voice', timeout=.2,
+                        on_borrow=lambda _: None, on_selected=selected.append)
+    assert selected == ['pinyin'] and sources.selected == 'pinyin'
+
+
+def test_temporary_probe_does_not_claim_a_manual_change_between_steps():
+    sources = Sources(['abc', 'pinyin'])
+    selected = []
+    def on_selected(source):
+        selected.append(source)
+        sources.selected = 'abc'  # User switches before the next shortcut.
+    with pytest.raises(RuntimeError, match='已变化'):
+        cycle_to_source(sources, ORIGIN, 'voice', timeout=.2,
+                        on_borrow=lambda _: None, on_selected=on_selected)
+    assert selected == ['pinyin'] and sources.advances == 1
 
 
 def test_borrow_uses_native_helpers_actual_previous_source():
@@ -75,7 +117,7 @@ def test_temporary_probe_records_original_before_a_switch_that_times_out(shortcu
         sources.sources = lambda **_: {'abc', 'voice'}
         sources.advance = fail_after_selection
     else:
-        # No cycle through an intermediate keyboard in this mode.
+        sources.shortcut = unavailable_shortcut
         sources.advance = lambda *_: pytest.fail('unexpected cycle')
     with pytest.raises(TimeoutError):
         cycle_to_source(sources, ORIGIN, 'voice', timeout=.2, native_activate=fail_after_selection,
@@ -94,8 +136,9 @@ def test_temporary_probe_with_no_external_original_does_not_switch(original):
 
 
 @pytest.mark.parametrize('source_count', [2, 3])
-def test_selected_inactive_source_uses_guarded_native_recovery_without_cycling(source_count):
+def test_selected_inactive_source_uses_native_recovery_when_shortcut_disabled(source_count):
     sources = Sources(['voice'])
+    sources.shortcut = unavailable_shortcut
     sources.sources = lambda **_: {'abc', 'voice'} if source_count == 2 else {'abc', 'pinyin', 'voice'}
     calls = []
     def activate(origin, *, timeout, expected_source, on_borrow):

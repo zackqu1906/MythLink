@@ -19,11 +19,9 @@ from proximic_ring.touchpad.stroke.stroke_experiment import SentenceTrial, FreeW
 from proximic_ring.touchpad.stroke.stroke_tap_guard import TapConfirmationGuard
 from proximic_ring.touchpad.stroke.stroke_display import TRIAL_TRACE_SCALE
 from collect_stroke_samples import Window as StrokeWindow, RingWorker as StrokeWorker
-from proximic_ring.touchpad.stroke.stroke_test_gestures import recognize, DELETE, CLEAR, DELETION_SOURCE
 import stroke_trial_menu as trial_menu
 from stroke_trial_trace import TrialTraceView, SELECTION_DISPLAY
 from stroke_trial_status_log import StatusLogWindow
-from proximic_ring.touchpad.stroke.stroke_clear_review import snapshot as clear_review_snapshot
 from proximic_ring.touchpad.stroke.stroke_common import COMMON_CHARACTER_COUNT, common_characters, candidate_scope_snapshot
 from proximic_ring.touchpad.stroke.stroke_left_dots import annotation_snapshot as left_dot_snapshot
 from proximic_ring.touchpad.stroke.stroke_fuzzy import ADAPTIVE_SETTINGS
@@ -36,7 +34,9 @@ from stroke_trial_llm import TrialLanguageContext
 from stroke_trial_batch import CandidateBatch, BUDGET_MS
 from proximic_ring.touchpad.stroke.stroke_personal import PersonalStrokeModel, TextLearningHistory, profile_key, qt_text_index
 from stroke_contact_diagnostics import ContactDiagnostics, marker_value
-from proximic_ring.touchpad.stroke.stroke_joined import JoinedStrokeModel, merge_joined_candidates
+from proximic_ring.touchpad.stroke.stroke_joined import (JoinedStrokeModel, merge_joined_candidates,
+                                                      personal_joined_model_path)
+from proximic_ring.touchpad.stroke.stroke_structure import clean_path
 from proximic_ring.touchpad.stroke.stroke_vectors import StrokeVectorModel
 from proximic_ring.touchpad.stroke.stroke_tolerant import DEFAULT_TOLERANT_POLICY, fill_page, index_for
 
@@ -119,15 +119,22 @@ class Window(StrokeWindow):
         self.joined_model = None
         self._trial_joined_ambiguous = False
         self.joined_error = ''
-        self.joined_model_path = Path(joined_model_path) if joined_model_path is not None else ROOT/'data'/'models'/'joined-strokes'/'model.json.gz'
-        try:
-            self.joined_model = JoinedStrokeModel.load(self.joined_model_path)
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            self.joined_error = '尚未建立连笔模型' if isinstance(error, FileNotFoundError) else '连笔模型不可用，已保留原识别'
+        default_model = ROOT/'data'/'models'/'joined-strokes'/'model.json.gz'
+        personal_model = personal_joined_model_path()
+        paths = [Path(joined_model_path)] if joined_model_path is not None else (
+            [personal_model, default_model] if personal_model.is_file() else [default_model])
+        for self.joined_model_path in paths:
+            try:
+                self.joined_model = JoinedStrokeModel.load(self.joined_model_path)
+            except (OSError, EOFError, ValueError, KeyError, TypeError) as error:
+                self.joined_error = '尚未建立连笔模型' if isinstance(error, FileNotFoundError) else '连笔模型不可用，已保留原识别'
+            else:
+                self.joined_error = ''
+                break
         self.joined_toggle = QCheckBox('连笔适配（本地样本）')
         self.joined_toggle.setChecked(joined_enabled and self.joined_model is not None)
         self.joined_toggle.setEnabled(self.joined_model is not None)
-        self.joined_toggle.setToolTip('按厂形／斤、白、了／子、衤、走之底末两笔展开；走之第一点单独写。保留原笔画，一次落笔整体撤回；走之暂用部件参考轨迹，可补采个人样本。')
+        self.joined_toggle.setToolTip('考虑撇横、口末两笔及其它连笔。一次落笔整体撤回。')
         self.joined_status = QLabel()
         self.joined_status.setWordWrap(True)
         self.joined_status.setObjectName('muted')
@@ -241,16 +248,14 @@ class Window(StrokeWindow):
                     if isinstance(widget, QPushButton) and widget.text().startswith('标记：'): widget.hide()
             widget = item.widget()
             if isinstance(widget, QLabel) and widget.text().startswith('轻触确认候选；'):
-                widget.setText('双指滑向格子选字 · 双指左滑退一笔（笔序为空时删正文一字）· 原地抬手取消\n'
-                               '单指左→右也可退一笔 · 往返≥3段清空笔画 · 轻触选第1候选' if trial_menu.TWO_FINGER else
-                               '左→右退一笔（不抬手，尽量沿原方向返回）；单独左滑按笔画识别\n笔序为空时删正文一字 · 往返≥3段清空笔画 · 轻触选第1候选')
+                widget.setText('双指滑向格子选字 · 双指左滑退笔／删字 · 继续外拉清空笔画\n'
+                               '原地抬手取消 · 轻触选第1候选' if trial_menu.TWO_FINGER else
+                               '停留后滑动选字 · 使用按钮退笔或清空笔画 · 轻触选第1候选')
         self.editor.textChanged.connect(self.refresh)
-        self.record('complete_trial', selection=trial_menu.TRIAL_SELECTION, deletion=DELETE, clear=CLEAR,
+        self.record('complete_trial', selection=trial_menu.TRIAL_SELECTION,
                     context_ranking=ranking_snapshot(),
                     fuzzy_policy=self.fuzzy_policy.snapshot(),
-                    clearReview=clear_review_snapshot(),
                     candidateScope=candidate_scope_snapshot(common_only),
-                    deletionSource=DELETION_SOURCE, contextAssist=False,
                     punctuation='discard-pending-strokes-then-punctuation')
         self.refresh()
         self.setup_experiment()
@@ -1117,8 +1122,13 @@ class Window(StrokeWindow):
         self.trace_view.set_selection_state(state)
         phase, direction = state['phase'], state.get('direction')
         two_finger = state.get('source') == 'two-finger'
+        pull = state.get('punctuation_pull')
+        if hasattr(self, 'punctuation_overlay'):
+            self.punctuation_overlay.update_selection(state)
         self.selection_hint.setText(
             '抬手清空 · 拉回取消' if state.get('clear_armed') else
+            '继续下拉取消 · 抬手输入 ' + pull['symbol'] if pull and pull.get('cancel_progress') else
+            ('抬手输入 ' + pull['symbol'] if pull['opened'] else '抬手输入 · 继续上滑展开标点') if pull else
             ('抬手删除 · 继续外拉可清空' if direction == 'left' else
              '双指选字 · 抬手确认' if direction else '双指滑向目标格子 · 原地抬手取消') if two_finger else
             '选字模式 · 抬手确认' if phase == 'selecting' else
@@ -1273,12 +1283,10 @@ class Window(StrokeWindow):
     def accept_stroke(self, value):
         self._batch_contact = False
         points = value['points']
-        decision = recognize(points, stroke_dictionary=self.dictionary, legacy_selection=False)
+        decision = dict(action='stroke') if len(clean_path(points)) >= 2 else dict(
+            action='ignore', reason='invalid-trajectory')
         self.record('contact_decision', points=points, kinematics=value.get('kinematics'), decision=decision,
-                    code=self.code, context_enabled=False, deletionSource=DELETION_SOURCE)
-        action = decision['action']
-        if action != 'stroke':
-            self.trial_event('gesture', action=action, target=decision.get('target'))
+                    code=self.code)
         self.trace_view.show_trace(points)
         self.apply_contact_decision(decision, points, value.get('kinematics'))
 
@@ -1304,15 +1312,13 @@ class Window(StrokeWindow):
         elif action == 'clear-all':
             self.clear()
             self.result.setText('已清空当前笔画')
-        elif action == 'ignore': self.result.setText('上方向暂未分配操作' if decision.get('reason')=='up-reserved' else '无效轨迹，未输入')
+        elif action == 'ignore': self.result.setText('无效轨迹，未输入')
         else:
             started = time.monotonic()
-            review = decision.get('clearReview')
-            reused = review is not None and review['modelAttempted']
-            result = review['recognition'] if reused else self.dictionary.recognize(points)
+            result = self.dictionary.recognize(points)
             if result and self.joined_model is not None:
                 result = dict(result, joined_options=self.joined_model.recognize(points))
-            recognition_ms = (review['recognitionMs'] if reused else 0.) + (time.monotonic()-started)*1000
+            recognition_ms = (time.monotonic()-started)*1000
             session = self.recording(start=True)
             if session is not None:
                 self._trial_joined_ambiguous = self._trial_joined_ambiguous or bool(
@@ -1330,11 +1336,6 @@ class Window(StrokeWindow):
                 if self.joined_toggle.isChecked() and result.get('joined_options'):
                     self.record('joined_stroke_options', options=result['joined_options'],
                         physical_code=self.code, candidates=[r for r in self.matches[:5] if r.get('match_type') == 'joined_stroke'])
-                if review and review['protect']:
-                    self.result.setText(self.result.text()+'\n已按笔画保留'+
-                                        ('，识别仍需确认' if review['status']=='uncertain' else ''))
-            elif review and review['protect']:
-                self.result.setText('这一笔识别不确定，当前笔画未清空；请重写这一笔')
         self.check_trial_complete()
         self.show_free_status()
 

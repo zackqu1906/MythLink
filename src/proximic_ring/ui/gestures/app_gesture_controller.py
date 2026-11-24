@@ -48,6 +48,7 @@ class AppGestureEvent:
     input_method_target: tuple | None = None
     input_focus: object = None
     input_validated_at: float = field(default=0.0, compare=False)
+    system_undo_tag: int = 0
 
 
 @dataclass(frozen=True)
@@ -555,6 +556,9 @@ class AppGestureController(QObject):
 
     def foreground_identity(self):
         """Read application identity without AX focus or editor contents."""
+        inline = getattr(self.owner, "_inline_input", None)
+        if getattr(inline, "_windows", False):
+            return inline._foreground_identity()
         if sys.platform != "darwin":
             return None
         from ...platforms.macos.mac_workspace import frontmost_application
@@ -635,7 +639,8 @@ class AppGestureController(QObject):
             return InputSourceGestureEvent(event, generation, created, pid, error)
         busy = bool(audio_busy or self.owner._ring_gestures.speech_busy())
         resume_failure = None
-        resumes_history = name in bindings.undo + bindings.polish or (
+        manual_polish = not getattr(self.owner._inline_input, "automatic_polish", False)
+        resumes_history = name in bindings.undo or (manual_polish and name in bindings.polish) or (
             self.owner._inline_input._history_action_mode != "undo" and name in bindings.switch_mode
             and not self.owner._inline_input.empty_redo_after_return())
         if input_priority and not busy and resumes_history:
@@ -659,6 +664,22 @@ class AppGestureController(QObject):
         if (empty_history and not self.owner._global_gesture_bindings.action_for(name)
                 and not self.foreground_has_binding(name)):
             return ignored(empty_reason)
+        # The native session already published whether this sentence owns undo.
+        # Only resolve which application's binding owns the swipe, once.
+        system_undo_tag = inline.direct_system_undo_tag() if name in bindings.undo and not busy else 0
+        if system_undo_tag and not resume_failure:
+            origin = inline._sentence_origin
+            checked = time.monotonic()
+            front, failure = inline.system_undo_foreground()
+            elapsed = round((time.monotonic() - checked) * 1000, 2)
+            self._trace(trace_id, "capture", failure or ("foreground_matched" if front == origin else "foreground_changed"),
+                        gesture=name, elapsed_ms=elapsed)
+            if failure:
+                return ignored(failure)
+            if origin and front == origin:
+                return AppGestureEvent(BoundGestureEvent(source, bindings), None, generation, created,
+                                       sentence=sentence, route="input", trace_id=trace_id,
+                                       input_method_target=(*sentence, *origin), system_undo_tag=system_undo_tag, **state)
         target, error, capture_error = None, None, ""
         input_method_target = None
         try:
@@ -692,6 +713,10 @@ class AppGestureController(QObject):
                         return ignored(start_focus.reason or "input_method_no_focus")
                     if start_focus.status == "text":
                         input_method_target = start_focus.target
+                        if system_undo_tag:
+                            # Another process now owns the foreground. Its
+                            # nontext app bindings may still route normally.
+                            return ignored("foreground_changed")
                     elif start_focus.status == "unavailable":
                         raise SceneActionError(start_focus.reason)
                     elif input_only:
@@ -792,7 +817,7 @@ class AppGestureController(QObject):
 
     def defer_input_gesture(self, event, connection, continuation):
         target = event.input_method_target
-        if (event.route != "input" or not target or len(target) != 6
+        if (event.system_undo_tag or event.route != "input" or not target or len(target) != 6
                 or target[4] != os.getpid() or event.input_validated_at
                 or (event.speech_owned and self.owner._ring_gestures.speech_busy())):
             return False
@@ -940,6 +965,8 @@ class AppGestureController(QObject):
                    else {"polish": _PolishBinding(gesture=name)} if name in bindings.polish
                    else {})
         action = next((key for key, b in actions.items() if b.enabled and b.gesture == name), None)
+        if action == "polish" and getattr(self.owner._inline_input, "automatic_polish", False):
+            return True
         if action == "polish" and self.owner._inline_input.session_automatic:
             self.notify("自动模式：结束语音后自动判断处理方式")
             return True
@@ -1018,6 +1045,8 @@ class AppGestureController(QObject):
 
     def _dispatch_polish(self, event, *, restore_raw_on_undo):
         inline, target = self.owner._inline_input, event.target
+        if getattr(inline, "automatic_polish", False):
+            return
         if (event.sentence != self.sentence() or not inline.ready or not inline._utterance_id
                 or inline._view.get("phase") != "dictated" or not str(inline._view.get("raw", "")).strip()
                 or inline.error or inline._view.get("edit_requested")):

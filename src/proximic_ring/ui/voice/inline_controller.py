@@ -1,8 +1,4 @@
-"""Qt-facing transport for native input-method transactions.
-
-All text, composition, geometry and undo decisions belong to the Swift helper.
-Native keys handle sentence undo/caret positioning; WeChat has a separate full-field override.
-"""
+"""Qt-facing controller for native input-method transactions."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,14 +12,21 @@ from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 from ...desktop.desktop_target import DesktopTargetRef
+from ...voice.hotwords import STROKE_CONTEXT_CHARS
 from ...voice.ime.ime_bridge import IMEBridge, IMEBridgeInUseError
+from ...voice.ime.input_method_install import BUNDLE_ID
 from ..permissions.mac_permissions_controller import MacPermissionsController
 from .input_source_activation import INPUT_ACTIVATION_TIMEOUT_MS, InputSourceActivation, warm_input_method
 from .gesture_source_activation import GestureSourceActivation
 from .input_source_return import InputSourceReturn
 
 
+DEFAULT_HISTORY_ACTION_MODE = "system_retry"
+DEFAULT_AUTOMATIC_POLISH = True
+
+
 class InlineInputController(QObject):
+    _UNDO_FOREGROUND_TIMEOUT = 0.050
     changed = Signal()
     began = Signal()
     diagnostic = Signal(object)
@@ -31,6 +34,7 @@ class InlineInputController(QObject):
     _installationFinished = Signal(str)
     editIntentConfirmed = Signal(int)
     editRequested = Signal(object, str, str, object)
+    dictationPreviewEvent = Signal(object)
     polishRequested = Signal(object, str, object)
     audioEndRequested = Signal()
     interrupted = Signal()
@@ -44,8 +48,10 @@ class InlineInputController(QObject):
 
     def __init__(self, parent=None, *, enabled=None, bridge_factory=None, source_switch_factory=None):
         super().__init__(parent)
-        self._enabled = sys.platform == "darwin" if enabled is None else bool(enabled)
-        self._permissions = MacPermissionsController(self, enabled=self._enabled)
+        self._windows = sys.platform == "win32" and os.environ.get("MYTHLINK_WINDOWS_TSF") == "1"
+        self._enabled = (sys.platform == "darwin" or self._windows) if enabled is None else bool(enabled)
+        self._windows = self._windows and self._enabled
+        self._permissions = MacPermissionsController(self, enabled=self._enabled and not self._windows)
         self._permissions.diagnostic.connect(self.diagnostic.emit)
         self._closed = False
         self.stroke_mode = False
@@ -69,15 +75,19 @@ class InlineInputController(QObject):
         self._compatibility_requests = set()
         from ...gestures.gesture_settings import GestureBindings
         self._gesture_hints = GestureBindings().as_dict()
+        self.automatic_polish = DEFAULT_AUTOMATIC_POLISH
         self._hud_scale_percent = 80
         self._redo_enabled = False
-        self._history_action_mode = "retry"
+        self._history_action_mode = DEFAULT_HISTORY_ACTION_MODE
         self._edit_replays = {}
         self._edit_request_sources = {}
         self._utterance_sessions = {}
         self._edit_intents = {}
         self.settled_session_id = None
         self._bridge = None
+        if self._windows and bridge_factory is None:
+            from ...voice.ime.windows_bridge import WindowsIMEBridge
+            bridge_factory = WindowsIMEBridge
         self._bridge_factory = bridge_factory or IMEBridge
         self._transport_busy = False
         self._transport_retry_delay = 1000
@@ -111,6 +121,7 @@ class InlineInputController(QObject):
         self._activation_timer.timeout.connect(self._refresh_activation)
         self._begin_origin = None
         self._sentence_origin = None
+        self._undo_foreground_lock = threading.Lock()
         self._input_preparation = None
         self._startup_buffering = False
         self._pending_update = None
@@ -187,7 +198,7 @@ class InlineInputController(QObject):
 
     @Slot()
     def refreshInputMethodVersion(self):
-        if not self._enabled or self._closed or self._installing:
+        if not self._enabled or self._windows or self._closed or self._installing:
             return
         from ...voice.ime.input_method_install import InputMethodInstaller
         state = InputMethodInstaller().version_status()
@@ -197,7 +208,7 @@ class InlineInputController(QObject):
 
     @Slot()
     def installInputMethod(self):
-        if not self._enabled or self._installing or self._closed:
+        if not self._enabled or self._windows or self._installing or self._closed:
             self._diagnose("installation_blocked", reason=(
                 "disabled" if not self._enabled else "already_installing" if self._installing else "closed"))
             return
@@ -268,6 +279,8 @@ class InlineInputController(QObject):
             return "输入法通道被另一个 Mythlink 实例占用 · 关闭另一个实例后将自动连接"
         if self._transport_error:
             return "输入法连接失败：" + self._transport_error
+        if self._windows:
+            return "Mythlink 输入法已就绪" if self.ready else "请在目标文本框用 Win+空格选中 Mythlink 输入法"
         if self._epoch:
             return "输入法已连接 · 已就绪" if self.ready else "输入法已连接 · 点入文本框后触发开始语音手势"
         installed = [Path.home() / "Library/Input Methods/ProxiMicInput.app", Path("/Library/Input Methods/ProxiMicInput.app")]
@@ -293,7 +306,7 @@ class InlineInputController(QObject):
     def canUndo(self):
         return bool(self.active or (self.ready
                     and self._view.get("phase") == "undone"
-                    and self._view.get("undo_history_depth", 0) > 0))
+                    and (self._view.get("undo_history_depth", 0) > 0 or self._view.get("can_system_undo"))))
 
     @Property(bool, notify=changed)
     def canRedo(self):
@@ -304,9 +317,11 @@ class InlineInputController(QObject):
 
     @Property(bool, notify=changed)
     def canRetryEdit(self):
-        return bool(self._history_action_mode == "retry" and self.ready and self._utterance_id
+        return bool(self._history_action_mode in {"retry", "system_retry"} and self.ready and self._utterance_id
                     and not self.stroke_mode and not self._awaiting_settlement()
-                    and not self._view.get("has_composition") and self._view.get("phase") == "dictated"
+                    and not self._view.get("has_composition")
+                    and (self._view.get("phase") == "dictated" or
+                         (self._view.get("system_undo_trial") and self._view.get("phase") == "undone"))
                     and self._view.get("edit_retry_version") == 1 and self._view.get("can_retry_edit")
                     and self._view.get("retry_source_utterance_id", self._utterance_id) in self._edit_replays)
 
@@ -394,7 +409,7 @@ class InlineInputController(QObject):
     def context_provider(self):
         if self._bridge is None:
             return {"status": "unavailable", "source": "input_method", "reason": "bridge_unavailable"}
-        return self._bridge.asr_context()
+        return self._bridge.asr_context(foreground=self._foreground_identity)
 
     def capture_gesture_target(self):
         """Use the active IMK client when an app does not expose AX focus."""
@@ -420,6 +435,12 @@ class InlineInputController(QObject):
     def capture_start_focus(self, *, native_fallback=None, allow_activation=True, require_editable=False):
         """Prefer live IMK text; confirmed shows may tolerate unavailable focus."""
         from ...voice.ime.focus_probe import probe_input_focus, InputFocus
+        if self._windows:
+            if self._closed or self.stroke_mode or not self._bridge or not self._bridge.connected:
+                return InputFocus("unavailable", reason="windows_tsf_not_selected")
+            proof = probe_input_focus(self._bridge, self._foreground_identity, None)
+            return (InputFocus("unavailable", reason="windows_tsf_not_selected", elapsed_ms=proof.elapsed_ms)
+                    if proof.reason == "unknown_focus" else proof)
         from ...voice.ime.system_input_source import activate_voice_input_source
         if (not self.enabled or self._closed or self._installing or self.stroke_mode
                 or not callable(getattr(self._bridge, "focus_state", None))):
@@ -440,11 +461,17 @@ class InlineInputController(QObject):
                                   "application": origin[0], "pid": origin[1]})
             return self._gesture_source_activation.activate(origin, **options)
         previous_source = ""
+        borrowed_source = BUNDLE_ID + '.dictation'
         def remember_borrow(source):
             nonlocal previous_source
             if source is not None and not gate.owns_restore(ticket):
                 raise RuntimeError("输入目标已变化")
             previous_source = source
+        def remember_selected(source):
+            nonlocal borrowed_source
+            if not gate.owns_restore(ticket):
+                raise RuntimeError("输入目标已变化")
+            borrowed_source = source
         def select_source(pid, **options):
             nonlocal previous_source, borrowed_origin
             borrowed_origin = self._foreground_identity()
@@ -454,18 +481,28 @@ class InlineInputController(QObject):
                 # Record the loan before selection, including switches whose
                 # receipt times out. Never depend on AX exposing an editor.
                 options["on_borrow"] = remember_borrow
+                options["on_selected"] = remember_selected
             if self._source_return.enabled or require_editable:
                 options["remember_source"] = True
             reported = activate_voice_input_source(pid, native_activate=native_activate, **options)
             if reported or not require_editable:
                 previous_source = reported
+        def refresh_context(origin, *, state, timeout):
+            prepared = self._bridge.prepare_focus(origin, foreground=self._foreground_identity,
+                                                  timeout=timeout, known_state=state)
+            self.diagnostic.emit(prepared.diagnostics)
+            return prepared
         proof = probe_input_focus(self._bridge, self._foreground_identity,
-                                  select_source if allow_activation else None, native_fallback=native_fallback)
+                                  select_source if allow_activation else None, native_fallback=native_fallback,
+                                  require_selection=not require_editable,
+                                  refresh_context=refresh_context if require_editable and allow_activation else None)
         restored = None
         if proof and proof.status == "text":
             self._source_return.remember_probe(proof.target, previous_source)
-        elif require_editable and borrowed_origin and self._source_return._external(previous_source):
-            restored = gate.restore_if_unused(borrowed_origin, previous_source, ticket)
+        elif (require_editable and borrowed_origin and previous_source and previous_source != borrowed_source
+              and (self._source_return._external(previous_source) or self._source_return._external(borrowed_source))):
+            restored = gate.restore_if_unused(borrowed_origin, previous_source, ticket,
+                                              expected_source=borrowed_source)
         if require_editable:
             self.diagnostic.emit({"type": "input_method_focus_probe", "success": bool(proof and proof.status == "text"),
                                   "status": proof.status, "reason": proof.reason,
@@ -481,7 +518,7 @@ class InlineInputController(QObject):
         saved = self._source_return.saved
         view = saved["view"] if saved else {}
         retained = (self._redo_enabled and view.get("can_redo", False)) or (
-            self._history_action_mode == "retry" and view.get("can_retry_edit", False)
+            self._history_action_mode in {"retry", "system_retry"} and view.get("can_retry_edit", False)
             and view.get("retry_source_utterance_id", view.get("utterance_id")) in (saved or {}).get("edit_replays", {}))
         return self.enabled and self._source_return.enabled and not retained and not self.canHistoryForward
 
@@ -539,6 +576,10 @@ class InlineInputController(QObject):
         self._gesture_hints = snapshot
         self._publish_gesture_hints()
 
+    def set_automatic_polish(self, value):
+        self.automatic_polish = bool(value)
+        self.configure()
+
     def _publish_gesture_hints(self):
         if self._bridge is not None and not self._closed:
             self._bridge.send({"type": "configure_hud", "gesture_hints": self._gesture_hints,
@@ -554,7 +595,7 @@ class InlineInputController(QObject):
         if history_action_mode is None and redo_enabled is not None:
             history_action_mode = "next" if redo_enabled else "undo"
         if history_action_mode is not None:
-            if history_action_mode not in {"undo", "next", "retry"}:
+            if history_action_mode not in {"undo", "next", "retry", "system_retry"}:
                 raise ValueError("未知历史操作模式")
             self._history_action_mode = history_action_mode
             self._redo_enabled = history_action_mode == "next"
@@ -566,7 +607,8 @@ class InlineInputController(QObject):
             self._bridge.send({"type": "configure",
                                "cancel_shortcut": "Esc", "multi_undo_enabled": True,
                                "redo_enabled": self._redo_enabled,
-                               "history_action_mode": self._history_action_mode})
+                               "history_action_mode": "retry" if self._history_action_mode == "system_retry" else self._history_action_mode,
+                               "automatic_polish": self.automatic_polish})
         self.changed.emit()
 
     def _send(self, operation, **fields):
@@ -620,15 +662,25 @@ class InlineInputController(QObject):
                                 clear_distance=float(state.get('clear_distance') or 30.),
                                 clear_progress=float(state.get('clear_progress') or 0.),
                                 correction_armed=bool(state.get('correction_armed')),
-                                correction_progress=float(state.get('correction_progress') or 0.))
+                                correction_progress=float(state.get('correction_progress') or 0.),
+                                punctuation_pull=state.get('punctuation_pull') or {})
 
     def stroke_backspace(self, origin, *, to_start=False):
-        """Send the editor's own Backspace only with fresh proof of this stroke target."""
+        """Request deletion only with fresh proof of this stroke target."""
         from ...voice.ime.focus_probe import valid_selection
         target = self.stroke_target
         if (self._installing or not self.stroke_mode or not target or not self._bridge
                 or self._stroke_request or not origin or self._foreground_identity() != origin):
+            if self._windows:
+                self._diagnose("stroke_delete", reason="no_active_target")
             return False
+        if self._windows:
+            # The native service rechecks the pinned context and its writable
+            # selection at execution time. Avoid a separate synchronous ping.
+            sent = self.send_stroke("stroke_delete", to_start=to_start, request_id=uuid.uuid4().hex)
+            self._diagnose("stroke_delete", reason="sent" if sent else "send_failed")
+            return sent
+
         def selection():
             state = self._bridge.focus_state(timeout=.2)
             if (not state or not state.get('ready') or not valid_selection(state.get('selection'))
@@ -662,25 +714,29 @@ class InlineInputController(QObject):
         return True
 
     def stroke_clear(self):
-        if self.stroke_target is not None:
-            self.send_stroke("stroke_clear")
-        elif self._bridge and self._client_id:
-            self._bridge.send({"type": "stroke_clear", "client_id": self._client_id})
+        if not self._windows:
+            if self.stroke_target is not None:
+                self.send_stroke("stroke_clear")
+            elif self._bridge and self._client_id:
+                self._bridge.send({"type": "stroke_clear", "client_id": self._client_id})
         self._stroke_request = None
         self._stroke_timer.stop()
 
-    def stroke_commit(self, char):
+    def stroke_commit(self, char, *, prefix=""):
         if (self._installing or (self.stroke_target is None and not self.ready) or not self._bridge or self._stroke_request or self._begin_origin is not None
                 or self._view.get("phase") in {"starting", "listening", "finishing", "editing", "polishing"}):
             return False
         request = uuid.uuid4().hex
         client = self.stroke_target[1] if self.stroke_target else self._client_id
-        sent = (self.send_stroke("stroke_commit", request_id=request, text=str(char)) if self.stroke_target else
+        completion = {"word_prefix": prefix} if prefix else {}
+        sent = (self.send_stroke("stroke_commit", request_id=request, text=str(char), **completion) if self.stroke_target else
                 self._bridge.send({"type": "stroke_commit", "client_id": client,
                                    "request_id": request, "text": str(char)}))
         if sent:
             self._stroke_request = (request, str(char), client)
             self._stroke_timer.start(5000)
+        if self._windows:
+            self._diagnose("stroke_commit", reason="sent" if sent else "send_failed")
         return sent
 
     def send_stroke(self, kind, **fields):
@@ -703,6 +759,8 @@ class InlineInputController(QObject):
 
     def _stroke_timed_out(self):
         if self._stroke_request is not None:
+            if self._windows:
+                self._diagnose("stroke_commit", reason="no_reply")
             _, char, _ = self._stroke_request
             self._stroke_request = None
             self.strokeCommitted.emit(char, False, "输入法未确认本次输入，请检查目标文本框")
@@ -727,6 +785,19 @@ class InlineInputController(QObject):
                 value = client_read.get(key)
                 if isinstance(value, list) and len(value) == 2 and all(type(item) is int for item in value):
                     safe_client_read[key] = value
+            # [DEBUG-netmail-range] Exact native integers, never normalized or
+            # converted through floating point; retain only diagnostic metadata.
+            if client_read.get("selection_trace") == "DEBUG-netmail-range":
+                safe_client_read["selection_trace"] = client_read["selection_trace"]
+                value = client_read.get("raw_selection")
+                if isinstance(value, list) and len(value) == 2 and all(type(item) is int for item in value):
+                    safe_client_read["raw_selection"] = value
+                if type(client_read.get("ns_not_found")) is int:
+                    safe_client_read["ns_not_found"] = client_read["ns_not_found"]
+                for key in ("raw_location_not_found", "raw_length_not_found", "raw_location_negative",
+                            "raw_length_negative", "raw_sum_overflow", "raw_range_valid"):
+                    if type(client_read.get(key)) is bool:
+                        safe_client_read[key] = client_read[key]
         safe_client_read.update(snapshot_metadata(client_read))
         safe_client_read.update(body_read_metadata(client_read))
         handoff = self._view.get("handoff_diagnostics", {})
@@ -782,6 +853,9 @@ class InlineInputController(QObject):
         self.diagnostic.emit(event)
 
     def _foreground_identity(self):
+        if self._windows:
+            from ...voice.ime.windows_bridge import foreground_identity
+            return foreground_identity()
         if sys.platform != "darwin":
             return None
         try:
@@ -866,9 +940,8 @@ class InlineInputController(QObject):
             self._bridge.send({"type": "ping"})
 
     def _request_start_focus(self):
-        # A plain ping intentionally returns the previous sentence's original
-        # snapshot. A request ID asks native IMK for the current caret after a
-        # settled sentence, and fences delayed replies from earlier starts.
+        # Metadata probes never read text. Correlate this response so delayed
+        # readiness notifications cannot authorize a different startup.
         self._startup_focus_request = "start:" + self._utterance_id
         self._bridge.send({"type": "ping", "request_id": self._startup_focus_request,
                            "capture_context": False})
@@ -954,7 +1027,10 @@ class InlineInputController(QObject):
             return
         self._input_preparation = (token, ready, failed)
         try:
-            self._start_input_activation(origin, auto_select=True, buffering=False)
+            self._start_input_activation(origin, auto_select=not self._windows, buffering=False)
+            if self._windows:
+                self._wait_for_reply("ready")
+                self._bridge.send({"type": "ping"})
         except Exception as exc:
             self._transport_failed(str(exc))
 
@@ -966,13 +1042,10 @@ class InlineInputController(QObject):
     def _input_client_ready(self, message):
         target = self._startup_focus_target
         if target is not None:
-            from ...voice.ime.focus_probe import valid_selection
-            selection = message.get("selection")
             if (not message.get("ready") or
                     (message.get("epoch"), message.get("client_id"), message.get("application"))
-                    != (target[0], target[1], target[3])
-                    or not valid_selection(selection) or tuple(selection) != target[5]):
-                self._transport_failed("输入目标或光标已变化，本句已取消")
+                    != (target[0], target[1], target[3])):
+                self._transport_failed("输入目标已变化，本句已取消")
                 return False
         if not message.get("ready"):
             if self._reply_stage == "ready":
@@ -997,8 +1070,13 @@ class InlineInputController(QObject):
 
     def _send_begin(self):
         history = self._source_return.begin_history
+        focus = self._startup_focus_target
+        expected = {"selection_revision": focus[5][0]} if self._windows and focus else {}
         return self._send("begin", automatic_mode=self.session_automatic,
                           routed_edit_mode=self.session_routed_edit,
+                          **({"system_undo_trial": True, "host_posts_undo": True} if self._history_action_mode == "system_retry"
+                             and not self._source_return.enabled else {}),
+                          **expected,
                           **({"undo_history_token": history["token"]} if history else {}))
 
     def begin(self, target=None, *, auto_select=False):
@@ -1016,8 +1094,8 @@ class InlineInputController(QObject):
         self.settled_session_id = 0
         self._session_id = 0
         origin = self._foreground_identity()
-        self.session_automatic = bool(self.automatic_mode)
-        self.session_routed_edit = bool(self.routed_edit_mode and not self.session_automatic)
+        self.session_automatic = bool(self.automatic_mode and not self._windows)
+        self.session_routed_edit = bool(self.routed_edit_mode and not self.session_automatic and not self._windows)
         pending_focus, self._pending_gesture_focus = self._pending_gesture_focus, None
         if pending_focus is not None:
             focus, created = pending_focus
@@ -1025,8 +1103,9 @@ class InlineInputController(QObject):
                 self._transport_failed("输入目标已变化或手势已超时，请重新开始")
                 return False
             self._startup_focus_target = focus
-        self._source_return.begin(origin, self._startup_focus_target)
-        auto_select = auto_select or self._source_return.enabled
+        if not self._windows:
+            self._source_return.begin(origin, self._startup_focus_target)
+        auto_select = (auto_select or self._source_return.enabled) and not self._windows
         self._sentence_origin = origin
         needs_activation = auto_select or not self.ready or bool(origin and self._view.get("application") != origin[0])
         if needs_activation and (origin is None or self._transport_error or self._bridge is None):
@@ -1125,7 +1204,8 @@ class InlineInputController(QObject):
         if not stage or self._closed:
             return
         if self._input_preparation:
-            self._transport_failed("输入法未连接到当前文本框，请重新点入文本框")
+            self._transport_failed(self.connectionStatus if self._windows and not self.ready else
+                                   "输入法未确认当前文本框，请重新点入文本框")
             return
         # Retire this exact transaction; never retry its text write.
         self._send("reset")
@@ -1215,8 +1295,68 @@ class InlineInputController(QObject):
             self._mark_action_pending("convert")
             self._send("convert")
 
+    def direct_system_undo_tag(self):
+        if (self.ready and self._utterance_id and self._view.get("phase") in {"dictated", "edited", "undone"}
+                and self._view.get("can_system_undo") and self._view.get("system_undo_trial")):
+            return self._view.get("host_undo_tag", 0)
+        return 0
+
+    def system_undo_foreground(self):
+        # NSWorkspace has no per-call timeout. A late read can only release the
+        # slot; it never posts a key or supplies the result of a later swipe.
+        deadline = time.monotonic() + self._UNDO_FOREGROUND_TIMEOUT
+        if not self._undo_foreground_lock.acquire(blocking=False):
+            return None, "foreground_check_busy"
+        done = threading.Event()
+        front = None
+
+        def read():
+            nonlocal front
+            try:
+                front = self._foreground_identity()
+            finally:
+                self._undo_foreground_lock.release()
+                done.set()
+
+        worker = threading.Thread(target=read, name="UndoForeground", daemon=True)
+        try:
+            worker.start()
+        except RuntimeError:
+            self._undo_foreground_lock.release()
+            return None, "foreground_unavailable"
+        if not done.wait(max(0, deadline - time.monotonic())) or time.monotonic() >= deadline:
+            return None, "foreground_check_timeout"
+        return front, "" if front else "foreground_unavailable"
+
+    def post_system_undo(self, target, tag, *, record_id=""):
+        from ...platforms.macos.wechat_native_keys import post_system_undo
+        error = ""
+        started = time.monotonic()
+        try:
+            post_system_undo(target[4], tag)
+        except Exception as exc:
+            error = str(exc)
+            self._permissions.report_error(exc)
+        posted_ms = round((time.monotonic() - started) * 1000, 2)
+        # Only feedback belongs to the old sentence; delivery has already finished.
+        self.diagnostic.emit({"type": "system_undo_posted", "application": target[3], "record_id": record_id,
+                              "elapsed_ms": posted_ms, "error": error})
+        if tuple(target[:3]) == (self._epoch, self._client_id, self._utterance_id):
+            self._send("system_undo_posted", event_tag=tag, error=error)
+            self.actionRequested.emit("cancel")
+        return not error
+
     @Slot()
     def cancel(self):
+        tag = self.direct_system_undo_tag()
+        if tag:
+            origin = self._sentence_origin
+            front, reason = self.system_undo_foreground()
+            if origin and front == origin:
+                self.post_system_undo((self._epoch, self._client_id, self._utterance_id, *origin), tag)
+            else:
+                self._diagnose("system_undo_skipped", reason=reason or "foreground_changed")
+            return
         self.actionRequested.emit("cancel")
         if self._startup_buffering:
             session_id = self._session_id
@@ -1257,7 +1397,7 @@ class InlineInputController(QObject):
 
     @Property(bool, notify=changed)
     def canPolish(self):
-        return bool(not self.session_automatic and self.ready and self._utterance_id and self._view.get("phase") == "dictated"
+        return bool(not self.automatic_polish and not self.session_automatic and self.ready and self._utterance_id and self._view.get("phase") == "dictated"
                     and self._view.get("raw") and not self._view.get("polished")
                     and not self._view.get("awaiting_readback") and not self._action_pending)
 
@@ -1267,6 +1407,15 @@ class InlineInputController(QObject):
             self._mark_action_pending("polish")
             self._send("polish", restore_raw_on_undo=bool(restore_raw_on_undo))
             return True
+        return False
+
+    def accept_dictation_preview(self, token, revision):
+        if not self.automatic_polish or self._view.get("phase") != "dictated" or self._view.get("revision") != revision:
+            return False
+        self._mark_action_pending("accept_dictation_preview")
+        if self._send("accept_dictation_preview", token=token, revision=revision):
+            return True
+        self._clear_action_pending()
         return False
 
     def apply_polish(self, key, text, error):
@@ -1286,9 +1435,13 @@ class InlineInputController(QObject):
     def _accept(self, message):
         if self._closed or not isinstance(message, dict):
             return
-        if self._source_return.handle(message):
+        if not self._windows and self._source_return.handle(message):
             return
         kind = message.get("type")
+        if kind in {"dictation_preview_requested", "dictation_preview_state"}:
+            if message.get("epoch") == self._epoch:
+                self.dictationPreviewEvent.emit(message)
+            return
         if kind == 'clipboard_offer_state':
             if message.get('epoch') == self._epoch:
                 self.clipboardEvent.emit(dict(message))
@@ -1297,9 +1450,17 @@ class InlineInputController(QObject):
             if message.get('epoch') == self._epoch:
                 self.strokeEvent.emit(dict(message))
             return
-        if kind in {"state", "stroke_ready", "stroke_cleared", "stroke_ink_cleared", "disconnected", "connected"}:
+        if kind in {"state", "stroke_ready", "stroke_delete_result", "stroke_cleared", "stroke_ink_cleared", "disconnected", "connected"}:
             if kind == "connected" or message.get("epoch") == self._epoch:
                 self.strokeEvent.emit(dict(message))
+        if kind == "stroke_delete_result":
+            target = (message.get("epoch"), message.get("client_id"), message.get("stroke_session"))
+            if self._windows and target == self.stroke_target:
+                reason = "unconfirmed" if message.get("sent") else "rejected"
+                if message.get("success"):
+                    reason = "changed" if message.get("changed") else "no_change"
+                self._diagnose("stroke_delete", reason=reason, error=str(message.get("error") or ""))
+            return
         if kind == "stroke_cleared":
             # Token-bound sessions are handled by StrokeSessionController.
             # A delayed clear for the previous token must not end a new one
@@ -1315,8 +1476,13 @@ class InlineInputController(QObject):
                     and message.get("request_id") == pending[0]):
                 self._stroke_request = None
                 self._stroke_timer.stop()
+                if self._windows:
+                    self._diagnose("stroke_commit", reason="accepted" if message.get("success") else "rejected",
+                                   error=str(message.get("error") or ""))
                 context = message.get("context")
-                self.stroke_context = context[-4:] if isinstance(context, str) and message.get("success") else None
+                self.stroke_context = (
+                    context[-STROKE_CONTEXT_CHARS:] if isinstance(context, str) and message.get("success") else None
+                )
                 self.strokeCommitted.emit(pending[1], bool(message.get("success")),
                                           str(message.get("error") or ""))
             return
@@ -1525,7 +1691,7 @@ class InlineInputController(QObject):
                     and (not message.get("routed_edit_mode") or message.get("routed_edit_version") != 1)):
                 self._transport_failed("请先在设置中更新输入法组件，再使用手动＋编辑路由")
                 return
-            if begin_acknowledged:
+            if begin_acknowledged and not self._windows:
                 self._source_return.begin_acknowledged(message)
             previous_active = self.active
             changed_client = client_id != self._client_id
@@ -1590,13 +1756,37 @@ class InlineInputController(QObject):
             return
         if client_id != self._client_id or utterance_id != self._utterance_id:
             return
+        if kind == "preview_undo_caret":
+            origin = self._sentence_origin
+            tag = self.direct_system_undo_tag()
+            expires = message.get("expires")
+            # A retry writes another edit in the same utterance. Each undo
+            # revision can collapse its selection exactly once.
+            receipt = (self._epoch, client_id, utterance_id, "preview_undo_caret", self._view.get("revision"))
+            if (not tag or not origin or self._view.get("application") != origin[0]
+                    or self._view.get("phase") != "undone" or self._view.get("revision") != message.get("revision")
+                    or message.get("host_undo_tag") != tag or message.get("event_tag") != (1 << 52) + tag
+                    or type(expires) not in (float, int) or not 0 < expires - time.monotonic() <= .3
+                    or receipt in self._compatibility_requests):
+                return
+            self._compatibility_requests.add(receipt)
+            from ...platforms.macos.native_access import native_access
+            try:
+                moved = native_access().call("preview_undo_caret", pid=origin[1],
+                                              event_tag=message["event_tag"], expires=expires)
+                self._diagnose(kind, reason="posted" if moved else "expired_or_changed")
+            except Exception as exc:
+                self._permissions.report_error(exc)
+                self._diagnose(kind, error=str(exc))
+            return
         if kind == "wechat_key":
             request_id = message.get("request_id")
             key = (self._epoch, client_id, utterance_id, request_id)
             application = message.get("application")
+            system_undo = message.get("command") == "system_undo"
             if (not isinstance(request_id, str) or not request_id or key in self._compatibility_requests
-                    or not self.active or not self._utterance_id
-                    or not isinstance(application, str)
+                    or not (self.active or (system_undo and self._view.get("phase") == "undone"))
+                    or not self._utterance_id or not isinstance(application, str)
                     or self._view.get("application") != application
                     or (application != "com.tencent.xinWeChat"
                         and message.get("command") in {"select_all", "select_to_start", "caret_from_end", "caret_to_end", "caret_backward", "caret_forward"}
@@ -1607,7 +1797,16 @@ class InlineInputController(QObject):
             try:
                 from ...platforms.macos.wechat_native_keys import send_wechat_key, send_input_method_key
                 args = (message.get("command"), message.get("count"), message.get("event_tag"))
-                if application == "com.tencent.xinWeChat":
+                if system_undo:
+                    from ...platforms.macos.wechat_native_keys import send_system_undo
+                    origin = self._sentence_origin
+                    if (not self._view.get("system_undo_trial") or not self._view.get("system_undo_pending")
+                            or self._view.get("phase") not in {"dictated", "edited", "undone"}
+                            or not origin or origin[0] != application
+                            or self._foreground_identity() != origin):
+                        raise RuntimeError("撤销目标已变化，未发送 ⌘Z")
+                    send_system_undo(application, *args[1:], expected_pid=origin[1])
+                elif application == "com.tencent.xinWeChat":
                     send_wechat_key(*args)
                 elif not application:
                     # Unbundled Qt clients share an empty bundle ID. Pin the
@@ -1676,7 +1875,8 @@ class InlineInputController(QObject):
                     (self._epoch, client_id, source, message.get("revision", self._view.get("revision", 0))),
                     phase, str(message.get("text", "")), str(message.get("error") or ""), source != utterance_id)
                 self.settled.emit(phase, str(message.get("text", "")))
-                self._source_return.schedule()
+                if not self._windows:
+                    self._source_return.schedule()
 
     def reset(self, *, return_source=False):
         if return_source:

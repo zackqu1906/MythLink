@@ -23,6 +23,8 @@ protocol PrefixSelectionDriver: AnyObject {
     func begin(_ operation: String)
     func select(_ range: NSRange, from caret: NSRange, current: () -> Bool) -> PrefixSelectionAttempt
     func readSelection(current: () -> Bool) -> NSRange?
+    func sampleCaret(current: () -> Bool) -> NSRange?
+    func entireSelectionMatches(_ text: String, current: () -> Bool) -> Bool
     func validateTarget(current: () -> Bool) -> Bool
     func validateTarget(current: () -> Bool, step: String) -> Bool
     func record(_ event: [String: Any])
@@ -30,6 +32,11 @@ protocol PrefixSelectionDriver: AnyObject {
 }
 
 extension PrefixSelectionDriver {
+    func sampleCaret(current: () -> Bool) -> NSRange? { readSelection(current: current) }
+    func entireSelectionMatches(_ text: String, current: () -> Bool) -> Bool {
+        guard let doc = readBody(.document, current: current) else { return false }
+        return doc.selection == doc.range && doc.text == text
+    }
     func validateTarget(current: () -> Bool, step: String) -> Bool { validateTarget(current: current) }
     func readBody(_ scope: EditorReadScope, current: () -> Bool) -> EditorTextRange? { nil }
 }
@@ -110,13 +117,44 @@ final class NativePrefixSelection: PrefixSelectionDriver {
     private func selection(_ element: AXUIElement) -> (AXError, NSRange?) {
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value)
-        guard error == .success, let value, CFGetTypeID(value) == AXValueGetTypeID() else { return (error, nil) }
+        guard error == .success, let value else { return (error, nil) }
+        guard let range = decodeSelection(value) else { return (.illegalArgument, nil) }
+        return (.success, range)
+    }
+
+    private func decodeSelection(_ value: CFTypeRef) -> NSRange? {
+        guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         let wrapped = value as! AXValue
-        guard AXValueGetType(wrapped) == .cfRange else { return (.illegalArgument, nil) }
+        guard AXValueGetType(wrapped) == .cfRange else { return nil }
         var range = CFRange()
         guard AXValueGetValue(wrapped, .cfRange, &range), range.location >= 0, range.length >= 0,
-              range.location < NSNotFound, range.length <= Int.max - range.location else { return (.illegalArgument, nil) }
-        return (error, NSRange(location: range.location, length: range.length))
+              range.location < NSNotFound, range.length <= Int.max - range.location else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+
+    // Optional probes use the already bound element and one AX round trip.
+    // Keep required selection and body verification on their normal timeout.
+    private func quickSample<T>(current: () -> Bool, read: (AXUIElement) -> T?) -> T? {
+        guard let element = focused, validateTarget(current: current, step: "caret_sample_before"),
+              AXUIElementSetMessagingTimeout(element, 0.012) == .success else { return nil }
+        defer { AXUIElementSetMessagingTimeout(element, 0.12) }
+        let result = read(element)
+        return validateTarget(current: current, step: "caret_sample_after") ? result : nil
+    }
+
+    func sampleCaret(current: () -> Bool) -> NSRange? {
+        quickSample(current: current) { selection($0).1 }
+    }
+
+    func entireSelectionMatches(_ text: String, current: () -> Bool) -> Bool {
+        quickSample(current: current) { element -> Bool? in
+            let keys = [kAXSelectedTextRangeAttribute, kAXValueAttribute] as CFArray
+            var values: CFArray?
+            guard AXUIElementCopyMultipleAttributeValues(element, keys, [], &values) == .success,
+                  let items = values as? [AnyObject], items.count == 2, let body = items[1] as? String,
+                  decodeSelection(items[0]) == NSRange(location: 0, length: body.utf16.count) else { return nil }
+            return body == text
+        } ?? false
     }
 
     func validateTarget(current: () -> Bool) -> Bool { validateTarget(current: current, step: "target_check") }

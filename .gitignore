@@ -118,6 +118,13 @@ tools/data/*
 !tools/data/VOICE_EVAL_DATASET.md
 !tools/data/voice_eval_master.json
 !tools/data/voice_eval_subsets.json
+!tools/data/fragment_completion_prompt_v1.txt
+!tools/data/asr_recovery_prompt_v2.txt
+!tools/data/asr_recovery_fragment_joint_v1.txt
+!tools/data/asr_recovery_fragment_joint_v2.txt
+!tools/data/asr_recovery_fragment_candidates.txt
+!tools/data/asr_recovery_fragment_candidates_v2.txt
+!tools/data/asr_fragment_candidate_rubric.txt
 !tools/data/voice_eval_annotation_audit_20261117.json
 !tools/data/automatic_voice_routing_cases.json
 !tools/data/clef_cases.template.json

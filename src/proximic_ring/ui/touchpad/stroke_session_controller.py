@@ -6,13 +6,44 @@ from __future__ import annotations
 
 import time
 import uuid
+import math
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, Property, QRect, QTimer, Signal, Slot
+from PySide6.QtGui import QGuiApplication
 
 from ...touchpad.stroke.stroke_display import TRAIL_STYLE
+from ...voice.hotwords import STROKE_CONTEXT_CHARS
+
+
+def stroke_popup_geometry(caret, area, correction_gutter=0):
+    left, top, _, bottom = caret
+    margin, gap = 8, 6
+    # The native window must contain the menu's overflow too: a 60px left
+    # slider, shadows, and the raised punctuation palette (including its
+    # opening animation). Keep these in sync with strokePopup in Main.qml.
+    horizontal_gutters, vertical_gutters = 76 + correction_gutter, 24
+    side = min(max(280, min(420, round(area.height() * .28))),
+               area.width() - 2 * margin - horizontal_gutters,
+               math.floor((area.height() - 2 * margin - vertical_gutters) / 1.4))
+    if side <= 0:
+        return QRect()
+    width = side + horizontal_gutters
+    height = side + math.ceil(side * .4) + vertical_gutters
+    min_x, min_y = area.x() + margin, area.y() + margin
+    max_x = area.x() + area.width() - margin - width
+    max_y = area.y() + area.height() - margin - height
+    below, above = math.ceil(bottom + gap), math.floor(top - gap - height)
+    if below <= max_y:
+        y = below
+    elif above >= min_y:
+        y = above
+    else:
+        y = above if top - min_y > max_y + height - bottom else below
+    return QRect(max(min_x, min(max_x, round(left) - 68)), max(min_y, min(max_y, y)), width, height)
 
 
 class StrokeSessionController(QObject):
+    caretChanged = Signal()
     gestures = {"tap", "double-tap", "index-pinch", "double-index-pinch",
                 "swipe-left", "swipe-right", "swipe-up", "swipe-down"}
 
@@ -26,9 +57,13 @@ class StrokeSessionController(QObject):
         self._connection = None
         self._origin = None
         self._initial_context = ""
+        self.word_completions = False
+        self.native_correction = False
         self._token = ""
         self._deadline = 0.
         self._output_started = False
+        self._restore_qos = None
+        self._caret = []
         self._timer = QTimer(self)
         self._timer.setInterval(150)
         self._timer.timeout.connect(self._poll)
@@ -43,6 +78,60 @@ class StrokeSessionController(QObject):
     @property
     def engaged(self):
         return self.phase != "idle"
+
+    @Property(list, notify=caretChanged)
+    def caret(self):
+        return self._caret
+
+    def _set_caret(self, caret):
+        if self._caret != caret:
+            self._caret = caret
+            self.caretChanged.emit()
+
+    def _screen_caret(self, caret):
+        if len(caret) != 4:
+            return None
+        from ...voice.ime.windows_bridge import caret_monitor_origin
+
+        # Qt scales each Windows display around its own native origin.
+        origin = caret_monitor_origin(caret)
+        screens = QGuiApplication.screens()
+        screen = next((s for s in screens if (s.geometry().x(), s.geometry().y()) == origin),
+                      QGuiApplication.primaryScreen())
+        if screen is None:
+            return None
+        x, y = screen.geometry().x(), screen.geometry().y()
+        scale = screen.devicePixelRatio()
+        logical_caret = [base + (value - base) / scale
+                         for value, base in zip(caret, (x, y, x, y))]
+        return logical_caret, screen.availableGeometry()
+
+    @Slot(list, result=QRect)
+    @Slot(list, int, result=QRect)
+    def popupGeometry(self, caret, correction_gutter=0):
+        target = self._screen_caret(caret)
+        return stroke_popup_geometry(*target, correction_gutter) if target else QRect()
+
+    @Slot(list, result=QRect)
+    def strokeSequenceBounds(self, caret):
+        target = self._screen_caret(caret)
+        if not target:
+            return QRect()
+        return target[1].adjusted(4, 4, -4, -4)
+
+    @Slot(list, int, int, result=QRect)
+    def strokeSequenceGeometry(self, caret, width, height):
+        target = self._screen_caret(caret)
+        if not target:
+            return QRect()
+        (_, top, right, _), area = target
+        area = area.adjusted(4, 4, -4, -4)
+        width, height = min(width, area.width()), min(height, area.height())
+        # Prefer the caret's right edge; move only this surface inward when
+        # needed to show the whole sequence at a screen edge.
+        x = max(area.left(), min(math.ceil(right + 4), area.right() + 1 - width))
+        y = max(area.top(), min(math.floor(top), area.bottom() + 1 - height))
+        return QRect(x, y, width, height)
 
     @property
     def _source(self):
@@ -94,8 +183,13 @@ class StrokeSessionController(QObject):
             self.local = True
             self._origin = None
         elif self.tp.externalStrokeSupported:
-            self._origin = ((event["bundle"], event["pid"]) if event else self.inline._foreground_identity())
             self.local = self.tp._local_stroke_focus
+            if self.tp.windowsInputPrototype:
+                self.local = bool(event and event.get("local") and self.tp._local_input_since is not None)
+            self._origin = None
+            if not self.local:
+                self._origin = ((event["bundle"], event["pid"]) if event and "pid" in event
+                                else self.inline._foreground_identity())
         else:
             self.local = self.tp._local_stroke_focus
             if not self.local:
@@ -148,9 +242,11 @@ class StrokeSessionController(QObject):
         self.inline.stroke_target = (message["epoch"], message["client_id"], self._token)
         self._deadline = time.monotonic() + 3
         self._set_phase("native")
+        options = {}
+        if self.tp.handwritingCorrectionSupported:
+            options['correction_enabled'] = self.tp.handwritingCorrectionEnabled
         if not self.inline.send_stroke("stroke_begin", gesture_label=self.tp.strokeGestureLabel,
-                                       tap_hint=self.tp.strokeTapHint,
-                                       correction_enabled=self.tp.handwritingCorrectionEnabled):
+                                       tap_hint=self.tp.strokeTapHint, **options):
             self.cancel("输入法连接已断开")
 
     def _native_event(self, message):
@@ -171,11 +267,20 @@ class StrokeSessionController(QObject):
             if not message.get("success") or message.get("panel_visible") is False:
                 self.cancel(str(message.get("error") or "输入法未能进入笔画模式"))
                 return
-            self._initial_context = str(message.get("context") or "")[-4:]
+            self.word_completions = message.get("word_completions") is True
+            self.native_correction = message.get("handwriting_correction") is True
+            if self.tp.windowsInputPrototype and self.native_correction:
+                self.inline.send_stroke("stroke_correction_configure", enabled=self.tp.handwritingCorrectionEnabled)
+            self._initial_context = str(message.get("context") or "")[-STROKE_CONTEXT_CHARS:]
+            self._set_caret(message.get("caret") or [])
             if self.allow_input():
                 self._begin_output()
         elif kind == "stroke_cleared" and message.get("stroke_session") == self._token:
             self.cancel("笔画输入已退出")
+        elif kind == "stroke_delete_result" and self.phase == "running":
+            target = (message.get("epoch"), message.get("client_id"), message.get("stroke_session"))
+            if self.inline.stroke_target == target:
+                self.tp._editor_delete_result(message)
         elif kind == "stroke_ink_cleared" and message.get("stroke_session") == self._token:
             self.tp._code = ""
             self.tp._clear_stroke_evidence()
@@ -186,6 +291,14 @@ class StrokeSessionController(QObject):
             target = self.inline.stroke_target
             if target and (message.get("client_id") != target[1] or not message.get("ready")):
                 self.cancel("已离开当前输入框，笔画输入已退出")
+            elif "caret" in message and self.tp.windowsInputPrototype:
+                caret = message["caret"]
+                # Editors can temporarily return TS_E_NOLAYOUT after a write.
+                # The same writable context is still active; retain its last
+                # valid anchor until layout catches up. cancel() clears it on
+                # real focus loss or session retirement.
+                if len(caret) == 4 and any(caret):
+                    self._set_caret(caret)
 
     def _begin_output(self):
         self._set_phase("starting")
@@ -204,6 +317,12 @@ class StrokeSessionController(QObject):
     def _output_changed(self):
         if (self.phase == "starting" and self._output_started and self.tp.state == "running"
                 and self.tp._run and self.tp._run.output_ready):
+            if self.tp.windowsInputPrototype and not self.local:
+                from ...voice.ime.windows_bridge import begin_interactive_stroke
+                try:
+                    self._restore_qos = begin_interactive_stroke()
+                except (AttributeError, OSError) as error:
+                    self.owner._event_log("STROKE_WINDOWS_QOS", _live_message="", error=str(error))
             self._set_phase("running")
             self._deadline = 0
             self.tp._refresh_candidates()
@@ -253,14 +372,22 @@ class StrokeSessionController(QObject):
         return True
 
     def _trace(self, points, finished):
-        if self.phase == "running" and not self.local:
+        if self.phase == "running" and not self.local and not self.tp.windowsInputPrototype:
             self.inline.send_stroke("stroke_trace", points=points, finished=finished, style=TRAIL_STYLE)
 
     def cancel(self, reason="", *, stop_output=True):
         previous = self.phase
         self._generation += 1
         self.phase = "idle"
+        self.native_correction = False
+        self._set_caret([])
         self._timer.stop()
+        restore_qos, self._restore_qos = self._restore_qos, None
+        if restore_qos is not None:
+            try:
+                restore_qos()
+            except OSError as error:
+                self.owner._event_log("STROKE_WINDOWS_QOS", _live_message="", error=str(error))
         if previous != "idle" or reason:
             self.owner._event_log("STROKE_SESSION", _live_message=reason,
                                   phase="idle", previous=previous, reason=reason)
@@ -271,6 +398,7 @@ class StrokeSessionController(QObject):
         self.inline._stroke_request = None
         self.inline._stroke_timer.stop()
         self._initial_context = ""
+        self.word_completions = False
         self.tp._code = self.tp._pending_stroke_commit = ""
         self.tp._clear_stroke_evidence()
         if not self.local:

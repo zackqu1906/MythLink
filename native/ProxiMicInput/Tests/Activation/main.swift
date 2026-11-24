@@ -31,7 +31,7 @@ final class ActionPanel {
     func configureGestureHints(_ hints: VoiceHudBindings) { Self.displayedHints = hints }
     func configureAppearance(_ value: VoiceHudAppearance) { Self.displayedAppearance = value }
     func update(_ session: CompositionSession, historyDepth: Int, redoAvailable: Bool = false, redoEnabled: Bool = true,
-                retryAvailable: Bool = false, historyActionMode: String = "next") {}
+                retryAvailable: Bool = false, historyActionMode: String = "next", manualPolish: Bool = true) {}
     func showLearnedHotwords(_ words: [String]) {}
     func position(caret: NSRect?, clientLevel: Int32) {}
 }
@@ -58,18 +58,23 @@ final class LocalClient: NSObject, IMKTextInput {
     var onRead: (() -> Void)?
     var onInsert: (() -> Void)?
     var reads = 0
+    var substringReads = 0
     var writes = 0
+    var lastReplacement: (String, NSRange)?
     var markedReads = 0
     var text = ""
     var selection = NSRange(location: 0, length: 0)
     var marked = unspecifiedRange
+    var testCaret: NSRect = .zero
+    var hideDocumentRanges = false
     var bundle = "test.activation"
     func bundleIdentifier() -> String! { let f = onBundle; onBundle = nil; f?(); return bundle }
-    func selectedRange() -> NSRange { reads += 1; let f = onRead; onRead = nil; f?(); return selection }
-    func markedRange() -> NSRange { markedReads += 1; return marked }
-    func length() -> Int { (text as NSString).length }
+    func selectedRange() -> NSRange { reads += 1; let f = onRead; onRead = nil; f?(); return hideDocumentRanges ? unspecifiedRange : selection }
+    func markedRange() -> NSRange { markedReads += 1; return hideDocumentRanges ? unspecifiedRange : marked }
+    func length() -> Int { hideDocumentRanges ? Int(Int32.max) : (text as NSString).length }
     func string(from range: NSRange, actualRange: NSRangePointer!) -> String! {
-        guard range.length > 0, isValidRange(range, length: (text as NSString).length) else {
+        substringReads += 1
+        guard !hideDocumentRanges, range.length > 0, isValidRange(range, length: (text as NSString).length) else {
             actualRange?.pointee = NSRange(location: 0, length: 0); return nil
         }
         actualRange?.pointee = range
@@ -78,6 +83,7 @@ final class LocalClient: NSObject, IMKTextInput {
     func insertText(_ string: Any!, replacementRange range: NSRange) {
         writes += 1
         let target = isValidRange(range) ? range : (isValidRange(marked) ? marked : selection)
+        if !isValidRange(marked), target.length > 0 { lastReplacement = (text, target) }
         let value = string as! String
         text = (text as NSString).replacingCharacters(in: target, with: value)
         selection = NSRange(location: target.location + (value as NSString).length, length: 0)
@@ -94,15 +100,18 @@ final class LocalClient: NSObject, IMKTextInput {
     }
     func attributedSubstring(from range: NSRange) -> NSAttributedString! { nil }
     func characterIndex(for point: NSPoint, tracking mode: IMKLocationToOffsetMappingMode, inMarkedRange: UnsafeMutablePointer<ObjCBool>!) -> Int { NSNotFound }
-    func attributes(forCharacterIndex index: Int, lineHeightRectangle: UnsafeMutablePointer<NSRect>!) -> [AnyHashable: Any]! { [:] }
+    func attributes(forCharacterIndex index: Int, lineHeightRectangle: UnsafeMutablePointer<NSRect>!) -> [AnyHashable: Any]! {
+        lineHeightRectangle?.pointee = testCaret
+        return [:]
+    }
     func validAttributesForMarkedText() -> [Any]! { [] }
     func overrideKeyboard(withKeyboardNamed name: String!) { fatalError("must not switch input sources") }
     func selectMode(_ identifier: String!) { fatalError("must not switch input sources") }
     func supportsUnicode() -> Bool { true }
     func windowLevel() -> Int32 { 0 }
-    func supportsProperty(_ property: TSMDocumentPropertyTag) -> Bool { true }
+    func supportsProperty(_ property: TSMDocumentPropertyTag) -> Bool { !hideDocumentRanges }
     func uniqueClientIdentifierString() -> String! { UUID().uuidString }
-    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer!) -> NSRect { .zero }
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer!) -> NSRect { testCaret }
 }
 // Use the real controller and transport without consulting another app's AX tree.
 final class LocalPrefixSelection: PrefixSelectionDriver {
@@ -148,14 +157,129 @@ func suspendSentence(_ controller: ProxiMicInputController, token: String = "ret
 // Local clients do not belong to the desktop's foreground application.
 IMEService.shared.activationForegroundPID = { ProcessInfo.processInfo.processIdentifier }
 
+do {
+    let service = IMEService.shared
+    service.transport.onMessage?(["type": "welcome", "protocol": 1, "epoch": "metadata-only"])
+    let client = LocalClient(), controller = ProxiMicInputController()
+    client.text = "上下文"; client.selection = NSRange(location: 3, length: 0)
+    controller.activateServer(client); drainActivation()
+    check(client.substringReads == 0, "activation read document text before context preparation")
+    service.transport.onMessage?(["type": "ping", "epoch": "metadata-only", "request_id": "focus-only", "capture_context": false])
+    check(client.substringReads == 0, "metadata focus probe read text before handshake")
+    service.transport.onMessage?(["type": "ping", "epoch": "metadata-only", "request_id": "read-context", "capture_context": true])
+    check(client.substringReads > 0, "explicit context request did not read document")
+    controller.deactivateServer(client)
+    print("PASS activation/focus probes defer document reads until context is requested")
+}
+
+do {
+    let service = IMEService.shared
+    let savedFront = service.inputContextForeground
+    let controller = ProxiMicInputController(), editor = LocalClient()
+    let frame = NSScreen.main!.visibleFrame
+    editor.testCaret = NSRect(x: frame.midX, y: frame.midY, width: 1, height: 16)
+    service.inputContextForeground = { ("test.activation", ProcessInfo.processInfo.processIdentifier) }
+    controller.makeSelectionDriver = { _, _, _ in LocalPrefixSelection(editor) }
+    let epoch = "dictation-preview"
+    service.transport.onMessage?(["type": "welcome", "protocol": 1, "epoch": epoch])
+    service.transport.onMessage?(["type": "configure", "epoch": epoch, "automatic_polish": true])
+    controller.activateServer(editor); drainActivation(); firstSentence(controller, editor)
+    let token = service.suggestion!.token
+    let session = currentSession(controller)!
+    check(session.phase == .dictated && editor.text == "第一句话", "raw dictation was not committed before preview")
+    service.transport.onMessage?(["type": "dictation_preview_result", "epoch": epoch, "token": token, "text": "第一句话。"])
+    check(service.suggestion?.isVisible == true && !session.polished, "passive suggestion missing or already applied")
+    controller.receive(["type": "polish", "client_id": currentClientID(controller), "utterance_id": "first", "seq": 4])
+    check(session.phase == .dictated, "old polish ran while preview mode enabled")
+    controller.receive(["type": "accept_dictation_preview", "client_id": currentClientID(controller),
+                        "utterance_id": "first", "seq": 5, "token": token, "revision": session.revision])
+    for _ in 0..<12 where session.awaitingReadback { drainActivation() }
+    check(editor.text == "第一句话。" && session.polished && service.suggestion == nil,
+          "preview acceptance failed: text=\(editor.text) phase=\(session.phase) error=\(session.error) stage=\(session.readbackStage) offered=\(service.suggestion != nil) diagnostics=\(session.readbackDiagnostics)")
+    controller.receive(["type": "cancel", "client_id": currentClientID(controller), "utterance_id": "first", "seq": 6])
+    for _ in 0..<12 where session.awaitingReadback { drainActivation() }
+    check(editor.text == "第一句话", "first undo did not restore raw: \(session.error)")
+    service.transport.onMessage?(["type": "dictation_preview_result", "epoch": epoch, "token": token, "text": "迟到"])
+    check(service.suggestion == nil && editor.text == "第一句话", "late output resurrected the preview")
+    controller.deactivateServer(editor)
+    service.transport.onMessage?(["type": "configure", "epoch": epoch, "automatic_polish": false])
+    service.inputContextForeground = savedFront
+    print("PASS native passive caret preview, mutually exclusive gesture, verified acceptance and undo")
+}
+
+// A key can create a controller before its deferred preparation runs. Our
+// authenticated wake event must be consumed even in that interval, without
+// inserting a character, moving selection, or requiring a document range.
+do {
+    let service = IMEService.shared
+    service.transport.onMessage?(["type": "welcome", "protocol": 1, "epoch": "context-key-test"])
+    let savedFront = service.inputContextForeground
+    service.inputContextForeground = { ("test.activation", 504) }
+    let client = LocalClient(), controller = ProxiMicInputController()
+    client.hideDocumentRanges = true
+    let stale = ProxiMicInputController(), staleClient = LocalClient()
+    staleClient.hideDocumentRanges = true
+    stale.activateServer(staleClient); drainActivation()
+    let arm: [String: Any] = ["type": "prepare_input_context", "epoch": "context-key-test", "request_id": "wake",
+                             "event_tag": Int64(123456), "application": client.bundle, "foreground_pid": Int32(504)]
+    service.transport.onMessage?(arm.merging(["foreground_pid": Int32(505)]) { _, next in next })
+    check(service.contextKey.pending == nil, "wrong foreground armed context key")
+    service.transport.onMessage?(arm)
+    check(service.contextKey.pending != nil, "context key was not armed")
+    controller.activateServer(client)
+    let own = CGEvent(keyboardEventSource: nil, virtualKey: InputContextKey.keyCode, keyDown: true)!
+    own.setIntegerValueField(.eventSourceUserData, value: 123456)
+    check(controller.handle(NSEvent(cgEvent: own), client: client), "pending controller leaked own context key")
+    check(client.writes == 0 && client.selection == NSRange(location: 0, length: 0), "context key changed text/caret")
+    let ordinary = CGEvent(keyboardEventSource: nil, virtualKey: InputContextKey.keyCode, keyDown: true)!
+    check(!controller.handle(NSEvent(cgEvent: ordinary), client: client), "ordinary F20 was swallowed")
+    drainActivation()
+    firstSentence(controller, client)
+    controller.deactivateServer(client)
+    service.inputContextForeground = savedFront
+    print("PASS own context key is consumed during activation; unknown-range dictation still works")
+}
+
+do {
+    let gate = InputContextKey()
+    var clock = 10.0
+    gate.now = { clock }
+    check(gate.arm(id: "expired", tag: 101, epoch: "e", application: "mail", pid: 1), "gate arm failed")
+    check(!gate.consumes(code: 124, tag: 101), "tagged arrow was swallowed")
+    clock += 1.1
+    check(gate.take(tag: 101) == nil && gate.consumes(code: 90, tag: 101), "late key revived expired request")
+    check(gate.arm(id: "cancel", tag: 102, epoch: "e", application: "mail", pid: 1), "second arm failed")
+    gate.cancel(id: "unrelated")
+    check(gate.pending != nil, "unrelated cancellation affected request")
+    gate.cancel(id: "cancel")
+    check(gate.take(tag: 102) == nil && gate.consumes(code: 90, tag: 102), "cancelled key leaked or revived request")
+    clock += 2
+    check(!gate.consumes(code: 90, tag: 102), "event reservation did not expire")
+    print("PASS context-key expiry, cancellation and unrelated-event boundaries")
+}
+
 // The IPC regression uses the production service and a process-local editor.
 if CommandLine.arguments.contains("--return-ipc") {
     var editor = LocalClient()
+    if CommandLine.arguments.contains("--with-suffix") { editor.text = "🍎后缀" }
+    if CommandLine.arguments.contains("--wechat") { editor.bundle = "com.tencent.xinWeChat" }
     let controller = ProxiMicInputController(), service = IMEService.shared
     controller.makeSelectionDriver = { _, _, _ in LocalPrefixSelection(editor) }
     let receive = service.transport.onMessage
     service.transport.onMessage = { message in
         switch message["type"] as? String {
+        case "test_apply_preview":
+            guard let session = currentSession(controller) else { fatalError("no active preview session") }
+            session.acceptSuggestion("明天我带苹果。", originalText: session.raw, revision: session.revision)
+        case "test_collapse_preview":
+            let key = CGEvent(keyboardEventSource: nil, virtualKey: 124, keyDown: true)!
+            key.setIntegerValueField(.eventSourceUserData, value: message["event_tag"] as! Int64)
+            key.flags = []
+            if !controller.handle(NSEvent(cgEvent: key)!, client: editor) {
+                check(editor.selection.length > 0, "moved an already collapsed caret")
+                editor.selection = NSRange(location: NSMaxRange(editor.selection), length: 0)
+            }
+            print("PREVIEW_UNDO_CARET=\(editor.selection.location),\(editor.selection.length)")
         case "test_reactivate":
             controller.deactivateServer(editor)
             switch message["change"] as? String {
@@ -171,7 +295,19 @@ if CommandLine.arguments.contains("--return-ipc") {
             controller.activateServer(editor)
         case "test_local_key":
             print("LOCAL_KEY=" + (message["command"] as? String ?? ""))
-            if message["command"] as? String == "select_all" {
+            if message["command"] as? String == "system_undo" {
+                if message["stripped"] as? Bool == true {
+                    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command],
+                        timestamp: 0, windowNumber: 0, context: nil, characters: "z", charactersIgnoringModifiers: "z",
+                        isARepeat: false, keyCode: 6)!
+                    check(!controller.handle(event, client: editor), "IME consumed host-posted ⌘Z")
+                }
+                guard let saved = editor.lastReplacement else { fatalError("no native replacement to undo") }
+                editor.text = saved.0
+                editor.selection = saved.1
+                editor.lastReplacement = nil
+                print("SYSTEM_UNDO_TEXT=" + editor.text)
+            } else if message["command"] as? String == "select_all" {
                 editor.selection = NSRange(location: 0, length: editor.text.utf16.count)
             } else if message["command"] as? String == "caret_from_end", let count = message["count"] as? Int {
                 let prefix = String(editor.text.dropLast(count))
@@ -607,6 +743,29 @@ do {
     print("PASS reentrant state reads coalesced")
 }
 print("PASS 8 activation lifecycle regressions")
+
+do {
+    let controller = ProxiMicInputController(), client = LocalClient()
+    client.hideDocumentRanges = true
+    controller.activateServer(client)
+    drainActivation()
+    check(!controller.isUnboundIdleClient, "unavailable ranges triggered source recovery")
+    firstSentence(controller, client)
+    let id = currentClientID(controller)
+    controller.receive(["type": "cancel", "client_id": id, "utterance_id": "first", "seq": 4])
+    check(currentSession(controller)?.phase == .dictated && currentSession(controller)?.error.isEmpty == false,
+          "unsupported controller undo blocked dictation or failed silently")
+    controller.receive(["type": "begin", "client_id": id, "utterance_id": "second", "seq": 1])
+    controller.receive(["type": "update", "client_id": id, "utterance_id": "second", "seq": 2, "text": "继续听写", "final": true])
+    check(client.text == "第一句话继续听写" && currentSession(controller)?.phase == .dictated,
+          "controller retained an unsupported-operation error across sentences")
+    controller.receive(["type": "begin", "client_id": id, "utterance_id": "retired", "seq": 1])
+    controller.deactivateServer(client)
+    let writes = client.writes
+    controller.receive(["type": "update", "client_id": id, "utterance_id": "retired", "seq": 2, "text": "不得写入", "final": true])
+    check(client.writes == writes, "range-free dictation bypassed deactivation ownership")
+    print("PASS controller permits range-free dictation after failed undo and rejects retired clients")
+}
 
 
 // Exercise the production recovery policy with a simulated OS; never switch

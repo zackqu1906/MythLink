@@ -16,8 +16,8 @@ import threading
 import time
 from uuid import uuid4
 
-from ..text_processing.model import LLM_PROVIDER_VOLCENGINE
 from ..text_processing.screen_context import ScreenContext
+from ..text_processing.qwen_thinking import text_thinking_budget
 
 
 CLEANUP_PROMPT_VERSION = "saved-screenshot-cleanup-v1"
@@ -215,8 +215,8 @@ class SavedScreenshotContext:
             if not record["ocr_text"].strip():
                 record.update(status="empty", reason="截图中未识别到文字")
                 return record
-            if settings.provider != LLM_PROVIDER_VOLCENGINE or not settings.model.lower().startswith("deepseek"):
-                raise ValueError("保存截图清理需要在服务设置中选择火山方舟 DeepSeek 模型")
+            if not settings.supports_routed_edit:
+                raise ValueError("保存截图清理需要在服务设置中选择百炼 Qwen 或火山方舟 DeepSeek 模型")
             settings = replace(settings, enabled=True)
             settings.validate()
             if len(record["ocr_text"]) > 24000:
@@ -227,7 +227,8 @@ class SavedScreenshotContext:
             trace["raw_output"] = self._processor._request_chat(
                 settings, system_prompt=CLEANUP_PROMPT, user_content=record["ocr_text"],
                 temperature=0, max_tokens=32768, require_complete=True,
-                preserve_whitespace=True, allow_empty_text=True)
+                preserve_whitespace=True, allow_empty_text=True,
+                thinking_budget=text_thinking_budget(len(record["ocr_text"])))
             record["text"] = validate_cleanup(record["ocr_text"], trace["raw_output"])
             record.update(status="ok" if record["text"].strip() else "empty",
                           reason="" if record["text"].strip() else "清理后没有完整内容")

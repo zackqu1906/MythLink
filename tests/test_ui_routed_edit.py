@@ -1,5 +1,6 @@
 """Third mode through the real Qt controller, native protocol and history."""
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from test_inline_ui import inline_ui
@@ -76,6 +77,23 @@ def test_right_swipe_requests_one_routed_edit_and_result_uses_native_key(inline_
     assert bridge.messages[-1]["revision"]==1
     count=len(bridge.messages);controller._apply_text_processed(result)
     assert len(bridge.messages)==count
+
+
+@pytest.mark.parametrize("variant", [ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY])
+def test_desktop_edit_submits_saved_text_and_current_screen(inline_ui, monkeypatch, variant):
+    controller, _, requests, _, _ = inline_ui
+    controller.routedEditVariant = variant
+    controller.ringGestures.screenshot.saveCopiedText("报价 18 元")
+    screen = {"messages": [{"speaker": "other", "text": "多少钱？"}]}
+    controller._voice_capture = {"session_id": 2, "model_context": screen}
+    target = object()
+    adapter = SimpleNamespace(capture_text=lambda ref: SimpleNamespace(text="您好", target=ref))
+    monkeypatch.setattr(controller, "_desktop_target_adapter", lambda: adapter)
+    controller._submit_routed_voice("按刚才复制的报价回复他", 2, "edit", target)
+    request, = requests
+    assert request.routed_edit_variant == variant and request.target_text == "您好"
+    assert request.saved_context.result()["text"] == "报价 18 元"
+    assert request.screen_context is screen
 
 
 def test_missing_native_source_never_submits_routed_request(inline_ui,monkeypatch):

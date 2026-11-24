@@ -131,7 +131,7 @@ class NativePeer:
             self._event("settled", phase="undone", text="")
         return True
 
-    def asr_context(self):
+    def asr_context(self, *, foreground):
         return {"status": "captured", "source": "input_method", "text": "", "context_complete": True}
 
     def close(self):
@@ -260,6 +260,8 @@ def pipeline_factory(tmp_path, monkeypatch):
 
     def create(replies):
         host = host_module.AppController(inline_input_enabled=True)
+        # This peer implements manual dictation and supplies its own ASR finals.
+        host.inputRoutingMode = host_module.INPUT_ROUTING_MANUAL
         host._inline_input._source_switch_factory = ReadyInputSource
         host._connected = True
         host._desktop_output = True

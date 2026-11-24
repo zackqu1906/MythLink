@@ -172,6 +172,19 @@ def test_failed_probe_restore_obeys_helper_current_source_guard(activation, rest
     assert gate.restore_if_unused(ORIGIN, 'abc', ticket) is False
 
 
+def test_interrupted_refresh_can_restore_original_mythlink_from_owned_intermediate(activation):
+    gate, data = activation
+    ticket = gate.invalidate_restore()
+    original = system.BUNDLE_ID + '.dictation'
+    thread, result = worker(lambda: gate.restore_if_unused(ORIGIN, original, ticket, expected_source='pinyin'))
+    until(lambda: bool(data['sources']))
+    source = data['sources'][0]
+    assert source.calls == [('restore', ORIGIN, original, 'pinyin')]
+    source.event.emit(dict(event='restored', restored=True))
+    thread.join(1)
+    assert result == {'value': True}
+
+
 @pytest.mark.parametrize('when', ['before_request', 'queued', 'running'])
 def test_new_input_cancels_older_failed_probe_restore(activation, when):
     gate, data = activation
@@ -321,10 +334,10 @@ def test_first_tap_without_system_shortcut_still_requires_live_imk_focus(compone
         assert result['value'].target == (bridge.epoch, 'fresh-client', '', *ORIGIN, (0, 0))
 
 
-@pytest.mark.parametrize('selection', [[0, 0], [-1, -1]])
+@pytest.mark.parametrize('outcome', ['ready', 'no_selection', 'not_ready', 'interrupted'])
 @pytest.mark.parametrize('auto_return', [False, True])
-def test_ax_free_tap_with_multiple_keyboards_uses_guarded_helper_and_returns_failures(
-        component, monkeypatch, selection, auto_return):
+def test_ax_free_tap_cycles_multiple_keyboards_and_restores_failed_probes(
+        component, monkeypatch, outcome, auto_return):
     from proximic_ring.desktop.app_shortcuts import MacAppShortcuts
     inline, _ = component
     inline.set_auto_return_input_source(auto_return)
@@ -340,22 +353,27 @@ def test_ax_free_tap_with_multiple_keyboards_uses_guarded_helper_and_returns_fai
         def foreground(self): return ORIGIN
         def sources(self, **_): return {'abc', 'pinyin', target}
         def current(self, **_): return state['source']
-        def shortcut(self): pytest.fail('Do not cycle through an intermediate keyboard')
+        def shortcut(self): return (49, 786432)
+        def advance(self, shortcut, origin, *, before_key_down):
+            before_key_down()
+            if state['source'] == 'pinyin' and outcome == 'interrupted':
+                raise system.InputSourceUnavailable('input_method_source_modifiers_held')
+            state['source'] = 'pinyin' if state['source'] == 'abc' else target
+            calls.append(state['source'])
+            if state['source'] == target:
+                state['reply'] = dict(epoch=bridge.epoch, application=ORIGIN[0], ready=outcome != 'not_ready',
+                                      client_id='fresh-client', utterance_id='',
+                                      selection=[-1, -1] if outcome == 'no_selection' else [0, 0])
     monkeypatch.setattr(system, 'SystemInputSources', Backend)
     calls = []
 
     class ProbeSource(Source):
         def start_probe(self, origin, expected, on_borrow):
-            assert origin == ORIGIN and expected == state['source'] == 'abc'
-            on_borrow('abc')
-            calls.append('borrow')
-            state['source'] = target
-            state['reply'] = dict(epoch=bridge.epoch, application=ORIGIN[0], ready=True,
-                                 client_id='fresh-client', utterance_id='', selection=selection)
-            QTimer.singleShot(0, lambda: self.event.emit(dict(event='selected', previous_source='abc')))
+            pytest.fail('Native selection would steal editor focus')
 
         def restore(self, origin, previous, expected):
-            assert origin == ORIGIN and previous == 'abc' and expected == state['source'] == target
+            assert origin == ORIGIN and previous == 'abc'
+            assert expected == state['source'] == ('pinyin' if outcome == 'interrupted' else target)
             calls.append('restore')
             state['source'] = previous
             QTimer.singleShot(0, lambda: self.event.emit(dict(event='restored', restored=True)))
@@ -364,8 +382,9 @@ def test_ax_free_tap_with_multiple_keyboards_uses_guarded_helper_and_returns_fai
     thread, result = worker(lambda: inline.capture_start_focus(require_editable=True))
     until(lambda: not thread.is_alive())
     thread.join()
-    accepted = selection == [0, 0]
-    assert result['value'].status == ('text' if accepted else 'nontext')
-    assert calls == (['borrow'] if accepted else ['borrow', 'restore'])
+    accepted = outcome in {'ready', 'no_selection'}
+    assert (result['value'].status == 'text') is accepted
+    assert calls == (['pinyin', 'restore'] if outcome == 'interrupted'
+                     else ['pinyin', target] + ([] if accepted else ['restore']))
     assert state['source'] == (target if accepted else 'abc')
     assert bool(inline._source_return.probe) is (accepted and auto_return)

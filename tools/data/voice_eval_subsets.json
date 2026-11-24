@@ -82,6 +82,19 @@
         "news_summary"
       ],
       "kind": "single"
+    },
+    "fragment_completion": {
+      "tags": [
+        "fragment_completion"
+      ],
+      "kind": "single"
+    },
+    "asr_recovery_and_fragments": {
+      "kind": "single",
+      "any_tags": [
+        "asr_intent_recovery",
+        "fragment_completion"
+      ]
     }
   }
 }

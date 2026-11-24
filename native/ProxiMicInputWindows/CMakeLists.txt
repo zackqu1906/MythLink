@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.20)
+project(MythlinkTsf LANGUAGES CXX)
+
+add_library(MythlinkTsf SHARED TextService.cpp MythlinkTsf.def)
+target_compile_features(MythlinkTsf PRIVATE cxx_std_17)
+target_link_libraries(MythlinkTsf PRIVATE ole32 oleaut32 advapi32 uuid)
+set_target_properties(MythlinkTsf PROPERTIES PREFIX "" MSVC_RUNTIME_LIBRARY "MultiThreaded")
+if(MSVC)
+    target_compile_options(MythlinkTsf PRIVATE /utf-8)
+elseif(MINGW)
+    target_link_options(MythlinkTsf PRIVATE -static)
+endif()

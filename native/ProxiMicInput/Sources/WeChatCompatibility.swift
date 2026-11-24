@@ -119,6 +119,40 @@ final class WeChatCompatibility {
     private var postwriteAXObservation = unspecifiedRange
     private var postwriteAXObservedAt: TimeInterval = 0
     private var postwriteMoveAttempted = false
+    var systemUndoTrial = false
+
+    private struct EditBoundary {
+        let expected: String
+        let tail: String
+        let headCharacters: Int
+        let lengths: ClosedRange<Int>
+
+        init?(_ result: String, caret: Int) {
+            guard let index = Range(NSRange(location: caret, length: 0), in: result)?.lowerBound,
+                  index == result.endIndex || result.indices.contains(index) else { return nil }
+            tail = String(result[index...])
+            headCharacters = result[..<index].count
+            expected = result.replacingOccurrences(of: "\r\n", with: "\n")
+            let minimum = expected.utf16.count
+            lengths = minimum...(minimum + expected.utf8.lazy.filter { $0 == 10 }.count)
+        }
+
+        func matches(_ body: EditorTextRange?, scope: EditorReadScope, imkCaret: NSRange) -> Bool {
+            guard let body, let caret = body.source == .imk ? imkCaret : body.selection,
+                  caret.length == 0, scope.range(at: caret) == body.range,
+                  body.text.utf16.count == body.range.length else { return false }
+            return body.text.replacingOccurrences(of: "\r\n", with: "\n") == expected && body.text.hasSuffix(tail)
+        }
+    }
+    private var editBoundary: EditBoundary?
+    private var readingRightContext = false
+    private var paragraphEditReachedEnd = false
+    private var paragraphObservation: EditorTextRange?
+
+    private var checksEditBoundary: Bool {
+        systemUndoTrial && prefixOnly && selectionTarget.location == 0 &&
+            (validationStage == "edit_prewrite" || validationStage == "retry_prewrite")
+    }
     private(set) var preparedEditContext: PreparedEditContext?
     private(set) var verifiedDocument: String?
     private var contextInstruction = ""
@@ -147,6 +181,9 @@ final class WeChatCompatibility {
         expectedBody = nil; preservedTailSource = nil; validationStage = "replace_prewrite"
         verifiedReplacementCaret = nil; verifiedReplacement = nil; requestedReplacement = nil
         replacementTextVerified = false; selectionWriteSent = false
+        editBoundary = nil
+        readingRightContext = false
+        paragraphEditReachedEnd = false; paragraphObservation = nil
         postwriteCaretTarget = unspecifiedRange; postwriteAXObservation = unspecifiedRange
         writtenRange = unspecifiedRange
         stageElapsedMS = [:]; stageEnteredAt = nil
@@ -157,10 +194,12 @@ final class WeChatCompatibility {
 
     /// Some IMK/Qt events lose CGEvent user data during conversion to NSEvent.
     /// In that case admit only a still-pending exact key/modifier sequence for
-    /// 500ms. Never suppress arbitrary typing, repeat keys, or another client.
+    /// 500ms around host delivery. A matching tagged event can also arrive
+    /// while the host is still posting the batch. Each expected key is used once.
     func acceptsKey(code: Int, command: Bool, shift: Bool = false, otherModifiers: Bool, tag: Int64) -> Bool {
-        guard pending, !otherModifiers, clock() < keyDeliveryDeadline,
-              tag == 0 || tag == eventTag,
+        let now = clock()
+        guard pending, !otherModifiers, now < deadline,
+              tag == eventTag || (tag == 0 && now < keyDeliveryDeadline),
               let index = expectedKeys.firstIndex(where: { $0.code == code && $0.command == command && $0.shift == shift }) else { return false }
         expectedKeys.removeFirst(index + 1) // AppKit may consume Cmd+A before IMK sees it.
         return true
@@ -324,7 +363,7 @@ final class WeChatCompatibility {
         deadline = clock() + 2.5
         if prefixOnly, let prefixTail {
             let caret = client.probe().selection
-            guard range.location == 0, caret.length == 0,
+            guard range.location == 0, (caret.length == 0 || (validationStage == "retry_prewrite" && caret.location == 0 && prefixTail == 0)),
                   let nativeRange = EditorReadScope.prefix(tail: prefixTail).range(at: caret) else {
                 fail("当前 IMK 位置无法界定上文写入范围", code: "native_prefix_unavailable"); return
             }
@@ -374,7 +413,7 @@ final class WeChatCompatibility {
         let token = generation
         let probe = client.probe()
         guard pending, generation == token, current(), isValidRange(range),
-              isValidRange(probe.selection), probe.selection.length == 0,
+              isValidRange(probe.selection), (probe.selection.length == 0 || (validationStage == "retry_prewrite" && range == probe.selection)),
               !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else {
             fail("输入框光标或组合状态已变化，未选择上文", code: "selection_state_changed"); return
         }
@@ -384,9 +423,9 @@ final class WeChatCompatibility {
         stage = next
         trace("selection_begin")
         // No selection operation is needed at an already confirmed empty range.
-        if range.length == 0, range == probe.selection {
+        if range == probe.selection {
             selectionUsesAX = false
-            readbackDiagnostics["selection_method"] = "existing_caret"
+            readbackDiagnostics["selection_method"] = range.length == 0 ? "existing_caret" : "restored_selection"
             keyAcknowledged = true; earliest = clock()
             trace("empty_range_ready")
             return
@@ -404,14 +443,19 @@ final class WeChatCompatibility {
         case .unavailable(let reason):
             selectionUsesAX = false
             readbackDiagnostics["ax_fallback_reason"] = reason
-            // Cmd+Shift+Up selects exactly [0, caret), never an arbitrary span.
-            guard range.location == 0, NSMaxRange(range) == probe.selection.location,
+            guard NSMaxRange(range) == probe.selection.location,
                   client.probe().selection == probe.selection, current() else {
+                fail("快捷键无法准确选择本次范围，未写入", code: "prefix_fallback_range_unsupported"); return
+            }
+            let wholePrefix = range.location == 0
+            guard wholePrefix || (expectedBody != nil && range == expectedRange &&
+                  expectedBefore.utf16.count == range.length && (1...512).contains(expectedBefore.count)) else {
                 fail("快捷键无法准确选择本次范围，未写入", code: "prefix_fallback_range_unsupported"); return
             }
             readbackDiagnostics["selection_method"] = "host_keyboard"
             trace("keyboard_fallback")
-            key("select_to_start", next: next)
+            if wholePrefix { key("select_to_start", next: next) }
+            else { key("select_previous", count: expectedBefore.count, next: next) }
         case .uncertain(let reason):
             fail("AX 选区结果或目标不确定，未写入", code: reason)
         }
@@ -441,8 +485,11 @@ final class WeChatCompatibility {
             guard let self, self.pending, self.generation == token else { return }
             if let error { self.fail(error, code: "key_delivery_failed"); return }
             self.keyAcknowledged = true
+            // Host startup may already have consumed the initial window. IMK
+            // can deliver a Qt-stripped key just after the host acknowledges it.
+            self.keyDeliveryDeadline = self.clock() + 0.5
             self.readbackDiagnostics["key_acknowledged"] = true
-            if self.stage == "postwrite_caret", self.postwriteMoveAttempted {
+            if self.stage == "paragraph_move" || (self.stage == "postwrite_caret" && self.postwriteMoveAttempted) {
                 self.readbackDiagnostics["postwrite_key_acknowledged"] = true
             }
             self.trace("host_key_acknowledged")
@@ -471,6 +518,16 @@ final class WeChatCompatibility {
     }
 
     private func fail(_ message: String, code: String = "unconfirmed") {
+        if stage == "paragraph_move", readbackDiagnostics["paragraph_move_status"] as? String == "requested" {
+            switch code {
+            case "key_delivery_failed": readbackDiagnostics["paragraph_move_status"] = "delivery_failed"
+            case "postwrite_key_ack_timeout": readbackDiagnostics["paragraph_move_status"] = "ack_timeout"
+            default: readbackDiagnostics["paragraph_move_status"] = "end_unconfirmed"
+            }
+        }
+        if stage == "edit_boundary", code == "postwrite_boundary_unconfirmed" || code == "body_read_unavailable" {
+            guard recordRightContext() else { return }
+        }
         readbackDiagnostics["failure_code"] = code
         if readbackDiagnostics["target_failure"] == nil,
            selectionDriver?.metadata["target_check_result"] as? String == "failed",
@@ -601,6 +658,18 @@ final class WeChatCompatibility {
     private func writeSelected(_ observed: String) {
         if prefixOnly {
             let token = generation
+            // An existing suffix must stay to the right of the insertion. Only
+            // allow paragraph-layout equivalence if the original selection covered the field.
+            if checksEditBoundary, resultCaret == result.utf16.count, result.contains("\n\n") {
+                readingRightContext = true
+                let atEnd = selectionDriver?.entireSelectionMatches(observed, current: {
+                    self.pending && self.generation == token && self.current()
+                }) == true
+                if generation == token { readingRightContext = false }
+                guard pending, generation == token, current() else { return }
+                paragraphEditReachedEnd = atEnd
+                readbackDiagnostics["paragraph_replaced_to_end"] = paragraphEditReachedEnd
+            }
             let targetValid = validateTarget("write_preflight", current: {
                 self.pending && self.generation == token && self.current()
             })
@@ -618,12 +687,12 @@ final class WeChatCompatibility {
                 // Backspace at an empty range would delete outside our ownership.
                 writtenRange = selectionTarget
                 readbackDiagnostics["ack_source"] = "empty_noop"
-                beginPostwriteCaretCheck(selectionTarget)
+                if checksEditBoundary { beginEditBoundaryCheck() }
+                else { beginPostwriteCaretCheck(selectionTarget) }
                 return
             }
         }
-        // capture already read the selected original in this same run-loop
-        // turn. No second full-document query before the single native write.
+        // The capture already verified the selected original before this single native write.
         selectionWriteSent = true
         stage = "written"
         readbackDiagnostics["write_sent"] = true
@@ -636,6 +705,313 @@ final class WeChatCompatibility {
             client.commit(result)
             stage = "written"; keyAcknowledged = true; earliest = clock() + 0.04
         }
+    }
+
+    private func beginEditBoundaryCheck() {
+        // resultCaret is still the intended offset in the submitted text. Never
+        // replace it with a position sampled while the editor is applying the edit.
+        guard let boundary = EditBoundary(result, caret: resultCaret) else {
+            fail("写后光标不在有效文字边界", code: "invalid_result_caret"); return
+        }
+        editBoundary = boundary
+        readbackDiagnostics["model_characters"] = result.utf16.count
+        let lines = boundary.expected.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline })
+        readbackDiagnostics["format_line_breaks"] = max(0, lines.count - 1)
+        readbackDiagnostics["format_blank_lines"] = lines.dropFirst().dropLast().filter { $0.allSatisfy { $0.isWhitespace } }.count
+        stage = "edit_boundary"
+        deadline = max(deadline, clock() + 0.75)
+        confirmEditBoundary()
+    }
+
+    private func confirmEditBoundary() {
+        let token = generation
+        let probe = client.probe()
+        let caret = probe.selection
+        guard let boundary = editBoundary, pending, generation == token, current(), isValidRange(caret), caret.length == 0,
+              !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }
+        let position = [caret.location, 0]
+        let positionChanged = readbackDiagnostics["postwrite_imk_selection"] as? [Int] != position
+        readbackDiagnostics["postwrite_imk_selection"] = position
+
+        var sampledAX: NSRange?
+        let sampleEnd = caret.location == result.utf16.count && boundary.tail.isEmpty
+        if sampleEnd {
+            sampledAX = samplePostwriteCaret()
+            guard pending, generation == token, current() else { return }
+            if let ax = sampledAX, ax.length == 0, ax.location < caret.location {
+                if tryEndMove(caret, sampledAX: ax) { return }
+                guard pending, generation == token, current() else { return }
+            } else { paragraphObservation = nil }
+        } else { paragraphObservation = nil }
+
+        // Each reader owns its selection offsets. Only text from the start of
+        // the prefix through the intended boundary can confirm this write.
+        // Cocoa and browser text may represent the same line break as LF or CRLF.
+        let tailLength = boundary.tail.utf16.count
+        let tails = tailLength == 0 || postwriteMoveAttempted ? [tailLength] : [tailLength, 0]
+        for tail in tails {
+            let scope = EditorReadScope.prefix(tail: tail)
+            guard let range = scope.range(at: caret) else { continue }
+            // Reject transient partial positions before a potentially expensive
+            // read. AX may use a different offset for the same line breaks.
+            let source = tailLength == 0 ? nil : preservedTailSource
+            var body: EditorTextRange?
+            let plausibleIMK = boundary.lengths.contains(range.length)
+            if plausibleIMK {
+                body = client.readBody(in: range, fallback: scope, source: source,
+                                       stage: validationStage + "_postwrite_baseline")
+            }
+            guard pending, generation == token, current() else { return }
+            if (body?.source == .imk || !plausibleIMK), (source == nil || source == .ax),
+               !boundary.matches(body, scope: scope, imkCaret: caret),
+               let ax = selectionDriver?.readSelection(current: { self.pending && self.generation == token && self.current() }),
+               ax.length == 0, let axRange = scope.range(at: ax), boundary.lengths.contains(axRange.length) {
+                body = readAXBody(scope)
+            }
+            guard pending, generation == token, current() else { return }
+            guard boundary.matches(body, scope: scope, imkCaret: caret), let body else {
+                // A clipboard fallback selects and restores text. Do not replay it
+                // on every timer tick after it already returned a different body.
+                if client.lastTextReadDiagnostics["clipboard_attempted"] as? Bool == true {
+                    fail("复制回读未能确认本次编辑的文字边界", code: "postwrite_boundary_unconfirmed"); return
+                }
+                continue
+            }
+            guard validateTarget("postwrite_boundary", current: {
+                self.pending && self.generation == token && self.current()
+            }) else {
+                if pending, generation == token { fail("写后输入目标已变化", code: "target_changed") }
+                return
+            }
+            guard pending, generation == token, current() else { return }
+            let final = client.probe()
+            guard pending, generation == token, current(), final.selection == caret,
+                  !isValidRange(final.markedRange) || final.markedRange.length == 0 else { return }
+            if tail != tailLength {
+                guard boundary.tail.count <= 512 else {
+                    fail("恢复光标距离超限", code: "caret_restore_limit_or_boundary"); return
+                }
+                postwriteMoveAttempted = true
+                key("caret_backward", count: boundary.tail.count, next: "edit_boundary")
+                return
+            }
+            if body.source == .ax || (sampleEnd && (sampledAX == nil || sampledAX == caret)) {
+                // The AX body can confirm its own insertion boundary even when IMK uses other offsets.
+                let aligned = body.source == .ax ? body.selection : sampledAX
+                readbackDiagnostics["right_check"] = aligned == nil ? "unavailable" : "aligned_offsets"
+                if let aligned {
+                    readbackDiagnostics["right_ax_caret"] = aligned.location
+                    readbackDiagnostics["right_move_utf16"] = 0
+                    readbackDiagnostics["right_move_graphemes"] = 0
+                }
+            } else if !recordRightContext() { return }
+            finishEditBoundary(body, caret: caret, status: "text_boundary_confirmed")
+            return
+        }
+        if positionChanged { trace("postwrite_boundary_wait") }
+    }
+
+    private func finishEditBoundary(_ body: EditorTextRange, caret: NSRange, status: String) {
+        verifiedReplacement = body
+        verifiedReplacementCaret = caret
+        replacementTextVerified = true
+        readbackDiagnostics["baseline_read_method"] = body.source.rawValue
+        let selection = body.selection ?? caret
+        readbackDiagnostics["baseline_body_selection"] = [selection.location, selection.length]
+        readbackDiagnostics["baseline_range"] = [body.range.location, body.range.length]
+        readbackDiagnostics["baseline_caret"] = [caret.location, 0]
+        readbackDiagnostics["replacement_text_matches"] = body.text == result
+        readbackDiagnostics["native_text_verified"] = true
+        readbackDiagnostics["postwrite_caret_status"] = status
+        trace("confirmed"); tracingSelection = false
+        pending = false; stage = ""
+    }
+
+    private func tryEndMove(_ caret: NSRange, sampledAX: NSRange) -> Bool {
+        let token = generation
+        readingRightContext = true
+        defer { if generation == token { readingRightContext = false } }
+        let doc = readAXBody(.document)
+        guard pending, generation == token, current() else { return true }
+        guard let doc, let ax = doc.selection, ax == sampledAX,
+              let start = Range(ax, in: doc.text)?.lowerBound,
+              doc.text.indices.contains(start) else { paragraphObservation = nil; return false }
+        let distance = doc.range.length - ax.location
+        let steps = doc.text[start...].count
+        guard (1...512).contains(steps) else { paragraphObservation = nil; return false }
+        // Exact full-field text proves the insertion boundary. A different paragraph
+        // layout additionally needs a verified original EOF and the observed geometry.
+        let literal = doc.text == result
+        if !literal {
+            guard paragraphEditReachedEnd, let blanks = readbackDiagnostics["format_blank_lines"] as? Int, blanks > 0,
+                  readbackDiagnostics["format_line_breaks"] as? Int == 2 * blanks,
+                  result.utf16.count - doc.range.length == blanks, distance == 2 * blanks else {
+                paragraphObservation = nil; return false
+            }
+            let paragraphs = result.components(separatedBy: "\n\n")
+            guard ["\n", "\r", "\u{2028}", "\u{2029}", " "].contains(where: { paragraphs.joined(separator: $0) == doc.text }) else {
+                paragraphObservation = nil; return false
+            }
+        }
+        guard paragraphObservation == doc else {
+            paragraphObservation = doc
+            earliest = clock() + 0.04
+            return true
+        }
+        guard validateTarget("paragraph_move", current: { self.pending && self.generation == token && self.current() })
+        else {
+            if pending, generation == token { fail("写后输入目标已变化", code: "target_changed") }
+            return true
+        }
+        guard pending, generation == token, current() else { return true }
+        let latest = client.probe()
+        guard pending, generation == token, current() else { return true }
+        guard latest.selection == caret,
+              !isValidRange(latest.markedRange) || latest.markedRange.length == 0 else { paragraphObservation = nil; return true }
+        readbackDiagnostics["right_check"] = literal ? "before_boundary" : "paragraph_pattern"
+        readbackDiagnostics["right_read_method"] = "ax_document"
+        readbackDiagnostics["right_ax_caret"] = ax.location
+        readbackDiagnostics["right_document_utf16"] = doc.range.length
+        readbackDiagnostics["paragraph_before_right_utf16"] = distance
+        readbackDiagnostics["right_available_utf16"] = distance
+        readbackDiagnostics["postwrite_move_method"] = "host_arrow"
+        readbackDiagnostics["postwrite_key_command"] = "caret_forward"
+        readbackDiagnostics["postwrite_move_attempted"] = true
+        readbackDiagnostics["postwrite_key_count"] = steps
+        readbackDiagnostics["postwrite_key_requested"] = true
+        readbackDiagnostics["postwrite_key_acknowledged"] = false
+        readbackDiagnostics["paragraph_move_status"] = "requested"
+        trace("paragraph_move_requested")
+        deadline = max(deadline, clock() + 0.75)
+        key("caret_forward", count: steps, next: "paragraph_move")
+        return true
+    }
+
+    private func confirmParagraphMove() {
+        guard let before = paragraphObservation else { return }
+        let token = generation
+        readingRightContext = true
+        defer { if generation == token { readingRightContext = false } }
+        let doc = readAXBody(.document)
+        guard pending, generation == token, current(), let doc, let ax = doc.selection else { return }
+        guard doc.text == before.text, doc.range == before.range, ax.length == 0 else {
+            fail("右移后正文或选区已变化", code: "paragraph_move_unconfirmed"); return
+        }
+        readbackDiagnostics["paragraph_after_right_utf16"] = doc.range.length - ax.location
+        readbackDiagnostics["postwrite_ax_after_move"] = [ax.location, ax.length]
+        guard ax.location == NSMaxRange(doc.range) else { return }
+        let probe = client.probe()
+        guard pending, generation == token, current(), isValidRange(probe.selection), probe.selection.length == 0,
+              !isValidRange(probe.markedRange) || probe.markedRange.length == 0 else { return }
+        readbackDiagnostics["postwrite_imk_after_move"] = [probe.selection.location, 0]
+        readbackDiagnostics["paragraph_move_status"] = "at_end"
+        // The full document matched before dispatch and is identical after the move.
+        var receipt = doc
+        receipt.readScope = .prefix(tail: 0)
+        finishEditBoundary(receipt, caret: probe.selection, status: "paragraph_end_confirmed")
+    }
+
+    /// Observe the same focused AX element in its own coordinates. This sample
+    /// neither authorizes a write/move nor changes the edit's success criteria.
+    private func recordRightContext() -> Bool {
+        let token = generation
+        guard let boundary = editBoundary, pending, current(), !readingRightContext else { return false }
+        readingRightContext = true
+        defer { if generation == token { readingRightContext = false } }
+        let data = measureRightContext(boundary)
+        guard pending, generation == token, current() else { return false }
+        for key in ["right_document_utf16", "right_available_utf16", "right_sample_utf16",
+                    "right_move_utf16", "right_move_graphemes", "right_ax_caret", "right_read_method"] {
+            readbackDiagnostics.removeValue(forKey: key)
+        }
+        readbackDiagnostics.merge(data) { _, new in new }
+        return true
+    }
+
+    private func measureRightContext(_ boundary: EditBoundary) -> [String: Any] {
+        var data: [String: Any] = ["right_check": "unavailable"]
+        let token = generation
+        let document = readAXBody(.document)
+        guard pending, generation == token, current() else { return data }
+        let body: EditorTextRange
+        let left: Substring
+        let right: Substring?
+        if let document, let selection = document.selection {
+            data["right_read_method"] = "ax_document"
+            data["right_document_utf16"] = document.range.length
+            guard selection.length == 0 else { data["right_check"] = "selection_active"; return data }
+            guard let index = Range(selection, in: document.text)?.lowerBound,
+                  index == document.text.endIndex || document.text.indices.contains(index) else {
+                data["right_check"] = "invalid_boundary"; return data
+            }
+            body = document
+            left = document.text[..<index]
+            right = document.text[index...]
+            data["right_available_utf16"] = document.range.length - selection.location
+        } else {
+            // Some editors expose parameterized ranges but no AXValue. Read
+            // the prefix and the missing suffix against the same AX selection.
+            guard let prefix = readAXBody(.prefix(tail: 0)), let selection = prefix.selection else { return data }
+            data["right_read_method"] = "ax_ranges"
+            guard selection.length == 0 else { data["right_check"] = "selection_active"; return data }
+            body = prefix
+            left = prefix.text[...]
+            right = nil
+        }
+        guard let selection = body.selection else { return data }
+        data["right_ax_caret"] = selection.location
+        let normalizedLeft = left.replacingOccurrences(of: "\r\n", with: "\n")
+        let expected = boundary.expected
+        let headCount = boundary.headCharacters
+        let leftCount = normalizedLeft.count
+        // Match from the known start of this edit. A repeated word near the
+        // caret by itself is not evidence of the boundary.
+        if leftCount > headCount {
+            let observed = normalizedLeft + (right?.replacingOccurrences(of: "\r\n", with: "\n") ?? "")
+            if observed.hasPrefix(expected) {
+                data["right_check"] = "past_boundary"
+                data["right_move_utf16"] = 0
+                data["right_move_graphemes"] = 0
+            } else { data["right_check"] = "text_mismatch" }
+            return data
+        }
+        guard expected.hasPrefix(normalizedLeft) else { data["right_check"] = "text_mismatch"; return data }
+        let remaining = expected.dropFirst(leftCount)
+        let needed = headCount - leftCount
+        let observedRight: Substring
+        if let right {
+            observedRight = right
+        } else if remaining.isEmpty {
+            // A nil one-unit read cannot distinguish EOF from an unavailable
+            // range (or a split surrogate). Keep prefix-only evidence separate.
+            let sample = readAXBody(.after(1))
+            guard let sample, sample.selection == selection else {
+                data["right_check"] = "aligned_prefix_only"; return data
+            }
+            data["right_sample_utf16"] = sample.range.length
+            observedRight = sample.text[...]
+        } else {
+            guard let suffix = readAXBody(.after(remaining.utf16.count)),
+                  suffix.selection == selection else { return data }
+            data["right_sample_utf16"] = suffix.range.length
+            observedRight = suffix.text[...]
+        }
+        guard observedRight.replacingOccurrences(of: "\r\n", with: "\n").hasPrefix(remaining) else {
+            data["right_check"] = "text_mismatch"; return data
+        }
+        let displacement = observedRight.prefix(needed)
+        if right != nil, needed > 0 {
+            // AXValue and the parameterized AX range can expose different
+            // paragraph layouts. Check the actual range before reporting steps.
+            guard let sample = readAXBody(.after(displacement.utf16.count)), sample.selection == selection,
+                  selectionDriver?.metadata["ax_text_method"] as? String != "value_range",
+                  sample.text == displacement else { data["right_check"] = "right_range_unconfirmed"; return data }
+            data["right_sample_utf16"] = sample.range.length
+        }
+        data["right_check"] = needed == 0 ? "aligned" : "before_boundary"
+        data["right_move_utf16"] = displacement.utf16.count
+        data["right_move_graphemes"] = needed
+        return data
     }
 
     private func completeSelectedWrite(_ caret: NSRange) {
@@ -756,7 +1132,7 @@ final class WeChatCompatibility {
             fail("保存撤销基准时光标已变化", code: "postwrite_baseline_caret_changed"); return
         }
         let body = client.readBody(in: writtenRange, fallback: selectionTarget.location == 0
-            ? .prefix(tail: postwriteTail.utf16.count) : nil,
+            ? .prefix(tail: postwriteTail.utf16.count) : (postwriteTail.isEmpty ? .before(writtenRange.length) : nil),
             source: postwriteTail.isEmpty ? nil : preservedTailSource,
             stage: validationStage + "_postwrite_baseline")
         let text = body?.text
@@ -824,6 +1200,17 @@ final class WeChatCompatibility {
         confirmPostwriteCaret()
     }
 
+    private func samplePostwriteCaret() -> NSRange? {
+        let token = generation
+        let began = clock()
+        readingRightContext = true
+        defer { if generation == token { readingRightContext = false } }
+        let ax = selectionDriver?.sampleCaret(current: { self.pending && self.generation == token && self.current() })
+        guard pending, generation == token, current() else { return nil }
+        readbackDiagnostics["caret_sample_ms"] = (clock() - began) * 1000
+        return ax
+    }
+
     private func confirmPostwriteCaret() {
         let token = generation
         let probe = client.probe()
@@ -836,9 +1223,13 @@ final class WeChatCompatibility {
         if !postwriteMoveAttempted && probe.selection != postwriteCaretTarget {
             fail("移动前 IMK 光标已变化，未发送按键", code: "postwrite_imk_caret_changed"); return
         }
-        let ax = selectionDriver?.readSelection(current: {
-            self.pending && self.generation == token && self.current()
-        })
+        let ax: NSRange?
+        if postwriteMoveAttempted || isValidRange(postwriteAXObservation) {
+            ax = selectionDriver?.readSelection(current: { self.pending && self.generation == token && self.current() })
+        } else {
+            ax = samplePostwriteCaret()
+        }
+        guard pending, generation == token, current() else { return }
         // Remote AX reads can pump both cancellation and new IMK state.
         let after = client.probe()
         guard pending, generation == token, current() else { return }
@@ -917,7 +1308,7 @@ final class WeChatCompatibility {
     }
 
     func advance() {
-        guard pending else { return }
+        guard pending, !readingRightContext else { return }
         client.clearTextReadFailure()
         defer {
             if pending, let failure = client.terminalTextReadFailure {
@@ -927,11 +1318,17 @@ final class WeChatCompatibility {
         if tracingSelection, (!currentTarget("advance.before") || !validateTarget("advance", current: current)) {
             fail("输入目标已变化，已停止操作", code: "target_changed"); return
         }
-        if stage == "postwrite_caret", postwriteMoveAttempted,
+        if (stage == "postwrite_caret" && postwriteMoveAttempted) || stage == "paragraph_move",
            !keyAcknowledged, clock() >= keyDeliveryDeadline {
             fail("写后光标移动请求未收到主程序回执，未重复发送", code: "postwrite_key_ack_timeout"); return
         }
         guard clock() < deadline else {
+            if stage == "paragraph_move" {
+                fail("右移已请求，但未确认光标已到末尾", code: "paragraph_move_unconfirmed"); return
+            }
+            if stage == "edit_boundary" {
+                fail("未能确认本次编辑的文字和光标边界", code: "postwrite_boundary_unconfirmed"); return
+            }
             if stage == "postwrite_baseline" {
                 fail("文字写入已发出，但未取得完整的写后正文，无法建立撤销基准",
                      code: "postwrite_baseline_unavailable")
@@ -946,6 +1343,10 @@ final class WeChatCompatibility {
         guard keyAcknowledged, clock() >= earliest else { return }
         let token = generation
         switch stage {
+        case "paragraph_move":
+            confirmParagraphMove()
+        case "edit_boundary":
+            confirmEditBoundary()
         case "postwrite_baseline":
             confirmPostwriteBaseline()
         case "postwrite_caret":
@@ -1103,6 +1504,7 @@ final class WeChatCompatibility {
             }
             writeSelected(whole)
         case "written":
+            if checksEditBoundary { beginEditBoundaryCheck(); return }
             if prefixOnly { confirmPrefixWrite(); return }
             if selectBeforeReplacing {
                 let probe = client.probe()

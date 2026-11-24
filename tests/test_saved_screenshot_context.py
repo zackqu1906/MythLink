@@ -11,7 +11,7 @@ import pytest
 from proximic_ring.screenshots.context import (
     CLEANUP_PROMPT, SavedScreenshotContext, resolve_saved_context, validate_cleanup)
 from proximic_ring.text_processing.model import (
-    INPUT_ROUTING_ROUTED_EDIT, ROUTED_EDIT_BOUNDARY, TextProcessingRequest)
+    INPUT_ROUTING_ROUTED_EDIT, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS, TextProcessingRequest)
 from proximic_ring.text_processing.processing_dispatch import process_text_request
 from proximic_ring.ui.voice.edit_replay import frozen_edit_request
 from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
@@ -137,10 +137,14 @@ def test_failed_replacement_does_not_reload_previous_slot(saved, tmp_path, monke
     assert saved().snapshot().result() == {}
 
 
-def test_edit_waits_for_pinned_context_and_retry_keeps_it(saved, tmp_path):
+@pytest.mark.parametrize("variant,reply", [
+    (ROUTED_EDIT_BOUNDARY, "编辑结果"),
+    (ROUTED_EDIT_SIX_CLASS, "分类：修改、翻译\n正文：\n编辑结果"),
+])
+def test_edit_waits_for_pinned_context_and_retry_keeps_it(saved, tmp_path, variant, reply):
     pending = Future()
-    request = edit_request(pending)
-    processor, calls = processor_returning('编辑结果')
+    request = replace(edit_request(pending), routed_edit_variant=variant)
+    processor, calls = processor_returning(reply)
     started = threading.Event()
     def process():
         started.set()

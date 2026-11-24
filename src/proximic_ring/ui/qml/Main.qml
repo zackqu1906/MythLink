@@ -29,6 +29,62 @@ ApplicationWindow {
     FigmaTheme { id: uiTheme }
     GestureHistoryDialog { controller: appController }
     ExportDialog { selection: appController.exportSelection }
+    Loader {
+        active: appController.touchpad.windowsInputPrototype
+        sourceComponent: Component {
+            Window {
+                id: strokePopup
+                objectName: "strokeExternalPopup"
+                readonly property var touchpad: appController.touchpad
+                readonly property var caret: touchpad.externalStrokeSession.caret
+                readonly property rect placement: touchpad.externalStrokeSession.popupGeometry(
+                    caret, strokeGrid.correctionPullGutter)
+                flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
+                       | Qt.WindowTransparentForInput | Qt.WindowStaysOnTopHint
+                transientParent: null
+                color: "transparent"
+                visible: placement.width > 0
+                width: placement.width
+                height: placement.height
+                x: placement.x
+                y: placement.y
+                StrokeSequencePopup { touchpad: strokePopup.touchpad }
+                StrokeCorrectionScope {
+                    id: externalCorrectionScope
+                    objectName: "externalStrokeCorrectionScope"
+                    touchpad: strokePopup.touchpad
+                    x: strokeGrid.x; y: 8
+                    width: strokeGrid.width
+                    height: Math.max(0, Math.min(implicitHeight, strokeGrid.y - y - 4))
+                    highlighted: strokeGrid.correcting && touchpad.handwritingCorrectionText.length > 0
+                    message: strokeGrid.selecting ? "" : touchpad.handwritingCorrectionMessage
+                    placeholder: "请先手写并确认要修正的词"
+                    visible: touchpad.handwritingCorrectionActive && !strokeGrid.punctuationPull &&
+                        ((strokeGrid.selecting && strokeGrid.activeDirection === "right")
+                         || touchpad.handwritingCorrectionCanUndo
+                         || (!touchpad.strokeCode.length && touchpad.handwritingCorrectionMessage.length > 0))
+                }
+                StrokeSelectionMenu {
+                    id: strokeGrid
+                    objectName: "strokeExternalGrid"
+                    // Native windows clip anything outside their surface, even
+                    // when the QML item itself has clip: false.
+                    x: 68
+                    y: Math.ceil(width * .4) + 16
+                    width: Math.max(0, strokePopup.width - 76 - correctionPullGutter)
+                    height: width
+                    viewport: strokePopup.contentItem
+                    touchpad: strokePopup.touchpad
+                }
+                Connections {
+                    target: strokePopup.touchpad
+                    function onStrokeTraceChanged(points, finished) {
+                        strokeGrid.updateTrace(points, finished)
+                    }
+                }
+            }
+        }
+    }
     property int currentPage: 0
     // Keep association features implemented, but hide their UI surfaces.
     readonly property bool associationUiVisible: false

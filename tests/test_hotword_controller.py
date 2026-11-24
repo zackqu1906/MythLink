@@ -221,18 +221,18 @@ def test_app_routes_edit_result_ack_and_undo_to_learning(route, monkeypatch):
     assert c.hotwords.store.snapshot() == [] and not sent
 
 
-@pytest.mark.parametrize("before,instruction,after,word", [
-    ("进行哔哩哔哩。飞书。", "鼠标的鼠。", "进行哔哩哔哩。飞鼠。", "飞鼠"),
-    ("进行哔哩哔哩。飞鼠。miss 绘制。", "myth 绘制。", "进行哔哩哔哩。飞鼠。myth 绘制。", "myth"),
+@pytest.mark.parametrize("backend,before,instruction,after,word", [
+    ("volcengine", "进行哔哩哔哩。飞书。", "鼠标的鼠。", "进行哔哩哔哩。飞鼠。", "飞鼠"),
+    ("funasr_nano", "进行哔哩哔哩。飞鼠。miss 绘制。", "myth 绘制。", "进行哔哩哔哩。飞鼠。myth 绘制。", "myth"),
 ])
 def test_replayed_ellipsis_results_save_notify_and_retract(route, monkeypatch, caplog,
-                                                        before, instruction, after, word):
+                                                        backend, before, instruction, after, word):
     """Two previously missed utterances using the word-only response format."""
     from proximic_ring.text_processing import OpenAICompatibleTextProcessor
     from proximic_ring.voice.hotwords import HotwordStore
     c, _, inline, _, sent, messages, _ = route
     caplog.set_level(logging.INFO)
-    c._asr_backend = "volcengine"
+    c._asr_backend = backend
     c._latest_asr_session_id = 12
     settings = LLMSettings(enabled=True, provider="volcengine", model="fixture",
                            base_url="https://example.invalid", api_key_env="TEST_UNUSED_API_KEY")

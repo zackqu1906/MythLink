@@ -150,9 +150,24 @@ ColumnLayout {
         objectName: "settingsInputGroup"
         visible: pane.expandedSection === "audio"
         title: "输入与控制"; symbol: "pointer"
+        description: pane.controller.activeTextModel ? qsTr("当前文本模型：%1").arg(pane.controller.activeTextModel) : qsTr("尚未选择文本模型")
+        FigmaFormRow {
+            objectName: "qwenThinkingRow"
+            preferenceStyle: true
+            visible: pane.controller.qwenThinkingAvailable
+            title: "Qwen 思考模式"
+            description: "通常用 24 个思考 token。遇到释字、组合编辑或较长正文时可用 128 个。需要逐字保留引文时关闭思考。"
+            PreferenceSwitch {
+                objectName: "qwenThinkingSwitch"
+                Layout.alignment: Qt.AlignRight
+                Accessible.name: "Qwen 思考模式"
+                checked: pane.controller.qwenThinkingEnabled
+                onClicked: pane.controller.qwenThinkingEnabled = checked
+            }
+        }
         FigmaFormRow {
             preferenceStyle: true
-            visible: pane.controller.inlineInput.enabled
+            visible: pane.controller.inlineInput.enabled && Qt.platform.os === "osx"
             title: "语音输入后切回原输入法"
             description: "完成后自动切回；润色、撤销及右滑历史操作会临时切回 Mythlink。默认关闭。"
             PreferenceSwitch {
@@ -165,9 +180,11 @@ ColumnLayout {
         }
         FigmaFormRow {
             preferenceStyle: true
-            visible: pane.controller.inlineInput.enabled
+            visible: pane.controller.inlineInput.enabled && Qt.platform.os === "osx"
             title: "历史操作模式"
-            description: pane.controller.historyActionMode === "retry"
+            description: pane.controller.historyActionMode === "system_retry"
+                ? "左滑调用当前应用的撤销。撤回到刚才的编辑指令后，右滑可用原指令重新生成。旧版输入法或开启自动切回输入法时沿用「撤销和重做」。"
+                : pane.controller.historyActionMode === "retry"
                 ? "左滑撤销；恢复出编辑指令后，右滑重做，使用原输入再次请求模型。"
                 : pane.controller.historyActionMode === "next"
                   ? "左滑上一步，右滑下一步；直接恢复已保存结果，不请求模型。"
@@ -176,9 +193,9 @@ ColumnLayout {
                 objectName: "historyActionModeCombo"
                 Layout.fillWidth: true
                 Accessible.name: "历史操作模式"
-                model: ["只撤销", "撤销和下一步", "撤销和重做"]
-                currentIndex: ["undo", "next", "retry"].indexOf(pane.controller.historyActionMode)
-                onActivated: pane.controller.historyActionMode = ["undo", "next", "retry"][currentIndex]
+                model: ["只撤销", "撤销和下一步", "撤销和重做", "无撤销栈撤销"]
+                currentIndex: ["undo", "next", "retry", "system_retry"].indexOf(pane.controller.historyActionMode)
+                onActivated: pane.controller.historyActionMode = ["undo", "next", "retry", "system_retry"][currentIndex]
             }
         }
         FigmaFormRow {
@@ -187,7 +204,7 @@ ColumnLayout {
             description: pane.controller.inputRoutingMode === "auto"
                 ? "开始后说话，再结束即可自动判断听写或编辑。请先在服务设置中配置自动路由服务器。"
                 : pane.controller.inputRoutingMode === "manual_routed_edit"
-                  ? "手势明确选择听写或编辑；编辑由火山 DeepSeek 一次完成，可在下方选择编辑版本。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
+                  ? "通过手势选择听写或编辑。所选文本模型一次完成编辑，编辑版本可在下方切换。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
                   : "先听写，通过转换操作将本句作为编辑指令。"
             FigmaSelect {
                 objectName: "inputRoutingModeCombo"
@@ -204,23 +221,37 @@ ColumnLayout {
             visible: pane.controller.inputRoutingMode === "manual_routed_edit"
             title: "手动编辑版本"
             description: pane.controller.routedEditVariant === "six_class_v5"
-                ? "保留原来的六分类版本，在一次请求中返回任务类别和完整正文。下次录音生效。"
-                : pane.controller.routedEditVariant === "boundary_only_v1"
-                  ? "按完整边界直接生成正文，由模型自行组合编辑要求，不输出分类。下次录音生效。"
-                  : "通用编辑要求始终保留；可对照保留或移除精细规则的效果。直接生成正文，下次录音生效。"
+                ? "可使用原文、屏幕上文和已保存资料，一次返回任务类别和完整正文。下次录音生效。"
+                : "可使用原文、屏幕上文和已保存资料，直接返回完整正文。下次录音生效。"
             FigmaSelect {
                 objectName: "routedEditVariantCombo"
                 Layout.fillWidth: true
                 Accessible.name: "手动编辑版本"
-                property var variantKeys: ["six_class_v5", "boundary_only_v1", "general_only_v1", "general_full_v1", "general_no_spelling_v1", "general_no_polish_v1", "general_no_structure_v1", "general_no_spelling_polish_v1", "general_no_spelling_polish_structure_v1"]
-                model: ["六分类 v5", "无分类边界 v1", "general 通用编辑", "general＋全部精细规则", "general＋缺释字细则", "general＋缺润色细则", "general＋缺结构细则", "general＋缺释字、润色细则", "general＋缺释字、润色、结构细则"]
+                property var variantKeys: ["six_class_v5", "boundary_only_v1", "original_structured_v1"]
+                model: ["六分类", "无分类边界", "精简编辑提示词"]
                 currentIndex: Math.max(0, variantKeys.indexOf(pane.controller.routedEditVariant))
                 onActivated: pane.controller.routedEditVariant = variantKeys[currentIndex]
             }
         }
         FigmaFormRow {
             preferenceStyle: true
-            visible: pane.controller.inputRoutingMode === "auto"
+            visible: pane.controller.inlineInput.enabled
+            title: "听写润色方式"
+            description: pane.controller.automaticPolish
+                ? "定稿后在后台补全短句、纠正识别错误。光标旁出现建议时，下滑替换，撤销可还原听写。"
+                : "用润色手势处理本句听写，默认为下滑。"
+            FigmaSelect {
+                objectName: "dictationPolishMode"
+                Layout.fillWidth: true
+                Accessible.name: "听写润色方式"
+                model: ["自动润色预览", "下滑润色"]
+                currentIndex: pane.controller.automaticPolish ? 0 : 1
+                onActivated: pane.controller.automaticPolish = currentIndex === 0
+            }
+        }
+        FigmaFormRow {
+            preferenceStyle: true
+            visible: pane.controller.inputRoutingMode === "auto" && !(pane.controller.inlineInput.enabled && pane.controller.automaticPolish && pane.controller.desktopOutputEnabled)
             title: "自动模式听写整理"
             description: "开启后用文本模型整理听写；关闭后直接输入语音识别结果，省去整理等待。编辑指令照常处理。"
             PreferenceSwitch {
@@ -234,7 +265,7 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             title: "OCR 截图上文传入"
-            description: "开启后等待上文整理完成，供自动判断和编辑路由使用；关闭后不传入、不等待。截图与原始 OCR 始终保存到记录。下次录音生效。"
+            description: "开启后，屏幕文字固定由火山方舟 DeepSeek V4.1 Flash 整理，完成后供自动判断和编辑使用。截图与原始 OCR 始终保存到记录。下次录音生效。"
             PreferenceSwitch {
                 objectName: "ocrContextSwitch"
                 Layout.alignment: Qt.AlignRight

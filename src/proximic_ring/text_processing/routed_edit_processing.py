@@ -1,16 +1,17 @@
-"""Manual edit intent, one DeepSeek request with a selectable output protocol."""
+"""Manual edit intent, one cloud model request with a selectable output protocol."""
 from __future__ import annotations
 
 import json
 import re
 
 from .edit_response import apply_edit_response
-from .edit_tool import EDIT_MODE_FULL
-from .model import (LLM_PROVIDER_VOLCENGINE, validate_edit_target_text,
+from .edit_tool import EDIT_MODE_FULL, FULL_TEXT_EDIT_TOOL
+from .model import (ROUTED_EDIT_ORIGINAL, validate_edit_target_text,
                     ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant)
 from .processing_common import LLMResponseProcessingError, _text_output_budget
+from .qwen_thinking import edit_thinking_budget
 from .routed_edit_prompts import routed_edit_prompt
-from .task_routing import EDIT_TASK_LABELS, EditPlan, available_edit_tasks
+from .task_routing import EDIT_TASK_LABELS, EditPlan
 
 
 def routed_edit_model_input(utterance, editable_text, screen_context=None, saved_context=None):
@@ -24,7 +25,7 @@ def routed_edit_model_input(utterance, editable_text, screen_context=None, saved
 
 def parse_routed_edit_response(raw, target):
     """Accept the two observed body layouts, never repair unknown categories."""
-    match = re.fullmatch(r"分类：([^\r\n]+)\r?\n正文：([\s\S]*)", raw) if isinstance(raw, str) else None
+    match = re.fullmatch(r"分类：([^\r\n]+)\r?\n(?:[ \t]*\r?\n)*正文：([\s\S]*)", raw) if isinstance(raw, str) else None
     if not match:
         raise ValueError("编辑结果缺少分类行或正文标记")
     labels, body = match.groups()
@@ -32,15 +33,13 @@ def parse_routed_edit_response(raw, target):
         body = body[2:]
     elif body.startswith("\n"):
         body = body[1:]
-    if labels == "无可执行编辑":
+    if labels.strip() == "无可执行编辑":
         raise ValueError("用户已确认编辑，但模型未选择编辑类别")
     inverse = {label: key for key, label in EDIT_TASK_LABELS.items()}
-    names = labels.split("、")
+    names = [name.strip() for name in labels.split("、")]
     if any(name not in inverse for name in names):
         raise ValueError("模型返回了约定六类之外的编辑类别")
     plan = EditPlan(tuple(inverse[name] for name in names))
-    if not set(plan.tasks) <= set(available_edit_tasks(target)):
-        raise ValueError("空原文不能选择修改任务")
     # Reuse full-body validation (including prompt leak checks), without
     # requiring the model to emit JSON or making a second model request.
     body = apply_edit_response(target, {"modified_text": body}, EDIT_MODE_FULL)
@@ -51,9 +50,8 @@ class RoutedEditTextProcessingMixin:
     def process_routed_edit_with_trace(self, text, settings, target_text, screen_context=None,
                                       *, variant=ROUTED_EDIT_SIX_CLASS, saved_context=None):
         settings.validate()
-        if (not settings.enabled or settings.provider != LLM_PROVIDER_VOLCENGINE
-                or not settings.model.lower().startswith("deepseek")):
-            raise ValueError("手动＋编辑路由需要在服务设置中选择火山方舟 DeepSeek 模型")
+        if not settings.enabled or not settings.supports_routed_edit:
+            raise ValueError("手动＋编辑路由需要在服务设置中选择百炼 Qwen 或火山方舟 DeepSeek 模型")
         raw = str(text or "").strip()
         if not raw:
             raise ValueError("本次编辑口述为空")
@@ -65,14 +63,26 @@ class RoutedEditTextProcessingMixin:
         model_input = json.loads(json.dumps(model_input, ensure_ascii=False))
         output = ""
         try:
+            structured = variant == ROUTED_EDIT_ORIGINAL
+            options = {}
+            if structured:
+                options["response_format"] = {"type": "json_schema", "json_schema": {
+                    "name": "edit_result", "strict": True, "schema": FULL_TEXT_EDIT_TOOL["function"]["parameters"]}}
             output = self._request_chat(
                 settings, system_prompt=routed_edit_prompt(target, variant),
                 user_content=json.dumps(model_input, ensure_ascii=False),
                 temperature=0.0, max_tokens=_text_output_budget(settings), edit_tool=None,
                 require_complete=True, preserve_whitespace=True,
-                allow_empty_text=boundary_only,
+                thinking_budget=edit_thinking_budget(raw, target),
+                allow_empty_text=boundary_only, **options,
             )
-            if boundary_only:
+            if structured:
+                plan = None
+                result = json.loads(output)
+                if not isinstance(result, dict):
+                    raise ValueError("编辑结果必须是 JSON 对象")
+                body = apply_edit_response(target, result, EDIT_MODE_FULL)
+            elif boundary_only:
                 plan = None
                 body = apply_edit_response(target, {"modified_text": output}, EDIT_MODE_FULL)
             else:

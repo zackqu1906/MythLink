@@ -100,6 +100,7 @@ def test_final_text_waits_for_native_settlement_before_return(component, monkeyp
 
 def test_round_trip_restores_sentence_for_polish_and_two_undos(component, monkeypatch):
     c, _ = component
+    c.set_automatic_polish(False)
     start(c, monkeypatch)
     utterance = c._utterance_id
     settle(c)
@@ -173,6 +174,7 @@ def test_cancelled_new_sentence_retires_its_history_token(component, monkeypatch
 
 def test_pending_polish_runs_before_auto_return(component, monkeypatch):
     c, _ = component
+    c.set_automatic_polish(False)
     start(c, monkeypatch)
     c.settled.connect(lambda *_: c.polish())
     settle(c, can_polish=True)

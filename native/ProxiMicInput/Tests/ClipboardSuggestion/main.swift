@@ -83,3 +83,26 @@ board.clearContents(); board.setString("temporary internal text", forType: .stri
 board.setString("1", forType: .init("application/x-mythlink-internal-clipboard"))
 check(ClipboardPreview.read(board, revision: board.changeCount) == nil, "internal clipboard leaked into suggestions")
 print("PASS clipboard preview limits, native palette, image thumbnail, focus, revision, dismissal and expiry")
+
+// Both a normal reply and a document taller than the display must be readable to their last character.
+for count in [1200, 1, 8] {
+    let candidate = String(repeating: "这是需要完整显示的一句文字，包含长串EnglishWithoutBreaks和👨‍👩‍👧‍👦。", count: count) + "末字"
+    check(palette.show(ClipboardPreview(text: candidate, image: nil), token: "replacement", caret: caret,
+                       duration: nil, replacement: true), "full replacement preview was dropped")
+    guard let scroll = content.subviews.compactMap({ $0 as? NSScrollView }).first,
+          let body = scroll.documentView as? NSTextView, let manager = body.layoutManager,
+          let container = body.textContainer else { fatalError("missing complete replacement text layout") }
+    manager.ensureLayout(for: container)
+    let last = manager.glyphIndexForCharacter(at: (candidate as NSString).length - 1)
+    let lastLine = manager.lineFragmentUsedRect(forGlyphAt: last, effectiveRange: nil)
+    check(!palette.panel.canBecomeKey && screen.contains(palette.panel.frame), "replacement left screen or took focus")
+    check(body.string == candidate && lastLine.maxY <= body.bounds.height + 1, "last line clipped")
+    if count < 1200 {
+        check(scroll.documentVisibleRect.contains(lastLine), "screen-fitting replacement concealed its last line")
+    } else {
+        check(!palette.panel.ignoresMouseEvents && scroll.hasVerticalScroller, "overflow preview cannot scroll: screen=\(screen.size) viewport=\(scroll.contentSize) document=\(body.frame.size) last=\(lastLine)")
+        body.scrollRangeToVisible(NSRange(location: (candidate as NSString).length - 1, length: 1))
+        check(scroll.documentVisibleRect.intersects(lastLine), "last line unreachable")
+    }
+}
+print("PASS complete wrapped replacement and scrollable overflow through final glyph")

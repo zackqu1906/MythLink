@@ -3,6 +3,7 @@ import Foundation
 final class FakeClient: CompositionClient {
     var body: String
     var selected: NSRange
+    var hideSelection = false
     var marked: NSRange = unspecifiedRange
     var fullContext = true
     var omitWholeWhileMarked = false
@@ -31,13 +32,13 @@ final class FakeClient: CompositionClient {
     func snapshot() throws -> EditorSnapshot {
         snapshotCount += 1
         if let snapshotOverride { return snapshotOverride }
-        return EditorSnapshot(text: fullContext && !(omitWholeWhileMarked && isValidRange(marked)) ? body : nil, selection: selected, markedRange: marked,
-                              selectedText: isValidRange(selected, length: (body as NSString).length) ? (body as NSString).substring(with: selected) : nil, documentAccess: access,
+        return EditorSnapshot(text: fullContext && !(omitWholeWhileMarked && isValidRange(marked)) ? body : nil, selection: hideSelection ? unspecifiedRange : selected, markedRange: marked,
+                              selectedText: !hideSelection && isValidRange(selected, length: (body as NSString).length) ? (body as NSString).substring(with: selected) : nil, documentAccess: access,
                               readableContext: contextRange.flatMap { range in
                                   isValidRange(range, length: (body as NSString).length) ? EditorTextRange(text: (body as NSString).substring(with: range), range: range) : nil
                               })
     }
-    func selection() -> NSRange { probeOverride?.selection ?? selected }
+    func selection() -> NSRange { probeOverride?.selection ?? (hideSelection ? unspecifiedRange : selected) }
     func readText(in range: NSRange) -> String? {
         let text: String?
         if rangeReads { text = body }
@@ -46,7 +47,7 @@ final class FakeClient: CompositionClient {
         return (text as NSString).substring(with: range)
     }
     func probe() -> CompositionProbe {
-        probeOverride ?? CompositionProbe(selection: selected, markedRange: marked,
+        probeOverride ?? CompositionProbe(selection: hideSelection ? unspecifiedRange : selected, markedRange: marked,
                          markedText: isValidRange(marked, length: (body as NSString).length) && !(emptyMarkClearsComposition && marked.length == 0) ? (body as NSString).substring(with: marked) : nil)
     }
     func holdReads() {
@@ -672,24 +673,33 @@ test("A changed marked range is rejected even when whole-document reads are unav
     check(session.phase == .error && client.markCount == 1 && client.commitCount == 0, "local commit bypassed marked ownership")
 }
 
-test("An invalid selected range is not a writable target and cannot start a transaction") {
+test("Unavailable document selection does not prevent a listening transaction") {
     let client = FakeClient("", selection: unspecifiedRange)
-    let snapshot = try client.snapshot()
-    check(snapshot.startError != nil, "invalid idle target advertised ready")
-    do {
-        _ = try begin(client)
-        check(false, "invalid target created a listening transaction")
-    } catch {
-        check(error.localizedDescription == "请先点入可编辑的文本框", "invalid target lost actionable reason")
-    }
-    check(client.markCount == 0 && client.commitCount == 0 && client.replaceCount == 0, "invalid target received a write")
+    let session = try begin(client)
+    check(session.phase == .listening && session.editOriginal == nil && !session.canReplace,
+          "document access was required for listening or granted editing")
+    check(client.markCount == 0 && client.commitCount == 0 && client.replaceCount == 0, "begin wrote before speech")
+}
+
+test("Readable preedit without document selection still streams and commits") {
+    let client = FakeClient("原文")
+    client.hideSelection = true
+    client.fullContext = false
+    client.access = false
+    let session = try begin(client)
+    session.update("部", final: false)
+    session.update("部分", final: false)
+    session.convert()
+    check(!session.error.isEmpty && session.phase == .listening, "unsupported edit ended audio")
+    session.update("完整听写", final: true)
+    check(client.body == "原文完整听写" && client.commitCount == 1 && session.phase == .dictated &&
+          session.error.isEmpty && !session.awaitingReadback && !session.committedRangeVerified,
+          "text readback required an unavailable document selection")
 }
 
 test("An old composition is not a startup gate") {
     let client = FakeClient("旧字")
     client.marked = NSRange(location: 0, length: 2)
-    let snapshot = try client.snapshot()
-    check(snapshot.startError == nil, "old combination still blocks startup")
     _ = try begin(client)
     check(client.body == "旧字" && client.commitCount == 0 && client.markCount == 0,
           "begin tried to clean up another input method")
@@ -1491,6 +1501,64 @@ test("Manual routed edit preserves suffix and rejects late results after cancel"
     let restored = client.body
     session.applyEdit(text: "迟到结果", revision: revision, error: nil)
     check(client.body == restored, "late routed result overwrote undo")
+}
+
+test("system undo commits the instruction first and only validates on explicit retry") {
+    for outcome in ["caret", "selected", "changed", "second_undo", "new_input", "delivery_failed"] {
+        let client = FakeClient("明天三点")
+        let session = try begin(client)
+        session.systemUndoTrial = true
+        var requests = 0
+        session.onEdit = { source, instruction, _ in
+            check(source == "明天三点" && instruction == "改到四点", "retry lost original request")
+            check(client.commitCount == 1 && !isValidRange(client.marked), "instruction was not committed before generation")
+            requests += 1
+        }
+        session.update("改到四点", final: false)
+        session.convert()
+        session.update("改到四点", final: true)
+        check(requests == 1 && client.body == "明天三点改到四点", "instruction disappeared")
+        session.applyEdit(text: "明天四点", revision: session.revision, error: nil)
+        check(session.phase == .edited && client.replaceCount == 1 && client.body == "明天四点", "expected one replacement")
+        let reads = client.snapshotCount
+        var receipt: ((String?) -> Void)?
+        session.systemUndo { receipt = $0 }
+        session.systemUndo { _ in fatalError("duplicate outstanding undo") }
+        check(client.snapshotCount == reads && !session.canRetryEdit, "looked up content during undo")
+        if outcome == "new_input" { session.retireSystemUndo() }
+        receipt?(outcome == "delivery_failed" ? "delivery failed" : nil)
+        check(client.snapshotCount == reads && client.replaceCount == 1, "receipt initiated a read or a write")
+        if ["new_input", "delivery_failed"].contains(outcome) {
+            check(!session.canRetryEdit, "late or failed delivery published a retry")
+            continue
+        }
+        check(session.canRetryEdit && requests == 1, "undo should only offer retry")
+        if outcome == "second_undo" {
+            session.systemUndo { $0(nil) }
+            check(!session.canRetryEdit && requests == 1, "an older instruction survived a second undo")
+            continue
+        }
+        client.body = outcome == "changed" ? "明天两点改到四点" : "明天三点改到四点"
+        client.selected = outcome == "selected" ? NSRange(location: 0, length: 8) : NSRange(location: 8, length: 0)
+        session.retryEdit()
+        if outcome == "changed" {
+            expireReadback(session, client)
+            check(requests == 1 && client.replaceCount == 1 && client.body == "明天两点改到四点", "mismatched retry was executed")
+        } else {
+            check(requests == 2 && session.retryingEdit, "verified retry failed")
+            session.applyEdit(text: "明天下午四点", revision: session.revision, error: nil)
+            check(session.phase == .edited && client.body == "明天下午四点" && client.replaceCount == 2, "retry did not apply new result")
+        }
+    }
+}
+
+test("system undo after dictation never offers an edit retry") {
+    let client = FakeClient()
+    let session = try begin(client)
+    session.systemUndoTrial = true
+    session.update("第一句", final: true)
+    session.systemUndo { $0(nil) }
+    check(session.phase == .undone && !session.canRetryEdit && session.canSystemUndo, "wrong dictation undo affordances")
 }
 
 print("\(passed) native composition tests passed")

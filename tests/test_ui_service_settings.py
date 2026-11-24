@@ -53,6 +53,23 @@ def screenshot(root, tmp_path, name):
     assert root.grabWindow().save(str(shots / name))
 
 
+@pytest.mark.parametrize("inline_ui", [{}, {"llm/provider": "volcengine"}], indirect=True)
+def test_ark_defaults_to_pro_and_can_select_flash(inline_ui):
+    from PySide6.QtCore import Q_ARG, QMetaObject
+
+    controller, _, _, root, _ = inline_ui
+    controller.llmProvider = "volcengine"
+    open_page(root, 5)
+    combo = item(root, "llmModelCombo")
+    assert combo.property("displayText") == "DeepSeek V4 Pro"
+    assert controller._llm_settings().model == "deepseek-v4-pro-ga-260813"
+
+    combo.setProperty("currentIndex", 1)
+    assert QMetaObject.invokeMethod(combo, "activated", Q_ARG(int, 1))
+    assert controller._llm_settings().model == "deepseek-v4-1-flash-260910"
+    assert controller._settings.value("llm/model") == controller.llmModel
+
+
 @pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
 def test_service_navigation_preserves_custom_profiles_and_live_voice(inline_ui, tmp_path, size):
     from PySide6.QtCore import QPointF
@@ -173,6 +190,7 @@ def test_local_and_existing_online_profiles_display_real_status_without_requests
     controller, bridge, _, root, _ = inline_ui
     monkeypatch.setattr(controller, "installLocalModel", lambda: pytest.fail("opening settings must not download"))
     monkeypatch.setattr(controller, "warmLocalModel", lambda: pytest.fail("opening settings must not load a model"))
+    controller.llmProvider = "local"
     controller.llmLocalServerPath = str(tmp_path / "missing-server")
     controller.llmLocalModelPath = str(tmp_path / "missing-model")
     open_page(root, 5)
@@ -203,3 +221,112 @@ def test_local_and_existing_online_profiles_display_real_status_without_requests
     assert not item(root, "llmModelCombo").property("visible")
     assert item(root, "onlineTextModelGroup").property("title") == "当前在线服务"
     assert settings(controller) == before and bridge.messages == messages
+
+
+def test_bailian_advanced_settings_use_separate_credentials_and_models(inline_ui):
+    from PySide6.QtCore import Q_ARG, QMetaObject
+    from proximic_ring.asr.backends.bailian import MESSAGE_MODEL, STREAMING_MODEL
+
+    controller, _, _, root, _ = inline_ui
+    controller.inlineInput.reset()
+    controller._set_interaction_state("idle")
+    controller._selector = "test-ring"
+    controller._audio_source = "microphone"
+    controller.asrBackend = "volcengine"
+    controller.asrApiKey = "seed-test-only"
+    controller.asrModel = "existing-seed-profile"
+    open_page(root, 4)
+
+    def select(name, index):
+        combo = item(root, name)
+        combo.setProperty("currentIndex", index)
+        assert QMetaObject.invokeMethod(combo, "activated", Q_ARG(int, index))
+
+    select("asrBackendCombo", 3)
+    assert controller.asrBackend == "bailian" and controller.asrModel == STREAMING_MODEL
+    assert not item(root, "asrApiKeyField").property("visible")
+    assert item(root, "bailianApiKeyField").property("text") == ""
+    select("bailianModelCombo", 1)
+    for name, value in (("bailianApiKeyField", "bailian-test-only"),
+                        ("bailianApiHostField", "example.cn-beijing.maas.aliyuncs.com")):
+        field = item(root, name)
+        assert field.property("visible") and field.property("enabled")
+        field.setProperty("text", value)
+        assert QMetaObject.invokeMethod(field, "editingFinished")
+    assert item(root, "bailianApiKeyField").property("displayText") != "bailian-test-only"
+    runtime = controller._runtime_settings()
+    args = runtime.to_namespace()
+    assert args.asr_model == [f"bailian={MESSAGE_MODEL}"]
+    assert args.asr_option == ["bailian.api_key=bailian-test-only",
+                               "bailian.api_host=example.cn-beijing.maas.aliyuncs.com"]
+    assert "bailian-test-only" not in repr(runtime)
+    practice = controller._practice_configuration()
+    assert practice.asr.options == {"api_key": controller.bailianApiKey, "api_host": controller.bailianApiHost}
+    select("asrBackendCombo", 2)
+    assert controller.asrModel == "existing-seed-profile"
+    assert controller._runtime_settings().to_namespace().asr_option == ["volcengine.api_key=seed-test-only"]
+    select("asrBackendCombo", 3)
+    assert controller.asrModel == MESSAGE_MODEL
+    assert controller._settings.value("asr/bailianApiKey") == "bailian-test-only"
+    assert controller._settings.value("asr/volcengineApiKey") == "seed-test-only"
+
+
+@pytest.mark.parametrize("inline_ui,initial", [({}, False), ({"llm/qwenThinkingEnabled": True}, True)],
+                         indirect=["inline_ui"])
+def test_dictation_preferences_follow_selected_text_model(inline_ui, initial):
+    from PySide6.QtCore import Q_ARG, QMetaObject, QSettings
+
+    controller, _, _, root, _ = inline_ui
+    root.show()
+    assert QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 0))
+    assert QMetaObject.invokeMethod(item(root, "settingsAudioEntry"), "clicked")
+    group = item(root, "settingsInputGroup")
+    switch = item(root, "qwenThinkingSwitch")
+    assert group.property("visible") and "qwen3.8-max" in group.property("description")
+    assert switch.property("visible") and switch.property("checked") is initial
+    previous_request = controller._voice_llm_settings()
+    click(root, "qwenThinkingSwitch")
+    assert previous_request.qwen_thinking_enabled is initial
+    assert controller._voice_llm_settings().qwen_thinking_enabled is not initial
+    controller._settings.sync()
+    saved = QSettings(controller._settings.fileName(), QSettings.IniFormat)
+    assert saved.value("llm/qwenThinkingEnabled", type=bool) is not initial
+    controller.llmProvider = "volcengine"
+    assert not switch.property("visible") and controller.llmModel in group.property("description")
+    controller.llmProvider = "local"
+    assert controller._llm_settings().model in group.property("description") and not switch.property("visible")
+    controller.llmProvider = "bailian"
+    assert switch.property("visible") and switch.property("checked") is not initial
+    assert controller.routedEditVariant == "original_structured_v1"
+    assert item(root, "routedEditVariantCombo").property("currentText") == "精简编辑提示词"
+
+
+def test_switch_online_model_services_restores_independent_credentials(inline_ui):
+    from PySide6.QtCore import Q_ARG, QMetaObject, QSettings
+    from proximic_ring.text_processing.service_profiles import load_service
+
+    controller, _, _, root, _ = inline_ui
+    assert controller.llmProvider == "bailian" and controller.llmModel == "qwen3.8-max"
+    assert controller.routedEditVariant == "original_structured_v1"
+    open_page(root, 5)
+    combo = item(root, "llmOnlineServiceCombo")
+    assert combo.property("currentIndex") == 0
+    controller.llmApiKey = "qwen-test-key"
+    controller.llmBaseUrl = "https://qwen.example.test/v1"
+    assert QMetaObject.invokeMethod(combo, "activated", Q_ARG(int, 1))
+    assert controller.llmProvider == "volcengine" and controller.llmApiKey == ""
+    assert controller.llmApiKeyEnv == "ARK_API_KEY"
+    controller.llmApiKey = "ark-test-key"
+    controller.llmModel = "deepseek-v4-1-flash-260910"
+    controller._settings.sync()
+    saved = QSettings(controller._settings.fileName(), QSettings.IniFormat)
+    assert load_service(saved).model == controller.llmModel
+    assert QMetaObject.invokeMethod(combo, "activated", Q_ARG(int, 0))
+    assert controller.llmModel == "qwen3.8-max" and controller.llmApiKey == "qwen-test-key"
+    assert controller.llmBaseUrl == "https://qwen.example.test/v1" and controller.llmApiKeyEnv == "DASHSCOPE_API_KEY"
+    controller.llmProvider = "local"
+    assert controller._llm_settings().api_key == ""
+    controller.llmProvider = controller.lastOnlineLlmProvider
+    assert controller.llmProvider == "bailian" and controller.llmApiKey == "qwen-test-key"
+    controller.llmProvider = "volcengine"
+    assert controller.llmModel == "deepseek-v4-1-flash-260910" and controller.llmApiKey == "ark-test-key"

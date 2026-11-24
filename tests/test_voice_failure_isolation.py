@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from proximic_ring.audio.live_audio_settings import AudioConfiguration, LiveAudioSettings
+from proximic_ring.asr.controller import ProximitySessionController
 from proximic_ring.voice import app_runtime
 from proximic_ring.voice.app_runtime import RecognitionRuntime, RuntimeSettings
 
@@ -48,7 +49,11 @@ def run_ring(monkeypatch):
         ring.connect, ring.close, ring.read = connect, close, read
         ring.start_stream = lambda **kw: ring.starts.append(kw)
         ring.set_audio_enabled = lambda value: setattr(ring, "audio_enabled", value)
-        monkeypatch.setattr(app_runtime, "RingAudioSource", lambda **kw: ring)
+        def build_ring(**kwargs):
+            ring.audio_enabled = kwargs.get("audio_enabled", True)
+            return ring
+
+        monkeypatch.setattr(app_runtime, "RingAudioSource", build_ring)
 
         class Gestures:
             error = None
@@ -71,7 +76,7 @@ def run_ring(monkeypatch):
                     on_connected=lambda: None,
                     on_disconnected=lambda: disconnected.append(True),
                     on_started=started.set, on_voice_availability=availability.append,
-                    gesture_filter=lambda event, busy: routed.append(event.name) or False,
+                    gesture_filter=overrides.pop("gesture_filter", lambda event, busy: routed.append(event.name) or False),
                     on_gesture_health=health.append,
                     **overrides,
                 )
@@ -173,6 +178,39 @@ def test_repeated_failure_then_latest_settings_recover_without_reconnecting(run_
     assert state.ring.audio_enabled
     assert state.ring.connects == 1 and len(state.ring.starts) == 1
     assert not state.disconnected and not state.stop.is_set()
+
+
+@pytest.mark.parametrize("trigger", ["gesture", "proximity-gesture", "key"])
+def test_local_ring_mic_only_runs_during_utterances(run_ring, monkeypatch, trigger):
+    settings = RuntimeSettings(speech_control_mode="gesture" if trigger == "gesture" else "proximity",
+                               desktop_output=False, push_to_talk=False, ring_mic_on_demand=True)
+    key = threading.Event()
+    sentences = []
+    routed = []
+    sink = SimpleNamespace(start=lambda _: None, feed=lambda _: None, end=sentences.append,
+                           close=lambda: None)
+    controller = ProximitySessionController(sink, end_on_tap=True, min_utterance_s=.02,
+                                            start_on_gesture=trigger == "gesture", manual_active=key.is_set)
+    monkeypatch.setattr(app_runtime, "_build_session_controller", lambda *a, **kw: controller)
+    monkeypatch.setattr(app_runtime, "_build_detector", lambda _: SimpleNamespace(reset=lambda: None))
+    state = run_ring(settings, gesture_filter=lambda event, busy: routed.append(event.name) or True)
+    assert not state.ring.audio_enabled
+    assert state.ring.starts == [{"buffer_audio": False}]
+    assert state.ring.reads == 0
+    state.ring.gesture_observer(SimpleNamespace(name="swipe-left"))
+    assert routed == ["swipe-left"]
+
+    if trigger != "key":
+        state.ring.gesture_observer(SimpleNamespace(name=settings.gesture_bindings.confirm[0]))
+    else:
+        key.set()
+    eventually(lambda: state.ring.audio_enabled and controller.active)
+    if trigger != "key":
+        state.ring.gesture_observer(SimpleNamespace(name=settings.gesture_bindings.end[0]))
+    else:
+        key.clear()
+    eventually(lambda: len(sentences) == 1 and not state.ring.audio_enabled)
+    assert state.ring.connects == 1 and not state.disconnected
 
 
 def test_audio_preferences_can_change_while_voice_is_unavailable(run_ring, monkeypatch, tmp_path):

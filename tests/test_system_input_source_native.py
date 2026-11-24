@@ -54,6 +54,8 @@ owner = SimpleNamespace(_disconnect_event=connection, _inline_input=inline,
     _app_gestures=SimpleNamespace(foreground_has_binding=lambda name: False),
     _gesture_bindings=GestureBindings(confirm=('tap', ''), end=('', '')))
 gate = SimpleNamespace(owner=owner, session_blocked=lambda: False, speech_busy=lambda: False,
+    _clipboard_suggestion=SimpleNamespace(consume=lambda *_: False),
+    _screenshot=SimpleNamespace(consume=lambda *_: False),
     _selector=SimpleNamespace(blocked=threading.Event()), _lock=threading.Lock(),
     _transition=None, _scroll=SimpleNamespace(applying=threading.Event()), _generation=0)
 

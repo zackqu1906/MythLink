@@ -77,6 +77,52 @@ def test_generalizes_without_legacy_variant_and_competes_for_first_place():
     assert d.candidates('nsnh') == ['乙']
 
 
+@pytest.mark.parametrize('char,code,component', [
+    ('泻', 'nnhnzzhh', '与'), ('屿', 'szszhh', '与'),
+    ('庇', 'nhpzhpz', '比'), ('楷', 'hspnzhpzpszhh', '比'),
+    ('典', 'szhhsspn', '曲'), ('腆', 'pzhhszhhsspn', '曲'),
+    ('纱', 'zzhnsnp', '少'), ('频', 'shshnsnhpszpn', '步'),
+    ('涉', 'nnhshshnsp', '步'), ('尖', 'nsnhpn', '小'),
+    ('童', 'nhnphszhhhsh', '里'), ('墨', 'sznphhshnnnnhsh', '黑'),
+    ('伪', 'pspznn', '为'), ('妫', 'zphpznn', '为'),
+    ('鞭', 'hsshszhshpshszhhpn', '革'), ('借', 'pshhssszhh', '昔'),
+    ('巷', 'hhsspnzhz', '共'),
+])
+def test_requested_schedules_propagate_and_color_the_correct_glyph(dictionary, char, code, component):
+    row = dictionary.encoding_candidates(evidence(code), fuzzy=False, allowed_characters={char})[0]
+    assert row['exact_match'] and row['order_variant'] and row['corrections'] == []
+    assert any(part['component'] == component and part['variant'] for part in row['component_path'])
+    visual = candidate_glyph(char, code, len(code)-1, stroke_indices=row['observed_to_expected'])
+    assert visual['available'] and visual['states'][row['observed_to_expected'][-1]] == 'next'
+
+
+def test_leather_swap_is_scoped_to_embedded_forms(dictionary):
+    assert '革' not in dictionary.candidates('hsshszhsh', allowed_characters={'革'})
+    assert '革' in dictionary.candidates('hsshszhhs', allowed_characters={'革'})
+
+
+@pytest.mark.parametrize('variant', ['hsszhhn', 'hsszshhn'])
+def test_fu_variants_follow_every_verified_component_occurrence(dictionary, variant):
+    occurrences = [(char, row['code'], part['indices']) for char, row in component_annotations().items()
+                   for part in row['components'] if part['component'] == '甫']
+    assert {'甫', '傅', '博', '搏', '薄', '簿', '捕', '鋪', '縛'}.issubset(c for c, _, _ in occurrences)
+    for char, canonical, indices in occurrences:
+        code = canonical[:indices[0]] + variant + canonical[indices[-1]+1:]
+        rows = dictionary.encoding_candidates(evidence(code), fuzzy=False, allowed_characters={char})
+        row = next(r for r in rows if r['char'] == char)
+        assert row['code'] == code and row['is_complete'] and row['exact_match']
+        assert row['match_type'] == 'component' and row['corrections'] == []
+
+    code = 'ps' + variant + 'hsn'
+    rows = dictionary.encoding_candidates(evidence(code[:-1]), fuzzy=False, allowed_characters={'傅'})
+    assert not rows[0]['is_complete'] and rows[0]['code'] == code
+    mapping = rows[0]['observed_to_expected']
+    visual = candidate_glyph('傅', code, len(code)-1, stroke_indices=mapping)
+    assert visual['available'] and visual['total'] == len(code)
+    assert visual['states'][mapping[-1]] == 'next'
+    assert candidate_glyph('傅', code, len(code), stroke_indices=mapping)['status'] == '已写完'
+
+
 def test_context_ranks_component_and_literal_paths_together():
     annotations = {'甲': annotation('忄', suffix='h')}
     d = StrokeDictionary(dict(entries=[['甲', 'nnsh', 1], ['乙', 'nsnh', 1]],

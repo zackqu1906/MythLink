@@ -1,9 +1,12 @@
 """Compact native desktop layout for the sentence trial window."""
-from PySide6.QtCore import Qt, QSize, QObject, QEvent
+from PySide6.QtCore import Qt, QSize, QObject, QEvent, QEasingCurve, QVariantAnimation, QRectF
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QFont
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QPushButton, QVBoxLayout,
-                              QHBoxLayout, QGridLayout, QSizePolicy, QProgressBar, QScrollArea)
+                              QHBoxLayout, QGridLayout, QSizePolicy, QProgressBar, QScrollArea,
+                              QGraphicsOpacityEffect)
 from shiboken6 import delete
 import stroke_trial_menu as trial_menu
+from proximic_ring.touchpad.stroke.stroke_menu import MORE_PUNCTUATION_CELLS
 
 
 class SquareArea(QWidget):
@@ -42,6 +45,213 @@ class TraceMenu(QFrame):
         super().resizeEvent(event)
         self.trace.setGeometry(self.contentsRect())
         self.trace.raise_()
+
+
+class TrialPullSlider(QWidget):
+    def __init__(self, parent, name, direction, caption):
+        super().__init__(parent)
+        self.setObjectName(name)
+        self.setFixedSize(60, 58)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.direction = direction
+        self.caption = caption
+        self.progress = 0
+        self.effect = QGraphicsOpacityEffect(self)
+        self.effect.setOpacity(0)
+        self.setGraphicsEffect(self.effect)
+        self.fade = QVariantAnimation(self)
+        self.fade.setDuration(120)
+        self.fade.setEasingCurve(QEasingCurve.OutCubic)
+        self.fade.valueChanged.connect(self.effect.setOpacity)
+        self.fade.finished.connect(self._finish_fade)
+        self.shown = False
+        self.hide()
+
+    def set_shown(self, shown):
+        if shown == self.shown:
+            return
+        self.shown = shown
+        self.fade.stop()
+        self.fade.setStartValue(self.effect.opacity())
+        self.fade.setEndValue(1. if shown else 0.)
+        if shown:
+            self.show()
+            self.raise_()
+        self.fade.start()
+
+    def _finish_fade(self):
+        if not self.shown:
+            self.hide()
+
+    def set_progress(self, value):
+        self.progress = value
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        destructive = self.direction == 'left'
+        armed = self.progress >= 1
+        edge = QColor('#c2413b' if destructive else '#345ee5')
+        ink = QColor('white' if armed else '#a6322c' if destructive else '#234cdb')
+        bounds = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
+        shape = QPainterPath()
+        shape.addRoundedRect(bounds, 16, 16)
+        painter.fillPath(shape, QColor('#fce9e6' if destructive else '#edf2fb'))
+        painter.save()
+        painter.setClipPath(shape)
+        height = bounds.height() * self.progress
+        width = bounds.width() * self.progress
+        if destructive:
+            fill = QRectF(bounds.right() - width, bounds.top(), width, bounds.height())
+        else:
+            y = bounds.bottom() - height if self.direction == 'up' else bounds.top()
+            fill = QRectF(bounds.left(), y, bounds.width(), height)
+        painter.fillRect(fill, QColor(('#9c2f2a' if armed else '#edaba5') if destructive
+                                     else ('#234cdb' if armed else '#aabcf2')))
+        painter.restore()
+        painter.setPen(edge)
+        painter.drawPath(shape)
+        painter.setPen(ink)
+        painter.save()
+        painter.translate(30, 20)
+        painter.rotate({'left': 0, 'up': 90, 'down': -90}[self.direction])
+        for offset in (-3, 3) if destructive else (0,):
+            arrow = QPainterPath()
+            arrow.moveTo(3 + offset, -4)
+            arrow.lineTo(-2 + offset, 0)
+            arrow.lineTo(3 + offset, 4)
+            painter.drawPath(arrow)
+        painter.restore()
+        font = painter.font()
+        font.setPixelSize(12)
+        painter.setFont(font)
+        painter.drawText(QRectF(0, 32, 60, 17), Qt.AlignCenter, self.caption)
+
+
+class TrialPunctuationButton(QPushButton):
+    def __init__(self, symbol, parent):
+        super().__init__(parent)
+        self.setAccessibleName(symbol)
+        self.ink = QPainterPath()
+        font = QFont(self.font())
+        font.setPixelSize(20)
+        self.ink.addText(0, 0, font, symbol)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        center = self.ink.boundingRect().center()
+        painter.translate(self.width() / 2 - center.x(), self.height() / 2 - center.y())
+        painter.fillPath(self.ink, QColor('white' if self.isChecked() else '#24334d'))
+
+
+class TrialPunctuationOverlay(QWidget):
+    """Show the same submenu above the standalone trial's candidate grid."""
+
+    def __init__(self, window, menu):
+        super().__init__(window)
+        self.window = window
+        self.menu = menu
+        self.slider = TrialPullSlider(window, 'strokePunctuationPull', 'up', '更多')
+        self.cancel_slider = TrialPullSlider(window, 'strokeCancelPunctuation', 'down', '取消')
+        self.clear_slider = TrialPullSlider(window, 'strokeClearPull', 'left', '清空')
+        self.clear_slider.hide()
+        self.setObjectName('strokeMorePunctuation')
+        self.setAttribute(Qt.WA_StyledBackground)
+        self.setStyleSheet(
+            'QWidget#strokeMorePunctuation {background:rgba(243,246,252,235);'
+            'border:1px solid #aabcf2; border-radius:14px}'
+            'QPushButton {background:rgba(255,255,255,205); border:1px solid #dce4f0;'
+            'border-radius:8px; color:#24334d; font-size:20px; padding:0}'
+            'QPushButton:checked {background:#234cdb; color:white; border-color:#1739ac}')
+        grid = QGridLayout(self)
+        grid.setContentsMargins(8, 8, 8, 8)
+        grid.setSpacing(4)
+        self.buttons = {}
+        for index, cell in enumerate(MORE_PUNCTUATION_CELLS):
+            row = QHBoxLayout()
+            row.setSpacing(1)
+            for symbol in cell:
+                button = TrialPunctuationButton(symbol, self)
+                button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+                button.setFocusPolicy(Qt.NoFocus)
+                button.setCheckable(True)
+                button.clicked.connect(lambda checked=False, symbol=symbol: window.punctuate(symbol))
+                self.buttons[symbol] = button
+                row.addWidget(button)
+            grid.addLayout(row, index // 3, index % 3)
+        self.effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.effect)
+        self.animation = QVariantAnimation(self)
+        self.animation.valueChanged.connect(self.animate)
+        self.animation.finished.connect(self.animation_finished)
+        self.opened = False
+        self.hide()
+        self.slider.hide()
+        self.cancel_slider.hide()
+
+    def animate(self, progress):
+        self.effect.setOpacity(min(1., progress))
+        side = round(self.side * (.66 + .34 * progress))
+        self.setGeometry(round(self.x_center - side / 2), round(self.y_center - side / 2), side, side)
+        self.cancel_slider.move(round(self.x_center - 30), self.geometry().bottom() + 5)
+
+    def animation_finished(self):
+        if not self.opened:
+            self.hide()
+
+    def update_selection(self, state):
+        clear = state.get('phase') == 'selecting' and state.get('direction') == 'left'
+        if clear:
+            delete = self.window.direction_buttons['left']
+            start = delete.mapTo(self.window, delete.rect().topLeft())
+            self.clear_slider.move(max(0, start.x() - 60), start.y() + (delete.height() - 58) // 2)
+            self.clear_slider.caption = '清空' if self.window.code else '删除前文'
+            self.clear_slider.set_progress(1 if state.get('clear_armed') else state.get('clear_progress', 0))
+            self.clear_slider.raise_()
+        self.clear_slider.set_shown(clear)
+        pull = state.get('punctuation_pull')
+        if pull:
+            anchor = self.window.direction_buttons[pull['direction']]
+            start = anchor.mapTo(self.window, anchor.rect().center())
+            grid_top = self.menu.mapTo(self.window, self.menu.rect().topLeft()).y()
+            self.side = round(self.menu.width() * .72)
+            half = self.side / 2
+            self.x_center = min(max(start.x(), half + 8), self.window.width() - half - 8)
+            self.y_center = min(max(grid_top + 8, half + 8), self.window.height() - half - 70)
+            progress = pull['progress']
+            x = start.x() + (self.x_center - start.x()) * progress
+            y = start.y() + (self.y_center - start.y()) * progress
+            self.slider.move(round(x - 30), round(y - 29))
+            self.slider.set_progress(progress)
+        opened = bool(pull and pull['opened'])
+        cancel_progress = pull.get('cancel_progress', 0) if opened else 0
+        self.cancel_slider.set_progress(cancel_progress)
+        self.cancel_slider.set_shown(opened)
+        if opened:
+            self.cancel_slider.raise_()
+        self.slider.set_shown(bool(pull) and not opened)
+        if self.slider.isVisible():
+            self.slider.raise_()
+        if opened != self.opened:
+            start = self.animation.currentValue() if self.isVisible() else 0.
+            self.opened = opened
+            self.setEnabled(opened)
+            self.animation.stop()
+            self.animation.setDuration(220 if opened else 140)
+            self.animation.setEasingCurve(QEasingCurve.OutBack if opened else QEasingCurve.InCubic)
+            self.animation.setStartValue(start)
+            self.animation.setEndValue(1. if opened else 0.)
+            self.show()
+            self.raise_()
+            self.animation.start()
+        elif opened:
+            self.animate(self.animation.currentValue())
+        if opened:
+            for symbol, button in self.buttons.items():
+                button.setChecked(symbol == pull['symbol'])
 
 
 class AdaptiveTrialLayout(QObject):
@@ -238,6 +448,8 @@ def compact_layout(window):
         action.setObjectName('deleteAction')
         add(grid, action, row, col)
     window.selection_square = SquareArea(menu)
+    if trial_menu.TWO_FINGER:
+        window.punctuation_overlay = TrialPunctuationOverlay(window, menu)
     window.selection_square.setMinimumSize(260, 260)
     selection.addWidget(window.selection_square, 1)
     legend = QLabel('<span style="color:#171C28">●</span> 已输入　'
@@ -389,9 +601,9 @@ def compact_layout(window):
     examples.setWordWrap(True)
     examples.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     add(side, examples)
-    footer = label('选字：双指滑向目标格子 → 抬手确认（原地抬手取消）   ·   双指左滑 / 单指左→右退笔、删字   ·   三段往返清空笔画'
+    footer = label('双指滑向目标格子，抬手确认 · 双指左滑退笔或删字，继续外拉清空笔画'
                    if trial_menu.TWO_FINGER else
-                   '选字：静止 0.333 秒（书写后也可停顿）→ 向目标滑动 → 抬手确认   ·   左→右退笔 / 删字   ·   三段往返清空笔画', 'muted')
+                   '选字：静止 0.333 秒后向目标滑动，抬手确认 · 使用按钮退笔或清空笔画', 'muted')
     root.addWidget(footer)
     window.setStyleSheet('''
         QWidget { font-family:"Microsoft YaHei UI"; font-size:12px; color:#24334d; }

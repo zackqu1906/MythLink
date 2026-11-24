@@ -48,6 +48,160 @@ def wait_until(predicate):
     assert predicate()
 
 
+@pytest.mark.parametrize('selection', [[1, 0], [-1, -1]])
+def test_context_key_is_armed_before_event_and_waits_for_new_client(bridge, selection):
+    server, messages = bridge
+    sock, stream = connect(server)
+    try:
+        epoch = receive(stream)['epoch']
+        origin = ('com.netease.macmail', 504)
+        posted, result = [], []
+        worker = threading.Thread(target=lambda: result.append(server.refresh_input_context(
+            origin, lambda tag, **_: posted.append(tag), timeout=1)))
+        worker.start()
+        arm = receive(stream)
+        assert arm['type'] == 'prepare_input_context' and not posted
+        assert arm['foreground_pid'] == 504
+        send(stream, dict(type='input_context_prepared', request_id=arm['request_id'], epoch=epoch, armed=True))
+        wait_until(lambda: posted)
+        assert posted == [arm['event_tag']] and not result
+        assert not server._state  # An arm receipt is not text focus.
+        send(stream, dict(type='state', request_id=arm['request_id'], epoch=epoch,
+                          application=origin[0], client_id='new-body', utterance_id='',
+                          ready=True, selection=selection))
+        worker.join(2)
+        assert result == [True]
+        assert receive(stream)['type'] == 'cancel_input_context'
+        assert not server._control_replies and not server._context_replies
+        assert not any(m.get('request_id') == arm['request_id'] for m in messages)
+    finally:
+        stream.close(); sock.close()
+
+
+@pytest.mark.parametrize('failure', ['denied', 'timeout', 'post_error', 'wrong_app', 'disconnect'])
+def test_context_key_failure_cannot_reuse_cached_success(bridge, failure):
+    server, _ = bridge
+    sock, stream = connect(server)
+    epoch = receive(stream)['epoch']
+    posted, result = [], []
+    def post(tag, **_):
+        posted.append(tag)
+        if failure == 'post_error':
+            raise RuntimeError('source changed')
+    def run():
+        try:
+            result.append(server.refresh_input_context(('mail', 504), post, timeout=.15))
+        except RuntimeError:
+            result.append(False)
+    worker = threading.Thread(target=run)
+    try:
+        worker.start()
+        arm = receive(stream)
+        if failure != 'timeout':
+            send(stream, dict(type='input_context_prepared', request_id=arm['request_id'], epoch=epoch,
+                              armed=failure != 'denied'))
+        if failure == 'wrong_app':
+            wait_until(lambda: posted)
+            send(stream, dict(type='state', request_id=arm['request_id'], epoch=epoch,
+                              application='other', client_id='other', ready=True))
+        if failure == 'disconnect':
+            sock.shutdown(socket.SHUT_RDWR)
+        worker.join(2)
+        assert result == [False]
+        if failure in {'denied', 'timeout'}:
+            assert not posted
+        assert not server._context_replies and not server._control_replies
+    finally:
+        stream.close(); sock.close()
+
+
+def test_context_key_accepts_fresh_activation_without_function_key_callback(bridge):
+    # MailMaster activates a new IMK client for F20 but does not deliver the
+    # function key to handle(). Its real activate_prepared state is the receipt.
+    server, _ = bridge
+    sock, stream = connect(server)
+    posted, result = [], []
+    try:
+        epoch = receive(stream)['epoch']
+        old = dict(type='state', epoch=epoch, application='mail', client_id='old',
+                   ready=True, utterance_id='', selection=[-1, -1])
+        send(stream, old)
+        wait_until(lambda: server._state.get('client_id') == 'old')
+        worker = threading.Thread(target=lambda: result.append(server.refresh_input_context(
+            ('mail', 504), lambda tag, **_: posted.append(tag), timeout=.5)))
+        worker.start()
+        arm = receive(stream)
+        send(stream, dict(type='input_context_prepared', request_id=arm['request_id'], epoch=epoch, armed=True))
+        wait_until(lambda: posted)
+        send(stream, old)  # Cached/repeated readiness is insufficient.
+        time.sleep(.02)
+        assert not result
+        send(stream, {**old, 'client_id': 'new-body', 'selection': [0, 0]})
+        worker.join(.2)
+        assert result == [True]
+        assert receive(stream)['type'] == 'cancel_input_context'
+    finally:
+        worker.join(1)
+        stream.close(); sock.close()
+
+
+@pytest.mark.parametrize('change', ['', 'client', 'utterance', 'foreground'])
+def test_context_capture_requests_text_directly_and_keeps_original_target(bridge, change):
+    server, _ = bridge
+    sock, stream = connect(server)
+    origin = ('com.openai.codex', 42)
+    front = [origin]
+    result = []
+    epoch = receive(stream)['epoch']
+    base = dict(type='state', epoch=epoch, ready=True, application=origin[0], client_id='old',
+                utterance_id='', selection=[3, 0], context_key_supported=True)
+    send(stream, base)
+    wait_until(lambda: server._state.get('client_id') == 'old')
+    worker = threading.Thread(target=lambda: result.append(server.asr_context(timeout=1, foreground=lambda: front[0])))
+    try:
+        worker.start()
+        document = receive(stream)
+        assert document['type'] == 'ping' and document['capture_context'] is True
+        if change == 'foreground':
+            front[0] = (origin[0], 43)
+        if change == 'client':
+            base['client_id'] = 'another-field'
+        if change == 'utterance':
+            base['utterance_id'] = 'next'
+        send(stream, {**base, 'request_id': document['request_id'], 'context_complete': True, 'original': '正文'})
+        worker.join(2)
+        if change:
+            assert result[0]['status'] == 'unavailable' and 'text' not in result[0]
+        else:
+            assert result[0]['text'] == '正文' and result[0]['target_key'] == epoch + ':old'
+    finally:
+        worker.join(2)
+        stream.close(); sock.close()
+
+
+def test_context_key_without_receipt_posts_once_and_does_not_spend_callers_long_timeout(bridge):
+    server, _ = bridge
+    sock, stream = connect(server)
+    posted, result = [], []
+    epoch = receive(stream)['epoch']
+    def run():
+        started = time.monotonic()
+        refreshed = server.refresh_input_context(('mail', 42), lambda tag, **_: posted.append(tag), timeout=1)
+        result.append((refreshed, time.monotonic() - started))
+    worker = threading.Thread(target=run)
+    try:
+        worker.start()
+        arm = receive(stream)
+        send(stream, dict(type='input_context_prepared', epoch=epoch, request_id=arm['request_id'], armed=True))
+        worker.join(.4)
+        assert len(posted) == 1 and result[0][0] is False
+        assert result[0][1] < .25  # 120 ms budget plus scheduling allowance.
+        assert receive(stream)['type'] == 'cancel_input_context'
+    finally:
+        worker.join(1)
+        stream.close(); sock.close()
+
+
 @pytest.mark.mac_only
 def test_authenticated_epoch_and_private_files(bridge):
     server, messages = bridge
@@ -180,6 +334,7 @@ def test_context_is_fresh_and_truncated_only_for_asr(bridge):
     stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_clipboard_palette_ack_works_without_active_input_method_client(bridge):
     server, messages = bridge
     sock, stream = connect(server)
@@ -214,6 +369,33 @@ def test_unavailable_context_does_not_reuse_previous_field(bridge):
     assert result[0]["status"] == "unavailable"
     assert "text" not in result[0]
     stream.close(); sock.close()
+
+
+@pytest.mark.mac_only
+def test_focus_requeries_newly_activated_client_without_waiting_for_old_ping(bridge):
+    server, _ = bridge
+    sock, stream = connect(server)
+    result = []
+    worker = threading.Thread(target=lambda: result.append(server.focus_state(timeout=1)))
+    try:
+        epoch = receive(stream)["epoch"]
+        worker.start()
+        first = receive(stream)
+        # A controller still preparing drops this ping, then publishes its activation.
+        active = dict(type="state", epoch=epoch, ready=True, lifecycle_event="activate",
+                      application="test.editor", client_id="new", utterance_id="", selection=[4, 0])
+        send(stream, active)
+        retry = receive(stream)
+        assert retry["type"] == "ping" and retry["capture_context"] is False
+        assert retry["request_id"] != first["request_id"]
+        send(stream, {**active, "request_id": first["request_id"], "selection": [5, 0]})
+        send(stream, {**active, "request_id": retry["request_id"], "selection": [6, 0]})
+        worker.join(1)
+        assert result[0]["client_id"] == "new" and result[0]["selection"] == [6, 0]
+    finally:
+        stream.close()
+        sock.close()
+        worker.join(1)
 
 
 @pytest.mark.mac_only

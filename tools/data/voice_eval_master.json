@@ -1,8 +1,8 @@
 {
   "schema_version": "voice-eval-master-v1",
   "dataset_id": "voice-eval-master",
-  "revision": 4,
-  "updated_at": "2026-11-17T16:19:08.677817+08:00",
+  "revision": 6,
+  "updated_at": "2026-11-19T14:46:12.134201+08:00",
   "description": "唯一可维护主测试集；派生集通过 voice_eval_dataset.py 筛选生成。",
   "policy": {
     "dictation_in_editing": false,
@@ -206,7 +206,9 @@
     "continuation": "续写与纠错边界",
     "direct_correction": "直接重述纠错",
     "saved_context": "保存上下文",
-    "news_summary": "新闻摘要分享"
+    "news_summary": "新闻摘要分享",
+    "fragment_completion": "口述片段补全",
+    "asr_intent_recovery": "ASR 原意恢复"
   },
   "sources": [
     {
@@ -3381,6 +3383,2021 @@
             "modified_text": "今天开会。明天休息。"
           },
           "original_pair_id": null
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D01",
+      "aliases": [
+        "asr-v2-D01"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "音频周五交。",
+        "context": {
+          "scene": "对话",
+          "context": "混音师：交付时我需要能分别静音人声和伴奏，单个混音文件做不到。",
+          "messages": []
+        },
+        "utterances": [
+          "人声和伴奏分两个柜子放，周五之前给我。"
+        ]
+      },
+      "input_sha256": "a055e191ce3665362ef6287d4ab9d5bf103e31ef814c822185cfb3566449a86e",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D01",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "人声和伴奏分两轨放，周五之前给我。",
+            "anchor": "分轨→分柜",
+            "cascade": "分别可控的音轨被解释成两个储物柜。",
+            "criterion": "说清分轨或分别放在不同音轨中，周五前交给我。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D01",
+          "record_sha256": "c64b5392ce2b3b3259b9eb5af7bcb3c632a7a461357877b424b01c59cd5b4ff4"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D02",
+      "aliases": [
+        "asr-v2-D02"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "餐厅：周六晚六点还有窗边的位置。您一共几位？",
+          "messages": []
+        },
+        "utterances": [
+          "麻烦帮我定做两把椅子，靠窗就行。"
+        ]
+      },
+      "input_sha256": "f76cdded8724f712bac8cd4b963b2d3b98517c740007f5cf75fbc2b24ab49a73",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D02",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "麻烦帮我订两个座，靠窗就行。",
+            "anchor": "订座→定做",
+            "cascade": "“订座”被展开成定制两把椅子。",
+            "criterion": "恢复预订两个靠窗座位；不能留下定制或买椅子的动作。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D02",
+          "record_sha256": "e457ac57e3bd84a79b57fce7c06517c5328094aa2243d6077d76d0fa6f530ffb"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D03",
+      "aliases": [
+        "asr-v2-D03"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "考勤管理员：昨天刷卡机停了半小时，漏打卡的人可以在考勤页补记录，不扣钱。",
+          "messages": []
+        },
+        "utterances": [
+          "昨天那次我今天把钱补上可以吗？"
+        ]
+      },
+      "input_sha256": "18edc7897ae154066d1f495e6da41168df045cb1254afa893f4636cd07c98d75",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D03",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "昨天那次我今天补签可以吗？",
+            "anchor": "补签→补钱",
+            "cascade": "补一条签到记录被写成补交款项。",
+            "criterion": "询问今天能否补昨天的签到或打卡记录，保留问句。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D03",
+          "record_sha256": "da3bbd3938db95dea7e60288d5582fe16e0647a2e511127409d1090b42d9d512"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D04",
+      "aliases": [
+        "asr-v2-D04"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "我叮嘱了水电班，",
+        "context": {
+          "scene": "写文档",
+          "context": "浇筑技术交底：两根套管都已到场。混凝土成型后，管线不能再穿进去。",
+          "messages": []
+        },
+        "utterances": [
+          "这两根管子得提前买好，浇完再买就晚了。"
+        ]
+      },
+      "input_sha256": "d750de05060b5cfd14b3a7a8c99c334fc15c85c4b568eb1fb1f2e00287564290",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D04",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "这两根管子得预埋好，浇完再埋就晚了。",
+            "anchor": "预埋→预买",
+            "cascade": "两个涉及施工时序的动作都被写成采购。",
+            "criterion": "两根管子要在浇筑前埋好，两处动作都指埋设。只输出新说的部分。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D04",
+          "record_sha256": "66ebea6f1fdb5820e86582b31fa9b8ab90d0fcf0d9ef78e8f9a594c85d118f68"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D05",
+      "aliases": [
+        "asr-v2-D05"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "写邮件",
+          "context": "财务：设备合同约定验收后才付最后一笔，付款单已建好。",
+          "messages": []
+        },
+        "utterances": [
+          "尾矿等验收后再运走，先别安排运输。"
+        ]
+      },
+      "input_sha256": "26bf3a793166628aa0e2058892185c2dc90ed9b7a6beb556c2c9313a09b066f3",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D05",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "尾款等验收后再付，先别安排付款。",
+            "anchor": "尾款→尾矿",
+            "cascade": "付款及暂缓付款被一起写成运输矿料。",
+            "criterion": "款项要验收后再付，眼下先别安排付款，不能留运输动作。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D05",
+          "record_sha256": "4a88e7c3438367c25f1cdf09968637a68127e1b9cb8ada9df91fc5ebd824e0c4"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D06",
+      "aliases": [
+        "asr-v2-D06"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "茶师：库存够。这批岩茶火候还欠一点，师傅说处理完再装箱。",
+          "messages": []
+        },
+        "utterances": [
+          "这批茶还得再备一次货，货备好再装箱。"
+        ]
+      },
+      "input_sha256": "bfbd21dd2ebd42c577a596bd0a5c76e99effb5b0e99ceaf9c645f2162c36b0fe",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D06",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "这批茶还得再焙一次火，焙好再装箱。",
+            "anchor": "焙火→备货",
+            "cascade": "包装前补一次烘焙被整理成补库存。",
+            "criterion": "恢复这批茶还需再焙一次、焙好才装箱，不改成重新进货。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D06",
+          "record_sha256": "afa4cf8b5764cf8a5691f6a6d9cb16e07e6588d0261f9180fe347a7b350e7197"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D07",
+      "aliases": [
+        "asr-v2-D07"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "导演：明天录的是脱稿介绍，她卡词的时候你在镜头外提醒她。",
+          "messages": []
+        },
+        "utterances": [
+          "明早她卡住的时候，你在旁边替她写个题词，别入镜。"
+        ]
+      },
+      "input_sha256": "91e4faca97ecaf71241d155c757e9d559c50a744a49a5693f699c11a61b2ecb1",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D07",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "明早她卡住的时候，你在旁边给她提个词，别入镜。",
+            "anchor": "提词→题词",
+            "cascade": "帮人想起台词被整理成代写题词。",
+            "criterion": "卡住时在旁提示台词，保留明早、她和别入镜，不能留下写题词。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D07",
+          "record_sha256": "44816ffe39aa6efe46eb27b0758cf502e08552d7ec988d074420af7caa0fce3e"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D08",
+      "aliases": [
+        "asr-v2-D08"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "阅读",
+          "context": "印前工单：这些小卡片要合到同一张大纸上出片，设备和文件都已就绪。",
+          "messages": []
+        },
+        "utterances": [
+          "我下午先用平板把这些小卡片排好，明早再送印。"
+        ]
+      },
+      "input_sha256": "3f4cb3e6ffc4a4fd0578990c007181390d718474db25ed4190a7ffc56d1b4d3d",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D08",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "我下午先把这些小卡片拼好版，明早再送印。",
+            "anchor": "拼版→平板",
+            "cascade": "印前拼版工序被识别成使用平板设备排卡片。",
+            "criterion": "恢复拼版或排在同一版上这一工序，去掉无依据的平板设备；时间、对象和送印都保留。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D08",
+          "record_sha256": "22b026823b1702a7b0c0e7ff6aaec5b8c3e155484f9db96ab749b10a498da2c5"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-D09",
+      "aliases": [
+        "asr-v2-D09"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "销售：报价您已经看过了。体验车明天下午有两个空档，我给您拿钥匙。",
+          "messages": []
+        },
+        "utterances": [
+          "我明天下午想问问这辆车的市价，三点方便吗？"
+        ]
+      },
+      "input_sha256": "5bceba48620ee0f1fd11ef929e8a43b49b24e3e69205383aa653c32494221e20",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "D09",
+            "mode": "听写",
+            "kind": "修复",
+            "gold": "我明天下午想试驾这辆车，三点方便吗？",
+            "anchor": "试驾→市价",
+            "cascade": "体验车辆被整理成询问市场价。",
+            "criterion": "恢复明天下午试驾这辆车并询问三点是否方便。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "D09",
+          "record_sha256": "9f6dc3662dd3828b7df9f63512f575e2aae35375ab547dbef4106419d25a3714"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E01",
+      "aliases": [
+        "asr-v2-E01"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "预算依据见附件。",
+        "context": {
+          "scene": "写文档",
+          "context": "审阅面板只有评论和批注，正文已锁定。",
+          "messages": []
+        },
+        "utterances": [
+          "把“需复核”加成一条批准意见，正文先别改。"
+        ]
+      },
+      "input_sha256": "9d66598714fe1c369350fa4c87fe021277f3873458256bbcb29941f115d5a81a",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E01",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把“需复核”加成一条批注，正文先别改。",
+            "anchor": "批注→批准",
+            "cascade": "添加边上的注释被写成发表批准意见。",
+            "criterion": "保留“需复核”、新增批注以及不改正文；不能表达批准或代为执行。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E01",
+          "record_sha256": "1b614d9a42a3095245dc88574b92444dda3a8dc3aca0f38d706c90a23c33acb0"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E02",
+      "aliases": [
+        "asr-v2-E02"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "春水初生。\n春林初盛。",
+        "context": {
+          "scene": "写文档",
+          "context": "段落面板显示首行缩进按字符数计。",
+          "messages": []
+        },
+        "utterances": [
+          "把第二行再锁紧两个扣，第一行先别动。"
+        ]
+      },
+      "input_sha256": "8d7c1f4ed7235185418efe167b522e0eb8adf03ec2c90c6e8e0a92a9afa21506",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E02",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把第二行再缩进两个字符，第一行先别动。",
+            "anchor": "缩进→锁紧",
+            "cascade": "排版位移被改成上锁，两个字符变成两个扣。",
+            "criterion": "第二行再缩进两个字符或两格，第一行不动。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E02",
+          "record_sha256": "b3ef139789cc23073529456433cfd2c662b33a4d2898a19a771a46abf5d48beb"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E03",
+      "aliases": [
+        "asr-v2-E03"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "写文档",
+          "context": "排版工单：标题通栏，正文后半页要把长行分开排，语言没有变更项。",
+          "messages": []
+        },
+        "utterances": [
+          "后半页换成芬兰文，标题保留原来的语言。"
+        ]
+      },
+      "input_sha256": "fc973d9834628314e38041957168fed6f222af5c17d2db8fc4f5566de64ecc50",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E03",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "后半页换成分栏排，标题保留原来的排法。",
+            "anchor": "分栏→芬兰",
+            "cascade": "两处排版要求分别被改成翻译和保留原语言。",
+            "criterion": "后半页分栏，标题保留原排版；不得保留翻译成芬兰文或单说保留标题语言。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E03",
+          "record_sha256": "e943e8205acc9933b5ca8014cfb1da0aaced0b4bbbe863b8268b21dae02a45bf"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E04",
+      "aliases": [
+        "asr-v2-E04"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "……\n陆遥\n十一月十日",
+        "context": {
+          "scene": "写邮件",
+          "context": "修改的是邮件签名区，最后两行分别是作者和日期。",
+          "messages": []
+        },
+        "utterances": [
+          "把结尾的书名换成林秋，下面的日期别动。"
+        ]
+      },
+      "input_sha256": "290d14a0e1c50d2c19328edc8cbbfca070795d3c885199889ef3c966bb1a9c02",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E04",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把结尾的署名换成林秋，下面的日期别动。",
+            "anchor": "署名→书名",
+            "cascade": "改署名被整理成给书换标题。",
+            "criterion": "目标是结尾署名，改为林秋，保留下方日期。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E04",
+          "record_sha256": "d8bfc58db921a7c5e6754c651fa3e47cac42e59598c8b73d89a15b5a6e28794e"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E05",
+      "aliases": [
+        "asr-v2-E05"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "写文档",
+          "context": "审稿人：页脚有两条注释，正文里的图和引用都要保留。",
+          "messages": []
+        },
+        "utterances": [
+          "把页脚编号二的那根角柱删了，正文别删。"
+        ]
+      },
+      "input_sha256": "37ff2ba73c6004396d54e3b2b9ec90a969ba288066b1e26aa10220de942c822e",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E05",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把页脚编号二的那条脚注删了，正文别删。",
+            "anchor": "脚注→角柱",
+            "cascade": "删除一条注释变成删除一根建筑构件。",
+            "criterion": "删除页脚第二条脚注，正文别删；修复对象和量词。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E05",
+          "record_sha256": "19c44a14883aa3383564d66d213a17287e62eda29339bb5aa2b33b07b4f4ceb4"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E06",
+      "aliases": [
+        "asr-v2-E06"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "关于冬季值班安排的通知",
+        "context": {
+          "scene": "写文档",
+          "context": "模板验收只查字体和字号；字体列表打开，选项含楷体、仿宋和黑体。",
+          "messages": []
+        },
+        "utterances": [
+          "把正文的语气再放松一点，字号还是小四。"
+        ]
+      },
+      "input_sha256": "61040c795c630dcc47782b33ebd51b5a1afa677d94064006d8ae98f192c796bc",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E06",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把正文的字体换成仿宋，字号还是小四。",
+            "anchor": "仿宋→放松",
+            "cascade": "更换字体被改成放松文章语气。",
+            "criterion": "正文改用仿宋，字号仍为小四；不要加语气修改。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E06",
+          "record_sha256": "75343bd34463462301fff98aa7a16e0ba2ef41de9a188f170b0429b7de5e6a6e"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E07",
+      "aliases": [
+        "asr-v2-E07"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "做法：第一步切丝，第二步翻炒。",
+        "context": {
+          "scene": "写文档",
+          "context": "菜谱已定稿。排版批注要求每一步的动作中只突出第二步，配方不再调整。",
+          "messages": []
+        },
+        "utterances": [
+          "把做法里第二步改成多加点醋，食材表别动。"
+        ]
+      },
+      "input_sha256": "51b68a0f9eaf5dfd6d17e26eab6ae2245387c1014834e9c6ecc7dce5f52d4333",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E07",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把做法里第二步加粗，食材表别动。",
+            "anchor": "加粗→加醋",
+            "cascade": "排版操作被整理成修改食谱用量。",
+            "criterion": "恢复只给做法的第二步加粗，保留食材表别动，不能添加调味要求。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E07",
+          "record_sha256": "c493b3e9e94ba70f12a9838070ae0e6bd3567b103caf67c03463ea64544e4eda"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E08",
+      "aliases": [
+        "asr-v2-E08"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "写文档",
+          "context": "表格样式设置打开，颜色选择器选中浅蓝色。数据单元格处于锁定状态。",
+          "messages": []
+        },
+        "utterances": [
+          "把表头那行改为低温，用浅蓝色标出来，数值别动。"
+        ]
+      },
+      "input_sha256": "c800741f63172b15e8bdd13c6a4634beb8d96d1e62b98da85fcc540f546fe440",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E08",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把表头那行的底纹改成浅蓝色，数值别动。",
+            "anchor": "底纹→低温",
+            "cascade": "表格填充色被整理成标记低温这一额外状态。",
+            "criterion": "仅把表头底纹或背景设成浅蓝色，保留数值；不能新增低温标记。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E08",
+          "record_sha256": "162b9c237c72e52839d6690710dd4cc841e79d97e4507c93d0893c1840764083"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-E09",
+      "aliases": [
+        "asr-v2-E09"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "其他",
+          "context": "照片调色面板有色轮和亮度滑块，正在处理一张已经拍好的照片。",
+          "messages": []
+        },
+        "utterances": [
+          "把摄像头转十五度，亮度别动。"
+        ]
+      },
+      "input_sha256": "69a1126ddd48b94a56e835298076206cd74f266f715549cafa02b51c45976678",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "E09",
+            "mode": "编辑指令",
+            "kind": "修复",
+            "gold": "把色相转十五度，亮度别动。",
+            "anchor": "色相→摄像",
+            "cascade": "转动色轮的色相被写成转动摄像头。",
+            "criterion": "色相旋转十五度，亮度别改；仍是编辑指令。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "E09",
+          "record_sha256": "2085ac0b3bdb533a616ad8f58f86359ff10900bdc10cbe76c1dee5ab100af48b"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-K01",
+      "aliases": [
+        "asr-v2-K01"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "甲：你问小周今天能不能来。乙：他说今天排满了，明天可以。",
+          "messages": []
+        },
+        "utterances": [
+          "他说今天不行明天可以。"
+        ]
+      },
+      "input_sha256": "17876d4685a5c8d3946098536a1495f6da0683f47149dad6068510801a809ee3",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "K01",
+            "mode": "听写",
+            "kind": "保护",
+            "gold": "他说今天不行明天可以。",
+            "anchor": "原 D11 · 缺标点但意思已在",
+            "cascade": "没有识别错义。屏幕给出的理由并非这次所说。",
+            "criterion": "今天不行、明天可以、保留转述。原样完全通过，只补停顿也可；加上排满的原因算引入信息。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "K01",
+          "record_sha256": "f9235046280bf5582dd6b7c6f0d84f9342e5f0e1fcacd54cfc356d71f888f1c6"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-K02",
+      "aliases": [
+        "asr-v2-K02"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "餐厅经理：这两把椅子是给新店做样品的，家具师傅来量过窗边的尺寸。",
+          "messages": []
+        },
+        "utterances": [
+          "麻烦帮我定做两把椅子，靠窗就行。"
+        ]
+      },
+      "input_sha256": "856025dfb3ed46d76ce5c5eb00c876ff1fcf59cc6421420e10a369b01311124b",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "K02",
+            "mode": "听写",
+            "kind": "保护",
+            "gold": "麻烦帮我定做两把椅子，靠窗就行。",
+            "anchor": "D02 的同句反例",
+            "cascade": "字面定做椅子与这次采购任务一致。",
+            "criterion": "保持定做两把椅子的意思和靠窗要求，不改订座。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "K02",
+          "record_sha256": "6b9df20b239f65612425052cefc80f38432c424d1410ea5ddc22852e4839ac0b"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-K03",
+      "aliases": [
+        "asr-v2-K03"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "我刚问过施工队，他们还没买管子。",
+        "context": {
+          "scene": "写邮件",
+          "context": "会议纪要说先预埋套管。",
+          "messages": []
+        },
+        "utterances": [
+          "这两根管子得提前买好，浇完再买就晚了。"
+        ]
+      },
+      "input_sha256": "fabd222ae43c465e9e86973148525a796adef09fa3023fe4787437f48441a0b1",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "K03",
+            "mode": "听写",
+            "kind": "保护",
+            "gold": "这两根管子得提前买好，浇完再买就晚了。",
+            "anchor": "D04 的同句反例",
+            "cascade": "前文解释了采购需求，屏幕上的施工动作不能覆盖它。",
+            "criterion": "保持浇筑前买好两根管子的意思，不改成埋管。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "K03",
+          "record_sha256": "c03ea6482f4ada82e4a4d55df24266466bce131869ad10c721071ed589ab3c5a"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-K04",
+      "aliases": [
+        "asr-v2-K04"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "做法：第一步切丝，第二步翻炒。",
+        "context": {
+          "scene": "写文档",
+          "context": "上条排版留言提过加粗。主编随后要求补上陈醋用量，配料清单已经有醋。",
+          "messages": []
+        },
+        "utterances": [
+          "把做法里第二步改成多加点醋，食材表别动。"
+        ]
+      },
+      "input_sha256": "9474dcccfaecc28d7a85b80f68e2427f9fd5ee8310ffd77a43e6e99cfa24bc3d",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "K04",
+            "mode": "编辑指令",
+            "kind": "保护",
+            "gold": "把做法里第二步改成多加点醋，食材表别动。",
+            "anchor": "E07 的同句反例",
+            "cascade": "这里确实要改调味操作，旧的排版留言是干扰。",
+            "criterion": "保持第二步多加醋，食材表不动。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "K04",
+          "record_sha256": "713f7d569d52ec77d76d4f5e9a79906b2dabd369520021bcbc7a75565c10fb38"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-K05",
+      "aliases": [
+        "asr-v2-K05"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "机位调整清单：左机位还有最后一项。",
+        "context": {
+          "scene": "写文档",
+          "context": "屏幕在讨论照片的色相。",
+          "messages": []
+        },
+        "utterances": [
+          "把摄像头转十五度，亮度别动。"
+        ]
+      },
+      "input_sha256": "46f61b22aecb2b1acae02e8552fd0be303e9c8f31d1e4831453108b584d3231c",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "K05",
+            "mode": "编辑指令",
+            "kind": "保护",
+            "gold": "把摄像头转十五度，亮度别动。",
+            "anchor": "E09 的同句反例",
+            "cascade": "具体所指是机位，摄像头的字面解释成立。",
+            "criterion": "保持转动摄像头十五度及亮度别动。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "K05",
+          "record_sha256": "a5d8e5cb0f24e95a3ec5c5871a78b7f6314c4bc5c62f4bfc4eb3e6e5c5775d87"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-K06",
+      "aliases": [
+        "asr-v2-K06"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "收件人：方琴、方芹。",
+        "context": {
+          "scene": "写邮件",
+          "context": "通讯录里同时有方琴和方芹，两人都在收件人列表里。",
+          "messages": []
+        },
+        "utterances": [
+          "把方琴放到前面，方芹还是放后面。"
+        ]
+      },
+      "input_sha256": "e83482f010ac11f692b2f7c4777e134397a3f27f6b949962de61814df2f0eb77",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "K06",
+            "mode": "编辑指令",
+            "kind": "保护",
+            "gold": "把方琴放到前面，方芹还是放后面。",
+            "anchor": "同音姓名 · 信息已足",
+            "cascade": "同音的两个收件人是不同的人，顺序明确。",
+            "criterion": "保留两个姓名和先后关系，不合并、不互换。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "K06",
+          "record_sha256": "9a56cd1b328de795a3225a5a5101d5edea2e4d86cf44051c2d59ee596efc9417"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "asr-v2-O01",
+      "aliases": [
+        "asr-v2-O01",
+        "asr-v2-O02"
+      ],
+      "kind": "single",
+      "evaluation_scope": "asr_final",
+      "input": {
+        "target": "",
+        "context": {
+          "scene": "对话",
+          "context": "对方：明天那个时间你安排好就行。",
+          "messages": []
+        },
+        "utterances": [
+          "你帮我订两个座位就好。"
+        ]
+      },
+      "input_sha256": "a6c69ade11fff3dbdb0f320a162c47c8b090cf3949a76bdfe361de4d8f222e95",
+      "labels": {
+        "intent": null,
+        "edit_tasks": null,
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": false,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "binary": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "six_class": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "editing": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。",
+        "fine_22": "ASR 后处理专项，原实验只标注本次口述，没有下游路由或编辑执行真值。"
+      },
+      "special_tags": [
+        "asr_intent_recovery",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "asr_intent_recovery": [
+          {
+            "id": "O01",
+            "mode": "听写",
+            "kind": "观察",
+            "gold": "你帮我订两个座位就好。",
+            "anchor": "不可辨识 · 隐藏设定 A",
+            "cascade": "说话人确实要订座。可见输入与 O02 完全相同。",
+            "criterion": "证据不足时保留 ASR。仅展示输出，不将猜中隐藏意思计入主分。"
+          },
+          {
+            "id": "O02",
+            "mode": "听写",
+            "kind": "观察",
+            "gold": "你帮我定做两把椅子就好。",
+            "anchor": "不可辨识 · 隐藏设定 B",
+            "cascade": "说话人实际要定做两把椅子，ASR 改成订座。可见输入与 O01 完全相同。",
+            "criterion": "证据不足时保留 ASR。仅展示输出，不将猜中隐藏意思计入主分。"
+          }
+        ]
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "逐项保留 V2 冻结的模拟 ASR 输入、原意、修复或保护判据与观察标注。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "O01",
+          "record_sha256": "8a26ffdf016f1bfad4707fe983e3774aad183714f8bc3c99a28d5c31a6c201a2"
+        },
+        {
+          "file": "docs/reports/asr-intent-recovery-2026-11-19/cases.json",
+          "case_id": "O02",
+          "record_sha256": "cac058f075007e0aaac34b6464f44d3737894a6d4141c07ac6635feb89e2fabe"
         }
       ],
       "relations": {
@@ -25766,6 +27783,2047 @@
             ]
           },
           "original_pair_id": null
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-001",
+      "aliases": [
+        "fragment-001"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "你落在我这儿的围巾什么时候来拿？"
+            }
+          ],
+          "conversation_title": "小林",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "下班以后"
+        ]
+      },
+      "input_sha256": "88a04fa415eced6c760bd613c86a4e433c9a7b1b2ecc3cb38b7b210c0fac68b5",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 1,
+          "reference": "我下班以后来拿围巾。",
+          "requirement": "说话者下班以后来拿围巾。动作要明确，物品在对话中可省略。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-001",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-002"
+        ]
+      }
+    },
+    {
+      "id": "fragment-002",
+      "aliases": [
+        "fragment-002"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "上次爬山的合照，你什么时候发我？"
+            }
+          ],
+          "conversation_title": "小林",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "下班以后"
+        ]
+      },
+      "input_sha256": "13336f6269cab07790fa5a552d4c9f772d6d857564734231acba7702dbb3bc0b",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 1,
+          "reference": "我下班以后发你。",
+          "requirement": "说话者下班以后把合照发给对方。动作要明确，照片在对话中可省略。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-002",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-001"
+        ]
+      }
+    },
+    {
+      "id": "fragment-003",
+      "aliases": [
+        "fragment-003"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "self",
+              "text": "水果已经买好了。"
+            },
+            {
+              "speaker": "other",
+              "text": "还缺一张野餐垫，谁方便带？"
+            }
+          ],
+          "conversation_title": "周末碰头",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "我带"
+        ]
+      },
+      "input_sha256": "4a39f5410daede570ba2ce1f7416f368a61764aa9655f5168ef46a2765e0cf92",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 2,
+          "reference": "我来带野餐垫。",
+          "requirement": "说话者愿意带野餐垫。点出要带的物品，别选已备好的水果。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-003",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-004"
+        ]
+      }
+    },
+    {
+      "id": "fragment-004",
+      "aliases": [
+        "fragment-004"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "self",
+              "text": "零食已经买好了。"
+            },
+            {
+              "speaker": "other",
+              "text": "还缺一副扑克牌，谁方便带？"
+            }
+          ],
+          "conversation_title": "周末碰头",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "我带"
+        ]
+      },
+      "input_sha256": "c9aadb3f16105f01bb7ab14263d6c39d2fc1b51eb5a1519c4e614adfdf0a4ee5",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 2,
+          "reference": "扑克牌我带。",
+          "requirement": "说话者愿意带扑克牌。点出要带的物品，别选已备好的零食。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-004",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-003"
+        ]
+      }
+    },
+    {
+      "id": "fragment-005",
+      "aliases": [
+        "fragment-005"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "两场电影，六点二十和八点四十，你想看哪场？"
+            }
+          ],
+          "conversation_title": "阿楠",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "后面那个"
+        ]
+      },
+      "input_sha256": "0b507154473c3564036d1aabe4148241a69c3a72eb4c0bd54ca348f08de6a92b",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 3,
+          "reference": "看八点四十那场吧。",
+          "requirement": "选后列的八点四十那场，用具体场次消解指代。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-005",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-006"
+        ]
+      }
+    },
+    {
+      "id": "fragment-006",
+      "aliases": [
+        "fragment-006"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "奶茶有桂花乌龙和芋泥波波两种，想喝哪个？"
+            }
+          ],
+          "conversation_title": "阿楠",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "后面那个"
+        ]
+      },
+      "input_sha256": "13d47c9aae2eef10c0070641f2e43e7706baf5243d704520cf1a51a445e0bc80",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 3,
+          "reference": "我要芋泥波波。",
+          "requirement": "选后列的芋泥波波，用具体口味消解指代。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-006",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-005"
+        ]
+      }
+    },
+    {
+      "id": "fragment-007",
+      "aliases": [
+        "fragment-007"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "我到楼下了，要给你顺手带杯咖啡吗？"
+            }
+          ],
+          "conversation_title": "小周",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "不用了 自己"
+        ]
+      },
+      "input_sha256": "7606166a3c04a37f0f046938a0c12616c28e506d174934dcb8cd85ec7b74dbca",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 4,
+          "reference": "咖啡不用带了，我自己买。",
+          "requirement": "婉拒代带咖啡，表示自己解决；不可写成已有咖啡或拒绝搭车。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-007",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-008"
+        ]
+      }
+    },
+    {
+      "id": "fragment-008",
+      "aliases": [
+        "fragment-008"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "外面下雨，要我开车去接你吗？"
+            }
+          ],
+          "conversation_title": "小周",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "不用了 自己"
+        ]
+      },
+      "input_sha256": "dc4ae5650fd3aad515de72356628c1c990704c83de03616abde224f2ab92d9a1",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "换屏配对",
+          "pair": 4,
+          "reference": "不用来接，我自己过去。",
+          "requirement": "婉拒接送，自己出行；不确定交通方式，不额外指定。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-008",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": [
+          "fragment-007"
+        ]
+      }
+    },
+    {
+      "id": "fragment-009",
+      "aliases": [
+        "fragment-009"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "今天午饭吃馄饨还是米线？辣度也说一下。"
+            }
+          ],
+          "conversation_title": "午饭搭子",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "米线 微辣"
+        ]
+      },
+      "input_sha256": "14f2e0da04c25e02b182f31d9c4fb77a135a1de06df7e732f0e306cd6a422d94",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "我要米线，微辣。",
+          "requirement": "明确选米线、微辣，语言像直接点单。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-009",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-010",
+      "aliases": [
+        "fragment-010"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "你到球馆了吗，场地要不要先让给别人？"
+            }
+          ],
+          "conversation_title": "球友",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "快了 别让"
+        ]
+      },
+      "input_sha256": "3e67d9cadb970b1bdb8246241f5dc306130bcc03a549ce4b715d9a3b222bcbb9",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "我快到了，先别让场。",
+          "requirement": "尚未抵达，请保留球场；不补具体分钟数。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-010",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-011",
+      "aliases": [
+        "fragment-011"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "今晚还一起跑步吗？"
+            }
+          ],
+          "conversation_title": "跑步群",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "腿酸 明天吧"
+        ]
+      },
+      "input_sha256": "94faa5bed33429caeaaa64e9522116cb9c71639d07c21492d175a3485efd7802",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "今天腿有点酸，明天再跑吧。",
+          "requirement": "给出腿酸及改约明天的意思，提议即可。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-011",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-012",
+      "aliases": [
+        "fragment-012"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "我在一楼大厅，送上去还是放前台？"
+            }
+          ],
+          "conversation_title": "外卖小哥",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "前台 不打电话"
+        ]
+      },
+      "input_sha256": "92bf90c9877e3bd4c3d13fa35ed48a44b1ac516075eb9b93fc9a3d7823416ea1",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "放前台就好，不用给我打电话。",
+          "requirement": "放前台，并请对方不要打电话。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-012",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-013",
+      "aliases": [
+        "fragment-013"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "self",
+              "text": "我先去车站，你到了叫我。"
+            },
+            {
+              "speaker": "other",
+              "text": "我已经到了，你在哪个出口？"
+            }
+          ],
+          "conversation_title": "小夏",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "西边 那个 有电梯"
+        ]
+      },
+      "input_sha256": "d0c2060f49d6a60b7885e57daed05101bccbf5db0fcc85a070d4cd9c9ab5f31b",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "我在西边有电梯的那个出口。",
+          "requirement": "描述说话者所在出口，保留西边、电梯；不补出口编号。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-013",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-014",
+      "aliases": [
+        "fragment-014"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "这周五的桌游你来吗？"
+            },
+            {
+              "speaker": "self",
+              "text": "还没看安排。"
+            },
+            {
+              "speaker": "other",
+              "text": "不用马上决定，什么时候能告诉我？"
+            }
+          ],
+          "conversation_title": "邻居",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "明晚 再说"
+        ]
+      },
+      "input_sha256": "6b8ead76e657cd193e21e014962a1bc6d0758fbffc1f5ef978555dfc97a8180e",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "我明晚再告诉你。",
+          "requirement": "明晚给答复；不能写成明晚参加桌游或承诺这周五到场。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-014",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-015",
+      "aliases": [
+        "fragment-015"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "下班顺便拿一下门口的快递？"
+            }
+          ],
+          "conversation_title": "室友",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "没拿 明早"
+        ]
+      },
+      "input_sha256": "952825e752602664b78d86b9367d9a58812814a6743e6aaadbf37b3b310e2980",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "我还没拿，明早去拿。",
+          "requirement": "现在未取件，自己明早去取；不能写成已拿。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-015",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-016",
+      "aliases": [
+        "fragment-016"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "你想换到靠窗还是靠门的座位？"
+            }
+          ],
+          "conversation_title": "小池",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "靠门 啊不 靠窗"
+        ]
+      },
+      "input_sha256": "928b66beeeea1c9ff91b1c9f223ef18ba788e7e52e3cc001887f7e855539405e",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "日常聊天",
+          "pair": null,
+          "reference": "我想换到靠窗的位置。",
+          "requirement": "最终选靠窗，消化自我纠正，不继续要求靠门。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-016",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-017",
+      "aliases": [
+        "fragment-017"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "下周你哪天可能有空吃个饭？"
+            }
+          ],
+          "conversation_title": "小赵",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "可能 周五"
+        ]
+      },
+      "input_sha256": "fc1af01f2808b96e9c5ed532eb7b7c745024e17fdf102d79e5f838d41563b2a6",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "克制补全",
+          "pair": null,
+          "reference": "周五可能有空。",
+          "requirement": "保留周五和不确定性，不写成已约好或一定有空。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-017",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-018",
+      "aliases": [
+        "fragment-018"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "other",
+              "text": "谁能带饮料？还有谁能带杯子？"
+            }
+          ],
+          "conversation_title": "拼餐群",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "我带一个"
+        ]
+      },
+      "input_sha256": "a49c26cf7e7e4a3a124e56d59f8d2464117184d1040d10b80b447071902fc6e1",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "克制补全",
+          "pair": null,
+          "reference": "我可以带一样。",
+          "requirement": "未指定饮料还是杯子。保留愿带一样的意思，或自然询问带哪样；不能任选一种写成承诺。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-018",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-019",
+      "aliases": [
+        "fragment-019"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [
+            {
+              "speaker": "self",
+              "text": "下午我在家。"
+            },
+            {
+              "speaker": "other",
+              "text": "收到啦，谢谢你！"
+            }
+          ],
+          "conversation_title": "小满",
+          "speaker_source": "bubble_geometry"
+        },
+        "utterances": [
+          "不客气"
+        ]
+      },
+      "input_sha256": "b82ae9af5341f73207429ae0d04f57811f962f75dbf62506e2fadb36af63d228",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "克制补全",
+          "pair": null,
+          "reference": "不客气！",
+          "requirement": "原话已经是自然完整的答复，保留简短致意，不续写邀约或承诺。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-019",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-020",
+      "aliases": [
+        "fragment-020"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "unavailable",
+          "coverage": "visible_only",
+          "application": "com.tencent.xinWeChat",
+          "messages": [],
+          "reason": "截图上文读取超时"
+        },
+        "utterances": [
+          "晚一点 再看"
+        ]
+      },
+      "input_sha256": "1c624f79d44783d183845984e18026cbf88612750f8672ffc8d0f890d8224011",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "克制补全",
+          "pair": null,
+          "reference": "我晚一点再看。",
+          "requirement": "屏幕不可用，只能表达晚一点再看；不猜所看对象、原因和准确时间。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-020",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-021",
+      "aliases": [
+        "fragment-021"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.apple.Notes",
+          "messages": [
+            {
+              "speaker": "unknown",
+              "text": "待买食材"
+            },
+            {
+              "speaker": "unknown",
+              "text": "鸡蛋、牛奶"
+            }
+          ],
+          "conversation_title": "",
+          "speaker_source": "unknown"
+        },
+        "utterances": [
+          "还有 葱 两根"
+        ]
+      },
+      "input_sha256": "11a0506fe49ac8877b3e743f2178b1abb1d81687e74a65e5cd490c9de5803131",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "随手记录",
+          "pair": null,
+          "reference": "再买两根葱。",
+          "requirement": "按购物备忘补一项，两根葱；不重抄原清单，不写成向对方代买的承诺。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-021",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-022",
+      "aliases": [
+        "fragment-022"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.apple.Notes",
+          "messages": [
+            {
+              "speaker": "unknown",
+              "text": "出门前要做的事"
+            },
+            {
+              "speaker": "unknown",
+              "text": "给猫添水"
+            }
+          ],
+          "conversation_title": "",
+          "speaker_source": "unknown"
+        },
+        "utterances": [
+          "钥匙 带上 备用的"
+        ]
+      },
+      "input_sha256": "7275a9110e6ac5746ae0c7e030ba3607ba1ccb7b4af6129457dd7014b40bb41b",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "随手记录",
+          "pair": null,
+          "reference": "出门前带上备用钥匙。",
+          "requirement": "形成可用的待办，带上备用钥匙；不把给猫添水并入新条目。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-022",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-023",
+      "aliases": [
+        "fragment-023"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.apple.Notes",
+          "messages": [
+            {
+              "speaker": "unknown",
+              "text": "《巷口的小店》读后随记"
+            },
+            {
+              "speaker": "unknown",
+              "text": "节奏有点慢。"
+            }
+          ],
+          "conversation_title": "",
+          "speaker_source": "unknown"
+        },
+        "utterances": [
+          "但 结尾 挺暖"
+        ]
+      },
+      "input_sha256": "36bacdbd1c7c74d0a05674963174f15e6c11c23a50757157c12983955482a2f7",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "随手记录",
+          "pair": null,
+          "reference": "但结尾挺暖的。",
+          "requirement": "写成随记里的感想，保留转折和正面评价；不编造情节。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-023",
+          "origin": "synthetic_direct_authoring"
+        }
+      ],
+      "relations": {
+        "contrast_pair_ids": [],
+        "related_case_ids": []
+      }
+    },
+    {
+      "id": "fragment-024",
+      "aliases": [
+        "fragment-024"
+      ],
+      "kind": "single",
+      "input": {
+        "target": "",
+        "context": {
+          "source": "screen_ocr",
+          "status": "ok",
+          "coverage": "visible_only",
+          "application": "com.apple.Notes",
+          "messages": [
+            {
+              "speaker": "unknown",
+              "text": "周六的雨天备选"
+            },
+            {
+              "speaker": "unknown",
+              "text": "室内活动"
+            }
+          ],
+          "conversation_title": "",
+          "speaker_source": "unknown"
+        },
+        "utterances": [
+          "下雨 就 拼图"
+        ]
+      },
+      "input_sha256": "1ba776603af83cd86e47771c2404bff03433dacac024244280221748de4329bb",
+      "labels": {
+        "intent": "dictation",
+        "edit_tasks": [],
+        "fine_edit_tasks": null
+      },
+      "applicability": {
+        "binary": true,
+        "six_class": false,
+        "editing": false,
+        "fine_22": false
+      },
+      "exclusion_reasons": {
+        "six_class": "直接口述内容，无编辑指令。",
+        "editing": "专项补全的生成预期单独存放。",
+        "fine_22": "无编辑任务。"
+      },
+      "special_tags": [
+        "fragment_completion",
+        "empty_source",
+        "ocr_context"
+      ],
+      "special_annotations": {
+        "character_clarification": {
+          "present": false,
+          "role": "none",
+          "mechanism": null
+        },
+        "fragment_completion": {
+          "group": "随手记录",
+          "pair": null,
+          "reference": "下雨就拼图。",
+          "requirement": "写下有条件的计划，下雨才拼图；不能断言会下雨或增加约定。"
+        }
+      },
+      "editing_expectations": [],
+      "split": "development",
+      "annotation": {
+        "status": "curated",
+        "author": "Codex",
+        "date": "2026-11-19",
+        "independent_human_review": false,
+        "label_reason": "用户直接口述要表达的片段。旧路由口径归听写；专项在已启用补全的前提下评正文。",
+        "input_amendments": []
+      },
+      "provenance": [
+        {
+          "file": "tools/data/voice_eval_master.json",
+          "case_id": "fragment-024",
+          "origin": "synthetic_direct_authoring"
         }
       ],
       "relations": {
@@ -99659,6 +103717,73 @@
         "saved-news-004"
       ],
       "note": "按用户指定口述新增4条新闻摘要分享邮件优先用例；合成新闻，覆盖多条事实、条件和与当前屏幕的来源冲突。",
+      "annotation_changes": []
+    },
+    {
+      "revision": 5,
+      "at": "2026-11-19T14:32:59.434919+08:00",
+      "action": "add",
+      "case_ids": [
+        "fragment-001",
+        "fragment-002",
+        "fragment-003",
+        "fragment-004",
+        "fragment-005",
+        "fragment-006",
+        "fragment-007",
+        "fragment-008",
+        "fragment-009",
+        "fragment-010",
+        "fragment-011",
+        "fragment-012",
+        "fragment-013",
+        "fragment-014",
+        "fragment-015",
+        "fragment-016",
+        "fragment-017",
+        "fragment-018",
+        "fragment-019",
+        "fragment-020",
+        "fragment-021",
+        "fragment-022",
+        "fragment-023",
+        "fragment-024"
+      ],
+      "note": "新增 24 条日常口述片段补全开发例与专项验收条件，含 4 组换屏配对。",
+      "annotation_changes": []
+    },
+    {
+      "revision": 6,
+      "at": "2026-11-19T14:46:12.134201+08:00",
+      "action": "add",
+      "case_ids": [
+        "asr-v2-D01",
+        "asr-v2-D02",
+        "asr-v2-D03",
+        "asr-v2-D04",
+        "asr-v2-D05",
+        "asr-v2-D06",
+        "asr-v2-D07",
+        "asr-v2-D08",
+        "asr-v2-D09",
+        "asr-v2-E01",
+        "asr-v2-E02",
+        "asr-v2-E03",
+        "asr-v2-E04",
+        "asr-v2-E05",
+        "asr-v2-E06",
+        "asr-v2-E07",
+        "asr-v2-E08",
+        "asr-v2-E09",
+        "asr-v2-K01",
+        "asr-v2-K02",
+        "asr-v2-K03",
+        "asr-v2-K04",
+        "asr-v2-K05",
+        "asr-v2-K06",
+        "asr-v2-O01"
+      ],
+      "note": "收录 V2 原意恢复 26 条原判据；两个等输入的观察设定共享一条主记录。",
       "annotation_changes": []
     }
   ]

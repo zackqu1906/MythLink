@@ -63,7 +63,7 @@ def component_seeds(character, count, dictionary, *, seen=()):
     return found
 
 
-def aligned_positions(base, variant, positions):
+def aligned_positions(base, variant, positions, *, same_category=False):
     """Keep only positions whose mapping agrees across every optimal alignment.
 
     This deliberately rejects ambiguous repeated strokes and distant variants.
@@ -89,12 +89,13 @@ def aligned_positions(base, variant, positions):
                                  backward[i+1][j+1] + (base[i] != variant[j]))
     result = {}
     for index in positions:
+        expected = base[index] if same_category else 'n'
         possible = set()
         for j in range(n + 1):
             if forward[index][j] + 1 + backward[index+1][j] == distance:
                 possible.add(None)
             if j < n and forward[index][j] + (base[index] != variant[j]) + backward[index+1][j+1] == distance:
-                possible.add(j if variant[j] == 'n' else None)
+                possible.add(j if variant[j] == expected else None)
         if len(possible) == 1 and None not in possible:
             result[index] = possible.pop()
     return result

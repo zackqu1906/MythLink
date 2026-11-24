@@ -39,7 +39,7 @@ def tap_probe(route, monkeypatch):
             assert origin == state["front"]
             before_key_down()
             actions.append("switch")
-            state["source"] = VOICE
+            state["source"] = ORIGINAL if state["source"] == VOICE else VOICE
             if state["outcome"] == "activation_timeout":
                 raise TimeoutError("Source changed, but selection receipt expired")
     monkeypatch.setattr(system_input_source, "SystemInputSources", Sources)
@@ -74,7 +74,7 @@ def tap_probe(route, monkeypatch):
     monkeypatch.setattr(inline, "_bridge", SimpleNamespace(epoch=inline._epoch, connected=True,
                         focus_state=focus_state, close=lambda: None, send=lambda _: True))
     monkeypatch.setattr(inline._gesture_source_activation, "restore_if_unused",
-                        lambda origin, previous, ticket: restores.append((origin, previous, ticket is not None)))
+                        lambda origin, previous, ticket, **_: restores.append((origin, previous, ticket is not None)))
     return controller, inline, state, actions, restores
 
 
@@ -93,7 +93,7 @@ def test_tap_uses_live_imk_for_every_app_without_ax(tap_probe, bundle, auto_retu
 
 
 @pytest.mark.parametrize("auto_return", [False, True])
-@pytest.mark.parametrize("outcome", ["no_selection", "malformed_selection", "not_ready", "ipc_timeout",
+@pytest.mark.parametrize("outcome", ["not_ready", "ipc_timeout",
                                      "activation_timeout", "app_changed", "pid_changed", "epoch_changed",
                                      "missing_client"])
 def test_failed_tap_returns_its_borrow_even_when_auto_return_is_off(tap_probe, auto_return, outcome):
@@ -107,14 +107,25 @@ def test_failed_tap_returns_its_borrow_even_when_auto_return_is_off(tap_probe, a
     assert inline._pending_gesture_focus is None and inline._source_return.probe is None
 
 
+@pytest.mark.parametrize("auto_return", [False, True])
+@pytest.mark.parametrize("outcome", ["no_selection", "malformed_selection"])
+def test_ready_voice_client_does_not_require_document_selection(tap_probe, auto_return, outcome):
+    controller, inline, state, actions, restores = tap_probe
+    state["outcome"] = outcome
+    inline.set_auto_return_input_source(auto_return)
+    assert ring_tap(controller, "tap", deliver=False)
+    assert inline._pending_gesture_focus[0][1] == "fresh-client"
+    assert actions == ["switch"] and not restores
+
+
 @pytest.mark.parametrize("already_ready", [False, True])
 @pytest.mark.parametrize("outcome", ["ready", "no_selection"])
-def test_already_selected_mythlink_does_not_cycle_or_invent_an_original(tap_probe, already_ready, outcome):
+def test_selected_mythlink_refreshes_only_inactive_client_without_inventing_original(tap_probe, already_ready, outcome):
     controller, inline, state, actions, restores = tap_probe
     state.update(source=VOICE, already_ready=already_ready, outcome=outcome)
     inline.set_auto_return_input_source(True)
-    assert ring_tap(controller, "tap", deliver=False) is (outcome == "ready")
-    assert actions == ([] if already_ready else ["recover"])
+    assert ring_tap(controller, "tap", deliver=False)
+    assert actions == ([] if already_ready else ["switch", "switch"])
     assert not restores and inline._source_return.probe is None
 
 
@@ -123,7 +134,7 @@ def test_selected_source_recovery_still_requires_fresh_editor_proof(tap_probe, o
     controller, inline, state, actions, restores = tap_probe
     state.update(front=("com.apple.mail", 42), source=VOICE, outcome=outcome)
     assert not ring_tap(controller, "tap", deliver=False)
-    assert actions == ["recover"] and not restores
+    assert actions == ["switch", "switch"] and not restores
     assert inline._pending_gesture_focus is None and inline._source_return.probe is None
 
 

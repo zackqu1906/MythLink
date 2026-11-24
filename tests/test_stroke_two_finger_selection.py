@@ -2,6 +2,7 @@
 import math
 import threading
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -71,6 +72,84 @@ def test_clear_fill_tracks_outward_travel_and_retraction_without_committing():
         state = two_finger_selection(points)
         assert state['clear_progress'] == progress and 'action' not in state
         assert state['clear_armed'] == (progress == 1)
+
+
+def test_period_pull_preserves_short_swipe_and_opens_submenu():
+    points = [(0, 0), (0, -6), (0, -24)]
+    state = two_finger_selection(points)
+    assert state['punctuation_pull'] == dict(direction='up', progress=.5, opened=False)
+    assert two_finger_selection(points, finished=True)['target'] == '。'
+    points.append((0, -30))
+    assert two_finger_selection(points)['punctuation_pull']['symbol'] == '！'
+    assert two_finger_selection(points, finished=True)['target'] == '！'
+    points.append((0, -11))
+    assert two_finger_selection(points, finished=True)['target'] == '——'
+
+
+@pytest.mark.parametrize('sign, symbol', [(-1, '，'), (1, '？')])
+def test_side_punctuation_has_no_submenu(sign, symbol):
+    points = swipe(sign * 32, -40)
+    assert 'punctuation_pull' not in two_finger_selection(points)
+    assert two_finger_selection(points, finished=True)['target'] == symbol
+
+    points = [(0, 0), (sign * 6, -6), (sign * 6, -24), (sign * 6, -30)]
+    pull = two_finger_selection(points)['punctuation_pull']
+    assert pull['direction'] == 'up' and not pull['opened']
+
+
+def test_punctuation_cancel_requires_full_center_pull_and_rebases_primary_selection():
+    points = [(0, 0), (0, -30), (0, -16.5), (0, -10.5)]
+    state = two_finger_selection(points)
+    assert state['punctuation_pull']['cancel_progress'] == .5
+    assert two_finger_selection(points, finished=True)['target'] == '——'
+    assert two_finger_selection(points + [(0, -21)])['punctuation_pull'].get('cancel_progress', 0) == 0
+    for x, symbol in [(-9, '……'), (9, '：')]:
+        assert two_finger_selection(points + [(x, 10)], finished=True)['target'] == symbol
+    points.append((0, -4.5))
+    state = two_finger_selection(points)
+    assert 'punctuation_pull' not in state and state['direction'] is None
+    assert state['display']['origin'] == [0, -4.5]
+    assert two_finger_selection(points, finished=True)['action'] == 'cancel-selection'
+    assert two_finger_selection(points + [(9, -4.5)], finished=True)['target'] == 1
+    assert two_finger_selection(points + [(0, -34.5)], finished=True)['target'] == '！'
+
+
+@pytest.mark.parametrize('side', [-9, 9])
+def test_punctuation_cancel_counts_only_travel_since_entering_bottom_center(side):
+    points = [(0, 0), (0, -30), (side, -14), (side, 12), (0, 12)]
+    pull = two_finger_selection(points)['punctuation_pull']
+    assert pull['opened'] and pull.get('cancel_progress', 0) == 0
+    assert two_finger_selection(points, finished=True)['target'] == '——'
+    points.append((0, 18))
+    assert two_finger_selection(points)['punctuation_pull']['cancel_progress'] == .5
+    points.extend([(side, 24), (0, 24)])
+    assert two_finger_selection(points)['punctuation_pull'].get('cancel_progress', 0) == 0
+    assert two_finger_selection(points + [(0, 35)])['punctuation_pull']['opened']
+    assert 'punctuation_pull' not in two_finger_selection(points + [(0, 36)])
+
+
+@pytest.mark.parametrize('dx, dy, symbol', [
+    (-9, -9, '、'), (-2, -9, '“'), (2, -9, '”'), (9, -9, '；'),
+    (-11, 0, '《'), (-7, 0, '》'), (0, 0, '！'), (7, 0, '（'), (11, 0, '）'),
+    (-9, 20, '……'), (0, 20, '——'), (9, 20, '：'),
+])
+def test_expanded_punctuation_release_matches_highlight(dx, dy, symbol):
+    points = [(0, 0), (0, -18), (0, -30), (dx, -30 + dy)]
+    assert two_finger_selection(points)['punctuation_pull']['symbol'] == symbol
+    final = two_finger_selection(points, finished=True)
+    assert (final['action'], final['target']) == ('punctuation', symbol)
+
+
+def test_expanded_punctuation_owns_right_motion_until_cancelled():
+    open_and_move_right = [(0, 0), (0, -30), (30, -30)]
+    inside = two_finger_selection(open_and_move_right, correction_enabled=True, finished=True)
+    assert inside['punctuation_pull']['opened'] and inside['action'] == 'punctuation'
+    assert not inside['correction_armed']
+
+    cancel_and_pull_right = open_and_move_right + [(0, -24), (0, -12), (30, -12)]
+    outside = two_finger_selection(cancel_and_pull_right, correction_enabled=True, finished=True)
+    assert 'punctuation_pull' not in outside
+    assert outside['correction_armed'] and outside['action'] == 'correct-text'
 
 
 def test_single_finger_hold_no_longer_arms_selection():
@@ -187,6 +266,42 @@ def test_contact_classification_routes_delete_without_a_pointer_motion_frame():
         feed(output, events)
         wait_for(lambda: bool(selections))
         assert selections[0]['decision']['action'] == 'delete-one'
+        assert not strokes and not taps
+    finally:
+        output.stop(); output.thread.join(1)
+
+
+def test_raw2_selection_survives_earlier_pointer_contact_start():
+    output, states, selections, strokes, taps = start_output(raw2=True)
+    try:
+        now = time.monotonic()
+        # Pointer and stroke detectors can disagree on the first down frame.
+        output.submit_pointer(Raw2PointerContact('CLASSIFIED', 'TWO_FINGER', 1, 6, now, now,
+                                                session_id='ring', start_step=4))
+        wait_for(lambda: any(s['source'] == 'two-finger' for s in states))
+        output.submit_pointer(Raw2PointerContact('END', 'TWO_FINGER', 1, 51, now, now,
+                                                session_id='ring', start_step=4, end_step=50))
+        events = contact(.5, 0)
+        shifted = [replace(event, step=event.step + 10) for event in events]
+        feed(output, shifted)
+        wait_for(lambda: bool(selections))
+        assert len(selections) == 1 and selections[0]['decision']['target'] == 1
+        assert not strokes and not taps
+    finally:
+        output.stop(); output.thread.join(1)
+
+
+def test_raw2_release_keeps_highlighted_candidate_if_release_trimmed_path():
+    output, states, selections, strokes, taps = start_output(raw2=True)
+    try:
+        events = contact(.5, 0)
+        feed(output, events[:-2], two_finger_steps=range(2, 40))
+        wait_for(lambda: any(s.get('direction') == 'right' for s in states))
+        up, verdict = events[-2:]
+        feed(output, [replace(up, step=10), replace(verdict, step=10)])
+        wait_for(lambda: bool(selections))
+        assert selections[0]['decision']['action'] == 'select'
+        assert selections[0]['decision']['target'] == 1
         assert not strokes and not taps
     finally:
         output.stop(); output.thread.join(1)

@@ -709,17 +709,28 @@ def test_funasr_nano_buffers_chunks_and_redecodes_trimmed_final(monkeypatch, tmp
         final_redecode=True,
     )
 
+    from proximic_ring.voice.app_runtime import _asr_context_provider
+    vocabulary = ["豆包", "张玮"]
+    def unreadable_editor():
+        pytest.fail("Local hotwords should not read editor context")
+    context_provider = _asr_context_provider("funasr_nano", unreadable_editor, lambda: vocabulary)
+    backend.set_session_context(context_provider())
     backend.start()
+    vocabulary.clear()
     assert backend.feed(np.ones(159, dtype=np.float32)) is None
     assert backend.feed(np.ones(1, dtype=np.float32)) == "n=160"
     assert backend.feed(np.ones(160, dtype=np.float32)) == "n=160n=320"
     assert backend.finish(np.ones(240, dtype=np.float32)) == "n=240"
+    backend.set_session_context(context_provider())
+    backend.start()
+    assert backend.feed(np.ones(160, dtype=np.float32)) == "n=160"
 
     infer_calls = [payload for name, payload in calls if name == "infer"]
     assert infer_calls == [
+        (160, "", "中文", ["ProxiMic", "豆包", "张玮"]),
+        (320, "n=160", "中文", ["ProxiMic", "豆包", "张玮"]),
+        (240, "", "中文", ["ProxiMic", "豆包", "张玮"]),
         (160, "", "中文", ["ProxiMic", "豆包"]),
-        (320, "n=160", "中文", ["ProxiMic", "豆包"]),
-        (240, "", "中文", ["ProxiMic", "豆包"]),
     ]
     assert (
         FunASRNanoStreamingASR._merge_context_boundary(

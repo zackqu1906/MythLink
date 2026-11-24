@@ -153,6 +153,19 @@ final class NativeInputClient: HandoffClient {
         isValidRange(range) ? [range.location, range.length] : [-1, -1]
     }
 
+    // [DEBUG-netmail-range] Preserve the actual selectedRange() reply before
+    // documentSelection/rangeNumbers normalization. Metadata only; no reads.
+    private func rawSelectionDiagnostics(_ range: NSRange) -> [String: Any] {
+        ["selection_trace": "DEBUG-netmail-range",
+         "raw_selection": [range.location, range.length], "ns_not_found": NSNotFound,
+         "raw_location_not_found": range.location == NSNotFound,
+         "raw_length_not_found": range.length == NSNotFound,
+         "raw_location_negative": range.location < 0,
+         "raw_length_negative": range.length < 0,
+         "raw_sum_overflow": range.location.addingReportingOverflow(range.length).overflow,
+         "raw_range_valid": isValidRange(range)]
+    }
+
     private func documentSelection(_ selected: NSRange, marked: NSRange) -> NSRange {
         // Clients can report the whole composition selected with a cached
         // origin (zero or an earlier composition's start). markedRange is current.
@@ -164,6 +177,16 @@ final class NativeInputClient: HandoffClient {
 
     func snapshot() throws -> EditorSnapshot { try readSnapshot(includeComposition: true) }
     func snapshotForBeginning() throws -> EditorSnapshot { try readSnapshot(includeComposition: false) }
+    func focusSnapshot() throws -> EditorSnapshot {
+        try validateReadLease()
+        let selection = client.selectedRange()
+        try validateReadLease()
+        lastReadDiagnostics = ["query": "focus", "selection": rangeNumbers(selection),
+                               "text_queried": false, "marked_text_queried": false]
+        lastReadDiagnostics.merge(rawSelectionDiagnostics(selection)) { _, value in value }
+        return EditorSnapshot(text: nil, selection: selection, markedRange: unspecifiedRange,
+                              selectedText: nil, documentAccess: false)
+    }
     func startingSelection() -> NSRange { client.selectedRange() }
 
     /// Only a short, exact prefix is needed for local next-character suggestions.
@@ -174,10 +197,10 @@ final class NativeInputClient: HandoffClient {
         guard isCurrent() else { return nil }
         let selected = client.selectedRange()
         guard isCurrent(), isValidRange(selected) else { return nil }
-        let count = min(8, selected.location)
+        let count = min(82, selected.location)  // Max vocabulary word plus a boundary in UTF-16.
         let value = readText(in: NSRange(location: selected.location - count, length: count))
         guard isCurrent(), client.selectedRange() == selected, isCurrent() else { return nil }
-        return value.map { String($0.suffix(4)) }
+        return value.map { String($0.suffix(41)) }
     }
 
     private func validateReadLease() throws {
@@ -281,6 +304,7 @@ final class NativeInputClient: HandoffClient {
                                "selection": rangeNumbers(selected), "marked_range": rangeNumbers(marked),
                                "document_access": access, "composition_queried": includeComposition, "text_queried": false, "returned_characters": -1,
                                "actual_range": [-1, -1]]
+        lastReadDiagnostics.merge(rawSelectionDiagnostics(reportedSelection)) { _, value in value }
         // Do not misclassify an unavailable/oversized document as an empty one.
         if length == 0, isValidRange(marked), marked.length > 0 {
             // An independently readable composition contradicts an empty full
@@ -412,6 +436,7 @@ final class NativeInputClient: HandoffClient {
                                "reported_selection": rangeNumbers(reportedSelection),
                                "marked_range": rangeNumbers(marked), "text_queried": false, "returned_characters": -1,
                                "actual_range": [-1, -1]]
+        lastReadDiagnostics.merge(rawSelectionDiagnostics(reportedSelection)) { _, value in value }
         var markedText: String?
         lastReadDiagnostics["composition_geometry_only"] = !compositionTextReadbackReliable
         if compositionTextReadbackReliable, isValidRange(marked), marked.length <= 512 * 1024 {

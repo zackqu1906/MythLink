@@ -47,6 +47,8 @@ final class ClipboardSuggestionPanel {
     let panel: NSPanel
     private let surface = InputPaletteSurface()
     private let text = NSTextField(wrappingLabelWithString: "")
+    private let replacementScroll = NSScrollView()
+    private let replacementBody = NSTextView(frame: .zero)
     private let image = NSImageView()
     private let hint = NSTextField(labelWithString: "右滑接受 →")
     private var token = ""
@@ -81,13 +83,32 @@ final class ClipboardSuggestionPanel {
         hint.font = VoiceHudStyle.font(11)
         hint.textColor = .secondaryLabelColor
         hint.alignment = .right
-        for view in [text, image, hint] { surface.addSubview(view) }
+        replacementBody.isEditable = false
+        replacementBody.isSelectable = false
+        replacementBody.drawsBackground = false
+        replacementBody.font = text.font
+        replacementBody.textColor = text.textColor
+        replacementBody.textContainerInset = .zero
+        replacementBody.textContainer?.lineFragmentPadding = 0
+        replacementBody.textContainer?.widthTracksTextView = false
+        replacementBody.textContainer?.heightTracksTextView = false
+        replacementScroll.drawsBackground = false
+        replacementScroll.borderType = .noBorder
+        replacementScroll.documentView = replacementBody
+        replacementScroll.isHidden = true
+        for view in [text, image, replacementScroll, hint] { surface.addSubview(view) }
     }
 
     @discardableResult
-    func show(_ preview: ClipboardPreview, token: String, caret: NSRect, duration: TimeInterval = 5) -> Bool {
+    func show(_ preview: ClipboardPreview, token: String, caret: NSRect, duration: TimeInterval? = 5, replacement: Bool = false) -> Bool {
         hide()
         guard let screen = NSScreen.screens.first(where: { $0.frame.intersects(caret.insetBy(dx: -1, dy: -1)) }) else { return false }
+        hint.stringValue = replacement ? "下滑替换 ↓" : "右滑接受 →"
+        if replacement {
+            layoutReplacement(preview.text, visible: screen.visibleFrame)
+            present(token: token, caret: caret, screen: screen, duration: duration)
+            return true
+        }
         let font = text.font!
         let hintHeight: CGFloat = 16
         let hintWidth = ceil((hint.stringValue as NSString).size(withAttributes: [.font: hint.font!]).width) + 2
@@ -121,6 +142,59 @@ final class ClipboardSuggestionPanel {
                             width: textWidth, height: textHeight)
         image.frame = NSRect(x: bodyX, y: 34 + (bodyHeight - imageSize.height) / 2,
                              width: imageSize.width, height: imageSize.height)
+        present(token: token, caret: caret, screen: screen, duration: duration)
+        return true
+    }
+
+    private func layoutReplacement(_ candidate: String, visible: NSRect) {
+        text.isHidden = true
+        image.isHidden = true
+        replacementScroll.isHidden = false
+        replacementBody.string = candidate
+        let container = replacementBody.textContainer!
+        let manager = replacementBody.layoutManager!
+        // Measure the same TextKit glyphs we display, including fallback fonts,
+        // emoji, wrapping and the last line. Coordinates are in screen points.
+        func bodyHeight(_ width: CGFloat) -> CGFloat {
+            container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+            manager.ensureLayout(for: container)
+            return ceil(manager.usedRect(for: container).maxY) + 2
+        }
+        let maxWidth = max(1, visible.width - 36)
+        let maxHeight = max(1, visible.height - 58)
+        let hintWidth = ceil(hint.intrinsicContentSize.width)
+        let naturalWidth = ceil((candidate as NSString).size(withAttributes: [.font: replacementBody.font!]).width) + 4
+        var width = min(maxWidth, max(hintWidth, min(440, naturalWidth)))
+        var height = bodyHeight(width)
+        if height > maxHeight && width < maxWidth {
+            width = maxWidth
+            height = bodyHeight(width)
+        }
+        let overflow = height > maxHeight
+        let viewport = min(height, maxHeight)
+        panel.setContentSize(NSSize(width: width + 24, height: viewport + 46))
+        hint.frame = NSRect(x: 12, y: 10, width: width, height: 16)
+        hint.stringValue = overflow ? "滚动看全文 · 下滑替换 ↓" : "下滑替换 ↓"
+        replacementScroll.hasVerticalScroller = overflow
+        replacementScroll.frame = NSRect(x: 12, y: 34, width: width, height: viewport)
+        replacementScroll.tile()
+        let documentWidth = max(1, replacementScroll.contentSize.width -
+            (overflow && replacementScroll.scrollerStyle == .overlay ? 16 : 0))
+        height = bodyHeight(documentWidth)
+        replacementBody.setFrameSize(NSSize(width: documentWidth, height: height))
+        replacementScroll.contentView.scroll(to: .zero)
+        replacementScroll.reflectScrolledClipView(replacementScroll.contentView)
+        panel.ignoresMouseEvents = !overflow
+    }
+
+    func handlesPreviewClick(_ event: NSEvent) -> Bool {
+        guard panel.isVisible, !panel.ignoresMouseEvents, event.type != .keyDown else { return false }
+        let point = event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
+        return panel.frame.contains(point)
+    }
+
+    private func present(token: String, caret: NSRect, screen: NSScreen, duration: TimeInterval?) {
+        let width = panel.frame.width, height = panel.frame.height
         let visible = screen.visibleFrame.insetBy(dx: 6, dy: 6)
         var y = caret.minY - height - InputPaletteStyle.caretGap
         if y < visible.minY { y = caret.maxY + InputPaletteStyle.caretGap }
@@ -131,14 +205,18 @@ final class ClipboardSuggestionPanel {
         if NSApp.isHidden { NSApp.unhideWithoutActivation() }
         panel.orderFrontRegardless()
         onVisibility?(token, true)
-        timer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in self?.hide() }
-        return true
+        if let duration {
+            timer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in self?.hide() }
+        }
     }
 
     func hide(token expected: String? = nil) {
         if let expected, expected != token { return }
         timer?.invalidate(); timer = nil
         panel.orderOut(nil)
+        panel.ignoresMouseEvents = true
+        replacementScroll.isHidden = true
+        replacementBody.string = ""
         text.stringValue = ""
         image.image = nil
         let previous = token; token = ""

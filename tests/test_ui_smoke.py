@@ -103,14 +103,14 @@ def test_macos_desktop_output_migrates_old_forced_off_setting(tmp_path, monkeypa
 @pytest.mark.parametrize(
     ("provider", "saved_model", "expected_model"),
     [
-        ("volcengine", "deepseek-v4-flash-260425", "deepseek-v4-1-flash-260910"),
+        ("volcengine", "deepseek-v4-flash-260425", "deepseek-v4-pro-ga-260813"),
         ("volcengine", "deepseek-v4-1-flash-260910", "deepseek-v4-1-flash-260910"),
         ("volcengine", "ep-custom-model", "ep-custom-model"),
         ("volcengine", "doubao-seed-2-0-lite-260215", "doubao-seed-2-0-lite-260215"),
         ("openai", "deepseek-v4-flash-260425", "deepseek-v4-flash-260425"),
     ],
 )
-def test_expired_ark_deepseek_model_migrates_on_startup(provider, saved_model, expected_model):
+def test_ark_deepseek_migrates_once_and_preserves_its_profile(provider, saved_model, expected_model):
     from PySide6.QtCore import QCoreApplication, QSettings
     from PySide6.QtWidgets import QApplication
     from proximic_ring.ui.controller import AppController
@@ -128,6 +128,12 @@ def test_expired_ark_deepseek_model_migrates_on_startup(provider, saved_model, e
 
     controller = AppController(inline_input_enabled=False)
     try:
+        if provider == "volcengine" and saved_model.startswith("deepseek"):
+            assert controller.llmProvider == "bailian"
+            assert controller.llmModel == "qwen3.8-max"
+            assert controller.llmApiKey == ""
+            assert controller.routedEditVariant == "original_structured_v1"
+            controller.llmProvider = "volcengine"
         assert controller.llmModel == expected_model
         assert controller._settings.value("llm/model") == expected_model
         assert controller.llmProvider == provider
@@ -414,6 +420,9 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
 
         def submit(self, request):
             submitted.append(request)
+
+        def prepare_context(self, capture, settings):
+            return capture
 
         def capture_context(self, target):
             return {"status": "empty", "messages": []}

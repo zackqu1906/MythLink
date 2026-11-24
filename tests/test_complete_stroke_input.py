@@ -304,7 +304,7 @@ def test_complete_window_short_curved_hook_candidates_toggle_and_examples(tmp_pa
         window.close();app.processEvents()
 
 
-def test_complete_window_reviews_clear_reuses_result_and_keeps_real_clear(tmp_path,monkeypatch):
+def test_complete_window_recognizes_fold_and_back_and_forth(tmp_path,monkeypatch):
     app,window=load_window(tmp_path,monkeypatch)
     cases=json.loads((Path(__file__).parent/'fixtures/clear_review_regression.json').read_text())['cases']
     fold=next(row for row in cases if row['sampleNumber']==57)
@@ -322,15 +322,15 @@ def test_complete_window_reviews_clear_reuses_result_and_keeps_real_clear(tmp_pa
         window.add_manual('p')
         window.accept_stroke(dict(points=fold['points']))
         assert window.code=='pz' and window.candidates==['九']
-        assert len(calls)==1 and '按笔画保留' in window.result.text()
+        assert len(calls)==1
         window.accept_stroke(dict(points=clear['points']))
-        assert not window.code and not window.evidence
-        assert window.editor.text()=='正文' and len(calls)==1
+        assert window.code=='pzz' and len(window.evidence)==3
+        assert window.editor.text()=='正文' and len(calls)==2
     finally:
         window.close();app.processEvents()
 
 
-def test_complete_window_failed_review_keeps_composition_without_retrying_model(tmp_path,monkeypatch):
+def test_complete_window_unrecognized_stroke_preserves_composition(tmp_path,monkeypatch):
     app,window=load_window(tmp_path,monkeypatch)
     cases=json.loads((Path(__file__).parent/'fixtures/clear_review_regression.json').read_text())['cases']
     fold=next(row for row in cases if row['sampleNumber']==57)
@@ -339,11 +339,10 @@ def test_complete_window_failed_review_keeps_composition_without_retrying_model(
         window.add_manual('p')
         def fail(points):
             calls.append(points)
-            raise RuntimeError('test failed review')
+            return None
         window.dictionary.recognize=fail
         window.accept_stroke(dict(points=fold['points']))
         assert window.code=='p' and len(window.evidence)==1 and len(calls)==1
-        assert '未清空' in window.result.text()
     finally:
         window.close();app.processEvents()
 
@@ -363,16 +362,15 @@ def test_complete_window_fuzzy_context_delete_commit_punctuation_and_clear(tmp_p
         assert window.candidates == ['小']
         window.fuzzy_toggle.setChecked(True)
         assert window.candidates[0] == '你'
-        # One left-right contact removes one pending stroke before committed text.
-        window.accept_stroke(dict(points=trace(*([(-2,0)]*20+[(2,0)]*20))))
+        window.delete_one()
         assert not window.code and window.editor.text() == '我爱'
         window.accept_stroke(dict(points=down))
         select_after_hold(window, (-1,-1))
         assert window.editor.text() == '我爱，' and not window.evidence
-        window.accept_stroke(dict(points=trace(*([(-2,0)]*20+[(2,0)]*20))))
+        window.delete_one()
         assert window.editor.text() == '我爱'
         window.add_manual('h')
-        window.accept_stroke(dict(points=trace(*([(-1,0)]*30+[(1,0)]*30+[(-1,0)]*30))))
+        window.clear()
         assert not window.code and window.editor.text() == '我爱'
         select_after_hold(window, (0,0))
         assert not window.code and window.editor.text() == '我爱你'
@@ -453,7 +451,7 @@ def test_hold_menu_feedback_six_page_wrap_center_and_old_prefix_is_handwriting(t
         window.close(); app.processEvents()
 
 
-def test_single_left_enters_handwriting_and_left_right_deletes_once(tmp_path, monkeypatch):
+def test_single_left_and_left_right_both_enter_handwriting(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QCheckBox, QLabel
     app, window = load_window(tmp_path, monkeypatch)
     try:
@@ -464,7 +462,7 @@ def test_single_left_enters_handwriting_and_left_right_deletes_once(tmp_path, mo
         window.accept_stroke(dict(points=trace(*([(-1,0)]*30))))
         assert window.code == 'hs' and window.editor.text() == '正文'
         window.accept_stroke(dict(points=trace(*([(-1,0)]*30+[(1,0)]*30))))
-        assert window.code == 'h' and len(window.evidence) == 1
+        assert window.code == 'hss' and len(window.evidence) == 3
         assert window.editor.text() == '正文'
         window.clear()
         # Separate left and right contacts are two handwriting strokes.
@@ -474,13 +472,12 @@ def test_single_left_enters_handwriting_and_left_right_deletes_once(tmp_path, mo
         window.clear()
         window.editor.setSelection(0, 2)
         window.accept_stroke(dict(points=trace(*([(-1,0)]*30+[(1,0)]*30))))
-        assert window.editor.text() == ''
+        assert window.editor.text() == '正文' and window.code == 's'
         assert not any('删除语境' in box.text() for box in window.findChildren(QCheckBox))
-        assert any('左→右' in label.text() for label in window.findChildren(QLabel))
+        assert not any('左→右' in label.text() for label in window.findChildren(QLabel))
         window.log.flush()
         events = [json.loads(line) for line in window.log_path.read_text(encoding='utf-8').splitlines()]
-        assert sum(event.get('kind') == 'delete_one' for event in events) == 2
-        assert any(event.get('deletionSource') == 'left-right-geometric-v3' for event in events)
+        assert not any(event.get('kind') == 'delete_one' for event in events)
     finally:
         window.close(); app.processEvents()
 

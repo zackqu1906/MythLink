@@ -114,7 +114,7 @@ def verify_history(bridge, expect, scenario):
     return expected_docs, redo_docs
 
 
-def verify_retry_edit(bridge, expect, sequence):
+def verify_retry_edit(bridge, expect, sequence, *, system=False, direct=False, receipt_first=False, switch_client=False):
     client = expect("state", ready=True)["client_id"]
     sentence = "source"
 
@@ -127,8 +127,8 @@ def verify_retry_edit(bridge, expect, sequence):
     command("update", text="原文", final=True)
     expect("settled", phase="dictated", utterance_id=sentence)
     sentence = "edit-instruction"
-    command("begin")
-    expect("state", phase="listening", utterance_id=sentence)
+    command("begin", system_undo_trial=system, host_posts_undo=direct)
+    listening = expect("state", phase="listening", utterance_id=sentence)
     command("update", text="扩写", final=False)
     command("convert")
     command("update", text="扩写", final=True)
@@ -136,29 +136,86 @@ def verify_retry_edit(bridge, expect, sequence):
     assert first["original"] == "原文" and first["instruction"] == "扩写" and not first["retry_edit"]
     command("edit_result", text="第一次结果", revision=first["revision"])
     expect("settled", phase="edited", utterance_id=sentence)
-    command("cancel")
-    settled = expect("settled", phase="dictated", utterance_id=sentence)
-    command("suspend_input", token="retry-return", revision=settled["revision"])
-    expect("input_suspended", success=True, restorable=True)
-    bridge.send(dict(type="test_reactivate", change="none"))
-    expect("state", ready=False)
-    client = expect("state", ready=True)["client_id"]
-    command("resume_input", token="retry-return")
-    state = expect("input_resumed", success=True)["state"]
+    if direct:
+        tag = listening["host_undo_tag"]
+        assert tag > 0
+        if receipt_first:
+            command("system_undo_posted", event_tag=tag, error="")
+        assert bridge.send(dict(type="test_local_key", command="system_undo", stripped=True))
+        if not receipt_first:
+            command("system_undo_posted", event_tag=tag, error="")
+    else:
+        command("cancel")
+    if system:
+        state = expect("state", phase="undone", can_retry_edit=True, system_undo_trial=True)
+        assert state["undo_history_depth"] == 0 and state["can_system_undo"]
+        if direct and not switch_client:
+            request = expect("preview_undo_caret", utterance_id=sentence, revision=state["revision"])
+            assert request["host_undo_tag"] == tag
+            assert bridge.send(dict(type="test_collapse_preview", event_tag=request["event_tag"]))
+    else:
+        settled = expect("settled", phase="dictated", utterance_id=sentence)
+        command("suspend_input", token="retry-return", revision=settled["revision"])
+        expect("input_suspended", success=True, restorable=True)
+        bridge.send(dict(type="test_reactivate", change="none"))
+        expect("state", ready=False)
+        client = expect("state", ready=True)["client_id"]
+        command("resume_input", token="retry-return")
+        state = expect("input_resumed", success=True)["state"]
     assert state["can_retry_edit"] and state["edit_retry_version"] == 1
     assert state["history_action_mode"] == "retry" and state["retry_source_utterance_id"] == sentence
+    if switch_client:
+        # The second editor has identical text, caret and bundle within the
+        # same process. Only its input-client activation distinguishes it.
+        assert bridge.send(dict(type="test_reactivate", change="client"))
+        expect("state", ready=False)
+        next_state = expect("state", ready=True)
+        assert next_state["client_id"] != client and next_state["application"] == state["application"]
+        assert next_state["host_undo_tag"] == next_state["undo_history_depth"] == 0
+        assert not next_state["can_system_undo"] and not next_state["can_retry_edit"]
+        command("system_undo_posted", event_tag=tag, error="")
+        command("retry_edit")
+        return "原文扩写"
     for failure in (True, False):
         command("retry_edit")
         retry = expect("edit_requested", utterance_id=sentence)
         assert retry["retry_edit"] and retry["source_utterance_id"] == sentence
         assert (retry["original"], retry["instruction"]) == (first["original"], first["instruction"])
         assert retry["revision"] > first["revision"]
-        if not failure:
+        if not failure and not direct:
             # Switching mode must not cancel an already submitted model request.
             bridge.send(dict(type="configure", history_action_mode="undo"))
         command("edit_result", text="第二次结果", revision=retry["revision"], error="模型超时" if failure else "")
         expect("settled", phase="dictated" if failure else "edited", utterance_id=sentence)
+    if direct:
+        assert bridge.send(dict(type="test_local_key", command="system_undo", stripped=True))
+        command("system_undo_posted", event_tag=tag, error="")
+        second = expect("state", phase="undone", can_retry_edit=True)
+        request = expect("preview_undo_caret", utterance_id=sentence, revision=second["revision"])
+        assert second["revision"] > state["revision"]
+        assert bridge.send(dict(type="test_collapse_preview", event_tag=request["event_tag"]))
+        return "原文扩写"
     return "第二次结果"
+
+
+def verify_preview_undo(bridge, expect):
+    client = expect("state", ready=True)["client_id"]
+    def send(kind, seq, **fields):
+        assert bridge.send(dict(type=kind, client_id=client, utterance_id="preview", seq=seq, **fields))
+    send("begin", 1, system_undo_trial=True, host_posts_undo=True)
+    tag = expect("state", phase="listening")["host_undo_tag"]
+    send("update", 2, text="明天带🍎", final=True)
+    expect("settled", phase="dictated")
+    assert bridge.send({"type": "test_apply_preview"})
+    expect("state", phase="dictated", polished=True)
+    # The host can acknowledge delivery before the editor runs undo.
+    send("system_undo_posted", 3, event_tag=tag, error="")
+    expect("state", phase="undone")
+    assert bridge.send(dict(type="test_local_key", command="system_undo", stripped=True))
+    request = expect("preview_undo_caret", utterance_id="preview", client_id=client)
+    assert request["host_undo_tag"] == tag
+    assert bridge.send(dict(type="test_collapse_preview", event_tag=request["event_tag"]))
+    return "明天带🍎"
 
 
 def verify_return_undo(binary, change):
@@ -172,7 +229,7 @@ def verify_return_undo(binary, change):
             try:
                 while time.monotonic() < deadline:
                     event = replies.get(timeout=max(0, deadline - time.monotonic()))
-                    if change == "retry-edit" and event["type"] == "wechat_key":
+                    if (change == "retry-edit" or change.startswith("system-retry")) and event["type"] == "wechat_key":
                         bridge.send(dict(type="test_local_key", command=event["command"], count=event["count"]))
                         retry_sequence[0] += 1
                         bridge.send(dict(type="wechat_key_result", client_id=event["client_id"],
@@ -189,12 +246,19 @@ def verify_return_undo(binary, change):
         bridge = IMEBridge(replies.put, path=Path(directory) / "bridge.sock")
         bridge.start()
         try:
-            with subprocess.Popen([binary, "--return-ipc"], stdout=subprocess.PIPE, text=True,
+            with_suffix = change == "system-retry-direct"
+            with subprocess.Popen([binary, "--return-ipc"] + (["--wechat"] if change.endswith("-wechat") else [])
+                                  + (["--with-suffix"] if with_suffix else []), stdout=subprocess.PIPE, text=True,
                                   env={**os.environ, "PROXIMIC_IME_SOCKET": str(bridge.path)}) as process:
                 try:
-                    if change == "retry-edit":
+                    if change == "preview-undo":
                         expected_docs = None
-                        expected = verify_retry_edit(bridge, expect, retry_sequence)
+                        expected = verify_preview_undo(bridge, expect)
+                    elif change == "retry-edit" or change.startswith("system-retry"):
+                        expected_docs = None
+                        expected = verify_retry_edit(bridge, expect, retry_sequence, system=change.startswith("system-retry"),
+                                                     direct="direct" in change, receipt_first=change.endswith("-wechat"),
+                                                     switch_client=change.endswith("-switch"))
                     elif change.startswith("history-"):
                         expected_docs, redo_docs = verify_history(bridge, expect, change)
                         expected = redo_docs[-1]
@@ -203,6 +267,17 @@ def verify_return_undo(binary, change):
                         expected = verify_single_undo(bridge, expect, change)
                     bridge.send(dict(type="test_exit"))
                     stdout, _ = process.communicate(timeout=3)
+                    if change == "preview-undo":
+                        assert stdout.splitlines().count("PREVIEW_UNDO_CARET=5,0") == 1, stdout
+                    if change.startswith("system-retry"):
+                        repeated = "direct" in change and not change.endswith("-switch")
+                        count = 2 if repeated else 1
+                        suffix = "🍎后缀" if with_suffix else ""
+                        expected += suffix
+                        assert stdout.splitlines().count("LOCAL_KEY=system_undo") == count, stdout
+                        assert stdout.splitlines().count("SYSTEM_UNDO_TEXT=原文扩写" + suffix) == count, stdout
+                        if repeated:
+                            assert stdout.splitlines().count("PREVIEW_UNDO_CARET=4,0") == count, stdout
                     if expected_docs is not None:
                         assert "LOCAL_KEY=select_all" not in stdout.splitlines(), stdout
                         assert "LOCAL_KEY=caret_from_end" not in stdout.splitlines(), stdout
@@ -284,7 +359,7 @@ def main() -> int:
                 process.terminate()
                 process.communicate(timeout=3)
     if len(sys.argv) > 2:
-        for change in ("none", "client", "text", "caret", "history-same", "history-wrong-token", "history-edited", "retry-edit"):
+        for change in ("none", "client", "text", "caret", "history-same", "history-wrong-token", "history-edited", "retry-edit", "system-retry", "system-retry-wechat", "system-retry-direct", "system-retry-direct-wechat", "system-retry-direct-switch", "preview-undo"):
             verify_return_undo(sys.argv[2], change)
     return 0
 

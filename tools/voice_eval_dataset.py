@@ -90,8 +90,18 @@ def validate_master(data):
             labels = c['labels']
             require(set(labels) == {'intent', 'edit_tasks', 'fine_edit_tasks'}, 'Unexpected label fields')
             intent, tasks, fine = (labels[k] for k in ('intent', 'edit_tasks', 'fine_edit_tasks'))
-            if sequence:
-                require(intent is None and tasks is None and fine is None, 'Sequences cannot carry single-turn labels')
+            scope = c.get('evaluation_scope')
+            require(scope in (None, 'asr_final'), 'Unknown evaluation scope')
+            preprocessor_only = scope == 'asr_final'
+            if preprocessor_only:
+                contracts = c['special_annotations'].get('asr_intent_recovery', [])
+                require(not sequence and 'asr_intent_recovery' in c['special_tags']
+                        and isinstance(contracts, list) and contracts, 'Missing ASR recovery contracts')
+                for contract in contracts:
+                    require(contract['kind'] in ('修复', '保护', '观察') and contract['criterion']
+                            and contract['id'] and contract['gold'], 'Invalid ASR recovery contract')
+            if sequence or preprocessor_only:
+                require(intent is None and tasks is None and fine is None, 'Case has no downstream routing labels')
             else:
                 require(intent in ('dictation', 'edit'), 'Missing binary label')
                 require(string_list(tasks) and set(tasks) <= set(TASKS), 'Invalid six-task labels')
@@ -105,6 +115,8 @@ def validate_master(data):
             require(set(applicable) == set(PURPOSES) and all(type(x) is bool for x in applicable.values()), 'Invalid applicability flags')
             expected_flags = {'binary': not sequence, 'six_class': not sequence and intent == 'edit',
                               'editing': sequence or intent == 'edit', 'fine_22': bool(fine)}
+            if preprocessor_only:
+                expected_flags = dict.fromkeys(PURPOSES, False)
             require(applicable == expected_flags, 'Applicability conflicts with labels/kind')
             require(set(c['exclusion_reasons']) == {p for p in PURPOSES if not applicable[p]}, 'Every disabled task needs an exclusion reason')
             require(all(isinstance(s, str) and s.strip() for s in c['exclusion_reasons'].values()), 'Empty exclusion reason')
@@ -173,10 +185,11 @@ def resolve_tag(data, tag):
     return matches[0]
 
 
-def select_cases(data, *, tasks=(), tags=(), exclude_tags=(), intent=None, kind=None,
+def select_cases(data, *, tasks=(), tags=(), any_tags=(), exclude_tags=(), intent=None, kind=None,
                  split=None, clarification_role=None, ids=(), source=None):
     require(set(tasks) <= set(PURPOSES), 'Unknown evaluation task')
     tags = {resolve_tag(data, t) for t in tags}
+    any_tags = {resolve_tag(data, t) for t in any_tags}
     excluded = {resolve_tag(data, t) for t in exclude_tags}
     require(not tags & excluded, 'A tag cannot be required and excluded')
     require(intent in (None, 'dictation', 'edit'), 'Unknown intent')
@@ -189,6 +202,7 @@ def select_cases(data, *, tasks=(), tags=(), exclude_tags=(), intent=None, kind=
         require(any(p['file'] == source for c in data['cases'] for p in c['provenance']), 'Unknown source path')
     return [c for c in data['cases'] if all(c['applicability'][p] for p in tasks)
             and tags <= set(c['special_tags']) and not excluded & set(c['special_tags'])
+            and (not any_tags or any_tags.intersection(c['special_tags']))
             and (intent is None or c['labels']['intent'] == intent)
             and (kind is None or c['kind'] == kind) and (split is None or c['split'] == split)
             and (clarification_role is None or c['special_annotations']['character_clarification']['role'] == clarification_role)
@@ -210,7 +224,7 @@ def model_input(case, step=0, previous_output=None):
 
 def summary(cases):
     return {'cases': len(cases), 'applicability': {p: sum(c['applicability'][p] for c in cases) for p in PURPOSES},
-            'intent': dict(Counter(c['labels']['intent'] or 'sequence' for c in cases)),
+            'intent': dict(Counter(c['labels']['intent'] or c.get('evaluation_scope') or 'sequence' for c in cases)),
             'kind': dict(Counter(c['kind'] for c in cases)),
             'edit_tasks': dict(Counter(t for c in cases for t in c['labels']['edit_tasks'] or [])),
             'special_tags': dict(Counter(t for c in cases for t in c['special_tags'])),
@@ -237,6 +251,7 @@ def legacy_cases(cases, output_format):
         if 'saved_context' in inp:
             row['saved_context'] = inp['saved_context']
         if output_format == 'routing':
+            require(c['applicability']['binary'], 'Case has no downstream routing labels')
             row['expected'] = {'task': c['labels']['intent'], 'tasks': c['labels']['edit_tasks']}
         else:
             require(c['applicability']['editing'], 'Dictation cannot be exported for editing')
@@ -318,6 +333,7 @@ def main(argv=None):
     export = sub.add_parser('export')
     export.add_argument('--task', dest='tasks', action='append', choices=PURPOSES, default=[])
     export.add_argument('--tag', dest='tags', action='append', default=[])
+    export.add_argument('--any-tag', dest='any_tags', action='append', default=[])
     export.add_argument('--exclude-tag', dest='exclude_tags', action='append', default=[])
     export.add_argument('--intent', choices=['dictation', 'edit'])
     export.add_argument('--kind', choices=['single', 'sequence'])
@@ -340,7 +356,7 @@ def main(argv=None):
         if args.command in ('validate', 'stats'):
             print(json.dumps(summary(data['cases']), ensure_ascii=False, indent=2))
         elif args.command == 'export':
-            filters = {k: getattr(args, k) for k in ('tasks', 'tags', 'exclude_tags', 'intent', 'kind', 'split', 'clarification_role', 'ids', 'source')}
+            filters = {k: getattr(args, k) for k in ('tasks', 'tags', 'any_tags', 'exclude_tags', 'intent', 'kind', 'split', 'clarification_role', 'ids', 'source')}
             doc = subset_document(data, filters)
             protected = {args.master.resolve(), DEFAULT_SUBSETS.resolve(), *(ROOT/s['file'] for s in data['sources'])}
             require(args.output.resolve() not in protected, 'Export cannot overwrite master or historical sources')

@@ -16,7 +16,8 @@ class ASRBackendSettings:
     model: str | None = None
     device: str = "cuda:0"
     language: str = "auto"
-    options: dict[str, str] = field(default_factory=dict)
+    # Online backends receive credentials through their private options.
+    options: dict[str, str] = field(default_factory=dict, repr=False)
     status_callback: Callable[[str], None] | None = field(
         default=None, compare=False, repr=False
     )

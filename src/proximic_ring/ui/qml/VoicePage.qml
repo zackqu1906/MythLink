@@ -378,7 +378,7 @@ UiScrollView {
                                 onTriggered: page.controller.voiceHistoryExport.export()
                             }
                             UiMenuItem { objectName: "openDataDirectoryButton"; text: "打开数据文件夹"; onTriggered: page.controller.openDataDirectory() }
-                            UiMenuItem { objectName: "clearVoiceHistoryButton"; destructive: true; text: "清空全部语音记录"; enabled: page.controller.voiceHistoryEntries.length > 0; onTriggered: clearHistoryDialog.open() }
+                            UiMenuItem { objectName: "clearVoiceHistoryButton"; destructive: true; text: "清空全部语音记录"; enabled: page.controller.voiceHistoryCount > 0; onTriggered: clearHistoryDialog.open() }
                         }
                     }
                 }
@@ -392,7 +392,7 @@ UiScrollView {
                     Label {
                         objectName: "voiceHistoryCount"
                         Layout.fillWidth: true
-                        text: page.historyFiltered ? "找到 " + voiceHistoryList.count + " 条 · 共 " + page.controller.voiceHistoryEntries.length + " 条" : ""
+                        text: page.historyFiltered ? "找到 " + voiceHistoryList.count + " 条 · 共 " + page.controller.voiceHistoryCount + " 条" : ""
                         color: historyTheme.muted; font.family: historyTheme.family; font.pixelSize: historyTheme.detailSize
                     }
                 }
@@ -428,12 +428,12 @@ UiScrollView {
                         Label {
                             objectName: "voiceHistoryEmptyTitle"
                             Layout.alignment: Qt.AlignHCenter
-                            text: page.controller.voiceHistoryEntries.length > 0 ? "没有匹配的记录" : "还没有语音记录"
+                            text: page.controller.voiceHistoryCount > 0 ? "没有匹配的记录" : "还没有语音记录"
                             color: theme.text; font.pixelSize: 15
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: page.controller.voiceHistoryEntries.length > 0 ? "换个关键词，或重置筛选条件。" : "完成一次听写或编辑后，文字与录音会保存在这里。"
+                            text: page.controller.voiceHistoryCount > 0 ? "换个关键词，或重置筛选条件。" : "完成一次听写或编辑后，文字与录音会保存在这里。"
                             color: theme.muted; font.pixelSize: 12; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
                         }
                     }

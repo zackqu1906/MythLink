@@ -1,14 +1,8 @@
 """Manual gestures + one-call edit routing. Never submits a Clef request."""
-from ...text_processing.model import INPUT_MODE_DICTATION, INPUT_MODE_EDIT, INPUT_ROUTING_ROUTED_EDIT, ROUTED_EDIT_BOUNDARY
+from ...text_processing.model import INPUT_MODE_DICTATION, INPUT_MODE_EDIT, INPUT_ROUTING_ROUTED_EDIT
 
 
 class RoutedEditVoiceMixin:
-    def _saved_edit_context(self, variant):
-        # Use the current slot at submission; later copies cannot mutate an
-        # in-flight request or its retry. Live OCR remains pinned to voice start.
-        return (self._ring_gestures.screenshot.saved_context_snapshot()
-                if variant == ROUTED_EDIT_BOUNDARY else None)
-
     def _finish_routed_edit_utterance(self):
         if self._utterance_active and self._latest_asr_session_id:
             self._session_input_modes[self._latest_asr_session_id] = INPUT_MODE_EDIT
@@ -22,7 +16,7 @@ class RoutedEditVoiceMixin:
         variant = capture.get("routed_edit_variant", self._routed_edit_variant)
         return {"routing_mode": INPUT_ROUTING_ROUTED_EDIT,
                 "screen_context": capture.get("model_context", {}), "force_llm": True,
-                "saved_context": self._saved_edit_context(variant),
+                "saved_context": self._ring_gestures.screenshot.saved_context_snapshot(),
                 "routed_edit_variant": variant}
 
     def _submit_routed_voice(self, text, session_id, mode, target):
@@ -48,6 +42,6 @@ class RoutedEditVoiceMixin:
         variant = capture.get("routed_edit_variant", self._routed_edit_variant)
         self._submit_text_processing(text, session_id, INPUT_MODE_EDIT, target=target,
             snapshot=snapshot, target_text=snapshot.text, screen_context=capture.get("model_context", {}),
-            saved_context=self._saved_edit_context(variant),
+            saved_context=self._ring_gestures.screenshot.saved_context_snapshot(),
             routing_mode=INPUT_ROUTING_ROUTED_EDIT, force_llm=True,
             routed_edit_variant=variant)

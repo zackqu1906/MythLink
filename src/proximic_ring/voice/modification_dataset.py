@@ -409,6 +409,24 @@ class ModificationDatasetCollector:
         else:
             completed(context)
 
+    def record_dictation_preview(self, interaction_id: str, token: str, fields: dict) -> None:
+        """Merge receipt and generation events into their original utterance only."""
+        with self._lock:
+            if not interaction_id or interaction_id in self._deleted_interactions:
+                return
+            path = self._interaction_path(interaction_id)
+            if not path.is_file():
+                return
+            record = self._interaction_data(interaction_id)
+            preview = record.setdefault("dictation_preview", {"token": token, "started_at": _utc_now()})
+            if preview["token"] != token:
+                return
+            now = _utc_now()
+            preview.update(fields, updated_at=now)
+            record["updated_at"] = now
+            self._write_json(path, record)
+            self._publish_history_locked(interaction_id, force=True)
+
     def record_input_context(self, interaction_id: str, context: dict) -> None:
         """Attach a late verified BEGIN snapshot to its already bound record."""
         with self._lock:
@@ -479,7 +497,8 @@ class ModificationDatasetCollector:
                 self._publish_history_locked(interaction_id)
             self._prune_pending_locked()
 
-    def record_asr_update(self, update) -> None:
+    def record_asr_update(self, update, *, defer_history=False) -> dict | None:
+        """Commit the update; a deferred history entry is published by the caller."""
         session_id = int(getattr(update, "session_id", 0))
         if session_id <= 0:
             return
@@ -505,9 +524,9 @@ class ModificationDatasetCollector:
                 self._update_final_asr_locked(interaction_id, row)
             elif row["kind"] == "final":
                 interaction_id = self._ensure_interaction_locked(session_id)
-            if interaction_id is not None and row["kind"] == "final":
-                self._publish_history_locked(interaction_id)
             self._prune_pending_locked()
+            if interaction_id is not None and row["kind"] == "final":
+                return self._publish_history_locked(interaction_id, defer=defer_history)
 
     def record_final(self, update) -> None:
         """VoiceHistory-compatible entry point for a final ASR update."""
@@ -1923,8 +1942,8 @@ class ModificationDatasetCollector:
         self._write_json(self._interaction_path(interaction_id), record)
 
     def _publish_history_locked(
-        self, interaction_id: str, *, force: bool = False
-    ) -> None:
+        self, interaction_id: str, *, force: bool = False, defer: bool = False
+    ) -> dict | None:
         if interaction_id in self._deleted_interactions:
             return
         if interaction_id in self._published_interactions and not force:
@@ -1938,6 +1957,8 @@ class ModificationDatasetCollector:
         if entry is None:
             return
         self._published_interactions.add(interaction_id)
+        if defer:
+            return entry
         if self._on_saved is not None:
             self._on_saved(entry)
 
@@ -2044,6 +2065,7 @@ class ModificationDatasetCollector:
             ),
             "preferenceEligible": preference_eligible,
             "automaticDetails": automatic_history_details(interaction_dir, record),
+            "dictationPreviewUpdatedAt": record.get("dictation_preview", {}).get("updated_at", ""),
         }
 
     @staticmethod

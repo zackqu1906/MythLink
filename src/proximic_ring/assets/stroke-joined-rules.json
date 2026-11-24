@@ -4,14 +4,23 @@
   "rules": [
     {
       "id": "slanted-roof", "family": "fan", "title": "厂形／双撇起笔",
-      "forms": [{"component": "厂", "strokeCount": 2, "indices": [0, 1]}],
+      "forms": [{"component": "厂", "strokeCount": 2, "indices": [0, 1]},
+                {"component": "后", "strokeCount": 6, "indices": [0, 1]}],
       "codes": ["pp", "hp"], "templateSource": "collected",
-      "examples": ["反", "斤", "听", "新", "近", "所", "质", "盾"]
+      "examples": ["反", "斤", "听", "新", "近", "所", "质", "盾", "后", "逅", "垢"],
+      "referenceExamples": ["后", "逅", "垢"]
     },
     {
-      "id": "white-head", "family": "de", "title": "白部件起笔",
-      "forms": [{"component": "白", "strokeCount": 5, "indices": [0, 1]}],
-      "codes": ["ps"], "templateSource": "collected", "examples": ["白", "的", "拍", "怕"]
+      "id": "white-head", "family": "de", "title": "白、段起笔／页、而、面第二三笔",
+      "forms": [{"component": "白", "strokeCount": 5, "indices": [0, 1]},
+                {"component": "段", "strokeCount": 9, "indices": [0, 1]},
+                {"component": "页", "strokeCount": 6, "indices": [1, 2]},
+                {"component": "頁", "strokeCount": 9, "indices": [1, 2]},
+                {"component": "而", "strokeCount": 6, "indices": [1, 2]},
+                {"component": "面", "strokeCount": 9, "indices": [1, 2]}],
+      "codes": ["ps"], "templateSource": "collected",
+      "examples": ["白", "的", "拍", "怕", "段", "缎", "页", "顶", "颜", "頂", "而", "耐", "需", "面", "缅"],
+      "referenceExamples": ["段", "缎", "锻", "页", "顶", "颜", "頁", "頂", "而", "耐", "需", "面", "缅"]
     },
     {
       "id": "hooked-head", "family": "le-zi", "title": "了／子部件起笔",
@@ -28,6 +37,49 @@
       "forms": [{"component": "辶", "strokeCount": 3, "indices": [1, 2]}],
       "codes": ["zn"], "templateSource": "reference-component",
       "examples": ["过", "近", "这", "进", "远", "返"]
+    },
+    {
+      "id": "pie-horizontal", "family": "pie-horizontal", "title": "撇横连写",
+      "geometry": "pie-horizontal",
+      "codes": ["ph"], "templateSource": "reference-component",
+      "examples": ["千", "午", "牛", "禾", "毛", "手", "乍", "气", "乞", "作", "件", "汽", "笔"]
+    },
+    {
+      "id": "mouth-tail", "family": "mouth-tail", "title": "口部件末两笔连写",
+      "forms": [{"component": "口", "strokeCount": 3, "indices": [1, 2]}],
+      "codes": ["zh"], "templateSource": "reference-component",
+      "examples": ["口", "中", "只", "叫", "和", "吕", "品", "问"]
+    },
+    {
+      "id": "silk-whole", "family": "silk-whole", "title": "绞丝旁三笔一气写完",
+      "forms": [{"component": "纟", "strokeCount": 3, "indices": [0, 1, 2]}],
+      "codes": ["zzh"], "templateSource": "reference-component",
+      "examples": ["红", "约", "纪", "线", "经", "给", "绝", "辫"]
+    },
+    {
+      "id": "turning-head", "family": "turning-head", "title": "印、仰、氏的撇接竖提",
+      "forms": [{"component": "印", "strokeCount": 5, "indices": [0, 1]},
+                {"component": "卬", "strokeCount": 4, "indices": [0, 1]},
+                {"component": "氏", "strokeCount": 4, "indices": [0, 1]}],
+      "codes": ["pz"], "templateSource": "reference-component",
+      "examples": ["印", "卬", "仰", "迎", "抑", "氏", "纸", "低", "底"]
+    },
+    {
+      "id": "water-tail", "family": "water-tail", "title": "水形右侧撇捺连写",
+      "forms": [{"component": "水", "strokeCount": 4, "indices": [2, 3]},
+                {"component": "氺", "strokeCount": 5, "indices": [3, 4]},
+                {"component": "永", "strokeCount": 5, "indices": [3, 4]},
+                {"component": "函", "strokeCount": 8, "indices": [4, 5]},
+                {"component": "承", "strokeCount": 8, "indices": [6, 7]}],
+      "codes": ["pn"], "templateSource": "reference-component",
+      "examples": ["水", "泉", "尿", "淼", "永", "咏", "泰", "函", "涵", "菡", "承", "暴"]
+    },
+    {
+      "id": "wrap-head", "family": "wrap-head", "title": "包字头前两笔连写",
+      "forms": [{"component": "勹", "strokeCount": 2, "indices": [0, 1]},
+                {"component": "包", "strokeCount": 5, "indices": [0, 1]}],
+      "codes": ["pz"], "templateSource": "reference-component",
+      "examples": ["包", "抱", "胞", "苞", "勺", "句"]
     }
   ]
 }

@@ -6,10 +6,12 @@ struct ActionPanelAnchor {
     private var utteranceID: String?
     private var holding = false
     private(set) var caret: NSRect?
+    private var fallback: NSRect?
     private(set) var origin: NSPoint?
     private var heldSize: NSSize?
 
     var needsCaret: Bool { !holding || origin == nil }
+    var usingFallback: Bool { caret == nil && fallback != nil }
 
     mutating func update(utteranceID: String, editing: Bool, currentSize: NSSize) {
         if self.utteranceID != utteranceID {
@@ -29,9 +31,10 @@ struct ActionPanelAnchor {
         busy ? (heldSize ?? proposed) : proposed
     }
 
-    mutating func observe(_ next: NSRect?) -> NSRect? {
+    mutating func observe(_ next: NSRect?, fallback: NSRect? = nil) -> NSRect? {
         if needsCaret, let next { caret = next }
-        return caret
+        if self.fallback == nil { self.fallback = fallback }
+        return caret ?? self.fallback
     }
 
     mutating func place(_ proposed: NSPoint, size: NSSize) -> NSPoint {

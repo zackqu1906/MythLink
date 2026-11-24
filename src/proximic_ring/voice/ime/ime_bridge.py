@@ -13,11 +13,12 @@ import secrets
 import socket
 import stat
 import threading
+import time
 import uuid
 
 PROTOCOL = 1
 MAX_MESSAGE = 8 * 1024 * 1024
-STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared",
+STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_delete_result", "stroke_cleared", "stroke_ink_cleared",
                           "stroke_correction_state", "stroke_correction_requested", "stroke_correction_key"})
 SUSPENSION_REPLIES = frozenset({"input_suspended", "input_resumed"})
 
@@ -47,6 +48,9 @@ class IMEBridge:
         self._epoch = ""
         self._state = {}
         self._context_replies = {}
+        self._control_replies = {}
+        from .context_preparation import InputContextPreparation
+        self._context_preparation = InputContextPreparation(self)
 
     @property
     def connected(self):
@@ -200,11 +204,14 @@ class IMEBridge:
                 if not isinstance(message, dict) or message.get("epoch") != epoch:
                     continue
                 kind = message.get("type")
-                if kind not in {"state", "finish_audio", "edit_requested", "polish_requested", "interrupted", "settled", "pong", "wechat_key", "activation_recovery", "activation_trace", "clipboard_offer_state"} | STROKE_REPLIES | SUSPENSION_REPLIES:
+                if kind not in {"state", "finish_audio", "edit_requested", "polish_requested", "dictation_preview_requested", "dictation_preview_state", "preview_undo_caret", "interrupted", "settled", "pong", "wechat_key", "activation_recovery", "activation_trace", "clipboard_offer_state", "input_context_prepared"} | STROKE_REPLIES | SUSPENSION_REPLIES:
                     continue
                 with self._condition:
                     if self._connection is not connection:
                         break
+                    if kind == "input_context_prepared" and message.get("request_id") in self._control_replies:
+                        self._control_replies[message["request_id"]] = dict(message)
+                        self._condition.notify_all()
                     if message.get("type") == "state":
                         previous = self._state
                         same_client = previous.get("client_id") == message.get("client_id")
@@ -223,7 +230,7 @@ class IMEBridge:
                 if (not request_id or ui_probe
                         or kind in {"wechat_key", "activation_recovery"} | STROKE_REPLIES | SUSPENSION_REPLIES):
                     self._notify(message)
-        except (OSError, ValueError, TypeError):
+        except (EOFError, OSError, ValueError, TypeError):
             pass
         finally:
             with self._condition:
@@ -261,15 +268,32 @@ class IMEBridge:
 
     def _request_state(self, *, timeout, capture_context, require_ready=True):
         """Correlate a live IMK response; cached readiness is not focus proof."""
-        request_id = uuid.uuid4().hex
+        deadline = time.monotonic() + timeout
         with self._condition:
             epoch = self._epoch
             if not self._connection:
                 return None
-            self._context_replies[request_id] = None
-            self.send({"type": "ping", "request_id": request_id, "capture_context": capture_context})
-            self._condition.wait_for(lambda: self._context_replies.get(request_id) is not None or self._epoch != epoch, timeout)
-            state = self._context_replies.pop(request_id, None)
+            previous_client = self._state.get("client_id")
+
+            def activated():
+                return (self._state.get("lifecycle_event") == "activate" and self._state.get("ready")
+                        and self._state.get("client_id") and self._state["client_id"] != previous_client)
+
+            def query(*, wake_on_activation):
+                request_id = uuid.uuid4().hex
+                self._context_replies[request_id] = None
+                self.send({"type": "ping", "request_id": request_id, "capture_context": capture_context})
+                self._condition.wait_for(lambda: self._context_replies[request_id] is not None
+                                         or self._epoch != epoch or (wake_on_activation and activated()),
+                                         max(0, deadline - time.monotonic()))
+                return self._context_replies.pop(request_id)
+
+            state = query(wake_on_activation=not capture_context)
+            if (state is None and not capture_context and self._epoch == epoch
+                    and activated() and time.monotonic() < deadline):
+                # IMK may drop a ping during activation. Query the newly ready client
+                # once, with a new request ID and the original deadline.
+                state = query(wake_on_activation=False)
             if not state or self._epoch != epoch or (require_ready and not state.get("ready")):
                 return None
             if any(self._state.get(key) != state.get(key) for key in ("client_id", "utterance_id")):
@@ -282,7 +306,70 @@ class IMEBridge:
         if state is None:
             return None
         return {key: state.get(key) for key in
-                ("epoch", "client_id", "utterance_id", "application", "ready", "selection")}
+                ("epoch", "client_id", "utterance_id", "application", "ready", "selection", "context_key_supported")}
+
+    def refresh_input_context(self, origin, post_key, *, timeout=.12):
+        """Arm consumption before posting a key; await receipt or new activation.
+
+        Runs off the UI thread. Failure is not proof that the editor
+        cannot dictate; the caller must re-probe and retain unknown-range support.
+        """
+        deadline = time.monotonic() + min(timeout, .12)
+        request_id = uuid.uuid4().hex
+        tag = 0x504D00000000 | secrets.randbits(32)
+        with self._condition:
+            epoch = self._epoch
+            previous_client = self._state.get('client_id')
+            if not self._connection or self._closed or timeout <= 0:
+                return False
+            self._context_replies[request_id] = None
+            self._control_replies[request_id] = None
+            self.send(dict(type="prepare_input_context", request_id=request_id, event_tag=tag,
+                           application=origin[0], foreground_pid=origin[1]))
+        try:
+            with self._condition:
+                self._condition.wait_for(lambda: self._control_replies.get(request_id) is not None
+                                         or self._epoch != epoch or self._closed,
+                                         max(0, deadline - time.monotonic()))
+                armed = self._control_replies.get(request_id)
+                if (not armed or not armed.get("armed") or self._epoch != epoch or self._closed
+                        or time.monotonic() >= deadline):
+                    return False
+            # Never hold the transport lock across TIS main-queue reads or
+            # event delivery. The native event may immediately reply/reenter.
+            post_key(tag, timeout=max(0, deadline - time.monotonic()))
+            with self._condition:
+                def receipt():
+                    correlated = self._context_replies.get(request_id)
+                    if correlated is not None:
+                        return correlated
+                    # Some clients activate their text context on a function
+                    # key without forwarding that key to IMK handle(). A newly
+                    # prepared client is also a receipt; repeated cached state
+                    # from the old client is not. Focus is re-probed by caller.
+                    state = self._state
+                    if (state.get('client_id') and state['client_id'] != previous_client
+                            and state.get('ready') and state.get('application') == origin[0]):
+                        return state
+                    return None
+                self._condition.wait_for(lambda: receipt() is not None
+                                         or self._epoch != epoch or self._closed,
+                                         max(0, deadline - time.monotonic()))
+                state = receipt()
+                return bool(state and self._epoch == epoch and state.get("ready")
+                            and state.get("application") == origin[0] and state.get("client_id")
+                            and all(self._state.get(k) == state.get(k) for k in ("client_id", "utterance_id")))
+        finally:
+            with self._condition:
+                self._context_replies.pop(request_id, None)
+                self._control_replies.pop(request_id, None)
+                if self._epoch == epoch:
+                    self.send(dict(type="cancel_input_context", request_id=request_id))
+
+    def prepare_focus(self, origin, *, foreground, timeout=.35, known_state=None):
+        """Wake the input client while acquiring focus for a voice gesture."""
+        return self._context_preparation.prepare(origin, foreground=foreground, timeout=timeout,
+                                                 known_state=known_state)
 
     def gesture_target(self, *, timeout=0.2):
         """Return only live client identity, never editor contents, for routing."""
@@ -294,10 +381,19 @@ class IMEBridge:
         return tuple(str(state.get(key, "")) for key in
                      ("epoch", "client_id", "utterance_id", "application"))
 
-    def asr_context(self, *, timeout=0.35, max_chars=1600):
+    def asr_context(self, *, timeout=0.35, max_chars=1600, foreground=None):
         """Ask the active client for fresh context; never reuse another field."""
         unavailable = {"status": "unavailable", "source": "input_method", "reason": "input_method_not_ready"}
+        origin = foreground() if foreground is not None else None
+        with self._condition:
+            epoch = self._epoch
+            target = tuple(self._state.get(k) for k in ("client_id", "utterance_id", "application"))
+        if foreground is not None and (not origin or not target[0] or origin[0] != target[2]):
+            return {**unavailable, "reason": "input_context_target_changed"}
         state = self._request_state(timeout=timeout, capture_context=True)
+        if foreground is not None and (foreground() != origin or not state or state.get("epoch") != epoch
+                or tuple(state.get(k) for k in ("client_id", "utterance_id", "application")) != target):
+            return {**unavailable, "reason": "input_context_target_changed"}
         if (not state or not state.get("context_complete")
                 or not isinstance(state.get("original"), str)):
             return unavailable
@@ -305,7 +401,8 @@ class IMEBridge:
         original = state["original"]
         result = {"status": "captured" if original else "empty", "source": "input_method",
                   "source_char_count": len(original), "application": str(state.get("application", "")),
-                  "target_key": f"{epoch}:{state.get('client_id', '')}", "read_method": "IMKTextInput",
+                  "target_key": f"{epoch}:{state.get('client_id', '')}",
+                  "read_method": state.get("read_method", "IMKTextInput"),
                   "context_complete": True}
         if original:
             result["text"] = original[-max_chars:]

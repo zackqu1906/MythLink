@@ -5,6 +5,8 @@ import uuid
 
 from PySide6.QtCore import QObject, QTimer
 
+from ...voice.hotwords import STROKE_CONTEXT_CHARS
+
 
 class HandwritingCorrection(QObject):
     def __init__(self, touchpad):
@@ -28,6 +30,8 @@ class HandwritingCorrection(QObject):
         self.tp.changed.emit()
 
     def request(self):
+        if not self.tp.handwritingCorrectionActive:
+            return
         if self.tp._local_stroke_input:
             self.tp._commit_message = '请在目标文本框中使用修正'
         elif self.tp._code or self.tp._pending_stroke_commit:
@@ -37,7 +41,7 @@ class HandwritingCorrection(QObject):
         self.tp.changed.emit()
 
     def undo(self):
-        if (self.tp.handwritingCorrectionEnabled and self.tp.handwritingCorrectionCanUndo
+        if (self.tp.handwritingCorrectionCanUndo
                 and not self.tp._local_stroke_input and self.tp.strokeSession.phase == 'running'
                 and self.tp.strokeSession.allow_input()):
             self.inline.send_stroke('stroke_correction_undo')
@@ -71,12 +75,16 @@ class HandwritingCorrection(QObject):
                 self.inline.send_stroke('stroke_correction_key_result', request_id=request, error=error)
         elif kind == 'stroke_correction_state':
             self.state = message
+            context = message.get('context')
+            if self.tp.windowsInputPrototype and isinstance(context, str):
+                self.tp._stroke_context = context[-STROKE_CONTEXT_CHARS:]
+                self.tp._refresh_candidates()
             if message.get('message'):
                 self.tp._commit_message = message['message']
             self.tp.changed.emit()
         elif kind == 'stroke_correction_requested':
             request = message.get('request_id')
-            if not request or not self.tp.handwritingCorrectionEnabled:
+            if not request or not self.tp.handwritingCorrectionActive:
                 return
             if self.thread and self.thread.is_alive():
                 self.inline.send_stroke('stroke_correction_result', request_id=request,
@@ -108,7 +116,7 @@ class HandwritingCorrection(QObject):
             except Empty:
                 break
             if (job == self.job and job[0] == self.inline.stroke_target
-                    and self.tp.handwritingCorrectionEnabled and not self.tp._closed):
+                    and self.tp.handwritingCorrectionActive and not self.tp._closed):
                 self.job = None
                 self.inline.send_stroke('stroke_correction_result', request_id=job[1],
                                         original_text=fragment, error=error)

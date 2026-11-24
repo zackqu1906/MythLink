@@ -77,6 +77,36 @@ def test_worker_runs_raw2_and_forwards_only_two_finger_moves(trial):
     assert steps == [7]
 
 
+def test_expanded_punctuation_uses_the_standalone_grid(trial):
+    from PySide6.QtTest import QTest
+
+    app, _, window = trial
+    window.show()
+    app.processEvents()
+    points = [(0, 0), (0, -6), (0, -24)]
+    window.show_selection_state(two_finger_selection(points))
+    overlay = window.punctuation_overlay
+    assert overlay.slider.isVisible() and overlay.slider.progress == .5
+    points.extend([(0, -30), (-11, -30)])
+    window.show_selection_state(two_finger_selection(points))
+    QTest.qWait(250)
+    assert overlay.isVisible() and not overlay.slider.isVisible()
+    assert overlay.buttons['《'].isChecked()
+    window.accept_selection(dict(points=points, decision=two_finger_selection(points, finished=True)))
+    QTest.qWait(180)
+    assert window.editor.text() == '《' and not overlay.isVisible()
+
+    points = [(0, 0), (0, -30), (0, -16.5), (0, -10.5)]
+    window.show_selection_state(two_finger_selection(points))
+    QTest.qWait(240)
+    assert overlay.cancel_slider.isVisible() and overlay.cancel_slider.progress == .5
+    assert overlay.buttons['——'].isChecked()
+    window.show_selection_state(two_finger_selection(points + [(0, -4.5)]))
+    QTest.qWait(150)
+    assert not overlay.cancel_slider.isVisible()
+    assert window.direction_buttons['center'].property('directionActive')
+
+
 def test_two_finger_left_deletes_stroke_then_character_and_right_selects(trial):
     app, _, window = trial
     window.show(); app.processEvents()

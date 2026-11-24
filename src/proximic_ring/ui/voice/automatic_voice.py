@@ -120,7 +120,8 @@ class AutomaticVoiceMixin:
         request_id = self._text_request_id
         pending = AutomaticUtterance(self._automatic_generation, text, int(session_id), target,
                                     snapshot=snapshot, inline_key=self._automatic_key() if inline else (),
-                                    cleanup_dictation=self._automatic_dictation_cleanup_enabled)
+                                    cleanup_dictation=self._automatic_dictation_cleanup_enabled
+                                    and not (inline and getattr(self._inline_input, "automatic_polish", False)))
         self._automatic_routes[request_id] = pending
         self._pending_mode_routes.add(request_id)
         request = InputModeRoutingRequest(request_id, int(session_id), text,

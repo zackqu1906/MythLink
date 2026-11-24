@@ -87,6 +87,7 @@ MESSAGES = {
     'input_method_no_focus': '当前没有可用的文本输入焦点',
     'input_method_timeout': '输入焦点确认超时，请重新点入文本框后重试',
     'input_method_not_ready': '输入法尚未就绪，请重新点入文本框后重试',
+    'windows_tsf_not_selected': '请点入目标文本框，再用 Win+空格选中 Mythlink 输入法',
     'input_method_activation_failed': '输入法切换未完成，请重新开始',
     'input_method_source_shortcut_unavailable': '请在系统键盘快捷键中启用“选择输入菜单中的下一个输入源”',
     'input_method_source_event_permission': '请允许 Mythlink 的系统事件投递权限后重试',

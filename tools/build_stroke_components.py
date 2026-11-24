@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 from build_left_dot_annotations import parse_ids
-from proximic_ring.touchpad.stroke.stroke_components import RULES, ENCLOSURES
+from proximic_ring.touchpad.stroke.stroke_components import RULES, ENCLOSURES, EMBEDDED_ONLY
 from proximic_ring.touchpad.stroke.stroke_glyphs import glyph_library
 
 
@@ -23,7 +24,7 @@ def occurrences(character, code, dictionary, diagnostics):
             return
         # 匸 is explicitly an enclosure form of the same scheduling rule.
         component = '匚' if char == '匸' else char
-        if component in RULES:
+        if component in RULES and (seen or component not in EMBEDDED_ONLY):
             expected = RULES[component][0]
             if ''.join(code[i] for i in indices) != expected:
                 diagnostics['code_mismatch:'+component] += 1
@@ -77,14 +78,33 @@ def build(source):
     dictionary = {row['character']: row for line in raw.decode('utf-8').splitlines()
                   if (row := json.loads(line))}
     diagnostics, counts, characters = Counter(), Counter(), {}
-    for char, glyph in glyph_library().items():
-        code = glyph.get('code', '')
-        if not code or len(code) != len(glyph['paths']):
-            continue
+    # A character without an aligned display glyph can still use a same-length
+    # dictionary spelling if the decomposition identifies its component roles.
+    with gzip.open(ROOT/'src/proximic_ring/assets/strokes.json.gz', 'rt', encoding='utf-8') as stream:
+        entries = json.load(stream)['entries']
+    fallback = {}
+    for char, code, sources in entries:
+        if len(code) == len(dictionary.get(char, {}).get('matches', ())):
+            fallback.setdefault(char, {})[code] = sources
+    aligned = {char: glyph['code'] for char, glyph in glyph_library().items()
+               if glyph.get('code') and len(glyph['code']) == len(glyph['paths'])}
+    for char, code in aligned.items():
         components = occurrences(char, code, dictionary, diagnostics)
         if components:
             characters[char] = dict(code=code, components=components)
             counts.update(row['component'] for row in components)
+    for char in sorted(fallback.keys() - aligned.keys()):
+        candidates = []
+        for code, sources in fallback[char].items():
+            components = occurrences(char, code, dictionary, Counter())
+            if components:
+                candidates.append(((len(components), sources), code, components))
+        candidates.sort(reverse=True, key=lambda item: item[0])
+        if not candidates or (len(candidates) > 1 and candidates[0][0] == candidates[1][0]):
+            continue
+        _, code, components = candidates[0]
+        characters[char] = dict(code=code, components=components)
+        counts.update(row['component'] for row in components)
     return dict(schema='ring-stroke-components', version=1,
                 rules={key: [code, [list(p) for p in orders]] for key, (code, orders) in RULES.items()},
                 source=dict(url='https://raw.githubusercontent.com/skishore/makemeahanzi/master/dictionary.txt',

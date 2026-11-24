@@ -60,7 +60,7 @@ from proximic_ring.text_processing import (  # noqa: E402
     DEFAULT_ARK_API_KEY_ENV,
     DEFAULT_ARK_BASE_URL,
     DEFAULT_ARK_DEEPSEEK_MODEL,
-    DEFAULT_ARK_MODEL,
+    DEFAULT_ARK_DOUBAO_MODEL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_CONTEXT_SIZE,
     DEFAULT_LOCAL_MODEL,
@@ -165,7 +165,7 @@ def _provider_label(provider: str) -> str:
         PROVIDER_LOCAL: "本地 Qwen",
         PROVIDER_OPENAI: "OpenAI-compatible API",
         PROVIDER_DOUBAO: "豆包 Seed 2.0 Lite",
-        PROVIDER_DEEPSEEK: "DeepSeek V4.1 Flash",
+        PROVIDER_DEEPSEEK: "DeepSeek V4 Pro",
         PROVIDER_COMPARE: "本地 Qwen / 豆包 / DeepSeek 对比",
     }[provider]
 
@@ -289,7 +289,7 @@ def _settings_for(args: argparse.Namespace, provider: str) -> LLMSettings:
         )
     if provider in {PROVIDER_DOUBAO, PROVIDER_DEEPSEEK}:
         default_model = (
-            DEFAULT_ARK_MODEL
+            DEFAULT_ARK_DOUBAO_MODEL
             if provider == PROVIDER_DOUBAO
             else DEFAULT_ARK_DEEPSEEK_MODEL
         )

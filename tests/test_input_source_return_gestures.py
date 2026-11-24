@@ -103,6 +103,7 @@ def test_nontext_binding_still_runs_after_history_end(scope, request: pytest.Fix
 @pytest.mark.parametrize("gesture,command", [("swipe-left", "cancel"), ("swipe-down", "polish"), ("swipe-right", "redo"), ("swipe-right", "retry_edit")])
 def test_external_gesture_captures_resumed_sentence(route, monkeypatch, gesture, command):
     controller, service, inline, _, sent, messages, emit = route
+    inline.set_automatic_polish(False)  # Exercise the manual polish binding.
     inline.configure(history_action_mode="retry" if command == "retry_edit" else "next")
     inline._view.update(phase="idle", ready=False)
     finished = []
@@ -126,6 +127,7 @@ def test_external_gesture_captures_resumed_sentence(route, monkeypatch, gesture,
 @pytest.mark.parametrize("gesture", ["swipe-left", "swipe-down", "swipe-right"])
 def test_failed_resume_blocks_input_and_external_fallback(route, monkeypatch, gesture):
     _, service, inline, backend, sent, messages, emit = route
+    inline.set_automatic_polish(False)  # Exercise the manual polish binding.
     inline._view.update(phase="idle", ready=False)
     backend.target = replace(backend.target, input_context="nontext")
     monkeypatch.setattr(inline, "resume_gesture_failure", lambda: "input_method_resume_field_changed")
