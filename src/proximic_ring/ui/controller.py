@@ -538,39 +538,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._microphone_devices: list[dict] = []
         self._microphone_scan_busy = False
         self._microphone_devices_error = ""
-        try:
-            self._gesture_bindings = GestureBindings.from_json(
-                self._settings.value("input/gestureBindings", GestureBindings().to_json())
-            )
-            if not self._bool_setting("gestures/appDefaultsMigrated", False):
-                self._gesture_bindings = migrate_voice_defaults(self._gesture_bindings)
-                self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
-                self._settings.setValue("gestures/appDefaultsMigrated", True)
-            from .gestures.voice_gesture_mapping import single_bindings
-            single = single_bindings(self._gesture_bindings)
-            if single != self._gesture_bindings:
-                if not self._settings.contains("input/gestureBindingsBeforeSingleGesture"):
-                    self._settings.setValue("input/gestureBindingsBeforeSingleGesture", self._gesture_bindings.to_json())
-                self._gesture_bindings = single
-                self._settings.setValue("input/gestureBindings", single.to_json())
-        except (ValueError, TypeError):
-            self._gesture_bindings = GestureBindings()
-            self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
-            self._gesture_settings_error = "原手势设置无效，已恢复默认分配"
-        if sys.platform == "win32" and os.environ.get("MYTHLINK_WINDOWS_TSF") == "1":
-            gestures = {action: tuple("" if name == "double-tap" else name for name in names)
-                        for action, names in self._gesture_bindings.as_dict().items()}
-            if not any(gestures["confirm"]):
-                for action in gestures:
-                    if action not in {"confirm", "end"}:
-                        gestures[action] = tuple("" if name == "swipe-up" else name for name in gestures[action])
-                gestures["confirm"] = ("swipe-up", "")
-            used = {name for action, names in gestures.items() if action not in {"confirm", "end"}
-                    for name in names if name}
-            if not any(gestures["end"]):
-                start = next(name for name in gestures["confirm"] if name)
-                gestures["end"] = ("tap" if "tap" not in used else start, "")
-            self._gesture_bindings = GestureBindings(**gestures)
+        self._gesture_bindings = self._load_gesture_bindings(restore_selected_ring=True)
         try:
             self._global_gesture_bindings = GlobalGestureBindings.from_json(
                 self._settings.value(GLOBAL_BINDINGS_KEY, GlobalGestureBindings().to_json()))
@@ -3076,6 +3044,76 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self.microphoneDevicesChanged.emit()
         self.audioSettingsChanged.emit()
 
+    @property
+    def _gesture_bindings_key(self) -> str:
+        return "input/r1GestureBindings" if self._device_family == "R1" else "input/gestureBindings"
+
+    def _default_gesture_bindings(self) -> GestureBindings:
+        from .gestures.voice_gesture_mapping import RINGO_START_END
+
+        toggle = ("index-pinch", "") if self._device_family == "R1" else RINGO_START_END
+        return GestureBindings(confirm=toggle, end=toggle)
+
+    def _load_gesture_bindings(self, *, restore_selected_ring: bool = False) -> GestureBindings:
+        from .gestures.voice_gesture_mapping import normalize_bindings
+
+        key = self._gesture_bindings_key
+        new_r1_profile = self._device_family == "R1" and not self._settings.contains(key)
+        legacy_r1 = restore_selected_ring and new_r1_profile
+        load_key = "input/gestureBindings" if legacy_r1 else key
+        defaults = self._default_gesture_bindings()
+        fallback = defaults if self._device_family == "R1" and not legacy_r1 else GestureBindings()
+        saved = self._settings.value(load_key, fallback.to_json())
+        migrate_aliases = (load_key == "input/gestureBindings"
+                           and not self._bool_setting("gestures/appDefaultsMigrated", False))
+        migrate_ringo = (key == "input/gestureBindings"
+                         and not self._bool_setting("gestures/ringoPinchDefaultMigrated", False))
+        self._gesture_settings_error = ""
+        try:
+            bindings = GestureBindings.from_json(saved)
+        except (ValueError, TypeError):
+            bindings = defaults
+            self._gesture_settings_error = "原手势设置无效，已恢复默认分配"
+        else:
+            if migrate_aliases:
+                bindings = migrate_voice_defaults(bindings)
+                if not legacy_r1:
+                    self._settings.setValue("gestures/appDefaultsMigrated", True)
+            normalized = normalize_bindings(bindings)
+            backup_key = key + "BeforeSingleGesture"
+            if normalized != bindings and not legacy_r1 and not self._settings.contains(backup_key):
+                self._settings.setValue(backup_key, bindings.to_json())
+            bindings = normalized
+            pinch_reserved = (self._settings.value("gestures/inputSourceGesture") == "index-pinch"
+                              or any("index-pinch" in names for action, names in bindings.as_dict().items()
+                                     if action not in {"confirm", "end"}))
+            if (legacy_r1 or migrate_ringo) and not pinch_reserved:
+                tap_gestures = {"tap", "double-tap"} if legacy_r1 else {"tap"}
+                bindings = replace(bindings, **{
+                    action: getattr(defaults, action) for action in ("confirm", "end")
+                    if getattr(bindings, action)[0] in tap_gestures
+                })
+        if migrate_ringo:
+            self._settings.setValue("gestures/ringoPinchDefaultMigrated", True)
+        if new_r1_profile or migrate_aliases or bindings.to_json() != saved:
+            self._settings.setValue(key, bindings.to_json())
+
+        if sys.platform == "win32" and os.environ.get("MYTHLINK_WINDOWS_TSF") == "1":
+            gestures = {action: tuple("" if name == "double-tap" else name for name in names)
+                        for action, names in bindings.as_dict().items()}
+            if not any(gestures["confirm"]):
+                for action in gestures:
+                    if action not in {"confirm", "end"}:
+                        gestures[action] = tuple("" if name == "swipe-up" else name for name in gestures[action])
+                gestures["confirm"] = ("swipe-up", "")
+            used = {name for action, names in gestures.items() if action not in {"confirm", "end"}
+                    for name in names if name}
+            if not any(gestures["end"]):
+                start = next(name for name in gestures["confirm"] if name)
+                gestures["end"] = ("tap" if "tap" not in used else start, "")
+            bindings = GestureBindings(**gestures)
+        return bindings
+
     @Property("QVariantMap", notify=gestureSettingsChanged)
     def gestureBindings(self) -> dict:
         return self._gesture_bindings.as_dict()
@@ -3116,13 +3154,12 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             for name, label in GESTURE_LABELS.items() if name not in used
         ]
 
-    def _save_gesture_bindings(self, bindings: GestureBindings) -> None:
+    def _set_active_gesture_bindings(self, bindings: GestureBindings) -> None:
         # Publish one immutable snapshot; the gesture worker never reads QSettings.
-        self._settings.setValue("input/gestureBindings", bindings.to_json())
         self._gesture_bindings = bindings
+        self._app_gestures.load_input_source_gesture()
         self._app_gestures._generation += 1
         self._app_gestures.cancel_pending("手势设置已变化，请重新触发手势")
-        self._gesture_settings_error = ""
         self.gestureSettingsChanged.emit()
         self._app_gestures.changed.emit()
         self._app_gestures.catalog.changed.emit()
@@ -3130,6 +3167,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._transcript_text = f"正在收听语音 · {self.endGestureHint} 结束"
             self.transcriptChanged.emit()
             self._set_status("正在聆听", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
+
+    def _save_gesture_bindings(self, bindings: GestureBindings) -> None:
+        self._settings.setValue(self._gesture_bindings_key, bindings.to_json())
+        self._gesture_settings_error = ""
+        self._set_active_gesture_bindings(bindings)
         self._event_log("USER_SETTING", setting="gesture_bindings", value=bindings.as_dict())
 
     @Slot(str, int, str, result=bool)
@@ -3166,9 +3208,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         for gesture, title in VOICE_GESTURES:
             action = action_for(self._gesture_bindings, gesture)
             if action:
-                assigned[action["id"]] = dict(gesture=gesture, gestureLabel=title)
-        return [{**action, **assigned.get(action["id"], dict(gesture="", gestureLabel="无"))}
-                for action in self.voiceGestureActions]
+                assigned.setdefault(action["id"], []).append((gesture, title))
+        rows = self.voiceGestureActions
+        for row in rows:
+            choices = assigned.get(row["id"], [])
+            row["gesture"] = choices[0][0] if choices else ""
+            row["gestureLabel"] = "、".join(title for _, title in choices) or "无"
+        return rows
 
     @Property(QObject, constant=True)
     def gestureMappingHistory(self):
@@ -3198,13 +3244,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot()
     def resetGestureBindings(self) -> None:
+        defaults = self._default_gesture_bindings()
         try:
-            self._app_gestures.validate_voice(GestureBindings())
+            self._app_gestures.validate_voice(defaults)
         except ValueError as exc:
             self._gesture_settings_error = str(exc)
             self.gestureSettingsChanged.emit()
             return
-        self._save_gesture_bindings(GestureBindings())
+        self._save_gesture_bindings(defaults)
 
 
     @Property(bool, notify=textProcessingChanged)
@@ -3833,12 +3880,15 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._proximity_reconnect_attempts = 0
         self._selector = identifier
         self._device_name = display_name
+        previous_gesture_key = self._gesture_bindings_key
         self._device_family = next((row.get("family", "") for row in self._available_devices
                                     if row["identifier"].casefold() == identifier.casefold()), ring_family(display_name))
         self._settings.setValue("ring/selector", identifier)
         self._settings.setValue("ring/name", display_name)
         self._settings.setValue("ring/family", self._device_family)
         self._load_device_audio_preferences()
+        if self._gesture_bindings_key != previous_gesture_key:
+            self._set_active_gesture_bindings(self._load_gesture_bindings())
         self.microphoneDevicesChanged.emit()
         self.audioSettingsChanged.emit()
         self.settingsChanged.emit()

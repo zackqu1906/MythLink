@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from proximic_ring.audio.microphone import SYSTEM_DEFAULT_MICROPHONE
+from proximic_ring.gestures.gesture_settings import GestureBindings
 from proximic_ring.voice import app_runtime
 
 sdk = pytest.importorskip("ring_python_sdk_r1")
@@ -21,8 +22,9 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
 
     stop, recognition, started, processed = (threading.Event() for _ in range(4))
     sources, gestures, battery, unavailable = (Queue() for _ in range(4))
+    toggles = Queue()
     calls, inputs = [], []
-    states = []
+    states, rings = [], []
 
     class R1:
         def __init__(self, *, on_state, on_battery, on_touchpad_status):
@@ -32,6 +34,7 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
             self.connected = False
             self.touchpad = SimpleNamespace(start=self.start_touchpad, stop=self.stop_touchpad,
                                             status=sdk.TouchpadStatus())
+            rings.append(self)
 
         async def connect(self, target, *, auto_reconnect):
             calls.append(("connect", target, auto_reconnect))
@@ -77,15 +80,26 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
         return SimpleNamespace(error=None, device_name="PC", open=open_input, read=read, close=lambda: None)
 
     def model(*args, **kwargs):
-        return SimpleNamespace(active=False, close=lambda: None, process=lambda *args, **kwargs: processed.set())
+        def toggle(_prepare, *, allow_start, allow_end):
+            action = "end" if controller.active else "start"
+            controller.active = not controller.active
+            toggles.put((action, allow_start, allow_end))
+            return action
+
+        controller = SimpleNamespace(active=False, close=lambda: None,
+                                     process=lambda *args, **kwargs: processed.set(),
+                                     request_gesture_toggle=toggle)
+        return controller
 
     monkeypatch.setattr(ring_python_sdk, "RingSession", lambda **kw: pytest.fail("R1 selected the Ringo SDK"))
     monkeypatch.setattr(r1_session, "Ring", R1)
     monkeypatch.setattr(ring, "_INITIAL_MIC_SETTLE_S", 0)
     monkeypatch.setattr(app_runtime, "MicrophoneSource", microphone)
     monkeypatch.setattr(app_runtime, "_build_session_controller", model)
+    pinch = ("index-pinch", "")
     settings = app_runtime.RuntimeSettings(ring_selector="r1-identifier", ring_family="R1", data_dir=tmp_path,
-                                           speech_control_mode="gesture", desktop_output=False, push_to_talk=False)
+                                           speech_control_mode="gesture", desktop_output=False, push_to_talk=False,
+                                           asr_end_on_tap=True, gesture_bindings=GestureBindings(confirm=pinch, end=pinch))
     recognition.set()
 
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -107,6 +121,9 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
             assert inputs == [SYSTEM_DEFAULT_MICROPHONE] and not source.audio_enabled
             if microphone_available:
                 assert processed.wait(3)
+                for sequence, action in enumerate(("start", "end"), 2):
+                    rings[0].on_gesture(sdk.GestureEvent(sequence, 8, sequence * 1000, 0.9))
+                    assert toggles.get(timeout=3) == (action, True, True)
             else:
                 assert unavailable.get_nowait() == "System microphone is unavailable"
                 assert not recognition.is_set() and not processed.is_set()

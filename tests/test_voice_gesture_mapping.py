@@ -1,7 +1,7 @@
 """Voice functions replace their single saved gesture atomically."""
 import pytest
 from proximic_ring.gestures.gesture_settings import GestureBindings, GESTURE_LABELS
-from proximic_ring.ui.gestures.voice_gesture_mapping import with_action, action_for, VOICE_ACTIONS, single_bindings
+from proximic_ring.ui.gestures.voice_gesture_mapping import with_action, action_for, VOICE_ACTIONS, normalize_bindings
 
 
 @pytest.mark.parametrize("action,_,targets", VOICE_ACTIONS)
@@ -52,7 +52,21 @@ def test_combined_start_end_can_split_and_invalid_change_is_atomic():
 def test_legacy_multiple_choices_keep_first_without_reintroducing_defaults():
     original = GestureBindings(confirm=("snap", "clench"), end=("snap", "clench"),
                                undo=("", "tap", "double-tap"), send=())
-    migrated = single_bindings(original)
+    migrated = normalize_bindings(original)
     assert migrated.confirm == migrated.end == ("snap", "")
     assert migrated.undo == ("tap", "") and migrated.send == ("", "")
-    assert single_bindings(migrated) == migrated
+    assert normalize_bindings(migrated) == migrated
+
+
+def test_ringo_toggle_pair_survives_unrelated_edits_and_can_be_cleared_together():
+    toggle = ("tap", "index-pinch")
+    original = GestureBindings(confirm=toggle, end=toggle)
+    updated = with_action(original, "snap", "undo")
+    assert updated.confirm == updated.end == toggle
+    assert normalize_bindings(updated) == updated
+    for gesture in toggle:
+        assert action_for(updated, gesture)["voiceAction"] == "start_end"
+    reassigned = with_action(updated, "tap", "send")
+    assert reassigned.confirm == reassigned.end == ("index-pinch", "")
+    cleared = with_action(updated, "", "start_end")
+    assert not any(cleared.confirm + cleared.end) and cleared.undo == updated.undo

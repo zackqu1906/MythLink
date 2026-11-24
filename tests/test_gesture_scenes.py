@@ -516,7 +516,9 @@ def test_scene_hud_reports_effective_bindings_and_respects_busy_state(presentati
     assert defaults == [("input", "")] and not sent and not messages
 
 
-def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exit(presentation, monkeypatch):
+@pytest.mark.parametrize("start_gesture,end_gesture", [("tap", "index-pinch"), ("index-pinch", "tap")])
+def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exit(
+        presentation, monkeypatch, start_gesture, end_gesture):
     import threading
     import numpy as np
     from proximic_ring.voice import app_runtime
@@ -557,11 +559,11 @@ def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exi
                 QCoreApplication.processEvents()
                 assert sent == [(POWERPOINT, "Escape")] and not gate.gesture_busy and not started
                 backend.target = replace(backend.target, scene="", input_context="text")
-                gesture("tap")
+                gesture(start_gesture)
                 assert gate.gesture_busy
             elif self.reads == 2:
                 assert gate.active and len(started) == 1
-                gesture()
+                gesture(end_gesture)
             else:
                 assert len(finals) == 1
                 disconnect.set()
@@ -573,7 +575,8 @@ def test_real_runtime_presentation_tap_skips_audio_then_restores_voice_after_exi
     monkeypatch.setattr(host, "FirmwareGestureWorker", Dispatcher)
     monkeypatch.setattr(app_runtime, "RingAudioSource", Source)
     monkeypatch.setattr(app_runtime, "_build_session_controller", build)
-    app_runtime.RecognitionRuntime(app_runtime.RuntimeSettings(speech_control_mode="gesture")).run(
+    settings = app_runtime.RuntimeSettings(speech_control_mode="gesture", gesture_bindings=c._gesture_bindings)
+    app_runtime.RecognitionRuntime(settings).run(
         disconnect, recognition, on_update=lambda _: None, on_state=lambda _: None,
         on_connected=lambda: None, on_disconnected=lambda: None, on_started=lambda: None,
         on_gesture=globals_.append,

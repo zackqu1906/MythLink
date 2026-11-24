@@ -109,6 +109,7 @@ def test_family_filters_and_audio_defaults_follow_the_selected_ring(inline_ui, m
 
     c.connectToDevice("one", "桌面测试")
     assert starts[-1].ring_family == "R1" and starts[-1].audio_source == "microphone"
+    assert starts[-1].gesture_bindings.confirm == starts[-1].gesture_bindings.end == ("index-pinch", "")
     assert starts[-1].microphone_device == c.audioInputSelection == SYSTEM_DEFAULT_MICROPHONE
     assert c.audioInputs[0]["label"] == "系统默认麦克风"
     assert c._settings.value("ring/family") == "R1"
@@ -121,6 +122,7 @@ def test_family_filters_and_audio_defaults_follow_the_selected_ring(inline_ui, m
     c.selectAudioInput(mic["value"])
     c.connectToDevice("two", "Ringo1234")
     assert starts[-1].ring_family == "Ringo" and starts[-1].audio_source == "ring"
+    assert starts[-1].gesture_bindings.confirm == starts[-1].gesture_bindings.end == ("tap", "index-pinch")
     assert c.audioInputSelection == "ring"
     c.connectToDevice("one", "桌面测试")
     assert starts[-1].microphone_device == mic["value"]

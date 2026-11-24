@@ -124,16 +124,7 @@ class AppGestureController(QObject):
         except (ValueError, TypeError, KeyError):
             self._profiles = default_profiles()
             self._error = "应用手势设置无效，已恢复默认"
-        available = self._unused_source_gestures()
-        saved = owner._settings.value("gestures/inputSourceGesture", None)
-        if sys.platform != "darwin":
-            self._source_gesture = ""
-        elif saved is None:
-            # Standalone selection is opt-in; tap handles automatic activation.
-            self._source_gesture = ""
-        else:
-            self._source_gesture = str(saved) if str(saved) in available else ""
-        owner._settings.setValue("gestures/inputSourceGesture", self._source_gesture)
+        self.load_input_source_gesture()
         self._notice_timer = QTimer(self)
         self._notice_timer.setSingleShot(True)
         self._notice_timer.timeout.connect(self.dismissNotice)
@@ -342,6 +333,14 @@ class AppGestureController(QObject):
     def _unused_source_gestures(self):
         used = {g for pair in self.owner._gesture_bindings.as_dict().values() for g in pair}
         return [g for g in GESTURE_LABELS if g not in used]
+
+    def load_input_source_gesture(self):
+        key = "gestures/inputSourceGesture"
+        if not self.owner._settings.contains(key):
+            self.owner._settings.setValue(key, "")
+        saved = str(self.owner._settings.value(key))
+        # A conflict in this ring's voice bindings can be absent with the other ring.
+        self._source_gesture = saved if sys.platform == "darwin" and saved in self._unused_source_gestures() else ""
 
     def _validate_source_conflict(self, profiles, voice):
         gesture = self._source_gesture

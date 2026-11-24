@@ -32,6 +32,7 @@ def test_app_binding_can_share_every_input_or_global_gesture_without_disabling_v
     assert not catalog.voiceOverrideNotice
     backend.target = replace(backend.target, focus="composer", role="AXTextArea", input_context="text")
     assert request(c, "tap")
+    assert request(c, "index-pinch")
     assert len(sent) == 1
 
 
@@ -55,6 +56,7 @@ def test_independent_gestures_ignore_input_focus_for_application_and_global_acti
     catalog = configure(service, monkeypatch)
     backend.target = replace(backend.target, bundle=BUNDLE, profile=BUNDLE, input_context=context)
     if gesture == "index-pinch":
+        assert c.setVoiceGestureAction(gesture, "")
         assert c.ringGestures.setGlobalBinding("show_menu", "")
     assert c.ringGestures.setGlobalBinding("window_selector", gesture)
     if scope == "application":

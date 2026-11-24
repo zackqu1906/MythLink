@@ -15,6 +15,7 @@ def controller(tmp_path, monkeypatch):
     value._connected = True
     value._recognition_enabled = True
     value._recognition_event.set()
+    value._ocr_context_enabled = False
     value._capture_desktop_reference = lambda: None
     value._suspend_recognition_for_interaction()
     yield value
@@ -89,7 +90,7 @@ def test_error_reopens_gate_and_next_speech_retires_old_callbacks(controller, re
     ))
     assert controller.interactionState == "listening"
     assert controller._transcript_active is True
-    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap / 食指捏合 结束"
     assert controller._recognition_event.is_set() is True
 
 

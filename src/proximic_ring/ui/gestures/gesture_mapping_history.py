@@ -21,7 +21,7 @@ class GestureMappingHistory(QObject):
 
     def _snapshot(self, scope, bundle):
         if scope == "voice":
-            return self.owner._gesture_bindings
+            return self.owner._gesture_bindings_key, self.owner._gesture_bindings
         if scope == "global":
             return self.owner._global_gesture_bindings
         return deepcopy(self.owner.appGestures.catalog._apps.get(bundle))
@@ -49,7 +49,9 @@ class GestureMappingHistory(QObject):
     def apply(self, scope, bundle, scene, gesture, action):
         catalog, ring = self.owner.appGestures.catalog, self.owner.ringGestures
         self._error = ""
-        if scope not in {"voice", "global", "application"} or gesture not in GESTURE_LABELS:
+        if scope not in {"voice", "global", "application"}:
+            return False
+        if gesture not in GESTURE_LABELS and not (scope == "voice" and gesture == ""):
             return False
         if scope == "application" and (bundle != catalog.selectedApp or scene != catalog.selectedScene):
             self._error = "应用或场景已变化，请重新选择"
@@ -94,8 +96,9 @@ class GestureMappingHistory(QObject):
         success = False
         try:
             if record["scope"] == "voice":
-                self.owner.appGestures.validate_voice(record["before"])
-                self.owner._save_gesture_bindings(record["before"])
+                _, bindings = record["before"]
+                self.owner.appGestures.validate_voice(bindings)
+                self.owner._save_gesture_bindings(bindings)
                 success = True
             elif record["scope"] == "global":
                 success = self.owner.ringGestures._save_global_bindings(record["before"])

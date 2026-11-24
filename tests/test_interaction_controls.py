@@ -60,7 +60,7 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=1.000s (pre-roll=0.40s)")
     assert controller._transcript_active is True
-    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap / 食指捏合 结束"
     assert controller.transcriptPrimaryText == ""
     assert controller.interactionState == "listening"
     assert controller.interactionCanCancel is True
@@ -73,7 +73,7 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=2.000s (pre-roll=0.40s)")
     assert controller.interactionState == "listening"
-    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap / 食指捏合 结束"
     _close(controller)
 
 
@@ -89,7 +89,7 @@ def test_overlay_keeps_asr_as_primary_text_while_status_changes(
     controller._apply_runtime_update("正在形成", False, "", 23)
 
     assert controller.transcriptPrimaryText == "正在形成"
-    assert controller.transcriptText == "正在收听语音 · 单击 tap 结束"
+    assert controller.transcriptText == "正在收听语音 · 单击 tap / 食指捏合 结束"
 
     controller._apply_runtime_update("这是最终识别文本", True, "", 23)
 
