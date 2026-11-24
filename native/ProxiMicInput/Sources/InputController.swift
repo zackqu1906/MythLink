@@ -544,6 +544,11 @@ final class ProxiMicInputController: IMKInputController {
         lastError = ""
         lastContext = nil
         rejectedBeginID = nil
+        panel.onPosition = { [weak self] frame in
+            guard let self, self.ownsActivation, let session = self.session else { return }
+            service.send(["type": "voice_panel_frame", "client_id": self.currentClientID,
+                          "utterance_id": session.utteranceID, "frame": frame])
+        }
         panel.onCancel = { [weak self] in self?.cancelCurrentOrHistory() }
         panel.onConvert = { [weak self] in
             guard let self else { return }
@@ -949,13 +954,6 @@ final class ProxiMicInputController: IMKInputController {
             } else { panel.hide() }
             sendState(includeSnapshot: true)
             return
-        }
-        if type == "hotwords_learned" {
-            guard message["revision"] as? Int == session.revision, session.phase == .edited,
-                  !session.awaitingReadback, session.error.isEmpty,
-                  let words = message["words"] as? [String], !words.isEmpty else { return }
-            panel.showLearnedHotwords(words)
-            return // Presentation only; no text write, session update or readback.
         }
         if type == "system_undo_posted" {
             guard let tag = session.hostUndoTag, message["event_tag"] as? Int64 == tag else { return }

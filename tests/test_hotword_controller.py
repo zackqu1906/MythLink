@@ -7,6 +7,9 @@ import pytest
 from PySide6.QtCore import QCoreApplication
 
 from proximic_ring.text_processing import LLMSettings, TextProcessingResult
+from proximic_ring.text_processing.model import (
+    INPUT_ROUTING_ROUTED_EDIT, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL, ROUTED_EDIT_SIX_CLASS,
+)
 from proximic_ring.ui.voice.hotword_controller import HotwordController
 from test_app_gestures import route
 from test_inline_state import component, receive
@@ -199,10 +202,14 @@ def test_reapplying_a_reverted_edit_can_learn_again(service):
     pump_until(lambda: c.store.snapshot() == ["张玮"])
 
 
-def test_app_routes_edit_result_ack_and_undo_to_learning(route, monkeypatch):
+@pytest.mark.parametrize("variant", [None, ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL])
+def test_app_routes_edit_result_ack_and_undo_to_learning(route, monkeypatch, variant):
     c, _, inline, _, sent, messages, _ = route
     c._asr_backend = "volcengine"
     c._latest_asr_session_id = 12
+    if variant is not None:
+        c.routedEditVariant = variant
+        inline.session_routed_edit = True
     model = Extractor()
     model.release.set()
     c.hotwords._processor = model
@@ -212,11 +219,15 @@ def test_app_routes_edit_result_ack_and_undo_to_learning(route, monkeypatch):
     key = (inline._epoch, inline._client_id, inline._utterance_id, 2)
     c._submit_inline_edit(key, "王字旁的玮", "联系张伟", inline.target_reference())
     request = submitted[0]
+    if variant is not None:
+        assert request.routing_mode == INPUT_ROUTING_ROUTED_EDIT and request.routed_edit_variant == variant
     c._apply_text_processed(TextProcessingResult(request.request_id, request.session_id, "edit", "王字旁的玮",
-                                                "联系张玮", 0.1, True))
+                                                "联系张玮", 0.1, True, routing_mode=request.routing_mode,
+                                                routed_edit_variant=request.routed_edit_variant))
     assert messages[-1][0] == "edit_result" and not model.calls
     receive(inline, "settled", phase="edited", revision=2, text="联系张玮")
     pump_until(lambda: c.hotwords.store.snapshot() == ["张玮"])
+    assert model.calls == [("联系张伟", "王字旁的玮", "联系张玮")]
     receive(inline, "settled", phase="dictated", revision=3, text="王字旁的玮")
     assert c.hotwords.store.snapshot() == [] and not sent
 
@@ -255,7 +266,7 @@ def test_replayed_ellipsis_results_save_notify_and_retract(route, monkeypatch, c
     assert c.hotwords.store.snapshot() == [word]
     assert HotwordStore(c.hotwords.store.path).snapshot() == [word]
     assert notices == [(key, [word])]
-    assert any(message[0] == "hotwords_learned" for message in messages)
+    assert all(message[0] != "hotwords_learned" for message in messages)
     stages = [json.loads(r.getMessage().split("] ", 1)[1])["stage"]
               for r in caplog.records if "[HOTWORD_LEARNING]" in r.getMessage()]
     assert all(stage in stages for stage in ("prepared", "queued", "extract_started", "extract_finished", "saved"))
@@ -304,21 +315,13 @@ def test_failed_save_does_not_announce_success(service, monkeypatch):
     assert not notices and not c.entries
 
 
-def test_native_notice_is_bound_to_current_confirmed_edit(component):
+def test_only_current_native_session_can_update_notice_anchor(component):
     inline, _ = component
     inline._utterance_id = "one"
-    inline._view.update(phase="edited", revision=2, error="", awaiting_readback=False)
-    key = (inline._epoch, inline._client_id, "one", 2)
-    state = inline._view.copy()
-    for invalid in [("old", *key[1:]), (key[0], "old", *key[2:]), (*key[:2], "old", 2), (*key[:3], 1)]:
-        inline.notify_hotwords_learned(invalid, ["张玮"])
-    assert not any(m["type"] == "hotwords_learned" for m in inline._bridge.messages)
-    inline.notify_hotwords_learned(key, ["张玮"])
-    assert inline._bridge.messages[-1]["type"] == "hotwords_learned"
-    assert inline._bridge.messages[-1]["words"] == ["张玮"]
-    assert inline._view == state
-    before = len(inline._bridge.messages)
-    for phase in ["listening", "polishing", "dictated", "undone", "interrupted"]:
-        inline._view["phase"] = phase
-        inline.notify_hotwords_learned(key, ["张玮"])
-    assert len(inline._bridge.messages) == before
+    anchors = []
+    inline.voicePanelPositioned.connect(anchors.append)
+    frame = [36, 100, 240, 32]
+    receive(inline, "voice_panel_frame", frame=frame, utterance_id="retired")
+    receive(inline, "voice_panel_frame", frame=frame, client_id="different")
+    receive(inline, "voice_panel_frame", frame=frame)
+    assert anchors == [frame]

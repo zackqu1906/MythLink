@@ -48,6 +48,7 @@ class InlineInputController(QObject):
     strokeInvalidated = Signal()
     strokeEvent = Signal(object)
     clipboardEvent = Signal(object)
+    voicePanelPositioned = Signal(object)
 
     def __init__(self, parent=None, *, enabled=None, bridge_factory=None, source_switch_factory=None):
         super().__init__(parent)
@@ -619,12 +620,6 @@ class InlineInputController(QObject):
             'client_id': self._client_id, 'utterance_id': self._utterance_id})
 
     @Slot(object, object)
-    def notify_hotwords_learned(self, key, words):
-        current = (self._epoch, self._client_id, self._utterance_id, self._view.get("revision", 0))
-        if (not self._closed and tuple(key) == current and self._view.get("phase") == "edited"
-                and not self._view.get("awaiting_readback") and not self._view.get("error") and words):
-            self._send("hotwords_learned", revision=current[-1], words=list(words)[:8])
-
     def stroke_update(self, code, candidates, selected, prediction=False, visuals=None):
         if self._installing:
             return False
@@ -1705,6 +1700,9 @@ class InlineInputController(QObject):
                     self._transport_failed(reason)
             return
         if client_id != self._client_id or utterance_id != self._utterance_id:
+            return
+        if kind == "voice_panel_frame":
+            self.voicePanelPositioned.emit(message.get("frame"))
             return
         if kind == "preview_undo_caret":
             origin = self._sentence_origin

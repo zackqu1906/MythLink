@@ -99,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     from .shared.notifications import install_ring_disconnect_notice
 
     install_ring_disconnect_notice(window, controller)
+    from .voice.hotword_notice import HotwordNotice
+    hotword_notice = HotwordNotice(controller.hotwords, controller.inlineInput, app)
     from .gestures.gesture_hud import GestureHud
 
     gesture_hud = GestureHud(app, diagnostic=controller._append_background_diagnostic)

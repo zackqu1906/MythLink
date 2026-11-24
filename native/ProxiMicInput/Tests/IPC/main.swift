@@ -41,11 +41,8 @@ transport.onMessage = { message in
                         "utterance_id": "polish-test", "revision": 8,
                         "phase": "dictated", "text": "润色后的本句😀"])
         print("SWIFT_IPC_POLISH_RESULT")
-    } else if message["epoch"] as? String == epoch, message["type"] as? String == "hotwords_learned" {
-        guard message["client_id"] as? String == "ipc-test", message["utterance_id"] as? String == "edit-test",
-              message["revision"] as? Int == 2, message["words"] as? [String] == ["张玮", "Kubernetes"] else { exit(4) }
-        transport.send(["type": "pong", "epoch": epoch, "echo": "hotwords_learned"])
-        print("SWIFT_IPC_HOTWORDS_LEARNED")
+        transport.send(["type": "voice_panel_frame", "epoch": epoch, "client_id": "ipc-test",
+                        "utterance_id": "polish-test", "frame": [10, 40, 240, 32]])
     } else if message["epoch"] as? String == epoch, message["type"] as? String == "reset" {
         transport.send(["type": "pong", "epoch": epoch, "echo": "中文😀\n上下文"])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { transport.stop(); exit(0) }

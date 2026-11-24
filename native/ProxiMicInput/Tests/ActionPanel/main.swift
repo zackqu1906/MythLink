@@ -221,21 +221,17 @@ check(window.frame.size == processingSize, "unchanged action count resized the w
 checkActionFit(1)
 check(cancelHint.toolTip?.contains("还原听写") == true && editHint.isHidden, "settled hints imply unavailable editing")
 try capture("edited")
-let learnedState = (session.phase, session.revision, session.raw, client.text.string)
-palette.showLearnedHotwords(["张玮"])
-check(label.stringValue == "已收录 · 张玮" && label.toolTip?.contains("从下一句") == true, "missing automatic vocabulary notice")
-check(!cancelHint.isHidden && spinner.isHidden && !window.canBecomeKey, "vocabulary notice took focus or removed undo")
-check(session.phase == learnedState.0 && session.revision == learnedState.1 && session.raw == learnedState.2 && client.text.string == learnedState.3,
-      "vocabulary notice changed text or transaction")
-try capture("hotwords-learned")
-palette.showLearnedHotwords(["张玮", "Kubernetes"])
-check(label.stringValue == "已收录 2 个热词" && label.toolTip?.contains("Kubernetes") == true, "multiple words overflowed notice or lost detail")
-palette.update(session)
-check(!label.stringValue.contains("收录"), "new presentation retained old vocabulary notice")
+var reportedFrames: [[Double]] = []
+palette.onPosition = { reportedFrames.append($0) }
 check(palette.needsPosition, "completed edit flag still blocks position refresh")
 palette.position(caret: newCaret, clientLevel: 0)
 check(window.frame.origin.x == newCaret.minX && window.frame.origin != oldOrigin,
       "result panel stayed at the old preedit caret")
+let desktopTop = NSScreen.screens[0].frame.maxY - window.frame.maxY
+check(reportedFrames.last == [window.frame.minX, desktopTop, window.frame.width, window.frame.height],
+      "host notice anchor does not match the visible voice panel")
+palette.position(caret: newCaret, clientLevel: 0)
+check(reportedFrames.count == 1, "unchanged voice panel repeatedly published its position")
 session.cancel(); palette.update(session)
 check(session.phase == .dictated && palette.needsPosition, "undo did not resume positioning")
 check(!undoCheck.isHidden && errorSymbol.isHidden, "restoring a committed edit lost its undo confirmation")

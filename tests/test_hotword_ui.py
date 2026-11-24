@@ -1,7 +1,44 @@
 import pytest
-
 from test_inline_ui import inline_ui
 from test_ui_service_settings import item, click, screenshot
+
+
+def test_independent_hotword_notice_tracks_panel_and_expires(inline_ui):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtTest import QTest
+    from proximic_ring.ui.voice.hotword_notice import HotwordNotice
+
+    controller, bridge, _, _, event = inline_ui
+    notice = HotwordNotice(controller.hotwords, controller.inlineInput, QGuiApplication.instance())
+    window = notice.window
+    area = QGuiApplication.primaryScreen().availableGeometry()
+    x, y = area.left() + 40, area.center().y()
+    try:
+        event("voice_panel_frame", frame=[x, y, 230, 32])
+        commands = list(bridge.messages)
+        key = ("previous", "client", "completed-edit", 1)
+        controller.hotwords.learned.emit(key, ["张玮"])
+        short = window.geometry()
+        assert window.isVisible() and short.left() == x and short.bottom() + 7 == y
+        assert window.flags() & Qt.WindowDoesNotAcceptFocus and window.flags() & Qt.WindowTransparentForInput
+        assert notice._dismiss.interval() == 5000
+        controller.hotwords.learned.emit(key, ["张玮", "Kubernetes"])
+        assert window.width() > short.width()
+        words = ["很长的项目专有名词" * 4, "MythlinkProximicVoice" * 2]
+        controller.hotwords.learned.emit(key, words)
+        assert window.width() <= 480 and window.height() > short.height()
+        assert all(word in window.rootObject().property("message") for word in words)
+        QTest.qWait(200)
+        remaining = notice._dismiss.remainingTime()
+        event("voice_panel_frame", frame=[x + 24, area.top() + 6, 230, 32])
+        assert window.x() == x + 24 and window.y() == area.top() + 6 + 32 + 6
+        assert 0 < notice._dismiss.remainingTime() <= remaining
+        assert bridge.messages == commands
+        QTest.qWait(remaining + 100)
+        assert not window.isVisible()
+    finally:
+        notice.close()
 
 
 def open_library(root, size):

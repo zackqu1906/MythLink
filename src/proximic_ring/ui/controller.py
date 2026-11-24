@@ -881,7 +881,6 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._inline_input.interrupted.connect(self._interrupt_inline_audio)
         self._inline_input.settled.connect(self._settle_inline_input)
         self._inline_input.transactionSettled.connect(self._hotwords.settle)
-        self._hotwords.learned.connect(self._inline_input.notify_hotwords_learned)
         self._inline_input.changed.connect(self.interactionChanged)
         self._inline_input.changed.connect(self._refresh_inline_status)
         self._inline_input.diagnostic.connect(self._log_inline_diagnostic)
@@ -1363,7 +1362,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._inline_requests[self._text_request_id] = key
         self._inline_edit_requests[self._text_request_id] = (request, source)
-        if not retry and self._asr_backend == "volcengine" and options.get("routing_mode") != INPUT_ROUTING_ROUTED_EDIT:
+        if not retry and self._asr_backend == "volcengine":
             self._hotwords.prepare(key, instruction, original, self._voice_llm_settings(INPUT_MODE_EDIT))
         self._set_interaction_state("processing")
 
@@ -7282,7 +7281,6 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     def _learn_applied_hotwords(self, interaction):
         if (self._asr_backend != "volcengine" or interaction is None
-                or interaction.routing_mode == INPUT_ROUTING_ROUTED_EDIT
                 or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None):
             return
         key = self._legacy_hotword_key(interaction)

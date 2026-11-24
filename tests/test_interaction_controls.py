@@ -2315,13 +2315,17 @@ def test_failed_edit_cancel_skips_readback_and_survives_release_error(
     _close(controller)
 
 
+@pytest.mark.parametrize("routing_mode", ["manual", "manual_routed_edit"])
 def test_edit_result_applies_immediately_without_preview_confirmation(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, routing_mode
 ):
     from proximic_ring.desktop.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import TextProcessingResult
 
     controller = _controller(tmp_path, monkeypatch)
+    controller._asr_backend = "volcengine"
+    queued = []
+    monkeypatch.setattr(controller.hotwords, "_enqueue", queued.append)
     target = DesktopTargetRef(1, 2, "编辑器", process_id=123)
     replacements = []
 
@@ -2347,10 +2351,12 @@ def test_edit_result_applies_immediately_without_preview_confirmation(
 
     controller._desktop_target = Desktop()
     result = TextProcessingResult(
-        31, 1, "edit", "改一下", "新文本", 0.1, True, target_text="旧文本"
+        31, 1, "edit", "改一下", "新文本", 0.1, True, target_text="旧文本", routing_mode=routing_mode
     )
     controller._begin_edit_review(result, DesktopTextSnapshot(target, "旧文本"))
     assert replacements == [("旧文本", "新文本")]
+    edit, = queued
+    assert (edit.before, edit.instruction, edit.after) == ("旧文本", "改一下", "新文本")
     assert controller.interactionState == "applied"
     assert controller.undoAvailable is True
     # A speculative alternate-mode request may still be running after the
