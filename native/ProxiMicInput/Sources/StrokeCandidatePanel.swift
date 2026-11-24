@@ -182,7 +182,7 @@ private final class StrokePullView: FlippedView {
         surface.wantsLayer = true
         surface.layer?.cornerRadius = 16
         surface.layer?.masksToBounds = true
-        let background = destructive ? 0xFCE9E6 : direction == .right ? 0xE9EFFF : 0xEDF2FB
+        let background: UInt32 = destructive ? 0xFCE9E6 : direction == .right ? 0xE9EFFF : 0xEDF2FB
         surface.layer?.backgroundColor = NSColor(hex: background).cgColor
         surface.layer?.borderWidth = 1
         surface.layer?.borderColor = NSColor(hex: destructive ? 0xC2413B : 0x345EE5).cgColor
