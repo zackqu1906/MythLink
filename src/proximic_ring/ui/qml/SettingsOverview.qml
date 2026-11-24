@@ -150,6 +150,21 @@ ColumnLayout {
         objectName: "settingsInputGroup"
         visible: pane.expandedSection === "audio"
         title: "输入与控制"; symbol: "pointer"
+        description: pane.controller.activeTextModel ? qsTr("当前文本模型：%1").arg(pane.controller.activeTextModel) : qsTr("尚未选择文本模型")
+        FigmaFormRow {
+            objectName: "qwenThinkingRow"
+            preferenceStyle: true
+            visible: pane.controller.qwenThinkingAvailable
+            title: "Qwen 思考模式"
+            description: "通常用 24 个思考 token。遇到释字、组合编辑或较长正文时可用 128 个。需要逐字保留引文时关闭思考。"
+            PreferenceSwitch {
+                objectName: "qwenThinkingSwitch"
+                Layout.alignment: Qt.AlignRight
+                Accessible.name: "Qwen 思考模式"
+                checked: pane.controller.qwenThinkingEnabled
+                onClicked: pane.controller.qwenThinkingEnabled = checked
+            }
+        }
         FigmaFormRow {
             preferenceStyle: true
             visible: pane.controller.inlineInput.enabled
@@ -189,7 +204,7 @@ ColumnLayout {
             description: pane.controller.inputRoutingMode === "auto"
                 ? "开始后说话，再结束即可自动判断听写或编辑。请先在服务设置中配置自动路由服务器。"
                 : pane.controller.inputRoutingMode === "manual_routed_edit"
-                  ? "手势明确选择听写或编辑；编辑由火山 DeepSeek 一次完成，可在下方选择编辑版本。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
+                  ? "通过手势选择听写或编辑。所选文本模型一次完成编辑，编辑版本可在下方切换。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
                   : "先听写，通过转换操作将本句作为编辑指令。"
             FigmaSelect {
                 objectName: "inputRoutingModeCombo"
@@ -212,8 +227,8 @@ ColumnLayout {
                 objectName: "routedEditVariantCombo"
                 Layout.fillWidth: true
                 Accessible.name: "手动编辑版本"
-                property var variantKeys: ["six_class_v5", "boundary_only_v1"]
-                model: ["六分类", "无分类边界"]
+                property var variantKeys: ["six_class_v5", "boundary_only_v1", "original_structured_v1"]
+                model: ["六分类", "无分类边界", "精简编辑提示词"]
                 currentIndex: Math.max(0, variantKeys.indexOf(pane.controller.routedEditVariant))
                 onActivated: pane.controller.routedEditVariant = variantKeys[currentIndex]
             }
@@ -250,7 +265,7 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             title: "OCR 截图上文传入"
-            description: "开启后等待上文整理完成，供自动判断和编辑路由使用；关闭后不传入、不等待。截图与原始 OCR 始终保存到记录。下次录音生效。"
+            description: "开启后，屏幕文字固定由火山方舟 DeepSeek V4.1 Flash 整理，完成后供自动判断和编辑使用。截图与原始 OCR 始终保存到记录。下次录音生效。"
             PreferenceSwitch {
                 objectName: "ocrContextSwitch"
                 Layout.alignment: Qt.AlignRight

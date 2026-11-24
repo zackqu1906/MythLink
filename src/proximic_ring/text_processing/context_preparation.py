@@ -10,8 +10,8 @@ import re
 import threading
 import time
 
-from .model import LLM_PROVIDER_VOLCENGINE
 from .screen_context import CHAT_APPS, ScreenContext, filter_context, unavailable
+from .qwen_thinking import text_thinking_budget
 
 CONTEXT_PROMPT_VERSION = "ocr-dialogue-speakers-v8"
 SCENE_TYPES = frozenset({"对话", "写邮件", "读邮件", "看视频", "搜索", "写文档", "阅读", "编程", "填表", "其他", "无法确定"})
@@ -131,6 +131,14 @@ def organize_ocr(raw):
                         for group in groups]}
 
 
+def _ocr_character_count(packed):
+    if "current_chat" in packed:
+        chat = packed["current_chat"]
+        return (len(chat["conversation_title"]) + sum(len(message["text"]) for message in chat["messages"])
+                + sum(len(line[-1]) for line in packed["composer_ocr"]))
+    return sum(len(line[-1]) for column in packed["columns"] for line in column["lines"])
+
+
 def parse_context(text):
     """Read natural-language sections without requiring a JSON/schema response.
 
@@ -233,8 +241,8 @@ class ContextPreparationProvider:
             if raw.get("status") != "ok":
                 raise ValueError(raw.get("reason") or ("截图已完成，但未识别到文字"
                     if raw.get("status") == "empty" else "未取得有效 OCR"))
-            if settings.provider != LLM_PROVIDER_VOLCENGINE or not settings.model.lower().startswith("deepseek"):
-                raise ValueError("OCR 上文整理需要火山方舟 DeepSeek 模型")
+            if not settings.supports_routed_edit:
+                raise ValueError("OCR 上文整理需要百炼 Qwen 或火山方舟 DeepSeek 模型")
             settings = replace(settings, enabled=True, timeout_s=min(settings.timeout_s, 10.0))
             settings.validate()
             lines = [line for line in getattr(raw, "evidence", {}).get("ocr_lines", [])
@@ -253,7 +261,8 @@ class ContextPreparationProvider:
             trace["input"] = packed
             trace["raw_output"] = self._processor._request_chat(
                 settings, system_prompt=CONTEXT_PROMPT, user_content=content,
-                temperature=0, max_tokens=1000, require_complete=True)
+                temperature=0, max_tokens=1000, require_complete=True,
+                thinking_budget=text_thinking_budget(_ocr_character_count(packed)))
             summary = parse_context(trace["raw_output"])
             if application in CHAT_APPS:
                 summary["app_type"] = "chat"

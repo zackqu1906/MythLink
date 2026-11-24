@@ -1,6 +1,7 @@
 """One-call manual editing with six task labels and the shared editing rules."""
 from .task_routing import EDIT_TASK_LABELS
-from .model import ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant
+from .original_edit_prompt import ORIGINAL_EDIT_PROMPT
+from .model import ROUTED_EDIT_ORIGINAL, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant
 from .boundary_edit_prompt import BOUNDARY_EDIT_PROMPT, BOUNDARY_EDIT_PROMPT_VERSION, manual_edit_rules
 from .general_edit_prompt import GENERAL_EDIT_VARIANTS, GENERAL_EDIT_PROMPT_VERSION, general_edit_prompt
 
@@ -8,6 +9,8 @@ ROUTED_EDIT_PROMPT_VERSION = "manual-edit-six-class-v6-context-source-selection"
 
 
 def routed_edit_prompt_version(variant=ROUTED_EDIT_SIX_CLASS):
+    if variant == ROUTED_EDIT_ORIGINAL:
+        return ROUTED_EDIT_ORIGINAL
     if variant in GENERAL_EDIT_VARIANTS:
         return GENERAL_EDIT_PROMPT_VERSION + "/" + variant
     return (BOUNDARY_EDIT_PROMPT_VERSION if normalize_routed_edit_variant(variant) == ROUTED_EDIT_BOUNDARY
@@ -15,6 +18,8 @@ def routed_edit_prompt_version(variant=ROUTED_EDIT_SIX_CLASS):
 
 
 def routed_edit_prompt(target, variant=ROUTED_EDIT_SIX_CLASS):
+    if variant == ROUTED_EDIT_ORIGINAL:
+        return ORIGINAL_EDIT_PROMPT
     if variant in GENERAL_EDIT_VARIANTS:
         return general_edit_prompt(variant)
     return (BOUNDARY_EDIT_PROMPT if normalize_routed_edit_variant(variant) == ROUTED_EDIT_BOUNDARY

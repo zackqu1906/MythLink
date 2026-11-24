@@ -10,7 +10,7 @@ from __future__ import annotations
 from argparse import Namespace
 from collections import deque
 import ctypes
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -469,10 +469,12 @@ class RuntimeSettings:
     push_to_talk: bool = WINDOWS_DESKTOP_INPUT_SUPPORTED
     # Passed only to the selected online ASR backend.  Environment-variable
     # lookup inside that backend remains available for CLI compatibility.
-    asr_api_key: str = ""
+    asr_api_key: str = field(default="", repr=False)
     # Dataset capture is optional. Gesture consumers independently request IMU.
     collect_imu: bool = False
     imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
+
+    bailian_api_host: str = ""
 
     def validate_voice_configuration(self) -> None:
         """Voice configuration must not gate the physical Ring connection."""
@@ -506,8 +508,12 @@ class RuntimeSettings:
                 asr_options.append(
                     f"funasr_nano.hotwords={','.join(hotwords)}"
                 )
-        elif backend == "volcengine" and self.asr_api_key.strip():
-            asr_options = [f"volcengine.api_key={self.asr_api_key.strip()}"]
+        elif backend in {"volcengine", "bailian"}:
+            asr_options = []
+            if self.asr_api_key.strip():
+                asr_options.append(f"{backend}.api_key={self.asr_api_key.strip()}")
+            if backend == "bailian" and self.bailian_api_host.strip():
+                asr_options.append(f"bailian.api_host={self.bailian_api_host.strip()}")
         else:
             asr_options = None
         return Namespace(
@@ -528,7 +534,7 @@ class RuntimeSettings:
             asr_model=[model_entry] if model_entry else None,
             asr_device=self.asr_device,
             asr_language=self.asr_language,
-            asr_option=asr_options,
+            asr_option=asr_options or None,
             sensevoice_repo=None,
             streaming_sensevoice_repo=(
                 self.streaming_sensevoice_repo

@@ -28,8 +28,8 @@ def test_compare_selection_uses_the_three_models_available_in_the_ui():
     assert settings[0].local_auto_start is True
     assert settings[0].local_reasoning == "off"
     assert settings[0].timeout_s == 180.0
-    assert settings[1].model == test_llm.DEFAULT_ARK_MODEL
-    assert settings[2].model == test_llm.DEFAULT_ARK_DEEPSEEK_MODEL
+    assert settings[1].model == "doubao-seed-2-0-lite-260215"
+    assert settings[2].model == "deepseek-v4-pro-ga-260813"
 
 
 def test_comparison_sends_identical_instruction_input_to_every_model(capsys):
@@ -90,7 +90,7 @@ def test_comparison_sends_identical_instruction_input_to_every_model(capsys):
     assert "[竞速胜出]" in output
     assert "最终结果集中比较（4 次运行）" in output
     assert "本地 Qwen / model-a" in output
-    assert "DeepSeek V4.1 Flash / model-b" in output
+    assert "DeepSeek V4 Pro / model-b" in output
     assert " vs " not in output
 
 

@@ -10,6 +10,7 @@ from .automatic_prompts import automatic_system_prompt
 from .edit_tool import EDIT_MODE_FULL
 from .model import LLM_PROVIDER_LOCAL, normalize_llm_provider, validate_edit_target_text
 from .processing_common import LLMResponseProcessingError, _text_output_budget
+from .qwen_thinking import text_thinking_budget
 from .task_routing import DICTATION, EDIT
 
 
@@ -67,7 +68,8 @@ class AutomaticTextProcessingMixin:
         content = self._automatic_request_content(settings, dictation_model_input(raw, screen_context), _on_request_input)
         response = self._request_chat(settings, system_prompt=automatic_system_prompt(DICTATION),
                                       user_content=content, temperature=0.0,
-                                      max_tokens=_text_output_budget(settings), edit_tool=None)
+                                      max_tokens=_text_output_budget(settings), edit_tool=None,
+                                      thinking_budget=text_thinking_budget(len(raw)))
         if not isinstance(response, str) or not response.strip():
             raise LLMResponseProcessingError("听写整理没有返回正文", self._model_output_text(response))
         return response.strip(), response

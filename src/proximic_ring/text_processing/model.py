@@ -26,21 +26,30 @@ INPUT_ROUTING_MODES = frozenset(INPUT_ROUTING_LABELS)
 ROUTED_EDIT_SIX_CLASS = "six_class_v5"
 ROUTED_EDIT_BOUNDARY = "boundary_only_v1"
 
+ROUTED_EDIT_ORIGINAL = "original_structured_v1"
+
 ROUTED_EDIT_VARIANT_LABELS = {
+    ROUTED_EDIT_ORIGINAL: "精简编辑提示词",
     ROUTED_EDIT_SIX_CLASS: "六分类",
     ROUTED_EDIT_BOUNDARY: "无分类边界",
     **{key: value[0] for key, value in GENERAL_EDIT_VARIANTS.items()},
 }
-ROUTED_EDIT_BODY_VARIANTS = frozenset({ROUTED_EDIT_BOUNDARY, *GENERAL_EDIT_VARIANTS})
+ROUTED_EDIT_BODY_VARIANTS = frozenset({ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL, *GENERAL_EDIT_VARIANTS})
 LLM_PROVIDER_LOCAL = "local"
 LLM_PROVIDER_OPENAI = "openai"
 LLM_PROVIDER_VOLCENGINE = "volcengine"
+LLM_PROVIDER_BAILIAN = "bailian"
+DEFAULT_QWEN_MODEL = "qwen3.8-max"
+DEFAULT_BAILIAN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_BAILIAN_API_KEY_ENV = "DASHSCOPE_API_KEY"
 LLM_PROVIDERS = frozenset(
-    {LLM_PROVIDER_LOCAL, LLM_PROVIDER_OPENAI, LLM_PROVIDER_VOLCENGINE}
+    {LLM_PROVIDER_LOCAL, LLM_PROVIDER_OPENAI, LLM_PROVIDER_VOLCENGINE, LLM_PROVIDER_BAILIAN}
 )
 DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-DEFAULT_ARK_MODEL = "doubao-seed-2-0-lite-260215"
-DEFAULT_ARK_DEEPSEEK_MODEL = "deepseek-v4-1-flash-260910"
+DEFAULT_ARK_DOUBAO_MODEL = "doubao-seed-2-0-lite-260215"
+DEFAULT_ARK_DEEPSEEK_MODEL = "deepseek-v4-pro-ga-260813"
+ARK_DEEPSEEK_FLASH_MODEL = "deepseek-v4-1-flash-260910"
+DEFAULT_ARK_MODEL = DEFAULT_ARK_DEEPSEEK_MODEL
 DEFAULT_ARK_API_KEY_ENV = "ARK_API_KEY"
 MAX_EDIT_TARGET_CHARS = 5000
 
@@ -106,6 +115,20 @@ class LLMSettings:
     # UI callers can provide a key directly.  ``api_key_env`` remains as a
     # compatibility fallback for CLI users and existing deployments.
     api_key: str = ""
+    qwen_thinking_enabled: bool = False
+
+    @property
+    def supports_qwen_thinking(self) -> bool:
+        model = self.model.strip().lower()
+        return self.provider == LLM_PROVIDER_BAILIAN and any(
+            model == family or model.startswith(family + "-")
+            for family in ("qwen3.8-max", "qwen3.8-flash")
+        )
+
+    @property
+    def supports_routed_edit(self) -> bool:
+        return (self.provider == LLM_PROVIDER_BAILIAN or
+                (self.provider == LLM_PROVIDER_VOLCENGINE and self.model.lower().startswith("deepseek")))
 
     def validate(self) -> None:
         if not self.enabled:
@@ -125,6 +148,8 @@ class LLMSettings:
                 raise ValueError("本地 GGUF 模型路径不能为空")
             if self.local_context_size < 512:
                 raise ValueError("本地模型上下文长度不能小于 512")
+        elif self.provider == LLM_PROVIDER_BAILIAN and not (self.api_key.strip() or self.api_key_env.strip()):
+            raise ValueError("百炼需要配置 API Key")
         elif (
             normalize_llm_provider(self.provider) == LLM_PROVIDER_VOLCENGINE
             and not self.api_key.strip()

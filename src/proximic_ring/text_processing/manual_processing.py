@@ -15,6 +15,7 @@ from .model import (INPUT_MODE_EDIT, LLMBranchTrace, LLM_PROVIDER_LOCAL, LLMSett
                     normalize_llm_provider, normalize_input_mode, validate_edit_target_text)
 from .prompts import DICTATION_PROMPT, EDIT_FRAGMENT_PROMPT, EDIT_FULL_TEXT_PROMPT, POLISH_PROMPT
 from .processing_common import LLMResponseProcessingError, _text_output_budget
+from .qwen_thinking import text_thinking_budget
 
 
 class ManualTextProcessingMixin:
@@ -30,7 +31,8 @@ class ManualTextProcessingMixin:
                    "scene": context.get("scene", ""), "context": context.get("context", "")}
         output = self._request_chat(settings, system_prompt=DICTATION_PREVIEW_PROMPT,
             user_content=json.dumps(payload, ensure_ascii=False), temperature=0, max_tokens=2048,
-            require_complete=True, disable_reasoning=True, allow_empty_text=settings.provider == "volcengine")
+            require_complete=True, disable_reasoning=not settings.supports_qwen_thinking,
+            thinking_budget=text_thinking_budget(len(text)), allow_empty_text=settings.provider in {"volcengine", "bailian"})
         return output.strip() if isinstance(output, str) else ""
 
     def polish_with_trace(self, text: str, settings: LLMSettings) -> tuple[str, str]:
@@ -47,6 +49,7 @@ class ManualTextProcessingMixin:
             settings, system_prompt=POLISH_PROMPT,
             user_content=f"<语音转写>\n{raw_text}\n</语音转写>",
             temperature=0.2, max_tokens=_text_output_budget(settings), edit_tool=None,
+            thinking_budget=text_thinking_budget(len(raw_text)),
         )
         output = self._model_output_text(response)
         if not isinstance(response, str) or not response.strip():
@@ -217,6 +220,7 @@ class ManualTextProcessingMixin:
             temperature=0.0,
             max_tokens=max_tokens,
             edit_tool=None,
+            thinking_budget=text_thinking_budget(len(raw_text)),
         )
         if not isinstance(response, str):
             model_output = self._model_output_text(response)

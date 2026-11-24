@@ -15,7 +15,9 @@ from .edit_tool import (
     normalize_edit_mode,
 )
 from .local_server import LocalModelServer
+from .qwen_thinking import edit_thinking_budget
 from .model import (
+    LLM_PROVIDER_BAILIAN,
     LLM_PROVIDER_LOCAL,
     LLM_PROVIDER_VOLCENGINE,
     LLMSettings,
@@ -142,6 +144,7 @@ class OpenAICompatibleTextProcessor(
                     temperature=0.0,
                     max_tokens=max_tokens,
                     edit_tool=edit_tool_for_mode(edit_mode),
+                    thinking_budget=edit_thinking_budget(instruction, target),
                 )
             except Exception as exc:
                 current_outputs = tuple(getattr(exc, "model_outputs", ()) or ())
@@ -247,6 +250,8 @@ class OpenAICompatibleTextProcessor(
         disable_reasoning: bool = False,
         preserve_whitespace: bool = False,
         allow_empty_text: bool = False,
+        response_format: dict | None = None,
+        thinking_budget: int | None = None,
     ) -> str | dict[str, Any]:
         provider = normalize_llm_provider(settings.provider)
         use_ark_responses = provider == LLM_PROVIDER_VOLCENGINE
@@ -265,8 +270,9 @@ class OpenAICompatibleTextProcessor(
         if not api_key and key_env:
             api_key = os.environ.get(key_env, "").strip()
             if not api_key:
+                service = "火山方舟" if use_ark_responses else "大模型"
                 raise RuntimeError(
-                    "尚未配置大模型 API Key；请在应用设置中填写"
+                    f"请在文本处理服务设置中填写{service} API Key"
                     f"（兼容环境变量：{key_env}）"
                 )
         if api_key:
@@ -319,17 +325,26 @@ class OpenAICompatibleTextProcessor(
                 "temperature": float(temperature),
                 "max_tokens": int(max_tokens),
             }
-            if disable_reasoning:
+            if provider == LLM_PROVIDER_BAILIAN:
+                thinking = (settings.qwen_thinking_enabled and settings.supports_qwen_thinking
+                            and thinking_budget is not None and not disable_reasoning)
+                request_body.update(enable_thinking=thinking, stream=False)
+                if thinking:
+                    request_body["thinking_budget"] = thinking_budget
+                if thinking or response_format:
+                    request_body.pop("temperature")
+                if response_format:
+                    request_body["response_format"] = response_format
+            elif disable_reasoning:
                 if provider == LLM_PROVIDER_LOCAL:
                     request_body["chat_template_kwargs"] = {"enable_thinking": False}
                 else:
                     request_body["reasoning_effort"] = "none"
             if edit_tool is not None:
                 request_body["tools"] = [edit_tool]
-                # There is exactly one edit tool. llama.cpp and compatible
-                # Chat Completions APIs accept this form to require a real
-                # function call instead of JSON placed in normal content.
-                request_body["tool_choice"] = "required"
+                # Bailian only accepts auto tool selection while thinking.
+                # The response still must contain the single named edit tool.
+                request_body["tool_choice"] = "auto" if request_body.get("enable_thinking") else "required"
         body = json.dumps(request_body, ensure_ascii=False).encode("utf-8")
         http_request = urllib_request.Request(
             endpoint,
@@ -356,14 +371,30 @@ class OpenAICompatibleTextProcessor(
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("大模型 API 返回了无法解析的数据") from exc
 
-        if require_complete and not use_ark_responses and disable_reasoning:
+        if provider == LLM_PROVIDER_BAILIAN and isinstance(payload, dict):
+            for choice in payload.get("choices") or ():
+                message = choice.get("message") if isinstance(choice, dict) else None
+                if isinstance(message, dict):
+                    message.pop("reasoning_content", None)
+
+        if require_complete and not use_ark_responses:
             choices = payload.get("choices") if isinstance(payload, dict) else None
             completed = bool(choices and isinstance(choices[0], dict) and choices[0].get("finish_reason") == "stop")
         else:
             completed = isinstance(payload, dict) and payload.get("status") == "completed"
         if require_complete and not completed:
-            raise LLMResponseProcessingError("大模型回复未完整结束，未应用编辑", self._model_output_text(payload))
-        if edit_tool is not None:
+            raw_output = "" if provider == LLM_PROVIDER_BAILIAN else self._model_output_text(payload)
+            raise LLMResponseProcessingError("大模型回复未完整结束，未应用编辑", raw_output)
+        if provider == LLM_PROVIDER_BAILIAN and edit_tool is None:
+            choices = payload.get("choices") if isinstance(payload, dict) else None
+            choice = choices[0] if isinstance(choices, list) and choices else None
+            message = choice.get("message") if isinstance(choice, dict) else None
+            if (not isinstance(message, dict) or message.get("role") != "assistant"
+                    or choice.get("finish_reason") != "stop" or message.get("refusal") or message.get("tool_calls")
+                    or message.get("function_call") or not isinstance(message.get("content"), str)):
+                raise LLMResponseProcessingError("百炼未返回有效的助手正文", "")
+            content = message["content"]
+        elif edit_tool is not None:
             expected_name = edit_tool["function"]["name"]
             content = self._extract_required_edit_tool_arguments(
                 payload,

@@ -35,6 +35,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..asr import ASRBackendCache
+from ..asr.backends.bailian import STREAMING_MODEL as BAILIAN_STREAMING_MODEL
 from ..audio.microphone import input_device_choices
 from ..voice.app_runtime import (
     ASR_GAIN_DB_DEFAULT,
@@ -75,13 +76,11 @@ from ..voice.interaction_associations import (
 )
 from ..voice.modification_dataset import ModificationDatasetCollector
 from ..runtime_paths import app_data_root, is_frozen, resource_root
-from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_SIX_CLASS,
+from ..text_processing.service_profiles import load_service, select_service
+from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_ORIGINAL,
+    LLM_PROVIDER_BAILIAN,
     ROUTED_EDIT_VARIANT_LABELS, selectable_routed_edit_variant)
 from ..text_processing import (
-    DEFAULT_ARK_API_KEY_ENV,
-    DEFAULT_ARK_BASE_URL,
-    DEFAULT_ARK_DEEPSEEK_MODEL,
-    DEFAULT_ARK_MODEL,
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_LOCAL_CONTEXT_SIZE,
     DEFAULT_LOCAL_MODEL,
@@ -97,8 +96,6 @@ from ..text_processing import (
     InputModeRoutingRequest,
     InputModeRoutingResult,
     LLM_PROVIDER_LOCAL,
-    LLM_PROVIDER_OPENAI,
-    LLM_PROVIDER_VOLCENGINE,
     LLMSettings,
     LLMTraceCollection,
     TextProcessingRequest,
@@ -123,6 +120,12 @@ from ..voice.voice_actions import (
 
 BUNDLED_NEAR_MODEL_VERSION = 3
 BUNDLED_NEAR_MODEL_FILENAME = f"ringo-near-v{BUNDLED_NEAR_MODEL_VERSION}.model"
+_ASR_DEFAULT_MODELS = {
+    "streaming_sensevoice": "iic/SenseVoiceSmall",
+    "volcengine": "seedasr-streaming",
+    "funasr_nano": "",  # Resolve the bundled checkpoint in the backend.
+    "bailian": BAILIAN_STREAMING_MODEL,
+}
 
 
 def _migrated_bundled_near_model_path(
@@ -499,7 +502,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             )
         )
         self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
-        saved_variant = self._settings.value("input/routedEditVariant", ROUTED_EDIT_SIX_CLASS)
+        text_service = load_service(self._settings)
+        saved_variant = self._settings.value("input/routedEditVariant", ROUTED_EDIT_ORIGINAL)
         self._routed_edit_variant = selectable_routed_edit_variant(saved_variant)
         if self._routed_edit_variant != saved_variant:
             self._settings.setValue("input/routedEditVariant", self._routed_edit_variant)
@@ -559,55 +563,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         # This switch controls only optional post-processing for dictation.
         # Edit mode always needs the selected text model.
         self._llm_enabled = self._bool_setting("llm/enabled", True)
-        saved_llm_provider = str(self._settings.value("llm/provider", "")).strip()
-        saved_llm_base_url = str(self._settings.value("llm/baseUrl", "")).strip()
-        if saved_llm_provider:
-            self._llm_provider = normalize_llm_provider(saved_llm_provider)
-        elif saved_llm_base_url:
-            local_hosts = ("http://127.0.0.1", "http://localhost", "http://[::1]")
-            self._llm_provider = (
-                LLM_PROVIDER_LOCAL
-                if saved_llm_base_url.lower().startswith(local_hosts)
-                else LLM_PROVIDER_OPENAI
-            )
-        else:
-            self._llm_provider = LLM_PROVIDER_LOCAL
-        self._llm_base_url = saved_llm_base_url or (
-            DEFAULT_LOCAL_BASE_URL
-            if self._llm_provider == LLM_PROVIDER_LOCAL
-            else (
-                DEFAULT_ARK_BASE_URL
-                if self._llm_provider == LLM_PROVIDER_VOLCENGINE
-                else "https://api.openai.com/v1"
-            )
-        )
-        default_llm_model = (
-            DEFAULT_LOCAL_MODEL
-            if self._llm_provider == LLM_PROVIDER_LOCAL
-            else (
-                DEFAULT_ARK_MODEL
-                if self._llm_provider == LLM_PROVIDER_VOLCENGINE
-                else "gpt-5.6-luna"
-            )
-        )
-        self._llm_model = str(
-            self._settings.value("llm/model", default_llm_model)
-        ).strip()
-        if (
-            self._llm_provider == LLM_PROVIDER_VOLCENGINE
-            and self._llm_model == "deepseek-v4-flash-260425"
-        ):
-            self._llm_model = DEFAULT_ARK_DEEPSEEK_MODEL
-            self._settings.setValue("llm/model", self._llm_model)
-        default_key_env = ""
-        if self._llm_provider == LLM_PROVIDER_VOLCENGINE:
-            default_key_env = DEFAULT_ARK_API_KEY_ENV
-        elif self._llm_provider != LLM_PROVIDER_LOCAL:
-            default_key_env = "OPENAI_API_KEY"
-        self._llm_api_key_env = str(
-            self._settings.value("llm/apiKeyEnv", default_key_env)
-        ).strip()
-        self._llm_api_key = str(self._settings.value("llm/apiKey", "")).strip()
+        self._qwen_thinking_enabled = self._bool_setting("llm/qwenThinkingEnabled", False)
+        self._load_llm_profile(text_service)
         self._llm_local_server_path = str(
             self._settings.value(
                 "llm/localServerPath",
@@ -753,6 +710,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._asr_api_key = str(
             self._settings.value("asr/volcengineApiKey", "")
         ).strip()
+        self._bailian_api_key = str(self._settings.value("asr/bailianApiKey", "")).strip()
+        self._bailian_api_host = str(self._settings.value("asr/bailianApiHost", "")).strip()
         try:
             saved_asr_gain_db = float(
                 self._settings.value("asr/gainDb", ASR_GAIN_DB_DEFAULT)
@@ -765,7 +724,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             ASR_GAIN_DB_MIN, min(saved_asr_gain_db, ASR_GAIN_DB_MAX)
         )
         self._asr_model = str(
-            self._settings.value("asr/model", "iic/SenseVoiceSmall")
+            self._settings.value("asr/model", _ASR_DEFAULT_MODELS.get(self._asr_backend, ""))
         )
         self._nvidia_gpu_name = self._detect_nvidia_gpu_name()
         self._compute_devices, self._gpu_status_text = self._detect_compute_devices(
@@ -3298,31 +3257,20 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @asrBackend.setter
     def asrBackend(self, value: str) -> None:
         value = str(value)
-        known_defaults = {
-            "",
-            "iic/SenseVoiceSmall",
-            "seedasr-streaming",
-            "FunAudioLLM/Fun-ASR-Nano-2512",
-        }
-        backend_changed = value != self._asr_backend
-        model_changed = False
-        if self._asr_model in known_defaults:
-            model = {
-                "streaming_sensevoice": "iic/SenseVoiceSmall",
-                "volcengine": "seedasr-streaming",
-                # Empty lets the backend prefer
-                # repo/pretrained_models/Fun-ASR-Nano-2512.
-                "funasr_nano": "",
-            }.get(value, self._asr_model)
-            model_changed = model != self._asr_model
-            self._asr_model = model
-
-        if not backend_changed and not model_changed:
+        if value == self._asr_backend:
             return
+        old_backend = self._asr_backend
+        self._settings.setValue(f"asr/models/{old_backend}", self._asr_model)
+        # Preserve legacy custom models across the old backends. Bailian has
+        # its own protocol and must never inherit a local or Seed model ID.
+        fallback = self._asr_model
+        if ("bailian" in {value, old_backend} or fallback in _ASR_DEFAULT_MODELS.values()
+                or fallback == "FunAudioLLM/Fun-ASR-Nano-2512"):
+            fallback = _ASR_DEFAULT_MODELS.get(value, "" if old_backend == "bailian" else fallback)
+        self._asr_model = str(self._settings.value(f"asr/models/{value}", fallback))
         self._asr_backend = value
         self._settings.setValue("asr/backend", value)
-        if model_changed:
-            self._settings.setValue("asr/model", self._asr_model)
+        self._settings.setValue("asr/model", self._asr_model)
         self.settingsChanged.emit()
 
     @Property(str, notify=settingsChanged)
@@ -3344,6 +3292,22 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             str(value).strip(),
             "asr/volcengineApiKey",
         )
+
+    @Property(str, notify=settingsChanged)
+    def bailianApiKey(self) -> str:
+        return self._bailian_api_key
+
+    @bailianApiKey.setter
+    def bailianApiKey(self, value: str) -> None:
+        self._set_setting("_bailian_api_key", str(value).strip(), "asr/bailianApiKey")
+
+    @Property(str, notify=settingsChanged)
+    def bailianApiHost(self) -> str:
+        return self._bailian_api_host
+
+    @bailianApiHost.setter
+    def bailianApiHost(self, value: str) -> None:
+        self._set_setting("_bailian_api_host", str(value).strip(), "asr/bailianApiHost")
 
     @Property(float, notify=settingsChanged)
     def asrGainDb(self) -> float:
@@ -3475,36 +3439,19 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         provider = normalize_llm_provider(value)
         if provider == self._llm_provider:
             return
-        previous = self._llm_provider
-        self._llm_provider = provider
-        self._settings.setValue("llm/provider", provider)
-        if provider == LLM_PROVIDER_LOCAL:
-            # Keep the remote profile intact so switching back online restores
-            # the user's Ark endpoint, model ID, key and compatibility fallback.
-            pass
-        elif previous == LLM_PROVIDER_LOCAL:
-            if not self._llm_base_url.strip() or self._llm_base_url == DEFAULT_LOCAL_BASE_URL:
-                self._llm_base_url = (
-                    DEFAULT_ARK_BASE_URL
-                    if provider == LLM_PROVIDER_VOLCENGINE
-                    else "https://api.openai.com/v1"
-                )
-                self._settings.setValue("llm/baseUrl", self._llm_base_url)
-            if not self._llm_model.strip() or self._llm_model == DEFAULT_LOCAL_MODEL:
-                self._llm_model = (
-                    DEFAULT_ARK_MODEL
-                    if provider == LLM_PROVIDER_VOLCENGINE
-                    else "gpt-5.6-luna"
-                )
-                self._settings.setValue("llm/model", self._llm_model)
-            if not self._llm_api_key_env:
-                self._llm_api_key_env = (
-                    DEFAULT_ARK_API_KEY_ENV
-                    if provider == LLM_PROVIDER_VOLCENGINE
-                    else "OPENAI_API_KEY"
-                )
-                self._settings.setValue("llm/apiKeyEnv", self._llm_api_key_env)
+        self._load_llm_profile(select_service(self._settings, provider, self._llm_settings()))
         self.settingsChanged.emit()
+
+    def _load_llm_profile(self, profile):
+        self._llm_provider = profile.provider
+        self._llm_base_url = profile.base_url
+        self._llm_model = profile.model
+        self._llm_api_key_env = profile.api_key_env
+        self._llm_api_key = profile.api_key
+
+    @Property(str, notify=settingsChanged)
+    def lastOnlineLlmProvider(self) -> str:
+        return str(self._settings.value("llm/lastOnlineProvider", LLM_PROVIDER_BAILIAN))
 
     @Property(str, notify=settingsChanged)
     def llmBaseUrl(self) -> str:
@@ -3521,6 +3468,22 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @llmModel.setter
     def llmModel(self, value: str) -> None:
         self._set_setting("_llm_model", str(value), "llm/model")
+
+    @Property(str, notify=settingsChanged)
+    def activeTextModel(self) -> str:
+        return self._llm_settings().model
+
+    @Property(bool, notify=settingsChanged)
+    def qwenThinkingAvailable(self) -> bool:
+        return self._llm_settings().supports_qwen_thinking
+
+    @Property(bool, notify=settingsChanged)
+    def qwenThinkingEnabled(self) -> bool:
+        return self._qwen_thinking_enabled
+
+    @qwenThinkingEnabled.setter
+    def qwenThinkingEnabled(self, value: bool) -> None:
+        self._set_setting("_qwen_thinking_enabled", bool(value), "llm/qwenThinkingEnabled")
 
     @Property(str, notify=settingsChanged)
     def llmApiKeyEnv(self) -> str:
@@ -5708,7 +5671,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         routing_mode: str = INPUT_ROUTING_MANUAL,
         settings=None,
         reexecuted: bool = False,
-        routed_edit_variant: str = ROUTED_EDIT_SIX_CLASS,
+        routed_edit_variant: str | None = None,
     ) -> TextProcessingRequest | None:
         normalized_mode = TEXT_MODE_POLISH if mode == TEXT_MODE_POLISH else normalize_input_mode(mode)
         if normalized_mode not in {INPUT_MODE_EDIT, TEXT_MODE_POLISH} and not self._llm_enabled and not force_llm:
@@ -5744,7 +5707,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             edit_plan=edit_plan,
             routing_mode=routing_mode,
             reexecuted=reexecuted,
-            routed_edit_variant=selectable_routed_edit_variant(routed_edit_variant),
+            routed_edit_variant=selectable_routed_edit_variant(routed_edit_variant or self._routed_edit_variant),
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
@@ -8522,11 +8485,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             # Keep RuntimeSettings/CLI reusable default at 1.0 s; the desktop
             # product intentionally retains a little more leading context.
             asr_pre_roll_s=1.2,
-            asr_api_key=(
-                self._asr_api_key.strip()
-                if self._asr_backend == "volcengine"
-                else ""
-            ),
+            asr_api_key={"volcengine": self._asr_api_key, "bailian": self._bailian_api_key}.get(self._asr_backend, ""),
+            bailian_api_host=self._bailian_api_host if self._asr_backend == "bailian" else "",
             # The UI commits either the LLM result or the raw fallback itself.
             # Feeding ASR finals into the legacy output here would inject the
             # unprocessed text once and then inject the processed text again.
@@ -8550,6 +8510,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         options = {}
         if self._asr_backend == "volcengine":
             options["api_key"] = self._asr_api_key.strip()
+        elif self._asr_backend == "bailian":
+            options = {"api_key": self._bailian_api_key, "api_host": self._bailian_api_host}
         elif self._asr_backend == "streaming_sensevoice":
             options = {"repo": self._streaming_repo, "final_redecode": "false"}
         elif self._asr_backend == "funasr_nano":
@@ -8587,6 +8549,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             local_context_size=DEFAULT_LOCAL_CONTEXT_SIZE,
             local_reasoning=DEFAULT_LOCAL_REASONING,
             api_key="" if local_selected else self._llm_api_key.strip(),
+            qwen_thinking_enabled=self._qwen_thinking_enabled,
         )
 
     def _voice_llm_settings(

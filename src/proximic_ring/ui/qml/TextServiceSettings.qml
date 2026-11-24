@@ -6,7 +6,7 @@ ColumnLayout {
     id: pane
     required property var controller
     readonly property bool local: controller.llmProvider === "local"
-    readonly property var presetModels: ["doubao-seed-2-0-lite-260215", "deepseek-v4-1-flash-260910"]
+    readonly property var presetModels: ["deepseek-v4-pro-ga-260813", "deepseek-v4-1-flash-260910", "doubao-seed-2-0-lite-260215"]
     spacing: 18
     FigmaTheme { id: theme }
 
@@ -17,7 +17,7 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             title: "运行方式"
-            description: pane.local ? "文本模型在电脑上运行，语音识别服务单独设置。"
+            description: pane.local ? "文本编辑在电脑上运行。启用屏幕上文时，屏幕文字由火山方舟 DeepSeek V4.1 Flash 在线整理。"
                 : "使用已配置的在线文本服务，需要网络连接。"
             FigmaSelect {
                 objectName: "llmProviderCombo"
@@ -27,7 +27,7 @@ ColumnLayout {
                 currentIndex: pane.local ? 0 : 1
                 onActivated: {
                     if (currentIndex === 0) pane.controller.llmProvider = "local"
-                    else if (pane.local) pane.controller.llmProvider = "volcengine"
+                    else if (pane.local) pane.controller.llmProvider = pane.controller.lastOnlineLlmProvider
                 }
             }
         }
@@ -63,7 +63,21 @@ ColumnLayout {
         flat: true
         objectName: "onlineTextModelGroup"
         visible: !pane.local
-        title: pane.controller.llmProvider === "volcengine" ? "火山方舟" : "当前在线服务"
+        title: pane.controller.llmProvider === "bailian" ? "阿里云百炼" : pane.controller.llmProvider === "volcengine" ? "火山方舟" : "当前在线服务"
+        FigmaFormRow {
+            preferenceStyle: true
+            title: "模型服务"
+            controlWidth: pane.width >= 760 ? 340 : 220
+            FigmaSelect {
+                objectName: "llmOnlineServiceCombo"
+                Layout.fillWidth: true
+                Accessible.name: "在线文本模型服务"
+                readonly property var providers: ["bailian", "volcengine", "openai"]
+                model: ["百炼 · Qwen", "火山方舟 · DeepSeek / 豆包", "OpenAI 兼容服务"]
+                currentIndex: providers.indexOf(pane.controller.llmProvider)
+                onActivated: index => pane.controller.llmProvider = providers[index]
+            }
+        }
         FigmaFormRow {
             preferenceStyle: true
             title: "在线模型"
@@ -74,7 +88,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Accessible.name: "在线文本模型"
                 visible: pane.controller.llmProvider === "volcengine"
-                model: ["豆包 Seed 2.0", "DeepSeek V4.1"]
+                model: ["DeepSeek V4 Pro", "DeepSeek V4.1 Flash", "豆包 Seed 2.0"]
                 currentIndex: pane.presetModels.indexOf(pane.controller.llmModel)
                 displayText: currentIndex < 0 ? "当前模型：" + pane.controller.llmModel : currentText
                 onActivated: pane.controller.llmModel = pane.presetModels[currentIndex]
@@ -99,7 +113,7 @@ ColumnLayout {
                     objectName: "llmApiKeyField"
                     Layout.fillWidth: true; Layout.minimumWidth: 0
                     text: pane.controller.llmApiKey
-                    hintText: pane.controller.llmProvider === "volcengine" ? "填写火山方舟 API Key" : "填写服务 API Key"
+                    hintText: pane.controller.llmProvider === "bailian" ? "填写百炼 API Key" : pane.controller.llmProvider === "volcengine" ? "填写火山方舟 API Key" : "填写服务 API Key"
                     echoMode: revealLlmKey.checked ? TextInput.Normal : TextInput.Password
                     onEditingFinished: pane.controller.llmApiKey = text
                 }

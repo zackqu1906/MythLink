@@ -1,9 +1,72 @@
 from concurrent.futures import Future
+import io
+import json
 
 import pytest
 from test_inline_ui import inline_ui
 from test_shared_voice_capture import raw_capture, finish_asr
-from proximic_ring.text_processing.context_preparation import PreparedContext
+from proximic_ring.text_processing.context_preparation import ContextPreparationProvider, PreparedContext
+from proximic_ring.text_processing.llm import OpenAICompatibleTextProcessor
+from test_context_preparation import SUMMARY_TEXT
+
+
+def test_voice_screen_ocr_always_uses_ark_flash(inline_ui, monkeypatch):
+    controller, *_ = inline_ui
+    requests = []
+    def respond(request, **kwargs):
+        requests.append((request.full_url, request.get_header("Authorization"), json.loads(request.data)))
+        result = {"status": "completed", "output": [{"type": "message", "content": [
+            {"type": "output_text", "text": SUMMARY_TEXT}]}]}
+        return io.BytesIO(json.dumps(result).encode())
+
+    preparer = ContextPreparationProvider(OpenAICompatibleTextProcessor(urlopen=respond))
+    worker = controller._text_processing_worker
+    monkeypatch.setattr(worker, "capture_context", lambda target: raw_capture())
+    monkeypatch.setattr(worker, "prepare_context", preparer.prefetch)
+    controller.ocrContextEnabled = True
+    controller.qwenThinkingEnabled = True
+    controller.llmApiKey = "test-qwen"
+    controller.llmProvider = "volcengine"
+    controller.llmBaseUrl = "https://ark.example.test/api/v3"
+    controller.llmApiKey = "test-ark"
+    controller.llmModel = "deepseek-v4-pro-ga-260813"
+    try:
+        for selected in ("volcengine", "bailian", "local", "openai"):
+            controller.llmProvider = selected
+            editor = controller._voice_llm_settings()
+            controller._prefetch_voice_capture(None, inline=True, verified=True)
+            result = controller._voice_capture["model_context"].result(2)
+            assert result["status"] == "ok"
+            url, auth, body = requests[-1]
+            assert url == "https://ark.example.test/api/v3/responses" and auth == "Bearer test-ark"
+            assert body["model"] == "deepseek-v4-1-flash-260910" and body["thinking"] == {"type": "disabled"}
+            trace = result.evidence["context_preparation"]
+            assert (trace["provider"], trace["model"]) == ("volcengine", body["model"])
+            assert controller.llmProvider == selected and controller._voice_llm_settings() == editor
+        assert len(requests) == 4
+    finally:
+        preparer.close()
+
+
+def test_missing_ark_credentials_do_not_use_editor_key(inline_ui, monkeypatch):
+    controller, *_ = inline_ui
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    controller.llmProvider = "bailian"
+    controller.llmApiKey = "test-qwen"
+    controller.ocrContextEnabled = True
+    preparer = ContextPreparationProvider(OpenAICompatibleTextProcessor(
+        urlopen=lambda *args, **kwargs: pytest.fail("HTTP called without Ark credentials")))
+    worker = controller._text_processing_worker
+    monkeypatch.setattr(worker, "capture_context", lambda target: raw_capture())
+    monkeypatch.setattr(worker, "prepare_context", preparer.prefetch)
+    try:
+        controller._prefetch_voice_capture(None, inline=True, verified=True)
+        result = controller._voice_capture["model_context"].result(2)
+        assert result["status"] == "unavailable"
+        assert "火山方舟" in result["reason"] and "ARK_API_KEY" in result["reason"]
+        assert controller._voice_llm_settings().api_key == "test-qwen"
+    finally:
+        preparer.close()
 
 
 @pytest.mark.parametrize("routing", ["auto", "manual_routed_edit"])

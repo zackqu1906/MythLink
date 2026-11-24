@@ -2,10 +2,10 @@
 from dataclasses import replace
 import pytest
 from test_inline_ui import inline_ui, _recording_test_begin_edit
-from proximic_ring.text_processing.model import ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS,TextProcessingResult
+from proximic_ring.text_processing.model import ROUTED_EDIT_ORIGINAL,ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS,TextProcessingResult
 
 @pytest.mark.parametrize('inline_ui,expected',[
-    ({},ROUTED_EDIT_SIX_CLASS),
+    ({},ROUTED_EDIT_ORIGINAL),
     ({'input/routedEditVariant':ROUTED_EDIT_BOUNDARY},ROUTED_EDIT_BOUNDARY),
     ({'input/routedEditVariant':ROUTED_EDIT_SIX_CLASS},ROUTED_EDIT_SIX_CLASS),
     ({'input/routedEditVariant':'general_only_v1'},ROUTED_EDIT_BOUNDARY),
@@ -17,10 +17,10 @@ def test_saved_or_missing_variant_loads_without_changing_mode(inline_ui,expected
     c,_,_,root,_=inline_ui
     assert c.routedEditVariant==expected and c.inputRoutingMode=='manual'
     combo=root.findChild(QObject,'routedEditVariantCombo')
-    assert combo.property('count')==2
-    assert [combo.textAt(i) for i in range(2)] == ['六分类', '无分类边界']
-    assert combo.property('currentIndex')==[ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY].index(expected)
-    assert c._settings.value('input/routedEditVariant', ROUTED_EDIT_SIX_CLASS) == expected
+    assert combo.property('count')==3
+    assert [combo.textAt(i) for i in range(3)] == ['六分类', '无分类边界', '精简编辑提示词']
+    assert combo.property('currentIndex')==[ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL].index(expected)
+    assert c._settings.value('input/routedEditVariant', ROUTED_EDIT_ORIGINAL) == expected
 
 def test_settings_combo_changes_persistent_variant_and_renders(inline_ui,monkeypatch):
     from PySide6.QtCore import QObject,QMetaObject,Q_ARG,QSettings,QPointF

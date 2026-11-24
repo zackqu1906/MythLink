@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -8,11 +9,46 @@ ColumnLayout {
     property bool deviceSettingsLocked: false
     readonly property bool voiceSettingsLocked: deviceSettingsLocked
         && (controller.voiceRuntimeError.length === 0 || controller.voiceRetryPending || controller.busy)
-    readonly property bool online: controller.asrBackend === "volcengine"
+    readonly property bool bailian: controller.asrBackend === "bailian"
+    readonly property bool online: bailian || controller.asrBackend === "volcengine"
+    readonly property var backendIds: ["streaming_sensevoice", "funasr_nano", "volcengine", "bailian"]
+    readonly property var bailianModels: ["qwen-audio-3.1-asr-flash-streaming", "qwen-audio-3.1-asr-flash-message"]
     readonly property bool local: ["streaming_sensevoice", "funasr_nano"].indexOf(controller.asrBackend) >= 0
     signal gpuSetupRequested()
     spacing: 18
     FigmaTheme { id: theme }
+
+    component ServiceKeyRow: FigmaFormRow {
+        id: keyRow
+        required property string fieldName
+        required property string buttonName
+        required property string hint
+        required property string savedKey
+        signal saved(string value)
+        preferenceStyle: true
+        title: "语音服务密钥"
+        controlWidth: pane.width >= 760 ? 340 : 220
+        RowLayout {
+            Layout.fillWidth: true; spacing: 8
+            enabled: !pane.voiceSettingsLocked
+            FigmaTextField {
+                objectName: keyRow.fieldName
+                Layout.fillWidth: true; Layout.minimumWidth: 0
+                text: keyRow.savedKey
+                hintText: keyRow.hint
+                echoMode: revealKey.checked ? TextInput.Normal : TextInput.Password
+                onEditingFinished: keyRow.saved(text)
+            }
+            FigmaAction {
+                id: revealKey
+                objectName: keyRow.buttonName
+                checkable: true; quiet: true
+                text: checked ? "隐藏" : "显示"
+                Accessible.name: checked ? "隐藏语音服务密钥" : "显示语音服务密钥"
+                onVisibleChanged: if (!visible) checked = false
+            }
+        }
+    }
 
     FigmaFormGroup {
         flat: true
@@ -25,7 +61,8 @@ ColumnLayout {
         FigmaFormRow {
             preferenceStyle: true
             title: "识别服务"
-            description: pane.online ? "通过火山引擎在线识别，需要网络连接。"
+            description: pane.bailian ? "通过阿里云百炼识别，边说边显示文字。"
+                : pane.online ? "通过火山引擎在线识别，需要网络连接。"
                 : pane.controller.asrBackend === "funasr_nano" ? "在电脑上识别，支持添加常用人名和专有名词。"
                 : pane.controller.asrBackend === "streaming_sensevoice" ? "在电脑上实时识别语音。"
                 : "沿用已保存的识别配置。"
@@ -34,10 +71,10 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Accessible.name: "识别服务"
                 enabled: !pane.voiceSettingsLocked
-                model: ["实时识别（推荐）", "本地高精度", "在线识别"]
-                currentIndex: ["streaming_sensevoice", "funasr_nano", "volcengine"].indexOf(pane.controller.asrBackend)
+                model: ["实时识别（推荐）", "本地高精度", "豆包（火山引擎）", "千问（阿里云百炼）"]
+                currentIndex: pane.backendIds.indexOf(pane.controller.asrBackend)
                 displayText: currentIndex < 0 ? "当前配置：" + pane.controller.asrBackend : currentText
-                onActivated: pane.controller.asrBackend = ["streaming_sensevoice", "funasr_nano", "volcengine"][currentIndex]
+                onActivated: pane.controller.asrBackend = pane.backendIds[currentIndex]
             }
         }
         FigmaFormRow {
@@ -65,29 +102,52 @@ ColumnLayout {
         description: "服务密钥保存在当前用户的应用设置中。"
         FigmaFormRow {
             preferenceStyle: true
-            title: "语音服务密钥"
-            description: "填写豆包语音的 App Key。"
-            controlWidth: pane.width >= 760 ? 340 : 220
-            RowLayout {
-                Layout.fillWidth: true; spacing: 8
+            visible: pane.bailian
+            title: "识别模型"
+            description: "连续转写适合实时听写，短句输入适合语音消息。"
+            FigmaSelect {
+                objectName: "bailianModelCombo"
+                Layout.fillWidth: true
+                Accessible.name: "百炼识别模型"
                 enabled: !pane.voiceSettingsLocked
-                FigmaTextField {
-                    objectName: "asrApiKeyField"
-                    Layout.fillWidth: true; Layout.minimumWidth: 0
-                    text: pane.controller.asrApiKey
-                    hintText: "填写豆包语音 App Key"
-                    echoMode: revealAsrKey.checked ? TextInput.Normal : TextInput.Password
-                    onEditingFinished: pane.controller.asrApiKey = text
-                }
-                FigmaAction {
-                    id: revealAsrKey
-                    objectName: "showAsrApiKeyButton"
-                    checkable: true; quiet: true
-                    text: checked ? "隐藏" : "显示"
-                    Accessible.name: checked ? "隐藏语音服务密钥" : "显示语音服务密钥"
-                    onVisibleChanged: if (!visible) checked = false
-                }
+                model: ["Qwen-Audio 3.1 · 连续转写", "Qwen-Audio 3.1 · 短句输入"]
+                currentIndex: pane.bailianModels.indexOf(pane.controller.asrModel)
+                onActivated: pane.controller.asrModel = pane.bailianModels[currentIndex]
             }
+        }
+        FigmaFormRow {
+            preferenceStyle: true
+            visible: pane.bailian
+            title: "API Host"
+            description: "填写百炼控制台中与密钥对应的 API Host。"
+            controlWidth: pane.width >= 760 ? 340 : 220
+            FigmaTextField {
+                objectName: "bailianApiHostField"
+                Layout.fillWidth: true
+                Accessible.name: "百炼 API Host"
+                enabled: !pane.voiceSettingsLocked
+                text: pane.controller.bailianApiHost
+                hintText: "默认使用北京公共端点"
+                onEditingFinished: pane.controller.bailianApiHost = text
+            }
+        }
+        ServiceKeyRow {
+            visible: pane.controller.asrBackend === "volcengine"
+            fieldName: "asrApiKeyField"
+            buttonName: "showAsrApiKeyButton"
+            description: "填写豆包语音的 App Key。"
+            hint: "填写豆包语音 App Key"
+            savedKey: pane.controller.asrApiKey
+            onSaved: value => pane.controller.asrApiKey = value
+        }
+        ServiceKeyRow {
+            visible: pane.bailian
+            fieldName: "bailianApiKeyField"
+            buttonName: "showBailianApiKeyButton"
+            description: "留空时使用环境变量 DASHSCOPE_API_KEY。"
+            hint: "填写百炼 API Key"
+            savedKey: pane.controller.bailianApiKey
+            onSaved: value => pane.controller.bailianApiKey = value
         }
     }
 

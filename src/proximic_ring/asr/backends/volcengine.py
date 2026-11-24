@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 
+from ...audio.pcm import encode_pcm16le as _pcm16
 from ..factory import ASRBackendSettings
 from ..punctuation import trim_short_utterance_end
 from ...voice.hotwords import select_hotwords
@@ -64,19 +65,6 @@ def _bool_option(value: str | None, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _pcm16(audio_16k: np.ndarray) -> bytes:
-    x = np.asarray(audio_16k, dtype=np.float32).reshape(-1)
-    if not x.size:
-        return b""
-    if not np.all(np.isfinite(x)):
-        raise ValueError("ASR audio contains NaN or infinity")
-    # Match VoiceHistoryStore's PCM16 quantization exactly so a saved WAV is a
-    # byte-for-byte record of the samples submitted to the cloud ASR.
-    return np.rint(np.clip(x, -1.0, 1.0) * 32767.0).astype(
-        "<i2", copy=False
-    ).tobytes()
 
 
 def _packet(

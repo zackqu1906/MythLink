@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from ...text_processing.service_profiles import screen_context_service
+
 
 class VoiceCaptureMixin:
     def _init_voice_capture(self):
@@ -49,8 +51,10 @@ class VoiceCaptureMixin:
         # Snapshot once, before either native BEGIN or ASR callbacks can finish.
         # Disabling model input must never disable the raw history capture.
         context_enabled = self._ocr_context_enabled
-        model_context = (self._text_processing_worker.prepare_context(future, self._llm_settings())
-                         if context_enabled else {})
+        model_context = {}
+        if context_enabled:
+            settings = screen_context_service(self._settings, timeout_s=self.llmTimeoutSeconds)
+            model_context = self._text_processing_worker.prepare_context(future, settings)
         self._voice_capture = {
             "future": future,
             "model_context": model_context,
