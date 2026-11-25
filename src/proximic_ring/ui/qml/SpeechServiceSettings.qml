@@ -8,7 +8,7 @@ ColumnLayout {
     required property var controller
     property bool deviceSettingsLocked: false
     readonly property bool voiceSettingsLocked: deviceSettingsLocked
-        && (controller.voiceRuntimeError.length === 0 || controller.voiceRetryPending || controller.busy)
+        && (controller.voiceRuntimeReady || controller.voiceRetryPending || controller.busy)
     readonly property bool bailian: controller.asrBackend === "bailian"
     readonly property bool online: bailian || controller.asrBackend === "volcengine"
     readonly property var backendIds: ["streaming_sensevoice", "funasr_nano", "volcengine", "bailian"]
@@ -53,18 +53,14 @@ ColumnLayout {
     FigmaFormGroup {
         flat: true
         title: "语音识别"; symbol: "microphone"
-        description: pane.controller.voiceRuntimeError.length > 0
-            ? (pane.controller.voiceRetryPending ? "正在重新检查语音配置，Ring 保持连接。" : "补齐语音配置后再次开启语音，无需断开 Ring。")
-            : pane.deviceSettingsLocked
-            ? "设备已连接，灰色选项需在首页断开戒指后修改。"
-            : "识别服务与语言在下次连接戒指时生效。"
+        description: pane.controller.voiceRuntimeReady ? "断开戒指后可更改识别服务与语言。" : ""
         FigmaFormRow {
             preferenceStyle: true
             title: "识别服务"
             description: pane.bailian ? "通过阿里云百炼识别，边说边显示文字。"
                 : pane.online ? "通过火山引擎在线识别，需要网络连接。"
-                : pane.controller.asrBackend === "funasr_nano" ? "在电脑上识别，支持添加常用人名和专有名词。"
-                : pane.controller.asrBackend === "streaming_sensevoice" ? "在电脑上实时识别语音。"
+                : pane.controller.asrBackend === "funasr_nano" ? "在电脑上识别，首次使用会下载模型。"
+                : pane.controller.asrBackend === "streaming_sensevoice" ? "在电脑上实时识别，缺少模型时需下载约 936 MB。"
                 : "沿用已保存的识别配置。"
             FigmaSelect {
                 objectName: "asrBackendCombo"
@@ -148,6 +144,25 @@ ColumnLayout {
             hint: "填写百炼 API Key"
             savedKey: pane.controller.bailianApiKey
             onSaved: value => pane.controller.bailianApiKey = value
+        }
+    }
+
+    UiNotice {
+        Layout.fillWidth: true
+        visible: pane.controller.connected && (pane.controller.voiceRetryPending || pane.controller.voiceRuntimeError.length > 0)
+        text: pane.controller.voiceRetryPending ? pane.controller.statusDetail : pane.controller.voiceRuntimeError
+        warning: !pane.controller.voiceRetryPending
+    }
+    FigmaAction {
+        objectName: "enableConfiguredVoiceButton"
+        Layout.alignment: Qt.AlignRight
+        visible: pane.controller.connected && !pane.controller.voiceRuntimeReady
+        enabled: !pane.voiceSettingsLocked && !pane.controller.touchpad.blocksVoice
+        text: pane.controller.voiceRetryPending ? "正在准备语音…" : "启用语音识别"
+        primary: true
+        onClicked: {
+            pane.forceActiveFocus()
+            pane.controller.enableConfiguredVoice()
         }
     }
 

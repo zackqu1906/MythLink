@@ -9,6 +9,19 @@ from pathlib import Path
 from types import ModuleType
 
 
+def _modelscope_cache_root() -> Path:
+    return Path(os.environ.get("MODELSCOPE_CACHE", Path.home() / ".cache/modelscope")).expanduser()
+
+
+def cached_modelscope_snapshot(model_id: str, revision: str = "master") -> Path | None:
+    snapshot = _modelscope_cache_root() / "models" / model_id.replace("/", "--") / "snapshots" / revision
+    files = ("model.pt", "configuration.json", "config.yaml")
+    if model_id == "iic/SenseVoiceSmall":
+        files += ("am.mvn", "chn_jpn_yue_eng_ko_spectok.bpe.model")
+    # The hub creates the snapshot directory before all downloads finish.
+    return snapshot if all((snapshot / name).is_file() for name in files) else None
+
+
 def prepare_funasr_runtime() -> None:
     """Satisfy FunASR's unused librosa import in a frozen application.
 
@@ -60,25 +73,14 @@ def _install_modelscope_download_shim() -> None:
         **kwargs: object,
     ) -> str:
         del user_agent  # The lightweight hub supplies its own user agent.
-        revision_name = str(revision or "master")
-        cache_root = Path(
-            os.environ.get("MODELSCOPE_CACHE", Path.home() / ".cache/modelscope")
-        ).expanduser()
-        # Reuse the legacy cache written by earlier Mythlink releases.
-        cached_snapshot = (
-            cache_root
-            / "models"
-            / model_id.replace("/", "--")
-            / "snapshots"
-            / revision_name
-        )
-        if cached_snapshot.is_dir():
+        cached_snapshot = cached_modelscope_snapshot(model_id, str(revision or "master"))
+        if cached_snapshot is not None:
             return str(cached_snapshot)
         return str(
             hub_snapshot_download(
                 model_id=model_id,
                 revision=revision,
-                cache_dir=str(cache_root),
+                cache_dir=str(_modelscope_cache_root()),
                 **kwargs,
             )
         )

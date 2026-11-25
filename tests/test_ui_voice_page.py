@@ -418,6 +418,7 @@ def test_home_reconnect_and_voice_toggle_use_separate_existing_operations(inline
     click(root, "homeConnectionButton")
     assert starts == ["connect"]
     controller._connected = True
+    controller._voice_runtime_ready = True
     controller.connectedChanged.emit()
     controller._recognition_enabled = False
     controller.recognitionEnabledChanged.emit()

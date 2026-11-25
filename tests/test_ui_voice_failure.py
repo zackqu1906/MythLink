@@ -2,27 +2,49 @@
 import threading
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, QMetaObject, Q_ARG
+import pytest
+from PySide6.QtCore import QObject, QMetaObject
 from PySide6.QtTest import QTest
 
 from test_inline_ui import inline_ui
 
 
-def test_missing_voice_setup_allows_settings_and_explicit_retry(inline_ui):
+@pytest.mark.parametrize("trigger", ["button", "gesture"])
+def test_first_voice_use_opens_settings_and_prepares_only_after_confirmation(inline_ui, trigger):
     c, _, _, root, event = inline_ui
     event(phase="idle", ready=True, utterance_id="")
     c._connected = c._runtime_active = True
+    c._recognition_enabled = False
     c._busy = False
     c.connectedChanged.emit()
+    c.recognitionEnabledChanged.emit()
     c.busyChanged.emit()
-    c._settings.setValue("input/voiceEnabled", True)
     root.show()
-    QMetaObject.invokeMethod(root, "showSettings", Q_ARG("QVariant", 4))
+    root.setProperty("currentPage", 1)
+    QTest.qWait(60)
+    dialog = root.findChild(QObject, "runtimeSettingsDialog")
+    c.startRecognition(remember=False)
+    assert not dialog.property("visible") and not c._retry_voice_event.is_set()
+    if trigger == "gesture":
+        c._runtimeVoiceStartRequested.emit(threading.Event())
+        assert not dialog.property("visible")
+        c._runtimeVoiceStartRequested.emit(c._disconnect_event)
+    else:
+        QMetaObject.invokeMethod(root.findChild(QObject, "voiceRecognitionButton"), "click")
     QTest.qWait(100)
     backend = root.findChild(QObject, "asrBackendCombo")
     key = root.findChild(QObject, "asrApiKeyField")
-    assert backend is not None and not backend.property("enabled")
+    enable = root.findChild(QObject, "enableConfiguredVoiceButton")
+    assert dialog.property("visible") and backend.property("visible") and backend.property("enabled")
+    assert not c._retry_voice_event.is_set() and not c.recognitionEnabled
+    assert not c._settings.contains("asr/configuredBackend")
 
+    c.asrBackend = "volcengine"
+    QTest.qWait(20)
+    QMetaObject.invokeMethod(enable, "click")
+    assert c.voiceRetryPending and c._retry_voice_event.is_set()
+    assert not backend.property("enabled")
+    c._retry_voice_event.clear()
     c._apply_runtime_voice_availability(c._disconnect_event, "尚未配置线上语音模型 API Key")
     QTest.qWait(20)
     assert c.connected and not c.recognitionEnabled
@@ -30,8 +52,6 @@ def test_missing_voice_setup_allows_settings_and_explicit_retry(inline_ui):
     assert c._bool_setting("input/voiceEnabled", False)
     assert "API Key" in c.voiceRuntimeError and "Ring 保持连接" in c.statusDetail
     assert backend.property("enabled")
-    c.asrBackend = "volcengine"
-    QTest.qWait(20)
     assert key.property("enabled")
     key.setProperty("text", "new-test-key")
     QMetaObject.invokeMethod(key, "editingFinished")
@@ -39,7 +59,7 @@ def test_missing_voice_setup_allows_settings_and_explicit_retry(inline_ui):
 
     c.startRecognition(remember=False)
     assert not c._retry_voice_event.is_set()  # Preference restore never spins retries.
-    c.startRecognition()
+    QMetaObject.invokeMethod(enable, "click")
     QTest.qWait(20)
     assert c.voiceRetryPending and c._retry_voice_event.is_set()
     assert c.connected and not c.recognitionEnabled
@@ -49,6 +69,7 @@ def test_missing_voice_setup_allows_settings_and_explicit_retry(inline_ui):
     QTest.qWait(20)
     assert c.recognitionEnabled and c._recognition_event.is_set()
     assert c.connected and not c.voiceRetryPending and not c.voiceRuntimeError
+    assert c._settings.value("asr/configuredBackend") == "volcengine"
     assert not backend.property("enabled")
 
 
@@ -59,6 +80,20 @@ def test_voice_failure_from_an_old_connection_cannot_pause_current_voice(inline_
     c._apply_runtime_voice_availability(threading.Event(), "old connection failure")
     assert c.recognitionEnabled and c._recognition_event.is_set()
     assert c.voiceRuntimeError == ""
+
+
+def test_configured_local_voice_waits_for_explicit_use_when_cache_is_missing(inline_ui, monkeypatch, tmp_path):
+    c, *_ = inline_ui
+    c._connected = c._runtime_active = True
+    c._recognition_enabled = False
+    c._settings.setValue("asr/configuredBackend", c.asrBackend)
+    c._settings.setValue("input/voiceEnabled", True)
+    monkeypatch.setenv("MODELSCOPE_CACHE", str(tmp_path / "empty-cache"))
+
+    c.startRecognition(remember=False)
+    assert not c.voiceRetryPending and not c._retry_voice_event.is_set()
+    c.startRecognition()
+    assert c.voiceRetryPending and c._retry_voice_event.is_set()
 
 
 def test_micless_ring_is_connected_without_a_ring_audio_option(inline_ui):

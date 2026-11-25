@@ -284,6 +284,17 @@ ApplicationWindow {
             root.currentPage = 0
             devicePicker.open()
         }
+        function onVoiceSetupRequested() {
+            root.show()
+            root.raise()
+            root.requestActivate()
+            root.showAdvancedSettings(4)
+            Qt.callLater(function() {
+                var flick = runtimeSettingsScroll.contentItem
+                flick.contentY = Math.min(settingsOverview.advancedSpeechPosition,
+                                          Math.max(0, flick.contentHeight - flick.height))
+            })
+        }
     }
 
     FigmaDialog {

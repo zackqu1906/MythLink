@@ -244,6 +244,7 @@ def test_settings_persist_independent_choices_and_lock_during_connection(tmp_pat
         controller.microphoneDevice = ""
         assert controller.audioSource == "microphone" and controller.speechControlMode == "gesture"
         assert controller.microphoneDevice == row["value"]
+        controller._voice_runtime_ready = True
         controller.startRecognition()
         assert controller.statusTitle == "等待开始手势"
         assert "开始" in controller.statusDetail

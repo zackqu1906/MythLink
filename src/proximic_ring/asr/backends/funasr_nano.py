@@ -307,7 +307,7 @@ def _bool_option(value: str | None, default: bool) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _resolve_model(model: str | None, repo_path: Path) -> str:
+def resolve_model(model: str | None, repo_path: Path) -> str:
     if model:
         return model
     local = repo_path / "pretrained_models" / LOCAL_MODEL_NAME
@@ -325,7 +325,7 @@ def create_streaming_backend(settings: ASRBackendSettings) -> FunASRNanoStreamin
     repo_path = Path(repo_raw).expanduser().resolve()
     hotwords = [item.strip() for item in options.get("hotwords", "").split(",") if item.strip()]
     return FunASRNanoStreamingASR(
-        model=_resolve_model(settings.model, repo_path),
+        model=resolve_model(settings.model, repo_path),
         device=settings.device,
         language=settings.language,
         repo_path=repo_path,

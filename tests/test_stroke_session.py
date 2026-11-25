@@ -573,6 +573,7 @@ def test_cancelled_handoff_does_not_change_next_voice_finish(stroke):
 def test_enabling_voice_during_strokes_changes_preference_without_listening(stroke):
     c, _, tp, _, _ = stroke
     wake(stroke)
+    c._voice_runtime_ready = True
     c.pauseRecognition()
     c.startRecognition()
     assert c.recognitionEnabled and not c._recognition_event.is_set()

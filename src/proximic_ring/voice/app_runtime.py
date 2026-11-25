@@ -620,11 +620,14 @@ class RecognitionRuntime:
         on_ring_source: Callable[[object], None] | None = None,
         on_audio_configuring: Callable[[], None] | None = None,
         on_audio_configured: Callable[[object, str], None] | None = None,
+        defer_voice: bool = False,
         retry_voice_event: threading.Event | None = None,
         voice_settings_provider: Callable[[], RuntimeSettings] | None = None,
         on_voice_availability: Callable[[str], None] | None = None,
+        on_voice_start_requested: Callable[[], None] | None = None,
         practice_active: Callable[[], bool] | None = None,
         practice_audio_consumer: Callable[[object, bool], bool] | None = None,
+        on_practice_audio_error: Callable[[str], None] | None = None,
     ) -> None:
         is_r1 = self.settings.ring_family == "R1"
         if is_r1:
@@ -659,7 +662,7 @@ class RecognitionRuntime:
             imu_observer=imu_buffer.append if imu_buffer is not None else None,
             battery_observer=on_battery,
             imu_hz=imu_hz,
-            **({"audio_enabled": False} if self.settings.audio_source == "microphone"
+            **({"audio_enabled": False} if defer_voice or self.settings.audio_source == "microphone"
                or self.settings.ring_mic_on_demand else {}),
             **({"ring_family": "R1", "pairing_observer": lambda: on_state("请确认系统蓝牙配对")}
                if is_r1 else {}),
@@ -691,7 +694,7 @@ class RecognitionRuntime:
             if on_voice_availability is not None:
                 on_voice_availability(detail)
 
-        def release_r1_voice(error):
+        def release_voice(error):
             nonlocal controller, detector, microphone
             with audio_change_lock:
                 recognition_event.clear()
@@ -845,7 +848,7 @@ class RecognitionRuntime:
                     close_source_and_report()
                     return
                 live_microphone = current_microphone()
-                if (not is_r1 and live_microphone is not None and live_microphone.error is not None
+                if (not is_r1 and controller is not None and live_microphone is not None and live_microphone.error is not None
                         and not (audio_settings is not None and audio_settings.applying)):
                     on_state(f"[AUDIO_INPUT_ERROR] {live_microphone.error}")
                     close_source_and_report()
@@ -869,7 +872,8 @@ class RecognitionRuntime:
 
             if disconnect_event.is_set():
                 return
-            load_voice()
+            if not defer_voice:
+                load_voice()
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error
             if disconnect_event.is_set():
@@ -949,6 +953,9 @@ class RecognitionRuntime:
                                     if cancel_utterance_event is not None and cancel_utterance_event.is_set()
                                     else "recognition_gate_closed"
                                 )
+                                if (controller is None and is_start_endpoint and not end_only
+                                        and on_voice_start_requested is not None):
+                                    on_voice_start_requested()
                         # Record firmware output before application state gating.
                         received_at = getattr(event, "received_at", None)
                         on_state("[GESTURE_RECOGNIZED] " + json.dumps({
@@ -1040,7 +1047,7 @@ class RecognitionRuntime:
                     if not is_r1:
                         on_state(f"[AUDIO_INPUT_ERROR] {exc}")
                         raise
-                    release_r1_voice(exc)
+                    release_voice(exc)
                 else:
                     on_state(f"音频来源：{microphone.device_name}（电脑麦克风）")
             elif controller is not None:
@@ -1149,7 +1156,7 @@ class RecognitionRuntime:
                         except Exception as exc:
                             if not is_r1 or source.error is not None:
                                 raise
-                            release_r1_voice(exc)
+                            release_voice(exc)
                             error = str(exc)
                         if disconnect_event.is_set():
                             break
@@ -1173,20 +1180,45 @@ class RecognitionRuntime:
                         finish_utterance_event.clear()
                     if retry_voice_event is not None and retry_voice_event.is_set():
                         retry_voice_event.clear()
+                        if source.audio_enabled:
+                            source.set_audio_enabled(False)
                         if load_voice(retry=True) and not disconnect_event.is_set() and source.error is None:
                             try:
                                 input_pipeline.attach_voice(controller, detector, self.settings, disconnect_event)
                             except Exception as exc:
-                                if not is_r1 or source.error is not None:
+                                if disconnect_event.is_set():
+                                    break
+                                if source.error is not None:
                                     raise
-                                release_r1_voice(exc)
+                                release_voice(exc)
                                 continue
                             audio_source = input_pipeline.audio_source
                             recognition_was_enabled = False
+                            on_state("语音模型已就绪，Ring 连接保持不变")
                             if on_voice_availability is not None:
                                 on_voice_availability("")
-                            on_state("语音模型已就绪，Ring 连接保持不变")
                         continue
+                    if (practice_active is not None and practice_active() and practice_audio_consumer is not None
+                            and input_pipeline.configuration.audio_source == "ring"):
+                        try:
+                            if not source.audio_enabled:
+                                source.set_audio_enabled(True)
+                            block = source.read_interruptible(
+                                320, should_interrupt=lambda: not practice_active() or interrupt_idle_audio_read(),
+                            )
+                            if block is None:
+                                break
+                            practice_audio_consumer(block, False)
+                        except InterruptedError:
+                            pass
+                        except (RuntimeError, TimeoutError) as exc:
+                            if source.error is not None or on_practice_audio_error is None:
+                                raise
+                            on_practice_audio_error(str(exc))
+                            disconnect_event.wait(.05)
+                        continue
+                    if source.audio_enabled:
+                        source.set_audio_enabled(False)
                     disconnect_event.wait(.05)
                     continue
                 on_demand = self.settings.ring_mic_on_demand and audio_source is source
@@ -1242,13 +1274,13 @@ class RecognitionRuntime:
                 except Exception as exc:
                     if current_microphone() is not None:
                         if is_r1:
-                            release_r1_voice(exc)
+                            release_voice(exc)
                             continue
                         on_state(f"[AUDIO_INPUT_ERROR] {exc}")
                     raise
                 if block is None:
                     if is_r1 and current_microphone() is not None and not disconnect_event.is_set():
-                        release_r1_voice("电脑麦克风已停止")
+                        release_voice("电脑麦克风已停止")
                         continue
                     break
                 if disconnect_event.is_set():

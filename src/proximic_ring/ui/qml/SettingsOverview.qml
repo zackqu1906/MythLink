@@ -16,6 +16,7 @@ ColumnLayout {
     signal logRequested()
     signal voiceHistoryRequested()
     signal browserSetupRequested(string browser)
+    readonly property real advancedSpeechPosition: advancedServices.y + advancedServices.speechServicesPosition
     readonly property real advancedTextPosition: advancedServices.y + advancedServices.textServicesPosition
     spacing: 18
     FigmaTheme { id: theme }

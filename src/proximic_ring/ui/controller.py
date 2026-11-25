@@ -36,6 +36,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..asr import ASRBackendCache
 from ..asr.backends.bailian import STREAMING_MODEL as BAILIAN_STREAMING_MODEL
+from ..asr.funasr_compat import cached_modelscope_snapshot
 from ..audio.microphone import SYSTEM_DEFAULT_MICROPHONE, input_device_choices
 from ..ring_devices import R1_TAP_ALIASES, matches_tap_gesture, ring_family
 from ..voice.app_runtime import (
@@ -363,7 +364,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     _runtimeStopping = Signal(object)
     _runtimeStarted = Signal(object)
     _runtimeVoiceAvailability = Signal(object, str)
+    _runtimeVoiceStartRequested = Signal(object)
     voiceAvailabilityChanged = Signal()
+    voiceSetupRequested = Signal()
     _runtimeSessionStarted = Signal(int)
     _runtimeUpdate = Signal(str, bool, str, int)
     _runtimeFinished = Signal(str, object)
@@ -401,6 +404,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._recognition_enabled = False
         self._ring_microphone_unavailable = ""
         self._voice_runtime_error = ""
+        self._voice_runtime_ready = False
         self._voice_retry_pending = False
         self._retry_voice_event = threading.Event()
         self._input_restore_connection = None
@@ -797,6 +801,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._runtimeStopping.connect(self._apply_runtime_stopping)
         self._runtimeStarted.connect(self._apply_runtime_started)
         self._runtimeVoiceAvailability.connect(self._apply_runtime_voice_availability)
+        self._runtimeVoiceStartRequested.connect(self._request_voice_from_gesture)
         self._runtimeSessionStarted.connect(self._apply_runtime_session_started)
         self._runtimeUpdate.connect(self._apply_runtime_update)
         self._runtimeFinished.connect(self._apply_runtime_finished)
@@ -3979,6 +3984,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._audio_input_failed = False
         self.busyChanged.emit()
         self._voice_runtime_error = ""
+        self._voice_runtime_ready = False
         self._voice_retry_pending = False
         self._retry_voice_event = threading.Event()
         self.voiceAvailabilityChanged.emit()
@@ -4021,9 +4027,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                     on_disconnected=lambda: self._runtimeDisconnected.emit(gesture_connection),
                     on_stopping=lambda: self._runtimeStopping.emit(gesture_connection),
                     on_started=lambda: self._runtimeStarted.emit(gesture_connection),
+                    defer_voice=True,
                     retry_voice_event=self._retry_voice_event,
                     voice_settings_provider=self._runtime_settings,
                     on_voice_availability=lambda error: self._runtimeVoiceAvailability.emit(gesture_connection, error),
+                    on_voice_start_requested=lambda: self._runtimeVoiceStartRequested.emit(gesture_connection),
                     on_session_started=self._runtimeSessionStarted.emit,
                     on_session_ended=self._suspend_recognition_for_interaction,
                     on_push_to_talk=self._pushToTalkChanged.emit,
@@ -4044,6 +4052,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                     ),
                     practice_active=lambda: self._voice_practice.active,
                     practice_audio_consumer=self._voice_practice.consume_audio,
+                    on_practice_audio_error=self._voice_practice.report_audio_error,
                     on_battery=self._publish_battery_status,
                     ime_context_provider=(self._inline_input.context_provider if self._inline_enabled() else None),
                     asr_hotwords_provider=self._hotwords.store.snapshot,
@@ -4190,10 +4199,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             print(f"[dataset] utterance IMU was not saved: {exc}")
 
     @Slot()
-    def startRecognition(self, *, remember: bool = True) -> None:
+    def startRecognition(self, *, remember: bool = True, from_settings: bool = False) -> None:
         accepted = bool(
             self._connected and not self._busy and not self._recognition_enabled
-            and not self._proximity.gestures_blocked
+            and not self._voice_retry_pending and not self._proximity.gestures_blocked
         )
         self._event_log(
             "USER_ACTION",
@@ -4205,18 +4214,34 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         if not accepted:
             return
+        if not self._voice_runtime_ready:
+            if self._audio_source == "ring" and self._ring_microphone_unavailable:
+                self._voice_runtime_error = self._ring_microphone_unavailable
+                self.voiceAvailabilityChanged.emit()
+                self._show_voice_unavailable()
+                return
+            configured = self._settings.value("asr/configuredBackend", "") == self._asr_backend
+            if not configured and not from_settings:
+                if remember:
+                    self.voiceSetupRequested.emit()
+                return
+            if self._voice_runtime_error and not remember:
+                self._show_voice_unavailable()
+                return
+            if not remember and not self._can_restore_voice_without_download():
+                return
+            if remember:
+                self._remember_input_setting("input/voiceEnabled", True)
+            if self._voice_practice.active:
+                self._voice_practice.cancel()
+            self._voice_retry_pending = True
+            self._voice_runtime_error = ""
+            self.voiceAvailabilityChanged.emit()
+            self._set_status("正在准备语音", "正在准备识别服务，Ring 保持连接", "starting")
+            self._retry_voice_event.set()
+            return
         if remember:
             self._remember_input_setting("input/voiceEnabled", True)
-        if self._voice_runtime_error:
-            requires_computer_mic = self._audio_source == "ring" and self._ring_microphone_unavailable
-            if remember and not self._voice_retry_pending and not requires_computer_mic:
-                self._voice_retry_pending = True
-                self.voiceAvailabilityChanged.emit()
-                self._retry_voice_event.set()
-                self._set_status("正在准备语音", "正在重新检查语音配置，Ring 保持连接", "starting")
-            elif not self._voice_retry_pending:
-                self._show_voice_unavailable()
-            return
         self._interaction_recognition_suspended = False
         if not self._touchpad.blocksVoice:
             self._recognition_event.set()
@@ -4239,6 +4264,29 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             detail += "，或按住右 Alt"
         self._set_status("自动监听中", detail, "running")
         self._append_log("语音识别已开启（设备保持连接）")
+
+    @Slot()
+    def enableConfiguredVoice(self) -> None:
+        self.startRecognition(from_settings=True)
+
+    def _can_restore_voice_without_download(self) -> bool:
+        if self._asr_backend in {"volcengine", "bailian"}:
+            return True
+        model = self._asr_model.strip()
+        if self._asr_backend == "funasr_nano":
+            from ..asr.backends.funasr_nano import resolve_model
+            model = resolve_model(model or None, Path(self._funasr_repo).expanduser())
+        elif self._asr_backend == "streaming_sensevoice":
+            model = model or _ASR_DEFAULT_MODELS["streaming_sensevoice"]
+        else:
+            return False
+        return Path(model).expanduser().is_dir() or cached_modelscope_snapshot(model) is not None
+
+    @Slot(object)
+    def _request_voice_from_gesture(self, connection) -> None:
+        if (connection is self._disconnect_event and not connection.is_set()
+                and not self._touchpad.blocksVoice and self._bool_setting("input/voiceEnabled", True)):
+            self.startRecognition()
 
     def _suspend_recognition_for_interaction(self) -> None:
         """Close the runtime gate without changing the user's on/off choice."""
@@ -4335,7 +4383,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 return
             self._input_paused_for_lock = False
             self._event_log("INPUT_PREFERENCES_RESUME", reason="screen_unlocked",
-                            voice_enabled=self._bool_setting("input/voiceEnabled", True),
+                            voice_enabled=self._bool_setting("input/voiceEnabled", False),
                             touchpad_enabled=self._bool_setting("touchpad/enabled", True))
         if (not self._input_restore_pending or self._input_restore_connection is not self._disconnect_event
                 or not self._connected or self._busy or self._quitting
@@ -4343,7 +4391,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             return
         if "input/voiceEnabled" in self._input_restore_pending:
             self._input_restore_pending.remove("input/voiceEnabled")
-            if self._bool_setting("input/voiceEnabled", True):
+            if self._bool_setting("input/voiceEnabled", False):
                 self.startRecognition(remember=False)
         if "touchpad/enabled" in self._input_restore_pending:
             enabled = self._bool_setting("touchpad/enabled", True)
@@ -5227,7 +5275,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self.connectedChanged.emit()
         self._set_status(
             "设备已连接",
-            "蓝牙与设备服务验证通过，正在准备识别组件",
+            "蓝牙与设备服务验证通过，正在启动戒指手势",
             "starting",
         )
         self._proximity_reconnect_attempts = 0
@@ -5382,6 +5430,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._recognition_event.clear()
         self._cancel_utterance_event.set()
         self._connected = False
+        self._voice_runtime_ready = False
+        self._voice_retry_pending = False
+        self.voiceAvailabilityChanged.emit()
         if self._ring_microphone_unavailable:
             if self._voice_runtime_error == self._ring_microphone_unavailable:
                 self._voice_runtime_error = ""
@@ -5486,6 +5537,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         retrying = self._voice_retry_pending
         self._voice_retry_pending = False
         self._voice_runtime_error = str(error).strip()
+        self._voice_runtime_ready = not self._voice_runtime_error
+        if retrying and self._voice_runtime_ready:
+            self._settings.setValue("asr/configuredBackend", self._asr_backend)
+            self._settings.sync()
         self.voiceAvailabilityChanged.emit()
         if self._voice_runtime_error:
             self.pauseRecognition(remember=False)
@@ -5494,6 +5549,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 self._show_voice_unavailable()
         elif retrying:
             self.startRecognition(remember=False)
+
+    @Property(bool, notify=voiceAvailabilityChanged)
+    def voiceRuntimeReady(self):
+        return self._voice_runtime_ready
 
     @Property(str, notify=voiceAvailabilityChanged)
     def voiceRuntimeError(self):
@@ -5516,7 +5575,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._busy = False
         self.busyChanged.emit()
         self._set_status("准备就绪", "设备已连接，点击“开启语音识别”开始", "paused")
-        self._append_log("设备和识别组件已就绪")
+        self._append_log("戒指手势已就绪")
         self._event_log("RUNTIME_READY", device_name=self._device_name)
         self._input_restore_connection = self._disconnect_event
         if sys.platform == "win32":
@@ -5525,7 +5584,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._settings.setValue("touchpad/enabled", self._touchpad.autoStartOnConnect)
         self._input_restore_pending = {"input/voiceEnabled", "touchpad/enabled"}
         self._event_log("INPUT_PREFERENCES_RESTORE",
-                        voice_enabled=self._bool_setting("input/voiceEnabled", True),
+                        voice_enabled=self._bool_setting("input/voiceEnabled", False),
                         touchpad_enabled=self._bool_setting("touchpad/enabled", True))
         self._restore_input_preferences()
         if self._voice_runtime_error:
@@ -8681,8 +8740,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         from .voice.practice_controller import PracticeConfiguration
 
         audio_change = self._audio_settings_changes
-        if self._busy or self._scan_busy or (audio_change is not None and (audio_change.pending or audio_change.applying)):
-            raise ValueError("请等待设备准备完成，再开始练习")
+        if (self._busy or self._scan_busy or self._voice_retry_pending
+                or (audio_change is not None and (audio_change.pending or audio_change.applying))):
+            raise ValueError("请等待准备完成，再开始练习")
         if self._interaction_state in {"listening", "processing"} or self._inline_input.active:
             raise ValueError("请先结束当前输入，再开始练习")
         if self._audio_source == "ring" and not self._connected:
@@ -8703,7 +8763,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                        "hotwords": ",".join(normalize_funasr_nano_hotwords(self._funasr_hotwords))}
         return PracticeConfiguration(
             source=self._audio_source, microphone=self._microphone_device,
-            shared=self._runtime_active, backend=self._asr_backend,
+            shared=self._runtime_active and (self._voice_runtime_ready or self._audio_source == "ring"),
+            backend=self._asr_backend,
             asr=ASRBackendSettings(model=self._asr_model.strip() or None, device=self._asr_device,
                                    language=self._asr_language, options=options),
             llm=self._llm_settings(), bindings=self._gesture_bindings, gain_db=self._asr_gain_db,

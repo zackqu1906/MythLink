@@ -5,6 +5,7 @@ ColumnLayout {
     id: pane
     objectName: "advancedSettingsPage"
     required property var controller
+    readonly property real speechServicesPosition: speechServices.y
     readonly property real textServicesPosition: textServices.y
     signal gpuSetupRequested()
     spacing: 24
@@ -15,6 +16,7 @@ ColumnLayout {
     }
 
     SpeechServiceSettings {
+        id: speechServices
         objectName: "settingsPage4"
         Layout.fillWidth: true
         controller: pane.controller

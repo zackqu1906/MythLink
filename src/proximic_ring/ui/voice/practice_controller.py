@@ -233,6 +233,11 @@ class VoicePracticeController(QObject):
             self._feed(block, self._generation)
         return True
 
+    def report_audio_error(self, message):
+        if self._armed.is_set():
+            self._armed.clear()
+            self._fault.emit(self._generation, message)
+
     def _feed(self, block, token):
         incoming = np.asarray(block, dtype=np.float32).reshape(-1)
         if not np.all(np.isfinite(incoming)):

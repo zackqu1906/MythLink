@@ -178,7 +178,17 @@ FigmaDialog {
                             onDownChanged: if (down) dialog.controller.refreshMicrophones()
                         }
                         VoiceAudioTest { Layout.fillWidth: true; practice: dialog.practice }
-                        FigmaAction { objectName: "tutorialBeginButton"; Layout.fillWidth: true; text: "开始真实练习"; primary: true; enabled: dialog.controller.connected && dialog.controller.recognitionEnabled; onClicked: dialog.begin(false) }
+                        FigmaAction {
+                            objectName: "tutorialBeginButton"
+                            Layout.fillWidth: true
+                            primary: true
+                            text: dialog.controller.recognitionEnabled ? "开始真实练习" : "启用语音识别"
+                            enabled: dialog.controller.connected && !dialog.controller.busy && !dialog.controller.voiceRetryPending
+                            onClicked: {
+                                if (dialog.controller.recognitionEnabled) dialog.begin(false)
+                                else dialog.controller.startRecognition()
+                            }
+                        }
                         Label { Layout.fillWidth: true; visible: text.length > 0; text: dialog.tutorial.message; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }
                         FigmaAction { objectName: "tutorialDemoButton"; text: "先看操作示意"; navigation: true; onClicked: dialog.begin(true) }
                         Label { Layout.fillWidth: true; text: "示意学习不计为真实设备测试。"; color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap }

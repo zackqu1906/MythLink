@@ -25,8 +25,11 @@ def controllers(tmp_path, monkeypatch):
     monkeypatch.setattr(proximity_controller, 'helper_path', lambda: helper)
     created = []
 
-    def make():
+    def make(*, voice_configured=True):
         c = _controller(tmp_path, monkeypatch)
+        if voice_configured and not c._settings.contains('asr/configuredBackend'):
+            c._settings.setValue('asr/configuredBackend', c.asrBackend)
+            c._settings.setValue('input/voiceEnabled', True)
         c.touchpad.output_factory = Output
         c.proximity._factory = Process
         monkeypatch.setattr(c.proximity, 'useDevice', lambda *_: None)
@@ -50,6 +53,7 @@ def connect(c, *, source_first=True):
     if source_first:
         c.touchpad.attach(source, c._disconnect_event)
     assert not c.recognitionEnabled and not c.touchpad.active
+    c._voice_runtime_ready = c._settings.contains('asr/configuredBackend') and not c.voiceRuntimeError
     c._apply_runtime_started()
     if not source_first:
         c.touchpad.attach(source, c._disconnect_event)
@@ -82,23 +86,22 @@ def enable_proximity(c):
 
 @pytest.mark.parametrize('windows_tsf', [False, True], ids=['standard', 'windows-tsf'])
 @pytest.mark.parametrize('source_first', [True, False])
-def test_first_connection_enables_both_once_and_logs_actual_state(
+def test_first_connection_enables_touchpad_and_leaves_voice_unprepared(
     controllers, tmp_path, source_first, windows_tsf
 ):
-    c = controllers()
+    c = controllers(voice_configured=False)
     c.touchpad._windows_ime = windows_tsf
     source = connect(c, source_first=source_first)
     wait_until(lambda: c.touchpad.state == 'running')
-    # Both choices restore independently; pointer control leaves audio available.
-    assert c.recognitionEnabled and not c.touchpad.blocksVoice
-    assert c._recognition_event.is_set()
+    assert not c.recognitionEnabled and not c.touchpad.blocksVoice
+    assert not c._recognition_event.is_set() and not c._retry_voice_event.is_set()
     assert c.touchpad.inputMode == 'pointer' and len(source.starts) == 1
     c._apply_runtime_started()
     c.touchpad.changed.emit()
     assert len(source.starts) == 1
     log = (tmp_path / 'logs/diagnostic.log').read_text(encoding='utf-8')
     assert '[EVENT INPUT_PREFERENCES_RESTORE]' in log
-    assert 'voice_enabled=true touchpad_enabled=true' in log
+    assert 'voice_enabled=false touchpad_enabled=true' in log
     assert '[EVENT TOUCHPAD_STATE]' in log and 'state="running"' in log
 
 

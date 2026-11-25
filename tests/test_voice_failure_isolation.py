@@ -180,6 +180,42 @@ def test_repeated_failure_then_latest_settings_recover_without_reconnecting(run_
     assert not state.disconnected and not state.stop.is_set()
 
 
+@pytest.mark.parametrize("backend", ["streaming_sensevoice", "volcengine"])
+def test_voice_is_deferred_until_setup_even_with_ring_audio_preview(run_ring, monkeypatch, backend):
+    settings = RuntimeSettings(speech_control_mode="gesture", desktop_output=False, push_to_talk=False)
+    configured = replace(settings, asr_backend=backend, asr_api_key="test-key")
+    builds, gestures, preview_audio = [], [], []
+    preview = threading.Event()
+
+    def build(options, *_args, **_kwargs):
+        builds.append(options.asr[0])
+        return SimpleNamespace(active=False, reset=lambda: None, process=lambda *_args, **_kwargs: None,
+                               close=lambda: None)
+
+    monkeypatch.setattr(app_runtime, "_build_session_controller", build)
+    state = run_ring(
+        settings, defer_voice=True, voice_settings_provider=lambda: configured,
+        gesture_filter=lambda _event, _busy: True, on_voice_start_requested=lambda: gestures.append(True),
+        practice_active=preview.is_set, practice_audio_consumer=lambda audio, _: preview_audio.append(audio),
+    )
+    state.ring.read_interruptible = lambda frames, **_options: state.ring.read(frames)
+    assert state.ring.starts == [{"buffer_audio": False}]
+    assert not state.ring.audio_enabled and not builds and not state.availability
+    state.ring.gesture_observer(SimpleNamespace(name=settings.gesture_bindings.confirm[0]))
+    assert gestures == [True] and not state.retry.is_set() and not builds
+
+    preview.set()
+    eventually(lambda: preview_audio)
+    assert not builds
+    preview.clear()
+    eventually(lambda: not state.ring.audio_enabled)
+
+    state.retry.set()
+    eventually(lambda: state.availability == [""])
+    assert builds == [backend]
+    assert state.ring.audio_enabled and state.ring.connects == 1 and not state.disconnected
+
+
 @pytest.mark.parametrize("trigger", ["gesture", "proximity-gesture", "key"])
 def test_local_ring_mic_only_runs_during_utterances(run_ring, monkeypatch, trigger):
     settings = RuntimeSettings(speech_control_mode="gesture" if trigger == "gesture" else "proximity",
