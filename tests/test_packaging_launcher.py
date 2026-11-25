@@ -66,13 +66,14 @@ def test_packaged_qml_runtime_check_requires_every_imported_module(tmp_path, mis
         launcher._verify_bundled_qml_runtime(tmp_path)
 
 
-def test_qml_packaging_hook_keeps_plugins_and_metadata_for_actual_ui_imports(monkeypatch):
+@pytest.mark.parametrize("qml_root", ["PySide6/Qt/qml", "PySide6/qml"])
+def test_qml_packaging_hook_keeps_plugins_and_metadata_for_actual_ui_imports(monkeypatch, qml_root):
     root = Path(__file__).parents[1]
     imports = set()
     for qml in (root / "src/proximic_ring").rglob("*.qml"):
         imports.update(re.findall(r"^import (Qt[\w.]+)", qml.read_text(encoding='utf-8-sig'), re.MULTILINE))
-    destinations = {"PySide6/Qt/qml/" + name.replace(".", "/") for name in imports}
-    unused = "PySide6/Qt/qml/QtQuick/Pdf"
+    destinations = {qml_root + "/" + name.replace(".", "/") for name in imports}
+    unused = qml_root + "/QtQuick/Pdf"
     plugins = [(path + "/plugin.dylib", path) for path in sorted(destinations | {unused})]
     metadata = [(path + "/qmldir", path) for path in sorted(destinations | {unused})]
     qt = types.ModuleType("PyInstaller.utils.hooks.qt")

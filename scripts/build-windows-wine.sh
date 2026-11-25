@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
     echo 'The Wine build requires a Linux x86-64 runner.' >&2
     exit 1
 fi
-for tool in wine wineserver curl unzip sha256sum; do
+for tool in wine winepath wineserver curl unzip sha256sum; do
     if ! command -v "$tool" >/dev/null; then
         echo "Missing build tool $tool" >&2
         exit 1
@@ -33,7 +33,7 @@ printf '%s  %s\n' 9283876d58c017e0e846f95b490da3bca0fc0a6ee1134b2870677cfb7eec3c
 unzip -q "$build_tools/python.nupkg" 'tools/*' -d "$build_tools"
 windows_python="$build_tools/tools/python.exe"
 wine "$windows_python" -c 'import platform, sys; assert sys.platform == "win32" and platform.machine().lower() == "amd64"; print(sys.version)'
-if [[ -n "${RUNNER_TOOL_CACHE:-}" && -w "$RUNNER_TOOL_CACHE" ]] && command -v winepath >/dev/null; then
+if [[ -n "${RUNNER_TOOL_CACHE:-}" && -w "$RUNNER_TOOL_CACHE" ]]; then
     pip_cache="$RUNNER_TOOL_CACHE/mythlink-wine-pip"
     mkdir -p "$pip_cache"
     PIP_CACHE_DIR=$(winepath -w "$pip_cache" | tr -d '\r')
@@ -69,12 +69,19 @@ MYTHLINK_BUILD_VERSION=$(wine "$windows_python" tools/build_version.py --version
 export MYTHLINK_BUILD_VERSION
 
 wine "$windows_python" -m pip install --upgrade 'pip==26.2.1' 'setuptools==81.0.0' 'wheel==0.48.0'
+# Qt 6.10 and newer Windows wheels require the system ICU DLL missing in Wine 9.
+wine_constraints="$build_tools/requirements-wine.txt"
+sed -E 's/^(PySide6(-Addons|-Essentials)?|shiboken6)==.*/\1==6.9.3/' requirements-windows.lock > "$wine_constraints"
+wine_constraints=$(winepath -w "$wine_constraints" | tr -d '\r')
+wine "$windows_python" -m pip install -c "$wine_constraints" PySide6-Essentials
+QT_QPA_PLATFORM=offscreen WINEDEBUG='-all,err+module,err+seh' wine "$windows_python" -c \
+    'from PySide6.QtCore import qVersion; from PySide6.QtWidgets import QApplication; app = QApplication([]); print("Windows Qt ready", qVersion())'
 # Resolve PyTorch dependencies from the workflow's PyPI source.
 wine "$windows_python" -m pip install --no-deps --index-url https://download.pytorch.org/whl/cpu \
     'torch==2.11.0' 'torchaudio==2.11.0'
 wine "$windows_python" -m pip install 'torch==2.11.0' 'torchaudio==2.11.0'
 wine "$windows_python" -c 'import torch; assert torch.version.cuda is None; assert torch.ones(256).sum().item() == 256; print("Windows CPU PyTorch ready", torch.__version__)'
-wine "$windows_python" -m pip install -c requirements-windows.lock \
+wine "$windows_python" -m pip install -c "$wine_constraints" \
     '.[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]' -r requirements-packaging.txt
 wine "$windows_python" tools/install_r1_sdk.py
 wine "$windows_python" -m PyInstaller --noconfirm --clean 'packaging\mythlink.spec'
