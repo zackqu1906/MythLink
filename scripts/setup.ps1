@@ -67,6 +67,7 @@ function Get-NvidiaGpuNames {
     if ($null -eq $NvidiaSmi) {
         return @()
     }
+    $ErrorActionPreference = "SilentlyContinue"
     $Output = & $NvidiaSmi.Source --query-gpu=name --format=csv,noheader 2>$null
     if ($LASTEXITCODE -ne 0) {
         return @()
@@ -179,7 +180,11 @@ Write-Host "[5/9] Installing pinned packaging tools..."
 Assert-LastCommand "pip bootstrap"
 
 Write-Host "[6/9] Installing the $ResolvedCompute PyTorch runtime..."
-$InstalledTorchFlavor = & $VenvPython -c "import torch; print('cuda' if torch.version.cuda else 'cpu')" 2>$null
+$InstalledTorchFlavor = & {
+    # The optional probe can fail before PyTorch has been installed.
+    $ErrorActionPreference = "SilentlyContinue"
+    & $VenvPython -c "import torch; print('cuda' if torch.version.cuda else 'cpu')" 2>$null
+}
 if ($LASTEXITCODE -ne 0) {
     $InstalledTorchFlavor = ""
 }
