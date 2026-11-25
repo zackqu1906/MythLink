@@ -24,7 +24,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-curl -fsSL --retry 3 -o "$build_tools/python.nupkg" \
+curl -fsSL --connect-timeout 20 --max-time 180 --retry 2 -o "$build_tools/python.nupkg" \
     https://api.nuget.org/v3-flatcontainer/python/3.11.9/python.3.11.9.nupkg
 printf '%s  %s\n' 9283876d58c017e0e846f95b490da3bca0fc0a6ee1134b2870677cfb7eec3c67 \
     "$build_tools/python.nupkg" | sha256sum --check
@@ -32,11 +32,21 @@ unzip -q "$build_tools/python.nupkg" 'tools/*' -d "$build_tools"
 windows_python="$build_tools/tools/python.exe"
 wine "$windows_python" -c 'import platform, sys; assert sys.platform == "win32" and platform.machine().lower() == "amd64"; print(sys.version)'
 
-curl -fsSL --retry 3 -o "$build_tools/innosetup.exe" \
-    https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe
+inno_installer="${MYTHLINK_INNO_INSTALLER:-}"
+if [[ -z "$inno_installer" ]]; then
+    inno_installer="$build_tools/innosetup.exe"
+    curl -fsSL --connect-timeout 20 --max-time 180 --retry 2 -o "$inno_installer" \
+        https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe
+fi
 printf '%s  %s\n' a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c \
-    "$build_tools/innosetup.exe" | sha256sum --check
-wine "$build_tools/innosetup.exe" /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PORTABLE=1 '/DIR=C:\InnoSetup'
+    "$inno_installer" | sha256sum --check
+if ! timeout 180s wine "$inno_installer" /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /PORTABLE=1 \
+    '/DIR=C:\InnoSetup' '/LOG=C:\InnoSetupInstall.log'; then
+    if [[ -f "$WINEPREFIX/drive_c/InnoSetupInstall.log" ]]; then
+        tail -n 40 "$WINEPREFIX/drive_c/InnoSetupInstall.log" >&2
+    fi
+    exit 1
+fi
 iscc="$WINEPREFIX/drive_c/InnoSetup/ISCC.exe"
 if [[ ! -f "$iscc" ]]; then
     echo 'Inno Setup did not install. Check that Wine can run 32-bit Windows programs.' >&2
