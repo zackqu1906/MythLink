@@ -18,12 +18,15 @@ $AppVersion = & $Python (Join-Path $ProjectRoot "tools\build_version.py") @Versi
 if ($LASTEXITCODE -ne 0) { throw "Version selection failed." }
 Write-Host "Building Mythlink $AppVersion"
 
-if (-not $SkipDependencyInstall) {
+$SdkArgs = @()
+if ($SkipDependencyInstall) {
+    $SdkArgs += "--no-deps"
+} else {
     & $Python -m pip install -r (Join-Path $ProjectRoot "requirements-packaging.txt")
     if ($LASTEXITCODE -ne 0) { throw "Packaging dependency installation failed." }
-    & $Python (Join-Path $ProjectRoot "tools\install_r1_sdk.py")
-    if ($LASTEXITCODE -ne 0) { throw "R1 SDK installation failed." }
 }
+& $Python (Join-Path $ProjectRoot "tools\install_r1_sdk.py") @SdkArgs
+if ($LASTEXITCODE -ne 0) { throw "R1 SDK installation failed." }
 
 $PreviousFirmware = $env:MYTHLINK_RING_FIRMWARE
 $PreviousBuildVersion = $env:MYTHLINK_BUILD_VERSION

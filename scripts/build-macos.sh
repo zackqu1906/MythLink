@@ -55,6 +55,8 @@ if [[ "${PROXIMIC_SKIP_DEPENDENCY_INSTALL:-0}" != "1" ]]; then
         ".[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
         -r requirements-packaging.txt
     "$PYTHON" tools/install_r1_sdk.py
+else
+    "$PYTHON" tools/install_r1_sdk.py --no-deps
 fi
 /bin/zsh scripts/build-input-method.sh
 /bin/zsh scripts/build-proximity.sh

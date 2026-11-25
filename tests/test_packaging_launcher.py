@@ -179,6 +179,14 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
     assert "bundled QML files ready" in output.getvalue()
 
 
+def test_dual_sdk_self_check_fails_if_r1_is_missing(monkeypatch):
+    launcher = _load_launcher()
+    monkeypatch.setitem(sys.modules, 'ring_python_sdk_r1', None)
+
+    with pytest.raises(RuntimeError, match='安装包缺少 R1-PC SDK'):
+        launcher._verify_touchpad_runtime()
+
+
 def test_permission_status_command_is_read_only_and_does_not_start_main_ui(monkeypatch, capsys):
     import json
     from PySide6 import QtCore, QtWidgets

@@ -3,7 +3,6 @@ param(
     [string]$Version,
     [switch]$AutoVersion,
     [string]$Firmware,
-    [string]$R1SdkWheel,
     [switch]$SkipDependencyInstall
 )
 
@@ -24,25 +23,13 @@ if ($Firmware) {
     $InstallerArgs.Firmware = $FirmwareFile.FullName
 }
 
-$PreviousWheel = $env:MYTHLINK_R1_SDK_WHEEL
-$Wheel = if ($R1SdkWheel) { $R1SdkWheel } else { $PreviousWheel }
-if ($Wheel) {
-    $WheelFile = Get-Item -LiteralPath $Wheel
-    if ($WheelFile -isnot [IO.FileInfo] -or $WheelFile.Extension -ne ".whl") {
-        throw "The R1 SDK must be a local wheel file."
-    }
-    $Wheel = $WheelFile.FullName
-}
-
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location -LiteralPath $ProjectRoot
 try {
-    $env:MYTHLINK_R1_SDK_WHEEL = $Wheel
     if (-not $SkipDependencyInstall) {
         & (Join-Path $PSScriptRoot "setup.ps1") -Compute cpu -SkipLocalLLM
     }
     & (Join-Path $PSScriptRoot "build-windows-installer.ps1") @InstallerArgs
 } finally {
-    $env:MYTHLINK_R1_SDK_WHEEL = $PreviousWheel
     Pop-Location
 }

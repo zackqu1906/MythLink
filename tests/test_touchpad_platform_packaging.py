@@ -1,4 +1,5 @@
 """Exercise platform branches in the real packaging recipe without building ASR."""
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -9,11 +10,11 @@ from packaging.requirements import Requirement
 
 
 @pytest.mark.parametrize('system', ['Darwin', 'Windows'])
-def test_mnn_native_libraries_are_collected_only_for_windows(system, monkeypatch):
+def test_touchpad_libraries_match_platform_and_ring_sdks(system, monkeypatch):
     root = Path(__file__).resolve().parents[1]
     hooks = ModuleType('PyInstaller.utils.hooks')
     calls = []
-    hooks.collect_data_files = lambda *args, **kwargs: []
+    hooks.collect_data_files = lambda name, includes=(): [(item, name) for item in includes]
     hooks.collect_submodules = lambda name, **kwargs: []
     hooks.copy_metadata = lambda *args, **kwargs: []
     def dynamic(package):
@@ -22,6 +23,9 @@ def test_mnn_native_libraries_are_collected_only_for_windows(system, monkeypatch
     hooks.collect_dynamic_libs = dynamic
     monkeypatch.setitem(sys.modules, 'PyInstaller.utils.hooks', hooks)
     monkeypatch.setitem(sys.modules, 'platform', SimpleNamespace(system=lambda: system))
+    r1 = ModuleType('ring_python_sdk_r1')
+    r1.__spec__ = ModuleSpec(r1.__name__, loader=None)
+    monkeypatch.setitem(sys.modules, r1.__name__, r1)
     # Run all import/data/native-library configuration preceding Analysis.
     source = (root/'packaging/mythlink.spec').read_text(encoding='utf8').split('a = Analysis(', 1)[0]
     namespace = dict(SPECPATH=str(root/'packaging'))
@@ -29,12 +33,40 @@ def test_mnn_native_libraries_are_collected_only_for_windows(system, monkeypatch
     assert namespace['hiddenimports'].count('MNN') == 1
     assert namespace['hiddenimports'].count('_mnncengine') == 1
     # Windows also bundles the delivered Raw2 SDK and its ONNX Runtime.
-    expected = ['MNN', 'onnxruntime', 'ring_windows_sdk'] if system == 'Windows' else ['ring_mac_sdk', 'onnxruntime']
+    expected = (['unicorn', 'MNN', 'onnxruntime', 'ring_windows_sdk'] if system == 'Windows'
+                else ['ring_mac_sdk', 'onnxruntime', 'unicorn'])
+    provider = 'ring_windows_sdk' if system == 'Windows' else 'ring_mac_sdk'
+    assert ('assets/*', provider) in namespace['datas']
+    assert ('assets/*', 'ring_python_sdk_r1') in namespace['datas']
     assert calls == expected
     for name in expected:
         assert (name+'-native', name) in namespace['binaries']
     assert namespace['hiddenimports'].count('onnxruntime') == 1
     assert ('ring_windows_sdk.model' in namespace['hiddenimports']) is (system == 'Windows')
+
+
+def test_r1_wheel_is_selected_from_the_copied_project(monkeypatch, tmp_path):
+    from tools import install_r1_sdk
+
+    project = tmp_path / 'source copy'
+    wheel_dir = project / 'third_party' / 'r1-sdk'
+    wheel_dir.mkdir(parents=True)
+    monkeypatch.setattr(install_r1_sdk, '__file__', str(project / 'tools' / 'install_r1_sdk.py'))
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit, match='Keep exactly one'):
+        install_r1_sdk.bundled_wheel()
+
+    original = wheel_dir / 'ring_python_sdk_r1-0.4.1-py3-none-any.whl'
+    original.touch()
+    assert install_r1_sdk.bundled_wheel() == original.resolve()
+
+    replacement = original.rename(wheel_dir / 'ring_python_sdk_r1-0.5.0-py3-none-any.whl')
+    assert install_r1_sdk.bundled_wheel() == replacement.resolve()
+
+    original.touch()
+    with pytest.raises(SystemExit, match='Keep exactly one'):
+        install_r1_sdk.bundled_wheel()
 
 
 def test_mac_touchpad_dependencies_keep_existing_versions():

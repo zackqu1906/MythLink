@@ -41,8 +41,10 @@ jobs:
         run: |
           $Python = ".\.runtime\venv\Scripts\python.exe"
           & $Python -m pip install -c requirements-windows.lock `
-            ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" `
+            ".[ring-opus,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" `
             -r requirements-packaging.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $Python tools/install_r1_sdk.py
       - name: Install Windows Opus runtime
         shell: pwsh
         run: ./scripts/install-opus-runtime.ps1

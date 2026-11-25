@@ -39,15 +39,9 @@ PROXIMIC_ALLOW_ADHOC_SIGNING=1 APPLE_SIGNING_IDENTITY=- bash scripts/build-macos
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Version 0.6.41
 ```
 
-脚本准备项目内的 Python 和 CPU 依赖，再打包并运行应用自检。产物为 `dist\installer\Mythlink-<版本>-windows-x64-setup.exe`。将示例版本替换为计划构建的版本，也可用 `-AutoVersion` 自动递增。
+脚本准备项目内的 Python 和 CPU 依赖，将 Ringo 与 R1 SDK 一起打入 `dist\installer\Mythlink-<版本>-windows-x64-setup.exe`，并自检两款戒指的触摸板模型。可用 `-AutoVersion` 自动递增版本。
 
-构建 R1 版时使用内部提供的本地 wheel。
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Version 0.6.41 -R1SdkWheel "C:\SDK\ring_python_sdk_r1-0.4.0-py3-none-any.whl"
-```
-
-已有完整打包环境时可传 `-SkipDependencyInstall`，构建 R1 版时环境中也须已安装 R1 SDK。签名使用 `WINDOWS_SIGNING_CERT_SHA1` 和可选的 `WINDOWS_TIMESTAMP_URL`。
+已有完整打包环境时可传 `-SkipDependencyInstall`，构建仍会安装项目内的 R1 wheel。签名使用 `WINDOWS_SIGNING_CERT_SHA1` 和可选的 `WINDOWS_TIMESTAMP_URL`。
 
 ### Windows TSF 输入法原型
 
@@ -67,7 +61,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Version 0.
 
 ## 构建资源
 
-内部构建可通过 `MYTHLINK_R1_SDK_WHEEL` 指向 R1-PC 0.4.0 的本地 wheel，再运行对应平台的安装或构建脚本。R1 构建使用 Bleak 3.1 和 SMPClient 7.4，随包收集 R1 触摸板所需的 SDK 资源。私有 wheel 由内部构建环境提供。
+R1-PC wheel 随源码放在 [third_party/r1-sdk](../third_party/r1-sdk)。Windows 和 macOS 的安装、构建脚本都从这个目录安装 SDK。更新时移走旧 wheel，放入新版并保留一个 `ring_python_sdk_r1-*.whl`，然后重新运行安装或构建脚本。
+
+Ringo 的 Windows 和 macOS SDK 代码、平台库和原始 wheel 也已随源码提供。首次在新电脑上运行安装脚本时需要下载公共 Python 依赖和构建工具。
 
 PyInstaller 配方为 `packaging/mythlink.spec`。固件 ZIP、SDK 动态库、随包检测模型、笔画词典和 UI 素材是产品资源，应保留在 Git 中。大型 ASR / 文本模型由应用按需下载，不随仓库和主安装包发布。
 
