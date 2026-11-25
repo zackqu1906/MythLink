@@ -13,11 +13,15 @@ func property(_ source: TISInputSource, _ key: CFString) -> AnyObject? {
     return Unmanaged<AnyObject>.fromOpaque(pointer).takeUnretainedValue()
 }
 
-func allSources(includeAllInstalled: Bool = true) -> [TISInputSource] {
-    guard let list = TISCreateInputSourceList(nil, includeAllInstalled)?.takeRetainedValue() else { return [] }
+func sourceList(includeAllInstalled: Bool) -> [TISInputSource]? {
+    guard let list = TISCreateInputSourceList(nil, includeAllInstalled)?.takeRetainedValue() else { return nil }
     return (0..<CFArrayGetCount(list)).map {
         unsafeBitCast(CFArrayGetValueAtIndex(list, $0), to: TISInputSource.self)
     }
+}
+
+func allSources(includeAllInstalled: Bool = true) -> [TISInputSource] {
+    sourceList(includeAllInstalled: includeAllInstalled) ?? []
 }
 
 func sources() -> [TISInputSource] {
@@ -62,8 +66,10 @@ func fallbackKeyboardID() throws -> String {
 }
 
 func snapshot() -> [String: Any] {
-    let matching = sources()
-    let availableIDs = Set(allSources(includeAllInstalled: false).compactMap {
+    let installed = sourceList(includeAllInstalled: true)
+    let enabledSources = sourceList(includeAllInstalled: false)
+    let matching = (installed ?? []).filter { property($0, kTISPropertyBundleID) as? String == productID }
+    let availableIDs = Set((enabledSources ?? []).compactMap {
         property($0, kTISPropertyInputSourceID) as? String
     })
     let parentEnabled = !matching.contains {
@@ -80,17 +86,19 @@ func snapshot() -> [String: Any] {
          "enabled": enabled,
          "enable_capable": property(source, kTISPropertyInputSourceIsEnableCapable) as? Bool ?? false,
          "select_capable": selectCapable,
+         "in_enabled_list": availableIDs.contains(identifier),
          "selectable": enabled && selectCapable && parentEnabled && availableIDs.contains(identifier),
          "selected": property(source, kTISPropertyInputSourceIsSelected) as? Bool ?? false]
     }
     return ["bundle_id": productID, "path": installation.path,
+            "installed_list_readable": installed != nil, "enabled_list_readable": enabledSources != nil,
             "installed": Bundle(url: installation)?.bundleIdentifier == productID,
             "sources": items]
 }
 
-func fail(_ message: String) -> Never {
+func fail(_ message: String, code: Int32 = 1) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
-    exit(1)
+    exit(code)
 }
 
 @main
@@ -98,6 +106,13 @@ struct InputMethodAdmin {
     static func main() throws {
         let command = CommandLine.arguments.dropFirst().first ?? "status"
         var extra: [String: Any] = [:]
+        var tisCalls: [[String: Any]] = []
+        func failInstall(_ message: String, code: Int32 = 1) -> Never {
+            if let data = try? JSONSerialization.data(withJSONObject: ["tis_calls": tisCalls]) {
+                FileHandle.standardOutput.write(data)
+            }
+            fail(message, code: code)
+        }
         let voiceIDs: Set<String> = [productID, productID + ".dictation"]
         switch command {
         case "status": break
@@ -192,7 +207,8 @@ struct InputMethodAdmin {
                 fail("安装位置不是本产品的输入法组件：\(installation.path)")
             }
             let status = TISRegisterInputSource(installation as CFURL)
-            guard status == noErr else { fail("输入法注册失败：\(status)") }
+            tisCalls.append(["api": "TISRegisterInputSource", "os_status": status])
+            guard status == noErr else { failInstall("输入法注册失败：\(status)") }
         case "enable":
             do {
                 try enableVoiceInputSources(productID: productID, readSources: {
@@ -205,14 +221,20 @@ struct InputMethodAdmin {
                 }, enable: { identifier in
                     guard let source = sources().first(where: {
                         property($0, kTISPropertyInputSourceID) as? String == identifier
-                    }) else { throw SourceSelectionFailure("待启用的 Mythlink 输入源已变化，请重试。") }
+                    }) else { throw SourceEnablePending("系统正在刷新 Mythlink 输入源。") }
                     let result = TISEnableInputSource(source)
+                    tisCalls.append(["api": "TISEnableInputSource", "source": identifier, "os_status": result])
                     guard result == noErr else {
                         let stage = identifier == productID ? "输入法组件" : "语音模式"
+                        if result == paramErr {
+                            throw SourceEnablePending("系统当前不允许启用\(stage)（\(result)）。")
+                        }
                         throw SourceSelectionFailure("\(stage)启用失败：\(result)")
                     }
                 })
-            } catch { fail(error.localizedDescription) }
+            } catch let error as SourceEnablePending {
+                failInstall(error.localizedDescription, code: 2)
+            } catch { failInstall(error.localizedDescription) }
         case "disable":
             guard !sources().contains(where: { property($0, kTISPropertyInputSourceIsSelected) as? Bool == true }) else {
                 fail("请先手动切回系统拼音或其他输入法，再卸载 Mythlink。")
@@ -226,6 +248,7 @@ struct InputMethodAdmin {
         default:
             fail("用法：InputMethodAdmin [status|register|enable|disable|prepare-update|restore-after-update 交接信息|select [前台进程 ID]|restore-source PID bundle 原输入源 预期输入源]")
         }
+        if command == "enable" || command == "register" { extra["tis_calls"] = tisCalls }
         let json = try JSONSerialization.data(withJSONObject: snapshot().merging(extra) { _, new in new }, options: [.prettyPrinted, .sortedKeys])
         FileHandle.standardOutput.write(json)
         FileHandle.standardOutput.write(Data("\n".utf8))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import os
 import sys
 import threading
@@ -9,7 +10,7 @@ import time
 import uuid
 
 from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from ...desktop.desktop_target import DesktopTargetRef
 from ...voice.hotwords import STROKE_CONTEXT_CHARS
@@ -23,6 +24,7 @@ from .input_source_return import InputSourceReturn
 
 DEFAULT_HISTORY_ACTION_MODE = "system_retry"
 DEFAULT_AUTOMATIC_POLISH = True
+_PENDING_ACTIVATION_MESSAGE = "组件已安装，等待系统启用。"
 
 
 class InlineInputController(QObject):
@@ -31,7 +33,8 @@ class InlineInputController(QObject):
     began = Signal()
     diagnostic = Signal(object)
     _received = Signal(object)
-    _installationFinished = Signal(str)
+    _installationFinished = Signal(str, object)
+    _inputMethodChecked = Signal(object)
     editIntentConfirmed = Signal(int)
     editRequested = Signal(object, str, str, object)
     dictationPreviewEvent = Signal(object)
@@ -45,6 +48,7 @@ class InlineInputController(QObject):
     strokeInvalidated = Signal()
     strokeEvent = Signal(object)
     clipboardEvent = Signal(object)
+    voicePanelPositioned = Signal(object)
 
     def __init__(self, parent=None, *, enabled=None, bridge_factory=None, source_switch_factory=None):
         super().__init__(parent)
@@ -101,7 +105,19 @@ class InlineInputController(QObject):
         self._transport_error = ""
         self._installing = False
         self._input_method_version = dict(state="unknown", text="版本待确认", current=False, detail="")
-        self._installation_message = "使用 Mythlink 时也可直接更新；安装后点入文本框并触发开始语音手势即可使用。"
+        self._installation_message = ""
+        self._install_settings = getattr(parent, "_settings", None)
+        self._last_install_report = {}
+        if self._install_settings is not None:
+            try:
+                saved = json.loads(self._install_settings.value("diagnostics/lastIMEInstall", "{}"))
+                if isinstance(saved, dict):
+                    self._last_install_report = saved
+            except (ValueError, TypeError):
+                pass
+        self._checking_input_method = False
+        self._check_input_method_again = False
+        self._inputMethodChecked.connect(self._input_method_checked)
         self._installationFinished.connect(self._installation_finished)
         self._reply_stage = ""
         self._source_switch_factory = source_switch_factory or InputSourceActivation
@@ -196,12 +212,65 @@ class InlineInputController(QObject):
     def inputMethodVersion(self):
         return self._input_method_version
 
+    @Property(bool, notify=changed)
+    def hasInstallDiagnostics(self):
+        return bool(self._last_install_report or self._input_method_version.get("code"))
+
+    @Slot(result=bool)
+    def copyInstallDiagnostics(self):
+        app = QGuiApplication.instance()
+        if not self.hasInstallDiagnostics or not isinstance(app, QGuiApplication):
+            return False
+        from ...voice.ime.install_diagnostics import environment
+        from ..shared.clipboard import internal_clipboard_write
+        report = {"copied_on": environment(), "last_install": self._last_install_report or None,
+                  "current_check": self._input_method_version}
+        with internal_clipboard_write():
+            app.clipboard().setText(json.dumps(report, ensure_ascii=False, indent=2))
+        return True
+
     @Slot()
     def refreshInputMethodVersion(self):
         if not self._enabled or self._windows or self._closed or self._installing:
             return
         from ...voice.ime.input_method_install import InputMethodInstaller
-        state = InputMethodInstaller().version_status()
+        if self._checking_input_method:
+            self._check_input_method_again = True
+            return
+        installer = InputMethodInstaller()
+        state = installer.version_status()
+        if not state["current"]:
+            self._set_input_method_version(state)
+            return
+        # Reading TIS starts a native helper. Keep it off the GUI thread and
+        # coalesce refreshes from focus, settings and installation completion.
+        self._checking_input_method = True
+        if self._input_method_version["state"] not in {
+                "current", "newer", "activation_pending", "activation_unknown"}:
+            self._set_input_method_version(dict(state="checking", text="正在确认启用状态",
+                                                current=False, detail=state["detail"]))
+
+        def check():
+            result = installer.activation_status(state)
+            try:
+                self._inputMethodChecked.emit(result)
+            except RuntimeError:
+                pass  # Window closed during the read-only probe.
+
+        threading.Thread(target=check, name="MythlinkIMEStatus", daemon=True).start()
+
+    @Slot(object)
+    def _input_method_checked(self, state):
+        self._checking_input_method = False
+        if self._check_input_method_again:
+            self._check_input_method_again = False
+            self.refreshInputMethodVersion()
+        elif not self._installing and not self._closed:
+            self._set_input_method_version(state)
+
+    def _set_input_method_version(self, state):
+        if state["current"] and self._installation_message == _PENDING_ACTIVATION_MESSAGE:
+            self._installation_message = ""
         if state != self._input_method_version:
             self._input_method_version = state
             self.changed.emit()
@@ -231,11 +300,15 @@ class InlineInputController(QObject):
         self.changed.emit()
 
         def work():
+            installer = None
             try:
                 from ...voice.ime.input_method_install import InputMethodInstaller
-                result = InputMethodInstaller().install()
-                if result.get("input_source_restore_error"):
-                    message = "已安装并启用，但未能自动恢复输入法。请点入文本框后触发开始语音手势，或从菜单栏选择 Mythlink。"
+                installer = InputMethodInstaller()
+                result = installer.install()
+                if result.get("activation_pending"):
+                    message = _PENDING_ACTIVATION_MESSAGE
+                elif result.get("input_source_restore_error"):
+                    message = "已安装并启用，但未能自动恢复输入法 [IME-RESTORE]。请点入文本框后触发开始语音手势，或从菜单栏选择 Mythlink。"
                 elif result.get("input_source_restored"):
                     message = "已安装并启用，已恢复 Mythlink 输入法。"
                 elif result.get("input_source_switched"):
@@ -245,17 +318,21 @@ class InlineInputController(QObject):
             except Exception as exc:
                 message = "安装未完成：" + str(exc)
             try:
-                self._installationFinished.emit(message)
+                self._installationFinished.emit(message, installer.diagnostic if installer else {})
             except RuntimeError:
                 pass  # The window may have closed; the atomic installation is complete.
 
         # Finish the short atomic installation even if the app is closed.
         threading.Thread(target=work, name="ProxiMicIMEInstaller", daemon=False).start()
 
-    @Slot(str)
-    def _installation_finished(self, message):
+    @Slot(str, object)
+    def _installation_finished(self, message, report=None):
         self._installing = False
         self._installation_message = message
+        if report:
+            self._last_install_report = report
+            if self._install_settings is not None:
+                self._install_settings.setValue("diagnostics/lastIMEInstall", json.dumps(report, ensure_ascii=False))
         self._diagnose("installation_finished", reason=message)
         self.refreshInputMethodVersion()
         self.changed.emit()
@@ -629,12 +706,6 @@ class InlineInputController(QObject):
             'client_id': self._client_id, 'utterance_id': self._utterance_id})
 
     @Slot(object, object)
-    def notify_hotwords_learned(self, key, words):
-        current = (self._epoch, self._client_id, self._utterance_id, self._view.get("revision", 0))
-        if (not self._closed and tuple(key) == current and self._view.get("phase") == "edited"
-                and not self._view.get("awaiting_readback") and not self._view.get("error") and words):
-            self._send("hotwords_learned", revision=current[-1], words=list(words)[:8])
-
     def stroke_update(self, code, candidates, selected, prediction=False, visuals=None):
         if self._installing:
             return False
@@ -1755,6 +1826,9 @@ class InlineInputController(QObject):
                     self._transport_failed(reason)
             return
         if client_id != self._client_id or utterance_id != self._utterance_id:
+            return
+        if kind == "voice_panel_frame":
+            self.voicePanelPositioned.emit(message.get("frame"))
             return
         if kind == "preview_undo_caret":
             origin = self._sentence_origin

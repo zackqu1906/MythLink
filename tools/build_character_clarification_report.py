@@ -13,7 +13,7 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[1];sys.path[:0]=[str(ROOT),str(ROOT/'src')]
 from tools.character_clarification_experiment import OUT,save,digest,jd
-RENDERER=Path('/Users/admin/.codex/skills/llm-eval-report/scripts/render_report.py')
+RENDERER=Path(__file__).with_name('eval_report.py')
 spec=importlib.util.spec_from_file_location('clarification_renderer',RENDERER)
 renderer=importlib.util.module_from_spec(spec);spec.loader.exec_module(renderer)
 

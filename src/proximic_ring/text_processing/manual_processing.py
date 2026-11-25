@@ -13,13 +13,14 @@ from .edit_tool import (DEFAULT_EDIT_MODE, EDIT_MODE_FRAGMENT, EDIT_MODE_FULL,
                         EDIT_MODE_RACE, normalize_edit_mode)
 from .model import (INPUT_MODE_EDIT, LLMBranchTrace, LLM_PROVIDER_LOCAL, LLMSettings,
                     normalize_llm_provider, normalize_input_mode, validate_edit_target_text)
-from .prompts import DICTATION_PROMPT, EDIT_FRAGMENT_PROMPT, EDIT_FULL_TEXT_PROMPT, POLISH_PROMPT
+from .prompts import (DICTATION_PROMPT, EDIT_FRAGMENT_PROMPT, EDIT_FULL_TEXT_PROMPT,
+                      POLISH_VOCABULARY_GUIDANCE, polish_model_input, polish_vocabulary_payload)
 from .processing_common import LLMResponseProcessingError, _text_output_budget
 from .qwen_thinking import text_thinking_budget
 
 
 class ManualTextProcessingMixin:
-    def suggest_dictation(self, settings, text, before_cursor, context):
+    def suggest_dictation(self, settings, text, before_cursor, context, candidates=()):
         """One complete plain-text answer, using the utterance's frozen context."""
         import json
         from .dictation_preview_prompt import DICTATION_PREVIEW_PROMPT
@@ -29,13 +30,17 @@ class ManualTextProcessingMixin:
             self._ensure_local_server(replace(settings, local_reasoning="off"))
         payload = {"asr_final": text, "before_cursor": before_cursor,
                    "scene": context.get("scene", ""), "context": context.get("context", "")}
-        output = self._request_chat(settings, system_prompt=DICTATION_PREVIEW_PROMPT,
+        prompt = DICTATION_PREVIEW_PROMPT
+        if candidates:
+            payload["personal_vocabulary"] = polish_vocabulary_payload(candidates)
+            prompt += POLISH_VOCABULARY_GUIDANCE
+        output = self._request_chat(settings, system_prompt=prompt,
             user_content=json.dumps(payload, ensure_ascii=False), temperature=0, max_tokens=2048,
             require_complete=True, disable_reasoning=not settings.supports_qwen_thinking,
             thinking_budget=text_thinking_budget(len(text)), allow_empty_text=settings.provider in {"volcengine", "bailian"})
         return output.strip() if isinstance(output, str) else ""
 
-    def polish_with_trace(self, text: str, settings: LLMSettings) -> tuple[str, str]:
+    def polish_with_trace(self, text: str, settings: LLMSettings, candidates=()) -> tuple[str, str]:
         """Polish only this utterance; never enter instruction editing/racing."""
         settings.validate()
         if not settings.enabled:
@@ -45,9 +50,10 @@ class ManualTextProcessingMixin:
             raise ValueError("本句没有可润色的文字")
         if normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL and settings.local_auto_start:
             self._ensure_local_server(settings)
+        model_input = polish_model_input(raw_text, candidates)
         response = self._request_chat(
-            settings, system_prompt=POLISH_PROMPT,
-            user_content=f"<语音转写>\n{raw_text}\n</语音转写>",
+            settings, system_prompt=model_input["system_prompt"],
+            user_content=model_input["user_content"],
             temperature=0.2, max_tokens=_text_output_budget(settings), edit_tool=None,
             thinking_budget=text_thinking_budget(len(raw_text)),
         )

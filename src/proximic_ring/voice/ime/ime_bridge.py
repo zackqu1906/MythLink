@@ -204,7 +204,7 @@ class IMEBridge:
                 if not isinstance(message, dict) or message.get("epoch") != epoch:
                     continue
                 kind = message.get("type")
-                if kind not in {"state", "finish_audio", "edit_requested", "polish_requested", "dictation_preview_requested", "dictation_preview_state", "preview_undo_caret", "interrupted", "settled", "pong", "wechat_key", "activation_recovery", "activation_trace", "clipboard_offer_state", "input_context_prepared"} | STROKE_REPLIES | SUSPENSION_REPLIES:
+                if kind not in {"state", "voice_panel_frame", "finish_audio", "edit_requested", "polish_requested", "dictation_preview_requested", "dictation_preview_state", "preview_undo_caret", "interrupted", "settled", "pong", "wechat_key", "activation_recovery", "activation_trace", "clipboard_offer_state", "input_context_prepared"} | STROKE_REPLIES | SUSPENSION_REPLIES:
                     continue
                 with self._condition:
                     if self._connection is not connection:

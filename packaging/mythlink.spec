@@ -143,7 +143,6 @@ a = Analysis(
         "soxr",
         # Training, clustering, plotting, and language-normalization packages
         # are unrelated to the three supported runtime ASR backends.
-        "jieba",
         "jamo",
         "jaconv",
         "umap",

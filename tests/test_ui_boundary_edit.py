@@ -2,25 +2,27 @@
 from dataclasses import replace
 import pytest
 from test_inline_ui import inline_ui, _recording_test_begin_edit
-from proximic_ring.text_processing.model import ROUTED_EDIT_ORIGINAL,ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS,TextProcessingResult
+from proximic_ring.text_processing.model import ROUTED_EDIT_HYBRID,ROUTED_EDIT_ORIGINAL,ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS,TextProcessingResult
 
 @pytest.mark.parametrize('inline_ui,expected',[
-    ({},ROUTED_EDIT_ORIGINAL),
+    ({},ROUTED_EDIT_HYBRID),
+    ({'input/routedEditVariant':ROUTED_EDIT_ORIGINAL},ROUTED_EDIT_HYBRID),
+    ({'input/routedEditVariant':ROUTED_EDIT_ORIGINAL,'input/hybridEditDefaultV1':True},ROUTED_EDIT_ORIGINAL),
     ({'input/routedEditVariant':ROUTED_EDIT_BOUNDARY},ROUTED_EDIT_BOUNDARY),
     ({'input/routedEditVariant':ROUTED_EDIT_SIX_CLASS},ROUTED_EDIT_SIX_CLASS),
     ({'input/routedEditVariant':'general_only_v1'},ROUTED_EDIT_BOUNDARY),
     ({'input/routedEditVariant':'general_full_v1'},ROUTED_EDIT_BOUNDARY),
-    ({'input/routedEditVariant':'unknown-future-version'},ROUTED_EDIT_SIX_CLASS),
+    ({'input/routedEditVariant':'unknown-future-version'},ROUTED_EDIT_HYBRID),
 ],indirect=['inline_ui'])
 def test_saved_or_missing_variant_loads_without_changing_mode(inline_ui,expected):
     from PySide6.QtCore import QObject
     c,_,_,root,_=inline_ui
     assert c.routedEditVariant==expected and c.inputRoutingMode=='manual'
     combo=root.findChild(QObject,'routedEditVariantCombo')
-    assert combo.property('count')==3
-    assert [combo.textAt(i) for i in range(3)] == ['六分类', '无分类边界', '精简编辑提示词']
-    assert combo.property('currentIndex')==[ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL].index(expected)
-    assert c._settings.value('input/routedEditVariant', ROUTED_EDIT_ORIGINAL) == expected
+    assert combo.property('count')==4
+    assert [combo.textAt(i) for i in range(4)] == ['六分类', '无分类边界', '精简编辑提示词', '规则＋模型编辑（默认）']
+    assert combo.property('currentIndex')==[ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL, ROUTED_EDIT_HYBRID].index(expected)
+    assert c._settings.value('input/routedEditVariant', ROUTED_EDIT_HYBRID) == expected
 
 def test_settings_combo_changes_persistent_variant_and_renders(inline_ui,monkeypatch):
     from PySide6.QtCore import QObject,QMetaObject,Q_ARG,QSettings,QPointF
@@ -37,7 +39,7 @@ def test_settings_combo_changes_persistent_variant_and_renders(inline_ui,monkeyp
     row=root.findChild(QQuickItem,'routedEditVariantRow')
     combo=root.findChild(QObject,'routedEditVariantCombo')
     assert row.isVisible()
-    for index,value in [(1,ROUTED_EDIT_BOUNDARY),(0,ROUTED_EDIT_SIX_CLASS),(1,ROUTED_EDIT_BOUNDARY)]:
+    for index,value in [(2,ROUTED_EDIT_ORIGINAL),(3,ROUTED_EDIT_HYBRID),(1,ROUTED_EDIT_BOUNDARY),(0,ROUTED_EDIT_SIX_CLASS),(1,ROUTED_EDIT_BOUNDARY)]:
         combo.setProperty('currentIndex',index)
         assert QMetaObject.invokeMethod(combo,'activated',Q_ARG(int,index))
         assert c.routedEditVariant==value
@@ -54,13 +56,17 @@ def test_settings_combo_changes_persistent_variant_and_renders(inline_ui,monkeyp
     c.inputRoutingMode='manual_routed_edit';QTest.qWait(20)
     assert row.isVisible() and c.routedEditVariant==ROUTED_EDIT_BOUNDARY
 
-@pytest.mark.parametrize('variant',[ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS])
+@pytest.mark.parametrize('variant',[ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_SIX_CLASS,ROUTED_EDIT_HYBRID])
 def test_reexecution_uses_original_variant_after_setting_changes(inline_ui,monkeypatch,variant):
     c,_,requests,_,event=inline_ui
+    store = c._hotwords.store
+    store.add("绀羽灵枢")
     context={'status':'ok','context':'当时上文'}
     monkeypatch.setattr(c,'_inline_edit_options',lambda _:dict(routing_mode='manual_routed_edit',
         routed_edit_variant=variant,screen_context=context))
     first=_recording_test_begin_edit(c,event,requests)
+    assert first.edit_hotwords == (("绀羽灵枢",) if variant == ROUTED_EDIT_HYBRID else ())
+    store.update(store.entries()[0]["id"], word="岚籽")
     c._apply_text_processed(TextProcessingResult(first.request_id,1,'edit','扩写','结果',.1,True,
         routing_mode='manual_routed_edit',routed_edit_variant=variant,model_input={'screen_context':context}))
     source=c._inline_input._utterance_id
@@ -72,3 +78,7 @@ def test_reexecution_uses_original_variant_after_setting_changes(inline_ui,monke
     retried=requests[-1]
     assert retried.routed_edit_variant==variant and retried.reexecuted
     assert replace(retried,request_id=first.request_id,screen_context=context,reexecuted=False)==first
+    if variant == ROUTED_EDIT_HYBRID:
+        fresh = c._submit_text_processing("改字", 2, "edit", target_text="原文",
+            routing_mode="manual_routed_edit", routed_edit_variant=variant)
+        assert fresh.edit_hotwords == ("岚籽",)

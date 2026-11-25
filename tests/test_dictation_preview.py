@@ -11,6 +11,7 @@ from PySide6.QtCore import QCoreApplication, QObject, Signal
 from proximic_ring.text_processing import LLMSettings, OpenAICompatibleTextProcessor
 from proximic_ring.ui.voice.dictation_preview import DictationPreviewController
 from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
+from proximic_ring.voice.hotwords import HotwordStore
 
 
 class Inline(QObject):
@@ -52,6 +53,7 @@ class Host(QObject):
     def __init__(self, root):
         super().__init__()
         self._inline_input = Inline()
+        self._hotwords = SimpleNamespace(store=HotwordStore(root / "words.json"))
         self._disconnect_event = threading.Event()
         self._modification_dataset = ModificationDatasetCollector(root, "test")
         interaction = self._modification_dataset.begin_session(24)
@@ -77,7 +79,7 @@ def preview(tmp_path):
 
 def submit(host, **extra):
     host._inline_input.dictationPreviewEvent.emit(dict(type="dictation_preview_requested", token="t",
-        epoch="epoch", client_id="field", utterance_id="first", raw="我带", revision=4, before_cursor="前文", **extra))
+        epoch="epoch", client_id="field", utterance_id="first", raw="我带", revision=4, before_cursor="前文") | extra)
 
 
 def data(host):
@@ -93,8 +95,9 @@ def native_state(host, visible, reason=""):
 def test_tap_discards_late_output_but_records_generation_and_deadline(preview):
     host, controller = preview
     started, release = threading.Event(), threading.Event()
-    def generate(settings, text, before, context):
+    def generate(settings, text, before, context, candidates):
         assert before == "前文" and context["context"] == "谁能带野餐垫？"
+        assert not candidates
         started.set()
         assert release.wait(2)
         return "我带野餐垫。"
@@ -164,3 +167,25 @@ def test_ark_request_uses_exact_single_answer_prompt_and_disabled_thinking():
     messages = calls[0]["input"]
     assert messages[0]["content"][0]["text"] == (Path(__file__).resolve().parents[1]/"tools/data/asr_recovery_fragment_joint_v2.txt").read_text()
     assert json.loads(messages[1]["content"][0]["text"]) == {"scene":"对话","context":"野餐垫","before_cursor":"前文","asr_final":"我带"}
+
+
+def test_hotword_preview_uses_one_existing_request_and_still_requires_down_swipe(preview, monkeypatch):
+    host, controller = preview
+    host._hotwords.store.learn("correction", ["飞鼠"], before="连接飞书", after="连接飞鼠")
+    calls = []
+    def chat(settings, **kwargs):
+        calls.append(kwargs)
+        return "连接飞鼠"
+    monkeypatch.setattr(controller._processor, "_request_chat", chat)
+    host._inline_input._view["raw"] = "连接飞书"
+    submit(host, raw="连接飞书")
+    wait_for(lambda: any(m["type"] == "dictation_preview_result" for m in host._inline_input.sent))
+    assert len(calls) == 1
+    payload = json.loads(calls[0]["user_content"])
+    assert payload["asr_final"] == host._inline_input._view["raw"] == "连接飞书"
+    assert payload["personal_vocabulary"] == [{"word": "飞鼠", "previous_asr": "飞书"}]
+    assert not any(m["type"] == "accept_dictation_preview" for m in host._inline_input.sent)
+    native_state(host, True)
+    assert controller.consume("swipe-down", host._disconnect_event, audio_busy=False)
+    wait_for(lambda: any(m["type"] == "accept_dictation_preview" for m in host._inline_input.sent))
+    assert len(calls) == 1

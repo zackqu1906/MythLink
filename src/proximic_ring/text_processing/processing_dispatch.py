@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 
 from .edit_tool import EDIT_MODE_RACE
-from .model import INPUT_MODE_EDIT, INPUT_ROUTING_ROUTED_EDIT, TEXT_MODE_POLISH, normalize_input_mode
+from .model import INPUT_MODE_EDIT, INPUT_ROUTING_ROUTED_EDIT, ROUTED_EDIT_HYBRID, TEXT_MODE_POLISH, normalize_input_mode
 from .context_preparation import resolve_model_context
 from .task_routing import EDIT, EditPlan
 
@@ -17,12 +17,14 @@ class ProcessingOutput:
     task_type: str = ""
     edit_plan: EditPlan | None = None
     screen_context: object = None
+    edit_steps: tuple = ()
 
 
 def process_manual(processor, request, on_trace):
     """Original explicit dictation/edit/polish and its candidate trace."""
     if request.mode == TEXT_MODE_POLISH:
-        text, raw = processor.polish_with_trace(request.raw_text, request.settings)
+        options = {"candidates": request.polish_candidates} if request.polish_candidates else {}
+        text, raw = processor.polish_with_trace(request.raw_text, request.settings, **options)
         return ProcessingOutput(text, raw)
     args = (request.raw_text, request.mode, request.settings, request.target_text,
             EDIT_MODE_RACE if normalize_input_mode(request.mode) == INPUT_MODE_EDIT else "")
@@ -53,17 +55,22 @@ def process_automatic(processor, request, cancelled=lambda: False):
 
 
 def process_routed_edit(processor, request, cancelled=lambda: False):
-    """Manual edit intent: resolve the same OCR frame, then one LLM call."""
+    """Resolve the captured context once for all steps of this edit."""
     context = resolve_model_context(request.screen_context, cancelled=cancelled)
     from ..screenshots.context import resolve_saved_context
     saved = resolve_saved_context(request.saved_context, cancelled=cancelled)
     if cancelled():
         raise RuntimeError("编辑已取消")
     options = {"saved_context": saved} if request.saved_context is not None else {}
+    steps = []
+    if request.routed_edit_variant == ROUTED_EDIT_HYBRID:
+        options.update(cancelled=cancelled, edit_steps=steps)
+        if request.edit_hotwords:
+            options["edit_hotwords"] = request.edit_hotwords
     text, raw, model_input, plan = processor.process_routed_edit_with_trace(
         request.raw_text, request.settings, request.target_text, context,
         variant=request.routed_edit_variant, **options)
-    return ProcessingOutput(text, raw, model_input, task_type=EDIT, edit_plan=plan, screen_context=context)
+    return ProcessingOutput(text, raw, model_input, task_type=EDIT, edit_plan=plan, screen_context=context, edit_steps=tuple(steps))
 
 
 def process_text_request(processor, request, *, on_trace, cancelled=lambda: False):

@@ -61,7 +61,7 @@ class HotwordController(QObject):
     def summary(self):
         entries = self.store.entries()
         enabled = sum(bool(e["enabled"]) for e in entries)
-        return f"{len(entries)} 个热词 · 下一句使用 {len(self.store.snapshot())} 个 · {enabled - len(self.store.snapshot())} 个超出预算"
+        return f"{len(entries)} 个热词 · 语音识别选用 {len(self.store.snapshot())} 个 · 编辑词典启用 {enabled} 个"
 
     @Property(str, notify=messageChanged)
     def message(self):
@@ -108,7 +108,7 @@ class HotwordController(QObject):
 
     @Slot(str, result=bool)
     def add(self, word):
-        return self._mutate(lambda: self.store.add(word), "已添加，可用于语音识别与笔画联想。")
+        return self._mutate(lambda: self.store.add(word), "已添加，可用于语音识别、编辑和笔画联想。")
 
     @Slot(str, str, result=bool)
     def rename(self, entry_id, word):
@@ -248,7 +248,7 @@ class HotwordController(QObject):
             self._show(error)
         elif words:
             before = {e["id"] for e in self.store.entries()}
-            if self._mutate(lambda: self.store.learn(edit.source, words)):
+            if self._mutate(lambda: self.store.learn(edit.source, words, before=edit.before, after=edit.after)):
                 added = [e["word"] for e in self.store.entries() if e["id"] not in before]
                 if added:
                     self._show("已收录热词：" + "、".join(added))

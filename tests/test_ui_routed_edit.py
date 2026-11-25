@@ -6,7 +6,7 @@ import pytest
 from test_inline_ui import inline_ui
 from test_shared_voice_capture import raw_capture
 from proximic_ring.text_processing.model import (INPUT_ROUTING_ROUTED_EDIT, TextProcessingResult,
-                                                ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY)
+                                                ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_HYBRID)
 from proximic_ring.text_processing.task_routing import EditPlan
 
 
@@ -42,7 +42,7 @@ def test_three_mode_selector_persists_and_tap_dictates_without_routing(inline_ui
 
 
 @pytest.mark.parametrize("source",["明天三点开会",""])
-@pytest.mark.parametrize("variant",[ROUTED_EDIT_SIX_CLASS,ROUTED_EDIT_BOUNDARY])
+@pytest.mark.parametrize("variant",[ROUTED_EDIT_SIX_CLASS,ROUTED_EDIT_BOUNDARY,ROUTED_EDIT_HYBRID])
 def test_right_swipe_requests_one_routed_edit_and_result_uses_native_key(inline_ui,monkeypatch,source,variant):
     controller,bridge,requests,root,event=inline_ui
     controller.routedEditVariant=variant
@@ -71,7 +71,7 @@ def test_right_swipe_requests_one_routed_edit_and_result_uses_native_key(inline_
     assert request.task_type=="" and request.edit_plan is None
     result=TextProcessingResult(request.request_id,2,"edit",request.raw_text,"明天开会。",.1,True,
         target_text=source,routing_mode=INPUT_ROUTING_ROUTED_EDIT,task_type="edit",
-        edit_plan=None if variant==ROUTED_EDIT_BOUNDARY else EditPlan(("compose",)),routed_edit_variant=variant)
+        edit_plan=EditPlan(("compose",)) if variant==ROUTED_EDIT_SIX_CLASS else None,routed_edit_variant=variant)
     controller._apply_text_processed(result)
     assert bridge.messages[-1]["type"]=="edit_result" and bridge.messages[-1]["text"]=="明天开会。"
     assert bridge.messages[-1]["revision"]==1
@@ -79,7 +79,7 @@ def test_right_swipe_requests_one_routed_edit_and_result_uses_native_key(inline_
     assert len(bridge.messages)==count
 
 
-@pytest.mark.parametrize("variant", [ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY])
+@pytest.mark.parametrize("variant", [ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_HYBRID])
 def test_desktop_edit_submits_saved_text_and_current_screen(inline_ui, monkeypatch, variant):
     controller, _, requests, _, _ = inline_ui
     controller.routedEditVariant = variant

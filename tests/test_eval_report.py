@@ -76,6 +76,11 @@ els.result.value='bodyfail';applyFilters();assert.deepEqual(shown(),['case 2']);
 els.result.value='mechanical';applyFilters();assert.deepEqual(shown(),['case 1']);
 els.result.value='observation';applyFilters();assert.deepEqual(shown(),['case 5']);
 els.result.value='pending';applyFilters();assert.deepEqual(shown(),['case 4']);
+Object.assign(rows[1].dataset,{initialStatus:'fail',initialBody:'fail',reviewed:'true',status:'pass',body:'pass'});
+els.result.value='fail';applyFilters();assert.deepEqual(shown(),['case 2','case 6']);
+els.result.value='reviewed-fail';applyFilters();assert.deepEqual(shown(),['case 2']);
+els.result.value='bodyfail';applyFilters();assert.deepEqual(shown(),['case 2']);
+els.result.value='pass';applyFilters();assert.deepEqual(shown(),['case 1','case 2']);
 '''
     result=engine.evaluate(setup+JS+checks)
     assert not result.isError(),result.toString()

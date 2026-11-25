@@ -7,7 +7,7 @@ from .model import (
     ARK_DEEPSEEK_FLASH_MODEL, DEFAULT_ARK_API_KEY_ENV, DEFAULT_ARK_BASE_URL, DEFAULT_ARK_MODEL,
     DEFAULT_BAILIAN_API_KEY_ENV, DEFAULT_BAILIAN_BASE_URL, DEFAULT_QWEN_MODEL,
     LLM_PROVIDER_BAILIAN, LLM_PROVIDER_LOCAL, LLM_PROVIDER_OPENAI,
-    LLM_PROVIDER_VOLCENGINE, LLMSettings, ROUTED_EDIT_ORIGINAL, normalize_llm_provider,
+    LLM_PROVIDER_VOLCENGINE, LLMSettings, normalize_llm_provider,
 )
 
 
@@ -77,7 +77,6 @@ def load_service(store):
             active = select_service(store, LLM_PROVIDER_LOCAL, _read(store, inferred, "llm"))
         elif active.provider == LLM_PROVIDER_VOLCENGINE and active.model.lower().startswith("deepseek"):
             active = select_service(store, LLM_PROVIDER_BAILIAN, active)
-            store.setValue("input/routedEditVariant", ROUTED_EDIT_ORIGINAL)
         else:
             _write(store, "llm", active)
             store.setValue("llm/provider", active.provider)

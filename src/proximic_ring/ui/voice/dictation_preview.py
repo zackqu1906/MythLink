@@ -149,7 +149,8 @@ class DictationPreviewController(QObject):
                 result = dict(generation="not_started")
             else:
                 model_start = time.monotonic()
-                output = self._processor.suggest_dictation(settings, job.raw, prefix, context)
+                candidates = self.owner._hotwords.store.polish_candidates(job.raw)
+                output = self._processor.suggest_dictation(settings, job.raw, prefix, context, candidates)
                 result = dict(generation="completed", output=output)
         except Exception as exc:
             result = dict(generation="failed" if model_start or not job.cancelled.is_set() else "not_started",

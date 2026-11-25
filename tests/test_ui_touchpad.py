@@ -406,6 +406,44 @@ def test_stream_end_gates_pointer_before_queued_ui_update(inline_ui):
     assert tp.state == 'error' and '数据中断' in tp.message
 
 
+@pytest.mark.parametrize('protocol', ['legacy', 'raw2'])
+def test_sdk_pointer_contact_gates_firmware_only_in_pointer_mode(inline_ui, monkeypatch, protocol):
+    import time
+    from PySide6.QtTest import QTest
+    from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
+    from ring_python_sdk.touchpad.events import Raw2PointerContact, TouchpadContact
+
+    class Pointer(TouchpadMouseOutput):
+        def start(self):
+            self.on_ready()  # Exercise real event intake without posting desktop input.
+
+    c, *_ = inline_ui
+    tp, source = prepare(c)
+    tp.output_factory, tp.stroke_output_factory = Pointer, Output
+    monkeypatch.setattr(tp, '_prepare_raw2_heap', lambda: None)
+    monkeypatch.setattr(tp, '_speech_busy', lambda: False)
+    before = tp.firmware_gesture_epoch()
+    tp.start()
+    QTest.qWait(20)
+    tp._run.protocol = protocol
+    source.future.set_result(None)
+    QTest.qWait(20)
+    assert tp.firmware_gesture_epoch() is not None
+    stamp = time.monotonic()
+    callbacks = source.starts[0]
+    if protocol == 'legacy':
+        callbacks['on_event'](TouchpadContact('down', 1, stamp))
+    else:
+        callbacks['on_pointer_move'](Raw2PointerContact('BEGIN', 'TWO_FINGER', 1, 1, stamp, stamp))
+    assert tp.firmware_gesture_epoch() is None
+    tp.setInputMode('stroke')
+    assert tp.inputMode == 'stroke'
+    assert tp.firmware_gesture_epoch() not in (None, before)
+    tp.stop()
+    QTest.qWait(20)
+    assert tp.firmware_gesture_epoch() not in (None, before)
+
+
 def test_permission_failure_and_connection_boundary(inline_ui):
     from PySide6.QtTest import QTest
     c, _, _, _, _ = inline_ui

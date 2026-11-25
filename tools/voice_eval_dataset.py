@@ -56,7 +56,9 @@ def validate_master(data):
     require(all(isinstance(k, str) and k and isinstance(v, str) and v for k,v in data['tag_catalog'].items()), 'Invalid tag definitions')
     require(len(set(data['tag_catalog'].values())) == len(data['tag_catalog']), 'Ambiguous translated tag names')
     require(isinstance(data.get('sources'), list) and data['sources'], 'Missing source manifest')
-    require(isinstance(data.get('cases'), list) and data['cases'], 'Empty master')
+    emptied_by_review = (data.get('source_type') == 'real_user_voice_history' and
+                         any(e.get('action') == 'remove_case' for e in data.get('change_log', [])))
+    require(isinstance(data.get('cases'), list) and (data['cases'] or emptied_by_review), 'Empty master')
     fine_parents = {t['id']: t['parent'] for t in data['fine_task_catalog']}
     seen_ids, seen_inputs, seen_aliases = set(), set(), {}
     for c in data['cases']:
@@ -72,8 +74,16 @@ def validate_master(data):
                     'saved_context must be text')
             require(isinstance(inp['target'], str), 'Target must be text')
             require(isinstance(inp['context'], dict), 'Context must be an object')
-            require(isinstance(inp['context'].get('messages'), list), 'context.messages must be a list')
-            for m in inp['context']['messages']:
+            context = inp['context']
+            if context and 'messages' not in context:
+                require(context.get('source') == 'screen_ocr'
+                        and context.get('status') in ('ok', 'empty', 'unavailable'),
+                        'Missing messages or captured screen OCR context')
+                if context['status'] == 'ok' or 'context' in context:
+                    require(isinstance(context.get('context'), str), 'Prepared screen context must be text')
+            messages = context.get('messages', [])
+            require(isinstance(messages, list), 'context.messages must be a list')
+            for m in messages:
                 require(m.get('speaker') in ('self', 'other', 'unknown') and isinstance(m.get('text'), str), 'Invalid OCR message')
             require(isinstance(inp['utterances'], list) and inp['utterances']
                     and all(isinstance(u, str) and u.strip() for u in inp['utterances']), 'Missing utterances')

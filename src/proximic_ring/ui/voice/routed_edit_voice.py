@@ -1,4 +1,4 @@
-"""Manual gestures + one-call edit routing. Never submits a Clef request."""
+"""Manual gestures and the selected voice editor. Never submits a Clef request."""
 from ...text_processing.model import INPUT_MODE_DICTATION, INPUT_MODE_EDIT, INPUT_ROUTING_ROUTED_EDIT
 
 

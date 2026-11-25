@@ -305,14 +305,14 @@ def main() -> int:
         compatibility = threading.Event()
         polish_requested = threading.Event()
         polish_settled = threading.Event()
-        hotwords_learned = threading.Event()
+        panel_positioned = threading.Event()
 
         def receive(message):
             events.append(message)
             if message.get("type") == "state" and message.get("ready"):
                 ready.set()
-            if message.get("type") == "pong" and message.get("echo") == "hotwords_learned":
-                hotwords_learned.set()
+            if message.get("type") == "voice_panel_frame" and message.get("frame") == [10, 40, 240, 32]:
+                panel_positioned.set()
             elif message.get("type") == "pong":
                 pong.set()
             if message.get("type") == "wechat_key" and message.get("request_id") == "key-test":
@@ -343,16 +343,14 @@ def main() -> int:
                                 "utterance_id": request["utterance_id"], "revision": request["revision"],
                                 "text": "润色后的本句😀", "error": ""})
             assert polish_settled.wait(2), "Swift did not receive the polish result"
-            assert bridge.send({"type": "hotwords_learned", "client_id": "ipc-test", "utterance_id": "edit-test",
-                                "seq": 10, "revision": 2, "words": ["张玮", "Kubernetes"]})
-            assert hotwords_learned.wait(2), "Swift did not receive the hotword notice"
+            assert panel_positioned.wait(2), "Python did not receive the native panel position"
             assert bridge.send({"type": "reset"})
             assert pong.wait(2), "Swift did not receive the Python command"
             assert any(message.get("type") == "pong" and message.get("echo") == "中文😀\n上下文" for message in events)
             output, _ = process.communicate(timeout=3)
             assert process.returncode == 0, output
             print(output.strip())
-            print("PASS actual Swift IPCClient ↔ Python IMEBridge: handshake, epoch, UTF-8 context, polish request/result, hotword notice, command")
+            print("PASS actual Swift IPCClient ↔ Python IMEBridge: handshake, epoch, UTF-8 context, polish request/result, voice panel position, command")
         finally:
             bridge.close()
             if process is not None and process.poll() is None:

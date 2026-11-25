@@ -79,7 +79,7 @@ from ..voice.interaction_associations import (
 from ..voice.modification_dataset import ModificationDatasetCollector
 from ..runtime_paths import app_data_root, is_frozen, resource_root
 from ..text_processing.service_profiles import load_service, select_service
-from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_ORIGINAL,
+from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_HYBRID, ROUTED_EDIT_ORIGINAL,
     LLM_PROVIDER_BAILIAN,
     ROUTED_EDIT_VARIANT_LABELS, selectable_routed_edit_variant)
 from ..text_processing import (
@@ -509,7 +509,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
         text_service = load_service(self._settings)
-        saved_variant = self._settings.value("input/routedEditVariant", ROUTED_EDIT_ORIGINAL)
+        saved_variant = self._settings.value("input/routedEditVariant", ROUTED_EDIT_HYBRID)
+        # The previous release also persisted its default during service migration.
+        # Convert it once so a subsequent explicit selection of the old editor sticks.
+        if not self._settings.contains("input/hybridEditDefaultV1"):
+            if saved_variant == ROUTED_EDIT_ORIGINAL:
+                saved_variant = ROUTED_EDIT_HYBRID
+                self._settings.setValue("input/routedEditVariant", saved_variant)
+            self._settings.setValue("input/hybridEditDefaultV1", True)
         self._routed_edit_variant = selectable_routed_edit_variant(saved_variant)
         if self._routed_edit_variant != saved_variant:
             self._settings.setValue("input/routedEditVariant", self._routed_edit_variant)
@@ -868,7 +875,6 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._inline_input.interrupted.connect(self._interrupt_inline_audio)
         self._inline_input.settled.connect(self._settle_inline_input)
         self._inline_input.transactionSettled.connect(self._hotwords.settle)
-        self._hotwords.learned.connect(self._inline_input.notify_hotwords_learned)
         self._inline_input.changed.connect(self.interactionChanged)
         self._inline_input.changed.connect(self._refresh_inline_status)
         self._inline_input.diagnostic.connect(self._log_inline_diagnostic)
@@ -1342,7 +1348,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                            edit_plan=saved.edit_plan, screen_context=replay_context(saved),
                            saved_context=saved.saved_context,
                            routing_mode=saved.routing_mode, reexecuted=True,
-                           routed_edit_variant=saved.routed_edit_variant)
+                           routed_edit_variant=saved.routed_edit_variant, edit_hotwords=saved.edit_hotwords)
         else:
             options = self._inline_edit_options(key)
         request = self._submit_text_processing(
@@ -1353,7 +1359,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._inline_requests[self._text_request_id] = key
         self._inline_edit_requests[self._text_request_id] = (request, source)
-        if not retry and request.routing_mode != INPUT_ROUTING_ROUTED_EDIT:
+        if not retry:
             self._hotwords.prepare(key, instruction, original, request.settings)
         self._set_interaction_state("processing")
 
@@ -4042,6 +4048,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                         self._ring_gestures.envelope(event), gesture_connection
                     ),
                     on_gesture_health=lambda healthy: self._runtimeGestureHealth.emit(gesture_connection, healthy),
+                    firmware_gesture_epoch=self._touchpad.firmware_gesture_epoch,
                     on_gesture_detected=lambda event: (
                         None if self._voice_practice.active else self._gesture_trigger.submit(event.name, gesture_connection)
                     ),
@@ -5893,6 +5900,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         settings=None,
         reexecuted: bool = False,
         routed_edit_variant: str | None = None,
+        edit_hotwords: tuple[str, ...] | None = None,
     ) -> TextProcessingRequest | None:
         normalized_mode = TEXT_MODE_POLISH if mode == TEXT_MODE_POLISH else normalize_input_mode(mode)
         if normalized_mode not in {INPUT_MODE_EDIT, TEXT_MODE_POLISH} and not self._llm_enabled and not force_llm:
@@ -5914,6 +5922,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             return
         self._text_request_id += 1
         request_id = self._text_request_id
+        variant = selectable_routed_edit_variant(routed_edit_variant or self._routed_edit_variant)
+        if (edit_hotwords is None and normalized_mode == INPUT_MODE_EDIT
+                and routing_mode == INPUT_ROUTING_ROUTED_EDIT and variant == ROUTED_EDIT_HYBRID):
+            edit_hotwords = self._hotwords.store.enabled_words()
         request = TextProcessingRequest(
             request_id=request_id,
             session_id=int(session_id),
@@ -5928,7 +5940,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             edit_plan=edit_plan,
             routing_mode=routing_mode,
             reexecuted=reexecuted,
-            routed_edit_variant=selectable_routed_edit_variant(routed_edit_variant or self._routed_edit_variant),
+            routed_edit_variant=variant,
+            edit_hotwords=edit_hotwords or (),
+            polish_candidates=self._hotwords.store.polish_candidates(text) if normalized_mode == TEXT_MODE_POLISH else (),
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
@@ -7502,8 +7516,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         return (self._hotword_legacy_epoch, "desktop", str(interaction.request_id), 0)
 
     def _learn_applied_hotwords(self, interaction):
-        if (interaction is None or interaction.routing_mode == INPUT_ROUTING_ROUTED_EDIT
-                or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None):
+        if interaction is None or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None:
             return
         key = self._legacy_hotword_key(interaction)
         self._hotwords.prepare(key, interaction.raw_text, interaction.original_snapshot.text,

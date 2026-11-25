@@ -12,7 +12,7 @@ import sys
 from check_bailian_six_tasks import EDIT_TASK_LABELS, metrics, timing, write_json
 
 LABELS = {'dictation': '听写', **EDIT_TASK_LABELS}
-SKILL_RENDERER = Path('/Users/admin/.codex/skills/llm-eval-report/scripts/render_report.py')
+SKILL_RENDERER = Path(__file__).with_name('eval_report.py')
 
 
 def percentage(n, d):

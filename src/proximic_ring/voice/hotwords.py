@@ -14,6 +14,8 @@ import time
 import unicodedata
 import uuid
 
+from .polish_vocabulary import PolishVocabulary, confirmed_asr_form
+
 
 # Seed's bidirectional endpoint documents 100 tokens. Without its tokenizer,
 # Use UTF-8 bytes as a conservative proxy, not an exact Seed token count.
@@ -64,6 +66,13 @@ class HotwordStore:
                 raise ValueError("无效的热词库格式")
             for entry in value["entries"]:
                 normalize_word(entry["word"])
+                forms = entry.get("asr_forms", {})
+                if not isinstance(forms, dict) or not all(
+                    source in entry["evidence"] and isinstance(form, str)
+                    and 2 <= len(form) <= MAX_WORD_CHARS and form.isalnum()
+                    for source, form in forms.items()
+                ):
+                    raise ValueError("无效的热词纠错记录")
                 if (not isinstance(entry["evidence"], dict) or not isinstance(entry["id"], str)
                         or type(entry.get("stroke_uses", 0)) is not int
                         or not 0 <= entry.get("stroke_uses", 0) <= 10_000
@@ -90,7 +99,9 @@ class HotwordStore:
 
     def _refresh_snapshot(self):
         ordered = self._state["entries"]
-        self._selected = tuple(select_hotwords(e["word"] for e in ordered if e["enabled"]))
+        self._polish_vocabulary = PolishVocabulary(ordered)
+        self._enabled_words = tuple(e["word"] for e in ordered if e["enabled"])
+        self._selected = tuple(select_hotwords(self._enabled_words))
         self._stroke_words = tuple(e for e in ordered if e["enabled"] and len(e["word"]) > 1)
         self._transactions = set()
         for entry in ordered:
@@ -150,6 +161,14 @@ class HotwordStore:
     def snapshot(self) -> list[str]:
         with self._lock:
             return list(self._selected)
+
+    def enabled_words(self) -> tuple[str, ...]:
+        """Full vocabulary for local editing, independent of the ASR request budget."""
+        with self._lock:
+            return self._enabled_words
+
+    def polish_candidates(self, text: str) -> tuple[tuple[str, str], ...]:
+        return self._polish_vocabulary.candidates(text)
 
     @staticmethod
     def _matches_tail(context, prefix):
@@ -231,6 +250,7 @@ class HotwordStore:
                 state["blocked"] = [k for k in state["blocked"] if k != word.casefold()]
                 entry.update(word=word, manual=True, evidence={}, updated_at=time.time())
                 entry.pop("stroke_uses", None)
+                entry.pop("asr_forms", None)
             if enabled is not None:
                 entry["enabled"] = bool(enabled)
             if pinned is not None:
@@ -262,7 +282,7 @@ class HotwordStore:
             state["entries"] = [e for e in state["entries"] if e["id"] != entry_id]
         return self._change(mutate)
 
-    def learn(self, source: str, words: list[str]):
+    def learn(self, source: str, words: list[str], *, before="", after=""):
         def mutate(state):
             added = []
             for word in words:
@@ -277,6 +297,9 @@ class HotwordStore:
                     added.append(entry)
                 # Repeated delivery must not inflate priority or re-enable a word.
                 entry["evidence"].setdefault(source, time.time())
+                form = confirmed_asr_form(before, after, word)
+                if form:
+                    entry.setdefault("asr_forms", {}).setdefault(source, form)
             state["entries"] = added + [e for e in state["entries"] if e not in added]
         return self._change(mutate)
 
@@ -284,6 +307,7 @@ class HotwordStore:
         def mutate(state):
             for entry in state["entries"]:
                 entry["evidence"].pop(source, None)
+                entry.get("asr_forms", {}).pop(source, None)
             state["entries"] = [e for e in state["entries"] if e["manual"] or e["evidence"]]
         return self._change(mutate)
 
@@ -301,6 +325,8 @@ class HotwordStore:
         def mutate(state):
             for entry in state["entries"]:
                 entry["evidence"] = {k: v for k, v in entry["evidence"].items() if not matches(k)}
+                if "asr_forms" in entry:
+                    entry["asr_forms"] = {k: v for k, v in entry["asr_forms"].items() if k in entry["evidence"]}
             state["entries"] = [e for e in state["entries"] if e["manual"] or e["evidence"]]
         return self._change(mutate)
 

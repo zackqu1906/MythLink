@@ -1,4 +1,4 @@
-"""Manual edit intent, one cloud model request with a selectable output protocol."""
+"""Manual edit intent with a selectable editor and output protocol."""
 from __future__ import annotations
 
 import json
@@ -6,8 +6,8 @@ import re
 
 from .edit_response import apply_edit_response
 from .edit_tool import EDIT_MODE_FULL, FULL_TEXT_EDIT_TOOL
-from .model import (ROUTED_EDIT_ORIGINAL, validate_edit_target_text,
-                    ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant)
+from .model import (ROUTED_EDIT_HYBRID, ROUTED_EDIT_ORIGINAL, validate_edit_target_text,
+                    ROUTED_EDIT_BODY_VARIANTS, normalize_routed_edit_variant)
 from .processing_common import LLMResponseProcessingError, _text_output_budget
 from .qwen_thinking import edit_thinking_budget
 from .routed_edit_prompts import routed_edit_prompt
@@ -48,7 +48,8 @@ def parse_routed_edit_response(raw, target):
 
 class RoutedEditTextProcessingMixin:
     def process_routed_edit_with_trace(self, text, settings, target_text, screen_context=None,
-                                      *, variant=ROUTED_EDIT_SIX_CLASS, saved_context=None):
+                                      *, variant=ROUTED_EDIT_HYBRID, saved_context=None,
+                                      cancelled=lambda: False, edit_steps=None, edit_hotwords=()):
         settings.validate()
         if not settings.enabled or not settings.supports_routed_edit:
             raise ValueError("手动＋编辑路由需要在服务设置中选择百炼 Qwen 或火山方舟 DeepSeek 模型")
@@ -61,6 +62,11 @@ class RoutedEditTextProcessingMixin:
         model_input = routed_edit_model_input(raw, target, screen_context, saved_context)
         # Detach the exact serialized input from mutable capture/evidence data.
         model_input = json.loads(json.dumps(model_input, ensure_ascii=False))
+        if variant == ROUTED_EDIT_HYBRID:
+            from .hybrid_edit.processing import process_hybrid_edit
+            from .hybrid_edit.vocabulary import use_edit_hotwords
+            with use_edit_hotwords(edit_hotwords):
+                return process_hybrid_edit(self, settings, model_input, cancelled, edit_steps)
         output = ""
         try:
             structured = variant == ROUTED_EDIT_ORIGINAL

@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26,<2",
   "torch>=2.11,<2.12",
+  "jieba==0.42.1",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +46,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
+"proximic_ring.text_processing.hybrid_edit" = ["prompts/*.txt", "mandarin.txt.gz"]
 ring_python_sdk = ["touchpad/assets/*"]
 ring_mac_sdk = ["py.typed", "assets/*", "native/*.dylib", "licenses/*", "web/*"]
 ring_windows_sdk = ["py.typed", "assets/*", "native/*.dll", "licenses/*", "web/*"]

@@ -8,16 +8,61 @@ from proximic_ring.text_processing import LLMSettings, OpenAICompatibleTextProce
 from proximic_ring.text_processing.prompts import HOTWORD_EXTRACTION_PROMPT, EDIT_FRAGMENT_PROMPT, POLISH_PROMPT
 
 
+def test_polish_uses_confirmed_asr_forms_only_until_undo(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    store.add("Myth")
+    source = json.dumps(["epoch", "client", "utterance", 2])
+    store.learn(source, ["Myth"], before="使用 miss 绘制", after="使用 Myth 绘制")
+    store = HotwordStore(store.path)
+    assert store.polish_candidates("重新用 miss 绘制") == (("Myth", "miss"),)
+    assert not store.polish_candidates("dismiss()")
+    assert not store.polish_candidates("make more room")
+    entry_id = store.entries()[0]["id"]
+    store.update(entry_id, enabled=False)
+    assert not store.polish_candidates("miss 绘制")
+    store.update(entry_id, enabled=True)
+    assert store.retract_transaction(("epoch", "client", "utterance"))
+    assert store.polish_candidates("miss 绘制") == (("Myth", ""),)
+    store.learn("truncated", ["Myth"], before="miss 绘制", after="Myth")
+    assert "truncated" not in store.entries()[0].get("asr_forms", {})
+    store.update(entry_id, word="别的名字")
+    assert not store.polish_candidates("miss 绘制")
+
+
+def test_polish_shortlists_old_and_new_entries_including_homophones(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    store.learn("old", ["飞鼠", "DeepSeek", "张玮", "张炜"])
+    for word in ["个人词条甲", "个人词条乙", "个人词条丙"]:
+        store.add(word)
+    assert store.polish_candidates("连接飞书，再打开 deep seek") == (("飞鼠", ""), ("DeepSeek", ""))
+    assert set(store.polish_candidates("联系张伟")) == {("张玮", ""), ("张炜", "")}
+    assert store.polish_candidates("今天早点回家") == ()
+    assert store.polish_candidates("飞。书") == ()
+    assert store.polish_candidates("xxdeepseek123") == ()
+
+
+def test_polish_shortlist_prioritizes_learned_form_over_other_possible_spellings(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    store.learn("confirmed", ["飞鼠"], before="设备飞书", after="设备飞鼠")
+    for word in ("非书", "非树", "非鼠", "飞梳", "飞树", "飞数", "飞叔"):
+        store.add(word)
+    candidates = store.polish_candidates("连接飞书")
+    assert len(candidates) == 6 and candidates[0] == ("飞鼠", "飞书")
+
+
 def test_manual_and_independent_corrections_survive_individual_undo(tmp_path):
     store = HotwordStore(tmp_path / "words.json")
     store.learn("edit-one", ["张玮", "Kubernetes"])
     store.learn("edit-two", ["张玮"])
+    assert set(store.enabled_words()) == {"张玮", "Kubernetes"}
     store.add("Kubernetes")
     store.retract("edit-one")
     assert set(store.snapshot()) == {"张玮", "Kubernetes"}
+    assert set(store.enabled_words()) == {"张玮", "Kubernetes"}
     store.retract("edit-two")
     assert store.snapshot() == ["Kubernetes"]
     assert HotwordStore(store.path).snapshot() == ["Kubernetes"]
+    assert HotwordStore(store.path).enabled_words() == store.enabled_words() == ("Kubernetes",)
 
 
 def test_delete_blocks_learning_and_manual_add_allows_it_again(tmp_path):
@@ -27,6 +72,7 @@ def test_delete_blocks_learning_and_manual_add_allows_it_again(tmp_path):
     store = HotwordStore(store.path)
     store.learn("two", ["java"])
     assert store.entries() == []
+    assert store.enabled_words() == ()
     store.add("Java")
     store.learn("three", ["java"])
     assert len(store.entries()) == 1 and store.snapshot() == ["Java"]
@@ -62,10 +108,12 @@ def test_disabled_word_stays_disabled_and_rename_becomes_manual(tmp_path):
     store.update(entry_id, enabled=False)
     store.learn("two", ["张玮"])
     assert store.snapshot() == []
+    assert store.enabled_words() == ()
     store.update(entry_id, word="张炜", enabled=True, pinned=True)
     store.retract("one")
     store.retract("two")
     assert store.snapshot() == ["张炜"] and store.entries()[0]["manual"]
+    assert store.enabled_words() == ("张炜",)
     store.learn("three", ["张玮"])
     assert store.snapshot() == ["张炜"]
 
@@ -79,6 +127,8 @@ def test_snapshots_are_bounded_and_pinning_prioritizes_old_words(tmp_path):
     snapshot = store.snapshot()
     assert snapshot[0] == "专有词汇0" and len(snapshot) < 20
     assert sum(len(word.encode("utf-8")) + 2 for word in snapshot) <= HOTWORD_BUDGET
+    assert len(store.enabled_words()) == 20
+    assert store.enabled_words()[:len(snapshot)] == tuple(snapshot)
     snapshot.clear()
     assert store.snapshot()
     assert select_hotwords(["Java", "java", None, "", "x" * 41, "张玮"]) == ["Java", "张玮"]
@@ -118,6 +168,7 @@ def test_disk_failure_does_not_publish_unsaved_words(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         store.add("Python")
     assert store.snapshot() == ["Java"]
+    assert store.enabled_words() == ("Java",)
     assert not list(tmp_path.glob(".hotwords-*"))
 
 

@@ -74,6 +74,7 @@ class TouchpadController(QObject):
         self._windows_ime = bool(getattr(getattr(owner, "_inline_input", None), "_windows", False))
         self._modeSwitch.connect(self._switch_input_mode, Qt.QueuedConnection)
         self._source = self._connection = self._run = None
+        self._non_pointer_epoch = object()
         self._capture_target = None  # Temporary screenshot owner; shares this pointer stream.
         self._capture_epoch = 0
         self._closed = False
@@ -784,6 +785,15 @@ class TouchpadController(QObject):
         self._sync_voice_gate()
         self.changed.emit()
 
+    def firmware_gesture_epoch(self):
+        run = self._run
+        if run is None or run.mode != 'pointer':
+            return self._non_pointer_epoch
+        # The GUI may replace the pointer with the stroke/voice sink between
+        # callbacks. Only a pointer sink participates in this arbitration.
+        epoch = getattr(run.output, 'firmware_gesture_epoch', None)
+        return epoch() if epoch is not None else self._non_pointer_epoch
+
     def consume_gesture(self, event, connection):
         # Called on the BLE worker before voice/app mappings; never manipulate Qt here.
         if connection is not self.owner._disconnect_event or connection.is_set():
@@ -1410,6 +1420,9 @@ class TouchpadController(QObject):
             if local:
                 output.input_since = lambda: self._local_input_since
         else:
+            # Gestures pending in voice/stroke mode cannot span an intervening
+            # mouse session, even if it starts and stops within a pair window.
+            self._non_pointer_epoch = object()
             selector = self.owner._ring_gestures.windowSelector
             def click_context():
                 if self._capture_target: return self._capture_target.pointer_context

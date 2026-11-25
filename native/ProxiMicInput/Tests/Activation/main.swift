@@ -32,7 +32,7 @@ final class ActionPanel {
     func configureAppearance(_ value: VoiceHudAppearance) { Self.displayedAppearance = value }
     func update(_ session: CompositionSession, historyDepth: Int, redoAvailable: Bool = false, redoEnabled: Bool = true,
                 retryAvailable: Bool = false, historyActionMode: String = "next", manualPolish: Bool = true) {}
-    func showLearnedHotwords(_ words: [String]) {}
+    var onPosition: (([Double]) -> Void)?
     func position(caret: NSRect?, clientLevel: Int32) {}
 }
 final class StrokeCandidatePanel {

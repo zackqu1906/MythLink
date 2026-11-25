@@ -150,3 +150,27 @@ def test_polish_log_keeps_its_own_prompt():
     assert payload["system_prompt"] == POLISH_PROMPT
     assert payload["user_content"] == "<语音转写>\n本句\n</语音转写>"
     assert payload["target_text"] == ""
+
+
+def test_swipe_down_passes_only_candidate_spellings_in_the_original_call(manual_polish_route, monkeypatch):
+    import json
+    from proximic_ring.text_processing.processing_dispatch import process_text_request
+    from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
+
+    c, _, inline, _, _, _, _ = manual_polish_route
+    c.hotwords.store.add("Myth")
+    c.hotwords.store.add("飞鼠")
+    requests, calls = [], []
+    monkeypatch.setattr(c._text_processing_worker, "submit", requests.append)
+    raw = "用 miss 绘制"
+    c._submit_inline_polish((*c._app_gestures.sentence(), 3), raw, inline.target_reference())
+    request, = requests
+    assert request.raw_text == raw and request.polish_candidates == (("Myth", ""),)
+    processor = OpenAICompatibleTextProcessor()
+    monkeypatch.setattr(processor, "_request_chat", lambda settings, **kwargs: calls.append(kwargs) or "用 Myth 绘制")
+    result = process_text_request(processor, request, on_trace=None)
+    call, = calls
+    assert result.text == "用 Myth 绘制"
+    assert json.loads(call["user_content"]) == {"asr_final": raw, "personal_vocabulary": [{"word": "Myth"}]}
+    history = ModificationDatasetCollector._llm_input(request.mode, raw, "", request.polish_candidates)
+    assert (history["user_content"], history["system_prompt"]) == (call["user_content"], call["system_prompt"])

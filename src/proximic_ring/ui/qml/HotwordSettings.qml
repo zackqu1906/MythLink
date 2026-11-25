@@ -138,9 +138,9 @@ Rectangle {
             Layout.fillWidth: true; spacing: 12
             Label { text: "热词库"; color: theme.text; font.pixelSize: 22; font.weight: Font.Medium }
             Image { source: "../assets/figma/redesign-567-32842-usage-indicator.svg" }
-            Label { text: "已激活"; color: theme.muted; font.pixelSize: 14 }
+            Label { text: "识别已选"; color: theme.muted; font.pixelSize: 14 }
             Image { source: "../assets/figma/redesign-567-32842-usage-indicator1.svg" }
-            Label { text: "候选"; color: theme.muted; font.pixelSize: 14 }
+            Label { text: "识别候选"; color: theme.muted; font.pixelSize: 14 }
             Item { Layout.fillWidth: true }
             Label { text: "自动学习"; color: theme.text; font.pixelSize: 16 }
             FigmaSwitch { objectName: "hotwordAutoLearnToggle"; checked: panel.service.autoLearn; Accessible.name: "自动收录语音纠正词并记住常用联想"; onToggled: panel.service.autoLearn = checked }
@@ -260,7 +260,7 @@ Rectangle {
                             height: panel.actionOverhang + panel.chipHeight
                             TextMetrics { id: metrics; text: tile.word; font: tagLabel.font }
                             Accessible.role: Accessible.Button
-                            Accessible.name: word + "，" + (selected ? "下句使用" : wordEnabled ? "超出预算" : "已停用")
+                            Accessible.name: word + "，" + (selected ? "识别和编辑启用" : wordEnabled ? "编辑启用，超出识别预算" : "已停用")
                             Accessible.description: "拖动调整顺序；悬停修改或删除；点选后按 Alt 加方向键调整顺序"
                             Accessible.onPressAction: panel.editWord(index)
                             Rectangle {
@@ -289,7 +289,7 @@ Rectangle {
                                 }
                                 ToolTip.visible: panel.hoverIndex === tile.index && pointer.containsMouse && !panel.dragging
                                 ToolTip.delay: 600
-                                ToolTip.text: "第 " + tile.position + " 位 · " + tile.source + " · " + (tile.selected ? "下句使用" : tile.wordEnabled ? "超出预算，移到前面可优先使用" : "已停用") + "\n" + tile.word
+                                ToolTip.text: "第 " + tile.position + " 位 · " + tile.source + " · " + (tile.selected ? "识别和编辑启用" : tile.wordEnabled ? "编辑启用，移到前面可优先用于识别" : "已停用") + "\n" + tile.word
                             }
                         }
                     }
@@ -297,7 +297,7 @@ Rectangle {
                 Label {
                     anchors.centerIn: parent; width: parent.width - 24
                     visible: vocabulary.count === 0
-                    text: panel.searching ? "没有匹配的热词" : "添加名字与术语，用于语音识别和笔画联想。"
+                    text: panel.searching ? "没有匹配的热词" : "添加名字与术语，用于语音识别、编辑和笔画联想。"
                     horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
                     color: theme.muted; font.pixelSize: 14
                 }
@@ -500,8 +500,8 @@ Rectangle {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Label { Layout.fillWidth: true; text: "参与语音识别"; color: theme.text; font.pixelSize: 14 }
-                FigmaSwitch { id: renameEnabled; objectName: "hotwordEnabledToggle"; Accessible.name: "参与语音识别" }
+                Label { Layout.fillWidth: true; text: "用于语音识别、编辑和笔画联想"; color: theme.text; font.pixelSize: 14 }
+                FigmaSwitch { id: renameEnabled; objectName: "hotwordEnabledToggle"; Accessible.name: "用于语音识别、编辑和笔画联想" }
             }
             Label { Layout.fillWidth: true; text: panel.service.message; visible: text.length > 0; wrapMode: Text.Wrap; color: theme.muted }
             RowLayout {

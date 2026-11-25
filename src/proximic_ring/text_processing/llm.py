@@ -46,7 +46,7 @@ class OpenAICompatibleTextProcessor(
     """Shared transport and validation; three explicit processing policies.
 
     Automatic policy lives in automatic_processing.py; explicit user-selected
-    policy lives in manual_processing.py; one-call manual routing lives in
+    policy lives in manual_processing.py; manual edit routing lives in
     routed_edit_processing.py. This class owns HTTP requests, local
     server lifetime, tool-response validation and shared vocabulary learning.
     """
@@ -252,6 +252,7 @@ class OpenAICompatibleTextProcessor(
         allow_empty_text: bool = False,
         response_format: dict | None = None,
         thinking_budget: int | None = None,
+        followup_messages: tuple = (),
     ) -> str | dict[str, Any]:
         provider = normalize_llm_provider(settings.provider)
         use_ark_responses = provider == LLM_PROVIDER_VOLCENGINE
@@ -305,6 +306,8 @@ class OpenAICompatibleTextProcessor(
                 # otherwise valid edit JSON response.
                 "thinking": {"type": "disabled"},
             }
+            # Responses accepts prior assistant messages as role/content items.
+            request_body["input"].extend(followup_messages)
             if edit_tool is not None:
                 function = edit_tool["function"]
                 request_body["tools"] = [
@@ -321,6 +324,7 @@ class OpenAICompatibleTextProcessor(
                 "messages": [
                     {"role": "system", "content": edit_system_prompt},
                     {"role": "user", "content": user_content},
+                    *followup_messages,
                 ],
                 "temperature": float(temperature),
                 "max_tokens": int(max_tokens),

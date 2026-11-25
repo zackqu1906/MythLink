@@ -1,17 +1,29 @@
 """Settings status reflects grants and on-disk IME versions, without requesting either."""
+import json
 import os
 from pathlib import Path
 import plistlib
 import shutil
+import time
 
 import pytest
 from PySide6.QtCore import QObject, QMetaObject, QPointF, Q_ARG
+from PySide6.QtGui import QClipboard, QDesktopServices
 from PySide6.QtTest import QTest
 
 from proximic_ring.platforms.macos.mac_permissions import PermissionState
 from proximic_ring.voice.ime import input_method_install as installer_module
 from test_inline_ui import inline_ui
 from test_input_method_installer import installer, bundle
+
+
+def wait_for_version(component, expected):
+    for _ in range(250):
+        if component.inputMethodVersion["state"] == expected and not component._checking_input_method:
+            return
+        QTest.qWait(10)
+        time.sleep(.002)  # Give the Python installer/probe thread a turn.
+    pytest.fail(f"Expected {expected}, got {component.inputMethodVersion}")
 
 
 @pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
@@ -90,17 +102,20 @@ def test_status_is_left_of_action_and_recovers_from_missing_permissions_and_old_
     target = value.destination / 'Contents/Info.plist'
     target.write_bytes((value.source / 'Contents/Info.plist').read_bytes())
     controller.inlineInput.refreshInputMethodVersion()
+    wait_for_version(controller.inlineInput, 'current')
     for name, _, _ in pairs:
         assert item(name).property("text") == ("已是最新版" if name == "inputMethodVersionStatus" else "已开启")
         assert item(name).property("color").name() == "#16703f"
     QTest.qWait(40)
     root.grabWindow().save(str(shots / f"status-ready-{size[0]}.png"))
-    assert not calls and bridge.messages == messages
+    assert calls and all(call == [str(value.helper), "status"] for call in calls)
+    assert bridge.messages == messages
     # A newer installed build opens input-source settings instead of the older installer.
     info = plistlib.loads(target.read_bytes())
     info['CFBundleVersion'] = '2'
     target.write_bytes(plistlib.dumps(info))
     controller.inlineInput.refreshInputMethodVersion()
+    wait_for_version(controller.inlineInput, 'newer')
     assert item("inputMethodVersionStatus").property("text") == "已是更高版本"
     assert item("settingsInputMethodButton").property("text") == "输入设置"
     QMetaObject.invokeMethod(item("runtimeSettingsDialog"), "close")
@@ -119,8 +134,8 @@ def test_update_completion_rereads_version_even_when_the_installer_reports_succe
     assert component.inputMethodVersion['state'] == 'outdated'
     (value.destination / 'Contents/Info.plist').write_bytes((value.source / 'Contents/Info.plist').read_bytes())
     component._installation_finished("已安装并启用")
-    assert component.inputMethodVersion['state'] == 'current'
-    assert not calls
+    wait_for_version(component, 'current')
+    assert calls and all(call == [str(value.helper), "status"] for call in calls)
 
 
 @pytest.mark.parametrize("size", [(1200, 780), (940, 700)])
@@ -177,8 +192,9 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
         assert not button.property('enabled')
         assert button.property('text') == '处理中…'
         assert notice.property('message') == controller.inlineInput.installationMessage
-        for _ in range(100):
+        for _ in range(250):
             QTest.qWait(10)
+            time.sleep(.002)
             if not controller.inlineInput.installing:
                 break
         assert not controller.inlineInput.installing and not dialog.property('visible')
@@ -189,6 +205,7 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
             assert 'test registration failure' in notice.property('message')
             assert (value.destination / 'marker').read_text() == 'old'
         else:
+            wait_for_version(controller.inlineInput, 'current')
             assert not notice.property('visible')
             assert (value.destination / 'marker').read_text() == 'new'
     assert calls
@@ -200,7 +217,7 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     info['CFBundleVersion'] = '2'
     target.write_bytes(plistlib.dumps(info))
     root.setProperty('currentPage', 0)
-    assert controller.inlineInput.inputMethodVersion['state'] == 'newer'
+    wait_for_version(controller.inlineInput, 'newer')
     assert not notice.property('visible')
     root.setProperty('currentPage', 1)
     shutil.rmtree(value.destination)
@@ -208,4 +225,46 @@ def test_home_reports_old_input_method_and_clears_notice_after_real_update(
     assert notice.property('visible') and '尚未安装' in notice.property('message')
     assert button.property('visible') and button.property('text') == '立即安装'
     assert notice.property('message') == '语音输入法尚未安装。'
-    assert not calls
+    assert calls and all(call == [str(value.helper), "status"] for call in calls)
+
+
+def test_manual_activation_opens_settings_and_refreshes_after_user_returns(inline_ui, installer, monkeypatch):
+    controller, _, _, root, event = inline_ui
+    value, state, calls = installer
+    monkeypatch.setattr(installer_module, "InputMethodInstaller", lambda: value)
+    component = controller.inlineInput
+    event(phase="idle", ready=False)
+    state["enabled"] = False
+    root.setProperty("currentPage", 0)
+    root.show()
+    component.installInputMethod()
+    wait_for_version(component, "activation_pending")
+    assert "已安装，待启用" == component.inputMethodVersion["text"]
+    assert "已安装并启用" not in component.installationMessage
+    notice = root.findChild(QObject, "homeInputMethodNotice")
+    assert notice.property("visible") and "注销" in notice.property("message")
+    assert "IME-MODE-DISABLED" in component.inputMethodVersion["detail"]
+    copied = []
+    monkeypatch.setattr(QClipboard, "setText", lambda _, text: copied.append(json.loads(text)))
+    copy_button = root.findChild(QObject, "copyInputMethodInstallDiagnostics")
+    QMetaObject.invokeMethod(copy_button, "click")
+    report = copied[-1]["last_install"]
+    assert report["code"] == "IME-MODE-DISABLED"
+    assert copied[-1]["current_check"]["code"] == report["code"]
+    assert json.loads(controller._settings.value("diagnostics/lastIMEInstall")) == report
+    button = root.findChild(QObject, "settingsInputMethodButton")
+    assert button.property("text") == "打开键盘设置"
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    QMetaObject.invokeMethod(button, "click")
+    assert opened == ["x-apple.systempreferences:com.apple.Keyboard-Settings.extension"]
+    # Returning from System Settings checks the mode without reinstalling.
+    calls.clear()
+    state["enabled"] = True
+    component.refreshInputMethodVersion()
+    wait_for_version(component, "current")
+    assert not notice.property("visible")
+    assert not component.installationMessage
+    assert component.copyInstallDiagnostics()
+    assert copied[-1]["last_install"] == report and copied[-1]["current_check"]["current"]
+    assert calls and all(call == [str(value.helper), "status"] for call in calls)

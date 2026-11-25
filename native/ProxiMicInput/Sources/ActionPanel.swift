@@ -45,6 +45,8 @@ final class ActionPanel: NSObject {
          "fallback": anchor.usingFallback,
          "anchor_caret": anchor.caret.map(CaretDiagnostics.rect) ?? []]
     }
+    var onPosition: (([Double]) -> Void)?
+    private var lastReportedFrame: NSRect?
     var onCancel: (() -> Void)?
     var onConvert: (() -> Void)?
     var onFinish: (() -> Void)?
@@ -338,24 +340,6 @@ final class ActionPanel: NSObject {
         dismissTimer = Timer.scheduledTimer(withTimeInterval: 2.8, repeats: false) { [weak self] _ in self?.hide() }
     }
 
-    func showLearnedHotwords(_ words: [String]) {
-        let words = words.prefix(8).map { String($0.prefix(40)) }.filter { !$0.isEmpty }
-        guard !words.isEmpty else { return }
-        undoCheck.hide()
-        status.stringValue = words.count == 1 ? "已收录 · \(words[0])" : "已收录 \(words.count) 个热词"
-        status.toolTip = "已收录热词：" + words.joined(separator: "、") + "。从下一句开始优先使用。"
-        status.setAccessibilityLabel(status.toolTip)
-        statusSymbol.image = VoiceHudAssets.image("status-done")
-        statusSymbol.isHidden = false
-        progress.setAnimating(false)
-        spinner.setAnimating(false)
-        shouldShow = true
-        fitVisibleActions()
-        VoiceHudMotion.transition(stack)
-        dismissTimer?.invalidate()
-        dismissTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { [weak self] _ in self?.hide() }
-    }
-
     func position(caret: NSRect?, clientLevel: Int32) {
         guard shouldShow else { return }
         // Some clients temporarily stop returning geometry while waiting for
@@ -391,10 +375,21 @@ final class ActionPanel: NSObject {
             if NSApp.isHidden { NSApp.unhideWithoutActivation() }
             panel.orderFrontRegardless()
         }
+        // The host draws its own notices in top-left desktop coordinates.
+        if let primary = NSScreen.screens.first {
+            let frame = panel.frame
+            let desktopFrame = NSRect(x: frame.minX, y: primary.frame.maxY - frame.maxY,
+                                      width: frame.width, height: frame.height)
+            if desktopFrame != lastReportedFrame {
+                lastReportedFrame = desktopFrame
+                onPosition?(CaretDiagnostics.rect(desktopFrame))
+            }
+        }
         undoCheck.playIfVisible()
     }
 
     func hide() {
+        lastReportedFrame = nil
         undoCheck.hide()
         resizeTimer?.invalidate()
         resizeTimer = nil

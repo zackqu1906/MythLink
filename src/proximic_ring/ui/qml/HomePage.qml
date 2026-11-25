@@ -32,18 +32,25 @@ UiScrollView {
             objectName: "homeInputMethodNotice"
             Layout.fillWidth: true
             readonly property string versionState: page.controller.inlineInput.inputMethodVersion.state
+            readonly property bool needsInputSettings: versionState === "activation_pending" || versionState === "activation_unknown"
             property bool installationRequested: false
             onVersionStateChanged: installationRequested = false
             visible: page.controller.inlineInput.enabled
-                     && (versionState === "outdated" || versionState === "not_installed" || versionState === "needs_build")
+                     && (needsInputSettings || versionState === "outdated" || versionState === "not_installed" || versionState === "needs_build")
             message: page.controller.inlineInput.installing ? page.controller.inlineInput.installationMessage
+                     : needsInputSettings ? page.controller.inlineInput.inputMethodVersion.detail
                      : (versionState === "not_installed" ? "语音输入法尚未安装。" : "语音输入法待更新。")
                        + (installationRequested ? "\n" + page.controller.inlineInput.installationMessage : "")
             actionText: page.controller.inlineInput.installing ? "处理中…"
+                        : needsInputSettings ? "打开键盘设置"
                         : versionState === "not_installed" ? "立即安装" : "立即更新"
             enabled: !page.controller.inlineInput.installing
             onVisibleChanged: if (!visible) installationRequested = false
             onActivated: {
+                if (needsInputSettings) {
+                    page.controller.inlineInput.openInputSettings()
+                    return
+                }
                 installationRequested = true
                 page.controller.inlineInput.installInputMethod()
             }

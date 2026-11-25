@@ -6,6 +6,12 @@ struct SourceSelectionFailure: LocalizedError {
     init(_ message: String) { errorDescription = message }
 }
 
+/// Registration succeeded, but the login session has not exposed an enabled mode yet.
+struct SourceEnablePending: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+}
+
 struct UpdateSourceHandoff: Codable {
     let originalSource: String
     let temporarySource: String
@@ -28,20 +34,25 @@ func enableVoiceInputSources(productID: String, readSources: () -> [InstallableI
                              enable: (String) throws -> Void) throws {
     let modeID = productID + ".dictation"
     for identifier in [productID, modeID] {
-        guard let source = readSources().first(where: { $0.id == identifier }) else {
-            if identifier == productID { continue } // Still require the exact mode below.
-            throw SourceSelectionFailure("未找到已注册的 Mythlink 语音模式，请重新安装输入法组件。")
+        let sources = readSources()
+        if identifier == modeID, sources.contains(where: { $0.id == productID && !$0.enabled }) {
+            throw SourceEnablePending("正在等待系统启用 Mythlink 语音模式的父输入源。")
         }
-        if source.enableCapable {
+        guard let source = sources.first(where: { $0.id == identifier }) else {
+            if identifier == productID { continue } // Still require the exact mode below.
+            throw SourceEnablePending("系统尚未列出 Mythlink 语音模式。")
+        }
+        if !source.enabled {
+            guard source.enableCapable else {
+                throw SourceEnablePending("请在系统键盘设置中添加 Mythlink 语音。")
+            }
             try enable(identifier)
-        } else if !source.enabled {
-            throw SourceSelectionFailure("系统不允许启用 Mythlink 输入法，请检查系统键盘设置后重试。")
         }
     }
     let confirmed = readSources()
     guard confirmed.contains(where: { $0.id == modeID && $0.enabled && $0.selectable }),
           !confirmed.contains(where: { $0.id == productID && !$0.enabled }) else {
-        throw SourceSelectionFailure("系统尚未确认 Mythlink 语音模式可切换，请重试安装输入法组件。")
+        throw SourceEnablePending("系统尚未确认 Mythlink 语音模式可切换。")
     }
 }
 

@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from ..text_processing.task_routing import EDIT_TASK_LABELS, LEGACY_EDIT_TASK_LABELS
-from ..text_processing.model import ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_VARIANT_LABELS, normalize_routed_edit_variant
+from ..text_processing.model import ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_HYBRID, ROUTED_EDIT_VARIANT_LABELS, normalize_routed_edit_variant
 
 
 def local_artifact(directory: Path, filename):
@@ -212,7 +212,16 @@ def history_details(directory: Path, record: dict) -> dict:
         failed = bool(request.get('error') or request.get('status') == 'failed')
         key = 'llm_' + str(index)
         title = '编辑请求 ' + str(index + 1) if edit_record and len(requests) > 1 else ''
-        if routed and request.get('routed_edit_variant') in ROUTED_EDIT_BODY_VARIANTS:
+        if routed and request.get('routed_edit_variant') == ROUTED_EDIT_HYBRID:
+            count = len(request.get('edit_steps') or [])
+            label = ROUTED_EDIT_VARIANT_LABELS[ROUTED_EDIT_HYBRID]
+            if count:
+                label += f' · {count} 次模型请求'
+            elif request.get('status') == 'completed':
+                label += ' · 本地完成'
+                model = ''
+            classifications.append(item(key, label, title=title, model=model))
+        elif routed and request.get('routed_edit_variant') in ROUTED_EDIT_BODY_VARIANTS:
             classifications.append(item(key, ROUTED_EDIT_VARIANT_LABELS[request['routed_edit_variant']] + ' · 直接生成正文', title=title, model=model))
         elif classification:
             classifications.append(item(key, title=title, model=model,
