@@ -1204,7 +1204,7 @@ ApplicationWindow {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: "语音和手势交互已停止。\n请重新连接 Ring 后再继续。"
+                    text: appController.ringDisconnectNoticeMessage || "语音和手势交互已停止。\n请重新连接 Ring 后再继续。"
                     color: root.textMain
                     font.pixelSize: 14
                     wrapMode: Text.Wrap
@@ -1228,6 +1228,7 @@ ApplicationWindow {
                         objectName: "reconnectRingFromNoticeButton"
                         text: "重新连接"
                         highlighted: true
+                        visible: appController.canReconnect
                         enabled: appController.canReconnect && !appController.busy
                                  && !appController.scanBusy
                         onClicked: {

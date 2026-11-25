@@ -1,6 +1,7 @@
 """Exercise the desktop entry point against the R1-PC API without Bluetooth I/O."""
 
 from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from queue import Queue
 import threading
 from types import SimpleNamespace
@@ -15,8 +16,36 @@ from proximic_ring.voice import app_runtime
 sdk = pytest.importorskip("ring_python_sdk_r1")
 
 
-@pytest.mark.parametrize("microphone_available", [True, False])
-def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microphone_available):
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_r1_checks_device_after_an_interrupted_unbind(confirmed):
+    from proximic_ring.audio.r1_session import R1Session
+
+    calls = []
+
+    async def unbind(address):
+        calls.append(("unbind", address))
+        raise sdk.RingError("unbind_unconfirmed")
+
+    async def close():
+        calls.append(("close",))
+
+    async def confirm(address):
+        calls.append(("confirm", address))
+        return confirmed
+
+    session = object.__new__(R1Session)
+    session.ring = SimpleNamespace(unbind=unbind, confirm_unbind=confirm, close=close)
+    if confirmed:
+        asyncio.run(session.unbind("r1-identifier"))
+    else:
+        with pytest.raises(sdk.RingError) as failure:
+            asyncio.run(session.unbind("r1-identifier"))
+        assert failure.value.reason == "unbind_unconfirmed"
+    assert calls == [("unbind", "r1-identifier"), ("close",), ("confirm", "r1-identifier")]
+
+
+@pytest.mark.parametrize("microphone_available,unbind", [(True, False), (False, False), (True, True)])
+def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microphone_available, unbind):
     from proximic_ring.audio import r1_session, ring
     import ring_python_sdk
 
@@ -46,6 +75,12 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
         async def close(self):
             calls.append(("close",))
             self.connected = False
+
+        async def unbind(self, address):
+            assert self.connected
+            calls.append(("unbind", address))
+            self.connected = False
+            return False  # The OS bond still needs to be removed manually.
 
         async def read_battery(self):
             self.on_battery(sdk.BatteryStatus(72, 0))
@@ -138,10 +173,16 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
             source.stop_touchpad().result(3)
             assert ended == [None] and source.gestures_active and source.error is None
             assert not worker.done()
+            if unbind:
+                result = source.request_unbind()
         finally:
             stop.set()
             worker.result(timeout=8)
     assert calls.count(("close",)) == 1
+    assert (("unbind", "r1-identifier") in calls) == unbind
+    if unbind:
+        assert result.result(timeout=1) is None
+        assert calls[-2:] == [("unbind", "r1-identifier"), ("close",)]
 
 
 def test_r1_sparse_motion_reaches_stroke_recognition_and_stationary_taps():

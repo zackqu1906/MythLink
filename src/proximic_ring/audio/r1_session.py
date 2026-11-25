@@ -4,7 +4,7 @@ import asyncio
 import time
 
 from ring_python_sdk_r1 import (
-    Click, ConnectionState, ContactUpdate, GestureMode, Motion, Ring, RingDevice, TouchpadStage,
+    Click, ConnectionState, ContactUpdate, GestureMode, Motion, Ring, RingDevice, RingError, TouchpadStage,
 )
 from ring_python_sdk.touchpad.events import Raw2PointerClick, Raw2PointerContact, Raw2PointerMove, Raw2Reset
 
@@ -55,6 +55,16 @@ class R1Session:
 
     async def disconnect(self):
         await self.ring.close()
+
+    async def unbind(self, address):
+        try:
+            await self.ring.unbind(address)
+        except RingError as error:
+            if error.reason not in {"unbind_pending", "unbind_unconfirmed"}:
+                raise
+            await self.ring.close()
+            if not await self.ring.confirm_unbind(address):
+                raise
 
     def _battery_updated(self, status):
         self.battery_pct, self.charge_status = status.percent, status.charging_state

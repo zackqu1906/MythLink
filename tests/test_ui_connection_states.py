@@ -1,7 +1,9 @@
 """Real QML controls and controller lifecycle, without real BLE/ASR/input."""
 import os
+from concurrent.futures import Future
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QObject, QPointF
@@ -52,6 +54,54 @@ def shot(root, tmp_path, state, size):
     path.mkdir(parents=True, exist_ok=True)
     QTest.qWait(40)
     assert root.grabWindow().save(str(path / f"connection-{state}-{size[0]}.png"))
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_r1_menu_unbinds_and_only_forgets_a_confirmed_binding(inline_ui, runtimes, confirmed):
+    controller, _, _, root, _ = inline_ui
+    prepare(controller, root, (940, 700))
+    controller._device_name, controller._device_family = "R1A1B2", "R1"
+    for key, value in (("selector", "test-ring"), ("name", "R1A1B2"), ("family", "R1")):
+        controller._settings.setValue(f"ring/{key}", value)
+    menu = root.findChild(QObject, "homeR1ConnectionMenuButton")
+    assert not menu.property("visible")
+    click(root, "homeConnectionButton")
+    worker = controller._worker
+    wait_until(lambda: runtimes and runtimes[0].started.is_set())
+    runtime = runtimes[0]
+    result = Future()
+    attempts = []
+
+    def request_unbind():
+        attempts.append(True)
+        return result
+
+    try:
+        runtime.callbacks["on_connected"]()
+        runtime.callbacks["on_ring_source"](SimpleNamespace(ring_family="R1", request_unbind=request_unbind))
+        wait_until(lambda: menu.property("visible"))
+        click(root, "homeR1ConnectionMenuButton")
+        click(root, "unbindR1MenuItem")
+        assert len(attempts) == 1 and runtime.stop.is_set()
+        assert controller.selector == "test-ring"
+        if confirmed:
+            result.set_result(None)
+        else:
+            result.set_exception(ConnectionError("解绑回执丢失"))
+        runtime.release.set()
+        wait_until(lambda: controller._worker is None)
+        assert controller.ringDisconnectNoticeVisible
+        assert controller.ringDisconnectNoticeDevice == "R1A1B2"
+        assert controller.canReconnect != confirmed
+        assert controller._settings.contains("ring/selector") != confirmed
+        if confirmed:
+            assert "解绑并断开" in controller.ringDisconnectNoticeTitle
+            assert "蓝牙设置" in controller.ringDisconnectNoticeMessage
+        else:
+            assert "未能确认" in controller.ringDisconnectNoticeTitle
+    finally:
+        runtime.release.set()
+        worker.join(2)
 
 
 @pytest.mark.parametrize("size", [(940, 700), (1440, 940)])

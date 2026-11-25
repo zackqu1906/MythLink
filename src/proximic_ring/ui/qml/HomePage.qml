@@ -102,6 +102,24 @@ UiScrollView {
                             onClicked: page.connectionRequested()
                         }
                         FigmaAction {
+                            objectName: "homeR1ConnectionMenuButton"
+                            symbol: "chevron-down"
+                            quiet: true
+                            Layout.preferredWidth: 30
+                            visible: page.controller.canUnbindR1
+                            Accessible.name: "戒指连接选项"
+                            onClicked: r1ConnectionMenu.open()
+                            FigmaMenu {
+                                id: r1ConnectionMenu
+                                FigmaMenuItem {
+                                    objectName: "unbindR1MenuItem"
+                                    text: "解绑并断开"
+                                    enabled: page.controller.canUnbindR1
+                                    onTriggered: page.controller.unbindDevice()
+                                }
+                            }
+                        }
+                        FigmaAction {
                             objectName: "homeDevicePickerButton"
                             text: "切换设备"
                             quiet: true

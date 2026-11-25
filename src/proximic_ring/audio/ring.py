@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import time
+from concurrent.futures import Future
 from typing import Callable
 from pathlib import Path
 
@@ -26,6 +27,7 @@ _WATCHDOG_STALL_S = 5.0
 _WATCHDOG_CONFIRM_S = 1.0
 _INITIAL_PCM_TIMEOUT_S = 3.0
 _FRESH_PCM_TIMEOUT_S = 3.0
+_R1_UNBIND_TIMEOUT_S = 45.0
 _INITIAL_MIC_SETTLE_S = 1.0
 # The same connection settling period must precede gesture START as well as
 # MIC ON. Keep the legacy constant name for existing callers/tests.
@@ -128,6 +130,8 @@ class RingAudioSource(AudioSource):
         self.touchpad_active = False
         self.touchpad_error = None
         self._touchpad_endpoint = None
+        self._unbind_lock = threading.Lock()
+        self._unbind_request: tuple[str, Future[None]] | None = None
         self._touchpad_requests = set()
         self._touchpad_control_lock = None
         self._touchpad_activities = set()
@@ -188,6 +192,7 @@ class RingAudioSource(AudioSource):
             raise RuntimeError("RingAudioSource is already open")
 
         self.firmware_identity = {}
+        self._unbind_request = None
         self.microphone_unavailable_reason = ""
         self._clear_queue()
         self._pending = np.empty(0, dtype=np.float32)
@@ -380,16 +385,29 @@ class RingAudioSource(AudioSource):
         """OTA may take ownership only after the BLE coroutine finished cleanup."""
         return self._thread is None or not self._thread.is_alive()
 
+    def request_unbind(self) -> Future[None]:
+        """Schedule the R1 binding removal during shutdown of this BLE session."""
+        with self._unbind_lock:
+            address = self.firmware_identity.get("address")
+            if self.ring_family != "R1" or not address or self._touchpad_endpoint is None or self._stop.is_set():
+                raise ConnectionError("R1 连接已结束，请重新连接后解绑")
+            if self._unbind_request is None:
+                self._unbind_request = (address, Future())
+            return self._unbind_request[1]
+
     def close(self) -> None:
         self._pcm_generation = object()
-        self._stop.set()
+        with self._unbind_lock:
+            self._stop.set()
+            unbinding = self._unbind_request is not None
         self._resume_finished.set()
         self._start_stream.set()
         self._pause_stream_requested.clear()
         self._stream_paused.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=max(5.0, self.timeout_s + 2.0))
+            timeout = max(5.0, self.timeout_s + 2.0)
+            thread.join(timeout=timeout + _R1_UNBIND_TIMEOUT_S if unbinding else timeout)
         if thread is None or not thread.is_alive():
             self._thread = None
 
@@ -791,7 +809,7 @@ class RingAudioSource(AudioSource):
             current = current.__cause__ or current.__context__
         return False
 
-    async def _shutdown_session(self, session) -> None:
+    async def _shutdown_session(self, session, unbind_request=None) -> None:
         """Best-effort BLE shutdown that never hides the stream failure."""
         # Release before any fallible observer or BLE cleanup, including a
         # failed START/STOP. Each source/connection owns its own activities.
@@ -824,6 +842,15 @@ class RingAudioSource(AudioSource):
                     else "MIC OFF failed during shutdown"
                 )
                 print(f"Ring cleanup: {label}: {exc}")
+        if unbind_request is not None:
+            address, result = unbind_request
+            try:
+                async with asyncio.timeout(_R1_UNBIND_TIMEOUT_S):
+                    await session.unbind(address)
+            except Exception as exc:
+                result.set_exception(exc)
+            else:
+                result.set_result(None)
         try:
             await session.disconnect()
         except Exception as exc:
@@ -1162,7 +1189,9 @@ class RingAudioSource(AudioSource):
             self._signal_error(exc)
             raise
         finally:
-            self._touchpad_endpoint = None
+            with self._unbind_lock:
+                self._touchpad_endpoint = None
+                unbind_request = self._unbind_request
             requests = list(self._touchpad_requests)
             for task in requests:
                 task.cancel()
@@ -1174,7 +1203,7 @@ class RingAudioSource(AudioSource):
                     await battery_refresh_task
                 except asyncio.CancelledError:
                     pass
-            await self._shutdown_session(session)
+            await self._shutdown_session(session, unbind_request)
 
     async def _start_gestures(self, session) -> None:
         if self.gesture_observer is None:
@@ -1232,7 +1261,6 @@ class RingAudioSource(AudioSource):
 
     def _submit_touchpad(self, enabled, options):
         """Return a Future immediately; all SDK calls stay on the owning BLE loop."""
-        from concurrent.futures import Future
         endpoint = self._touchpad_endpoint
         if endpoint is None or self._stop.is_set():
             result = Future()

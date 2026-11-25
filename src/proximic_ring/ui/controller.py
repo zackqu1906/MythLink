@@ -602,6 +602,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._ring_disconnect_notice_visible = False
         self._ring_disconnect_notice_title = "Ring 已断开连接"
         self._ring_disconnect_notice_device = "Ring"
+        self._ring_disconnect_notice_message = ""
+        self._r1_source = None
+        self._r1_unbind_result = None
         self._audio_input_failed = False
         self._asr_backend_cache = ASRBackendCache()
         self._scan_worker: DeviceScanWorker | None = None
@@ -891,6 +894,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._gesture_trigger = GestureTriggerController(self)
         from .touchpad.touchpad_controller import TouchpadController
         self._touchpad = TouchpadController(self)
+        self._touchpad.sourceReady.connect(self._remember_r1_source)
         from proximic_ring.agent_workflow.ui.agent_controller import AgentController
         self._agent = AgentController(self)
         from .proximity.proximity_controller import ProximityController
@@ -1034,6 +1038,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     def ringDisconnectNoticeDevice(self) -> str:
         return self._ring_disconnect_notice_device
 
+    @Property(str, notify=ringDisconnectNoticeChanged)
+    def ringDisconnectNoticeMessage(self) -> str:
+        return self._ring_disconnect_notice_message
+
     @Slot()
     def dismissRingDisconnectNotice(self) -> None:
         if self._ring_disconnect_notice_visible:
@@ -1080,6 +1088,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Property(bool, notify=reconnectAvailabilityChanged)
     def canReconnect(self) -> bool:
         return self._can_reconnect and bool(self._selector.strip())
+
+    @Property(bool, notify=connectionChanged)
+    def canUnbindR1(self) -> bool:
+        return bool(self._r1_source is not None and self._connected
+                    and not self._disconnect_event.is_set() and not self._firmware_update_busy)
 
     @Property(bool, notify=recognitionEnabledChanged)
     def recognitionEnabled(self) -> bool:
@@ -4411,6 +4424,59 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                     self._touchpad.setInputMode("pointer")
                     self._touchpad.start()
 
+    @Slot(object, object)
+    def _remember_r1_source(self, source, connection) -> None:
+        if (connection is self._disconnect_event and not connection.is_set()
+                and getattr(source, "ring_family", "") == "R1"):
+            self._r1_source = source
+            self.connectionChanged.emit()
+
+    @Slot()
+    def unbindDevice(self) -> None:
+        if (not self.canUnbindR1 or self._worker is None or not self._worker.is_alive()
+                or self._r1_unbind_result is not None):
+            return
+        try:
+            self._r1_unbind_result = self._r1_source.request_unbind()
+        except ConnectionError as error:
+            self._set_status("无法解绑", str(error), "error")
+            return
+        self._event_log("USER_ACTION", action="unbind_r1")
+        self.disconnectDevice()
+        self._set_status("正在解绑", "正在断开并清除戒指绑定", "stopping")
+
+    def _finish_r1_unbind(self, result) -> None:
+        device = self._device_name
+        try:
+            result.result(timeout=0)
+        except Exception as error:
+            title = "未能确认戒指已解绑"
+            message = "请保持戒指在附近并检查连接状态。"
+            self._set_status(title, message, "error")
+            self._append_log(f"R1 解绑失败：{type(error).__name__}: {error}")
+        else:
+            self._selector = self._device_name = self._device_family = ""
+            self._selected_device = None
+            self._can_reconnect = False
+            for key in ("ring/selector", "ring/name", "ring/family"):
+                self._settings.remove(key)
+            self._settings.sync()
+            self._connection_outcome = "disconnected"
+            self._connection_error = ""
+            self.settingsChanged.emit()
+            self.reconnectAvailabilityChanged.emit()
+            title = "戒指已解绑并断开"
+            message = "如需连接其他设备，请在系统蓝牙设置中确认已取消与此戒指的配对。"
+            self._set_status(title, message, "idle")
+            self._append_log(f"R1 已解绑：{device}")
+
+        if not self._quitting:
+            self._ring_disconnect_notice_title = title
+            self._ring_disconnect_notice_device = device
+            self._ring_disconnect_notice_message = message
+            self._ring_disconnect_notice_visible = True
+            self.ringDisconnectNoticeChanged.emit()
+
     @Slot()
     def disconnectDevice(self) -> None:
         if self._firmware_update_busy:
@@ -5467,6 +5533,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self.runningChanged.emit()
 
         if had_attempt and not self._disconnect_requested_by_user and not self._quitting:
+            self._ring_disconnect_notice_message = ""
             self._ring_disconnect_notice_title = (
                 "麦克风连接中断" if self._audio_input_failed else
                 "Ring 已断开连接" if was_connected or self._runtime_had_connection
@@ -8512,11 +8579,15 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._clear_undo_stack_for_device_boundary()
         self._reset_transcript_for_device_boundary()
         self._worker = None
+        self._r1_source = None
+        unbind_result, self._r1_unbind_result = self._r1_unbind_result, None
         self._connection_outcome = "cancelled" if cancelled else "failed" if error else "disconnected"
         from .shared.device_connection import connection_error_message
         self._connection_error = connection_error_message(error) if error and not cancelled else ""
         self.busyChanged.emit()
-        if cancelled:
+        if unbind_result is not None:
+            self._finish_r1_unbind(unbind_result)
+        elif cancelled:
             self._set_status("已取消连接", "本次连接已取消，可重新连接或切换设备", "idle")
             self._append_log("设备连接已取消" + (f"；清理信息：{error}" if error else ""))
         elif error:
