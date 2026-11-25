@@ -18,6 +18,8 @@ build_tools=$(mktemp -d "${RUNNER_TEMP:-/tmp}/mythlink-wine.XXXXXX")
 export WINEPREFIX="$build_tools/prefix" WINEARCH=win64
 export WINEDEBUG="${WINEDEBUG:--all}" WINEDLLOVERRIDES='mscoree,mshtml='
 export PYTHONIOENCODING=utf-8 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1
+# Wine's NUMA affinity API can abort the Intel OpenMP runtime in PyTorch.
+export KMP_AFFINITY=disabled
 cleanup() {
     wineserver -k >/dev/null 2>&1 || true
     rm -rf -- "$build_tools"
@@ -31,6 +33,12 @@ printf '%s  %s\n' 9283876d58c017e0e846f95b490da3bca0fc0a6ee1134b2870677cfb7eec3c
 unzip -q "$build_tools/python.nupkg" 'tools/*' -d "$build_tools"
 windows_python="$build_tools/tools/python.exe"
 wine "$windows_python" -c 'import platform, sys; assert sys.platform == "win32" and platform.machine().lower() == "amd64"; print(sys.version)'
+if [[ -n "${RUNNER_TOOL_CACHE:-}" && -w "$RUNNER_TOOL_CACHE" ]] && command -v winepath >/dev/null; then
+    pip_cache="$RUNNER_TOOL_CACHE/mythlink-wine-pip"
+    mkdir -p "$pip_cache"
+    PIP_CACHE_DIR=$(winepath -w "$pip_cache" | tr -d '\r')
+    export PIP_CACHE_DIR
+fi
 
 inno_installer="${MYTHLINK_INNO_INSTALLER:-}"
 if [[ -z "$inno_installer" ]]; then
@@ -61,9 +69,11 @@ MYTHLINK_BUILD_VERSION=$(wine "$windows_python" tools/build_version.py --version
 export MYTHLINK_BUILD_VERSION
 
 wine "$windows_python" -m pip install --upgrade 'pip==26.2.1' 'setuptools==81.0.0' 'wheel==0.48.0'
-# Resolve the shared Python dependencies from PyPI with the application.
+# Resolve PyTorch dependencies from the workflow's PyPI source.
 wine "$windows_python" -m pip install --no-deps --index-url https://download.pytorch.org/whl/cpu \
     'torch==2.11.0' 'torchaudio==2.11.0'
+wine "$windows_python" -m pip install 'torch==2.11.0' 'torchaudio==2.11.0'
+wine "$windows_python" -c 'import torch; assert torch.version.cuda is None; assert torch.ones(256).sum().item() == 256; print("Windows CPU PyTorch ready", torch.__version__)'
 wine "$windows_python" -m pip install -c requirements-windows.lock \
     '.[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]' -r requirements-packaging.txt
 wine "$windows_python" tools/install_r1_sdk.py
