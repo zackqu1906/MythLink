@@ -49,6 +49,22 @@ def cache_root() -> Path:
     return app_data_root() / "cache"
 
 
+def _enable_registered_windows_ime() -> None:
+    if sys.platform != "win32" or "MYTHLINK_WINDOWS_TSF" in os.environ:
+        return
+    import winreg
+
+    registration = r"Software\Classes\CLSID\{40b2749b-c169-4a28-921c-c3367b96482b}\InprocServer32"
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registration, 0,
+                            winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            dll, _ = winreg.QueryValueEx(key, "")
+        if isinstance(dll, str) and Path(dll).is_file():
+            os.environ["MYTHLINK_WINDOWS_TSF"] = "1"
+    except OSError:
+        pass
+
+
 def configure_runtime_environment() -> None:
     """Point every mutable cache at a per-user directory before model imports."""
 
@@ -73,6 +89,7 @@ def configure_runtime_environment() -> None:
     # Packaging keeps Material plus Qt's Basic fallback and deliberately omits
     # the unrelated platform/alternate Qt Quick Controls style bundles.
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Material")
+    _enable_registered_windows_ime()
 
     opus_directories = [resource_root() / "opus"]
     if not is_frozen():

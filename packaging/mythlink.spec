@@ -86,6 +86,11 @@ if platform.system() == "Darwin":
 if platform.system() in {"Darwin", "Windows"}:
     hiddenimports += ["MNN", "_mnncengine"]
 if platform.system() == "Windows":
+    tsf_dll = project_root / ".build/windows-ime/MythlinkTsf.dll"
+    if not tsf_dll.is_file():
+        raise RuntimeError("Build MythlinkTsf.dll before packaging the Windows application.")
+    binaries.append((str(tsf_dll), "windows-ime"))
+    datas.append((str(project_root / "scripts/windows-ime-prototype.ps1"), "windows-ime"))
     binaries += collect_dynamic_libs("MNN")
     binaries += collect_dynamic_libs("onnxruntime")
     binaries += collect_dynamic_libs("ring_windows_sdk")

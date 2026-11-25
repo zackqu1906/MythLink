@@ -1,6 +1,27 @@
 from pathlib import Path
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 from proximic_ring import runtime_paths
+
+
+def test_windows_input_method_is_enabled_when_its_registered_dll_exists(monkeypatch, tmp_path):
+    dll = tmp_path / "MythlinkTsf.dll"
+    registry = SimpleNamespace(
+        HKEY_LOCAL_MACHINE=1, KEY_READ=2, KEY_WOW64_64KEY=4,
+        OpenKey=lambda *_: nullcontext(), QueryValueEx=lambda *_: (str(dll), 1),
+    )
+    monkeypatch.setattr(runtime_paths.sys, "platform", "win32")
+    monkeypatch.setitem(runtime_paths.sys.modules, "winreg", registry)
+    monkeypatch.delenv("MYTHLINK_WINDOWS_TSF", raising=False)
+    runtime_paths._enable_registered_windows_ime()
+    assert "MYTHLINK_WINDOWS_TSF" not in runtime_paths.os.environ
+    dll.touch()
+    runtime_paths._enable_registered_windows_ime()
+    assert runtime_paths.os.environ["MYTHLINK_WINDOWS_TSF"] == "1"
+    monkeypatch.setenv("MYTHLINK_WINDOWS_TSF", "0")
+    runtime_paths._enable_registered_windows_ime()
+    assert runtime_paths.os.environ["MYTHLINK_WINDOWS_TSF"] == "0"
 
 
 def test_data_home_override_is_shared_by_packaged_runtime(monkeypatch, tmp_path):

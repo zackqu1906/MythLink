@@ -26,6 +26,9 @@ def test_touchpad_libraries_match_platform_and_ring_sdks(system, monkeypatch):
     r1 = ModuleType('ring_python_sdk_r1')
     r1.__spec__ = ModuleSpec(r1.__name__, loader=None)
     monkeypatch.setitem(sys.modules, r1.__name__, r1)
+    tsf_dll = root / '.build/windows-ime/MythlinkTsf.dll'
+    is_file = Path.is_file
+    monkeypatch.setattr(Path, 'is_file', lambda path: path == tsf_dll or is_file(path))
     # Run all import/data/native-library configuration preceding Analysis.
     source = (root/'packaging/mythlink.spec').read_text(encoding='utf8').split('a = Analysis(', 1)[0]
     namespace = dict(SPECPATH=str(root/'packaging'))
@@ -43,6 +46,9 @@ def test_touchpad_libraries_match_platform_and_ring_sdks(system, monkeypatch):
         assert (name+'-native', name) in namespace['binaries']
     assert namespace['hiddenimports'].count('onnxruntime') == 1
     assert ('ring_windows_sdk.model' in namespace['hiddenimports']) is (system == 'Windows')
+    assert ((str(tsf_dll), 'windows-ime') in namespace['binaries']) is (system == 'Windows')
+    script = root / 'scripts/windows-ime-prototype.ps1'
+    assert ((str(script), 'windows-ime') in namespace['datas']) is (system == 'Windows')
 
 
 def test_r1_wheel_is_selected_from_the_copied_project(monkeypatch, tmp_path):

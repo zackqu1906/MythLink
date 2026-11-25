@@ -10,6 +10,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Source = Join-Path $Root 'native/ProxiMicInputWindows'
 $Build = Join-Path $Root '.build/windows-ime'
 $Dll = Join-Path $Build 'MythlinkTsf.dll'
+$BundledDll = Join-Path $PSScriptRoot 'MythlinkTsf.dll'
 $InstallDirectory = Join-Path $env:ProgramFiles 'Mythlink TSF Prototype'
 $RegistrationKey = 'HKLM:\Software\Classes\CLSID\{40b2749b-c169-4a28-921c-c3367b96482b}\InprocServer32'
 
@@ -35,9 +36,14 @@ if ($Action -eq 'Build') {
     if ($Compiler) {
         & $Compiler -std=c++17 -O2 -static -shared "$Source/TextService.cpp" "$Source/MythlinkTsf.def" -o $Dll -lole32 -loleaut32 -ladvapi32 -luuid
     } else {
-        & cmake -S $Source -B "$Build/cmake" -A x64
+        $CMake = Join-Path $Root '.runtime/venv/Scripts/cmake.exe'
+        if (!(Test-Path -LiteralPath $CMake -PathType Leaf)) {
+            $CMake = (Get-Command cmake -CommandType Application -ErrorAction SilentlyContinue).Source
+            if (!$CMake) { throw "Install CMake to build the Windows TSF input method." }
+        }
+        & $CMake -S $Source -B "$Build/cmake" -A x64
         if ($LASTEXITCODE) { throw "Could not configure the Windows TSF build." }
-        & cmake --build "$Build/cmake" --config Release
+        & $CMake --build "$Build/cmake" --config Release
         if (!$LASTEXITCODE) { Copy-Item "$Build/cmake/Release/MythlinkTsf.dll" $Dll -Force }
     }
     if ($LASTEXITCODE) { throw "Could not build MythlinkTsf.dll." }
@@ -52,7 +58,8 @@ if ($Action -in @('Install', 'Uninstall')) {
     }
     $Key = Get-Item -LiteralPath $RegistrationKey -ErrorAction SilentlyContinue
     if ($Action -eq 'Install') {
-        if (!(Test-Path -LiteralPath $Dll)) { throw "Run this script with -Action Build first." }
+        if (Test-Path -LiteralPath $BundledDll -PathType Leaf) { $Dll = $BundledDll }
+        if (!(Test-Path -LiteralPath $Dll -PathType Leaf)) { throw "MythlinkTsf.dll is missing. Run this script with -Action Build first." }
         New-Item -Path $InstallDirectory -ItemType Directory -Force | Out-Null
         $Hash = (Get-FileHash -LiteralPath $Dll -Algorithm SHA256).Hash
         $InstalledDll = Join-Path $InstallDirectory "MythlinkTsf-$Hash.dll"

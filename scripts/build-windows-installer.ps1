@@ -127,6 +127,9 @@ try {
             & $Python -m pip install -c (Join-Path $ProjectRoot "requirements-windows.lock") -r (Join-Path $ProjectRoot "requirements-packaging.txt")
             if ($LASTEXITCODE -ne 0) { throw "Packaging dependency installation failed." }
         }
+        Write-Host "Building the Windows TSF input method..."
+        & (Join-Path $PSScriptRoot "windows-ime-prototype.ps1") -Action Build -Compiler $env:MYTHLINK_TSF_COMPILER | Out-Host
+
         if ($BootloaderWithoutCfg) {
             $CfgBootloaderRequirement = Get-CfgBootloaderRequirement
             if ($CfgBootloaderRequirement) {

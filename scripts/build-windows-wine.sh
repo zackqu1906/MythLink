@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
     echo 'The Wine build requires a Linux x86-64 runner.' >&2
     exit 1
 fi
-for tool in wine winepath wineserver curl unzip sha256sum; do
+for tool in wine winepath wineserver curl unzip sha256sum tar; do
     if ! command -v "$tool" >/dev/null; then
         echo "Missing build tool $tool" >&2
         exit 1
@@ -25,6 +25,21 @@ cleanup() {
     rm -rf -- "$build_tools"
 }
 trap cleanup EXIT
+
+tsf_compiler="${MYTHLINK_TSF_COMPILER:-$(command -v x86_64-w64-mingw32-g++ || true)}"
+if [[ -z "$tsf_compiler" ]]; then
+    llvm_mingw='llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64'
+    curl -fsSL --connect-timeout 20 --max-time 180 --retry 2 -o "$build_tools/$llvm_mingw.tar.xz" \
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/20261117/$llvm_mingw.tar.xz"
+    printf '%s  %s\n' e7a15a49a2ea95e9f3d8a9d0cfabe5052a4b10fb4777cc54de5a8c27b64bb701 \
+        "$build_tools/$llvm_mingw.tar.xz" | sha256sum --check
+    tar -xf "$build_tools/$llvm_mingw.tar.xz" -C "$build_tools"
+    tsf_compiler="$build_tools/$llvm_mingw/bin/x86_64-w64-mingw32-clang++"
+fi
+tsf_source='native/ProxiMicInputWindows'
+mkdir -p .build/windows-ime
+"$tsf_compiler" -std=c++17 -O2 -static -shared "$tsf_source/TextService.cpp" "$tsf_source/MythlinkTsf.def" \
+    -o .build/windows-ime/MythlinkTsf.dll -lole32 -loleaut32 -ladvapi32 -luuid
 
 curl -fsSL --connect-timeout 20 --max-time 180 --retry 2 -o "$build_tools/python.nupkg" \
     https://api.nuget.org/v3-flatcontainer/python/3.11.9/python.3.11.9.nupkg

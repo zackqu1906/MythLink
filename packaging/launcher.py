@@ -71,6 +71,19 @@ def _verify_bundled_qml_runtime(resource_root: Path) -> None:
         )
 
 
+def _verify_bundled_windows_ime(resource_root: Path) -> None:
+    payload = resource_root / "windows-ime"
+    script = payload / "windows-ime-prototype.ps1"
+    dll = payload / "MythlinkTsf.dll"
+    if not script.is_file() or not dll.is_file():
+        raise RuntimeError("安装包缺少 Windows TSF 输入法组件")
+    from ctypes import WinDLL
+
+    library = WinDLL(str(dll))
+    for name in ("DllGetClassObject", "DllRegisterServer", "DllUnregisterServer"):
+        getattr(library, name)
+
+
 def _open_diagnostic_log() -> tuple[Path, object]:
     try:
         from proximic_ring.diagnostics.runtime_diagnostics import configure_diagnostics
@@ -152,6 +165,9 @@ def run() -> int:
             print("[startup] Computer History recommendation runtime ready")
             if is_frozen():
                 _verify_bundled_qml_runtime(resource_root())
+                if sys.platform == "win32":
+                    _verify_bundled_windows_ime(resource_root())
+                    print("[startup] bundled Windows TSF input method ready")
             if sys.platform == "darwin":
                 from proximic_ring.desktop.app_shortcuts import verify_native_api
                 from proximic_ring.voice.ime.ime_bridge import default_socket_path

@@ -188,6 +188,27 @@ def test_dual_sdk_self_check_fails_if_r1_is_missing(monkeypatch):
         launcher._verify_touchpad_runtime()
 
 
+def test_windows_self_check_requires_the_tsf_script_and_loadable_dll(monkeypatch, tmp_path):
+    import ctypes
+
+    launcher = _load_launcher()
+    with pytest.raises(RuntimeError, match="缺少 Windows TSF"):
+        launcher._verify_bundled_windows_ime(tmp_path)
+    payload = tmp_path / "windows-ime"
+    payload.mkdir()
+    dll = payload / "MythlinkTsf.dll"
+    dll.touch()
+    (payload / "windows-ime-prototype.ps1").touch()
+    loaded = []
+    library = types.SimpleNamespace(DllGetClassObject=True, DllRegisterServer=True, DllUnregisterServer=True)
+    monkeypatch.setattr(ctypes, "WinDLL", lambda path: loaded.append(path) or library, raising=False)
+    launcher._verify_bundled_windows_ime(tmp_path)
+    assert loaded == [str(dll)]
+    del library.DllRegisterServer
+    with pytest.raises(AttributeError, match="DllRegisterServer"):
+        launcher._verify_bundled_windows_ime(tmp_path)
+
+
 def test_permission_status_command_is_read_only_and_does_not_start_main_ui(monkeypatch, capsys):
     import json
     from PySide6 import QtCore, QtWidgets
