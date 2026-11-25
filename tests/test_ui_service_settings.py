@@ -131,6 +131,7 @@ def test_online_speech_form_retains_connection_locks_and_live_gain(inline_ui, st
     controller.asrBackend = "volcengine"
     controller.asrHotwords = "保留的本地热词"
     setattr(controller, "_" + state, True)
+    controller._voice_runtime_ready = state == "connected"
     getattr(controller, state + "Changed").emit()
     before, messages = settings(controller), list(bridge.messages)
     open_page(root, 4)
