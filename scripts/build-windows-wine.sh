@@ -93,7 +93,8 @@ if ! PROXIMIC_DATA_HOME='C:\Mythlink-build-check' wine dist/Mythlink/Mythlink.ex
     fi
     exit 1
 fi
-wine "$iscc" "/DMyAppVersion=$MYTHLINK_BUILD_VERSION" 'packaging\windows\Mythlink.iss'
+echo 'Windows application self-check passed.'
+wine "$iscc" /DWineBuild=1 "/DMyAppVersion=$MYTHLINK_BUILD_VERSION" 'packaging\windows\Mythlink.iss'
 installer="dist/installer/Mythlink-$MYTHLINK_BUILD_VERSION-windows-x64-setup.exe"
 test -s "$installer"
 sha256sum "$installer"

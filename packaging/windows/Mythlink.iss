@@ -18,8 +18,12 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\..\dist\installer
 OutputBaseFilename=Mythlink-{#MyAppVersion}-windows-x64-setup
+#ifdef WineBuild
+Compression=zip
+#else
 Compression=lzma2/ultra64
 SolidCompression=yes
+#endif
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=yes
