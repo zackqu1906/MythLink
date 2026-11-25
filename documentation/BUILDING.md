@@ -36,13 +36,18 @@ PROXIMIC_ALLOW_ADHOC_SIGNING=1 APPLE_SIGNING_IDENTITY=- bash scripts/build-macos
 准备 Inno Setup 6，在仓库根目录运行 PowerShell：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Compute cpu -SkipLocalLLM
-powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Version 0.6.41
 ```
 
-产物为 `dist\installer\Mythlink-<版本>-windows-x64-setup.exe`。版本参数为 `-Version 0.6.28` 或 `-AutoVersion`；将示例版本替换成计划发布的版本。
+脚本准备项目内的 Python 和 CPU 依赖，再打包并运行应用自检。产物为 `dist\installer\Mythlink-<版本>-windows-x64-setup.exe`。将示例版本替换为计划构建的版本，也可用 `-AutoVersion` 自动递增。
 
-只修改业务代码、未修改依赖时可以使用 `-SkipDependencyInstall`。修改依赖清单后先更新开发环境。签名使用 `WINDOWS_SIGNING_CERT_SHA1` 和可选的 `WINDOWS_TIMESTAMP_URL`。
+构建 R1 版时使用内部提供的本地 wheel。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Version 0.6.41 -R1SdkWheel "C:\SDK\ring_python_sdk_r1-0.4.0-py3-none-any.whl"
+```
+
+已有完整打包环境时可传 `-SkipDependencyInstall`，构建 R1 版时环境中也须已安装 R1 SDK。签名使用 `WINDOWS_SIGNING_CERT_SHA1` 和可选的 `WINDOWS_TIMESTAMP_URL`。
 
 ### Windows TSF 输入法原型
 

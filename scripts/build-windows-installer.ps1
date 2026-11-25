@@ -20,16 +20,18 @@ Write-Host "Building Mythlink $AppVersion"
 
 if (-not $SkipDependencyInstall) {
     & $Python -m pip install -r (Join-Path $ProjectRoot "requirements-packaging.txt")
+    if ($LASTEXITCODE -ne 0) { throw "Packaging dependency installation failed." }
     & $Python (Join-Path $ProjectRoot "tools\install_r1_sdk.py")
     if ($LASTEXITCODE -ne 0) { throw "R1 SDK installation failed." }
 }
 
-Push-Location $ProjectRoot
 $PreviousFirmware = $env:MYTHLINK_RING_FIRMWARE
-if ($Firmware) { $env:MYTHLINK_RING_FIRMWARE = (Resolve-Path -LiteralPath $Firmware).Path }
 $PreviousBuildVersion = $env:MYTHLINK_BUILD_VERSION
-$env:MYTHLINK_BUILD_VERSION = $AppVersion
+if ($Firmware) { $Firmware = (Resolve-Path -LiteralPath $Firmware).Path }
+Push-Location -LiteralPath $ProjectRoot
 try {
+    if ($Firmware) { $env:MYTHLINK_RING_FIRMWARE = $Firmware }
+    $env:MYTHLINK_BUILD_VERSION = $AppVersion
     & $Python -m PyInstaller --noconfirm --clean "packaging\mythlink.spec"
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
@@ -54,6 +56,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 
     $Installer = Join-Path $ProjectRoot "dist\installer\Mythlink-$AppVersion-windows-x64-setup.exe"
+    if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) { throw "Installer not found: $Installer" }
     if ($env:WINDOWS_SIGNING_CERT_SHA1) {
         $SignToolCandidates = @(
             (Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
