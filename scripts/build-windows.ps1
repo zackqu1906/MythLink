@@ -14,7 +14,10 @@ if ($Version -and $AutoVersion) {
     throw "Choose either -Version or -AutoVersion."
 }
 
-$InstallerArgs = @{ SkipDependencyInstall = $SkipDependencyInstall }
+$InstallerArgs = @{
+    SkipDependencyInstall = $SkipDependencyInstall
+    BootloaderWithoutCfg = $true
+}
 if ($Version) { $InstallerArgs.Version = $Version }
 if ($AutoVersion) { $InstallerArgs.AutoVersion = $true }
 if ($Firmware) {

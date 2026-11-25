@@ -2,7 +2,8 @@ param(
     [switch]$SkipDependencyInstall,
     [string]$Version,
     [switch]$AutoVersion,
-    [string]$Firmware
+    [string]$Firmware,
+    [switch]$BootloaderWithoutCfg
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,24 @@ $Python = Join-Path $ProjectRoot ".runtime\venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw "Missing .runtime Python. Run scripts/setup.ps1 -SkipLocalLLM first."
 }
+function Get-CfgBootloaderRequirement {
+    # The windowed Mythlink executable uses runw.exe from the PyInstaller package.
+    $Probe = @'
+from pathlib import Path
+
+import pefile
+import PyInstaller
+
+bootloader = Path(PyInstaller.__file__).parent / 'bootloader' / PyInstaller.PLATFORM / 'runw.exe'
+with pefile.PE(str(bootloader), fast_load=True) as image:
+    if image.OPTIONAL_HEADER.DllCharacteristics & 0x4000:
+        print('PyInstaller==' + PyInstaller.__version__)
+'@
+    $Requirement = & $Python -c $Probe
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect the PyInstaller Windows bootloader." }
+    return $Requirement
+}
+
 $VersionArgs = @()
 if ($Version) { $VersionArgs += @("--version", $Version) }
 if ($AutoVersion) { $VersionArgs += "--auto-version" }
@@ -24,6 +43,32 @@ if ($SkipDependencyInstall) {
 } else {
     & $Python -m pip install -r (Join-Path $ProjectRoot "requirements-packaging.txt")
     if ($LASTEXITCODE -ne 0) { throw "Packaging dependency installation failed." }
+}
+if ($BootloaderWithoutCfg) {
+    $CfgBootloaderRequirement = Get-CfgBootloaderRequirement
+    if ($CfgBootloaderRequirement) {
+        if ($SkipDependencyInstall) {
+            throw "The Mythlink bootloader still uses CFG. Run build-windows.ps1 without -SkipDependencyInstall to rebuild it."
+        }
+        # R1's Unicorn runtime is incompatible with CFG in the PyInstaller bootloader.
+        Write-Host "Rebuilding the Mythlink Windows bootloader without CFG..."
+        $PreviousCompileBootloader = $env:PYINSTALLER_COMPILE_BOOTLOADER
+        $PreviousWafArgs = $env:PYINSTALLER_BOOTLOADER_WAF_ARGS
+        try {
+            $env:PYINSTALLER_COMPILE_BOOTLOADER = "1"
+            $env:PYINSTALLER_BOOTLOADER_WAF_ARGS = "--no-cfg"
+            & $Python -m pip install --force-reinstall --no-cache-dir --no-deps --no-binary=PyInstaller $CfgBootloaderRequirement
+            if ($LASTEXITCODE -ne 0) {
+                throw "PyInstaller bootloader rebuild failed. Check that Visual Studio C++ Build Tools and the Windows SDK are installed."
+            }
+        } finally {
+            $env:PYINSTALLER_COMPILE_BOOTLOADER = $PreviousCompileBootloader
+            $env:PYINSTALLER_BOOTLOADER_WAF_ARGS = $PreviousWafArgs
+        }
+        if (Get-CfgBootloaderRequirement) {
+            throw "The rebuilt Mythlink Windows bootloader still has CFG enabled."
+        }
+    }
 }
 & $Python (Join-Path $ProjectRoot "tools\install_r1_sdk.py") @SdkArgs
 if ($LASTEXITCODE -ne 0) { throw "R1 SDK installation failed." }

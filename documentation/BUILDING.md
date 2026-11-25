@@ -33,15 +33,15 @@ PROXIMIC_ALLOW_ADHOC_SIGNING=1 APPLE_SIGNING_IDENTITY=- bash scripts/build-macos
 
 ## Windows x64
 
-准备 Inno Setup 6，在仓库根目录运行 PowerShell：
+准备 Inno Setup 6 后，在仓库根目录用 PowerShell 运行构建。首次重编译启动器需要 Visual Studio Build Tools 的「使用 C++ 的桌面开发」工作负载和 Windows SDK。[PyInstaller Windows 启动器构建说明](https://pyinstaller.org/en/v6.22.2/bootloader-building.html#building-for-windows)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Version 0.6.41
 ```
 
-脚本准备项目内的 Python 和 CPU 依赖，将 Ringo 与 R1 SDK 一起打入 `dist\installer\Mythlink-<版本>-windows-x64-setup.exe`，并自检两款戒指的触摸板模型。可用 `-AutoVersion` 自动递增版本。
+脚本准备项目内的 Python 和 CPU 依赖，使用 `--no-cfg` 重编译 Mythlink 的 Windows 启动器以兼容 R1 SDK 使用的 Unicorn。后续构建复用已重编译的启动器。Ringo 和 R1 的触摸板模型自检通过后，生成 `dist\installer\Mythlink-<版本>-windows-x64-setup.exe`。可用 `-AutoVersion` 自动递增版本。
 
-已有完整打包环境时可传 `-SkipDependencyInstall`，构建仍会安装项目内的 R1 wheel。签名使用 `WINDOWS_SIGNING_CERT_SHA1` 和可选的 `WINDOWS_TIMESTAMP_URL`。
+已有完整打包环境和兼容启动器时可传 `-SkipDependencyInstall`，构建仍会安装项目内的 R1 wheel。签名使用 `WINDOWS_SIGNING_CERT_SHA1` 和可选的 `WINDOWS_TIMESTAMP_URL`。
 
 ### Windows TSF 输入法原型
 
