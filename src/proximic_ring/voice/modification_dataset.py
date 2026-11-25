@@ -922,8 +922,12 @@ class ModificationDatasetCollector:
                     updates["input"] = model_input
                     updates["screen_context"] = model_input.get("screen_context")
             if routed_edit:
-                from ..text_processing.model import ROUTED_EDIT_BODY_VARIANTS, normalize_routed_edit_variant
+                from ..text_processing.model import ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_HYBRID, normalize_routed_edit_variant
                 variant = normalize_routed_edit_variant(getattr(result, "routed_edit_variant", ""))
+                if variant == ROUTED_EDIT_HYBRID:
+                    steps = list(getattr(result, "edit_steps", ()))
+                    updates["edit_steps"] = steps
+                    updates["system_prompt"] = "\n\n".join(step["system_prompt"] for step in steps)
                 classification_type = "not_applicable" if variant in ROUTED_EDIT_BODY_VARIANTS else "llm_single_pass"
                 plan = result.edit_plan.as_dict() if result.edit_plan else None
                 updates.update(edit_plan=plan, classification_type=classification_type, task_type="edit",

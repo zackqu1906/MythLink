@@ -26,15 +26,17 @@ INPUT_ROUTING_MODES = frozenset(INPUT_ROUTING_LABELS)
 ROUTED_EDIT_SIX_CLASS = "six_class_v5"
 ROUTED_EDIT_BOUNDARY = "boundary_only_v1"
 
+ROUTED_EDIT_HYBRID = "hybrid_edit_v1"
 ROUTED_EDIT_ORIGINAL = "original_structured_v1"
 
 ROUTED_EDIT_VARIANT_LABELS = {
+    ROUTED_EDIT_HYBRID: "规则＋模型编辑",
     ROUTED_EDIT_ORIGINAL: "精简编辑提示词",
     ROUTED_EDIT_SIX_CLASS: "六分类",
     ROUTED_EDIT_BOUNDARY: "无分类边界",
     **{key: value[0] for key, value in GENERAL_EDIT_VARIANTS.items()},
 }
-ROUTED_EDIT_BODY_VARIANTS = frozenset({ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL, *GENERAL_EDIT_VARIANTS})
+ROUTED_EDIT_BODY_VARIANTS = frozenset({ROUTED_EDIT_HYBRID, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL, *GENERAL_EDIT_VARIANTS})
 LLM_PROVIDER_LOCAL = "local"
 LLM_PROVIDER_OPENAI = "openai"
 LLM_PROVIDER_VOLCENGINE = "volcengine"
@@ -73,6 +75,8 @@ def normalize_routed_edit_variant(value: str) -> str:
 
 def selectable_routed_edit_variant(value: str) -> str:
     """Map retired general preferences to the supported direct-body editor."""
+    if str(value or "").strip().lower() not in ROUTED_EDIT_VARIANT_LABELS:
+        return ROUTED_EDIT_HYBRID
     variant = normalize_routed_edit_variant(value)
     return ROUTED_EDIT_BOUNDARY if variant in GENERAL_EDIT_VARIANTS else variant
 
@@ -171,8 +175,9 @@ class TextProcessingRequest:
     edit_plan: EditPlan | None = None
     routing_mode: str = INPUT_ROUTING_MANUAL
     reexecuted: bool = False
-    routed_edit_variant: str = ROUTED_EDIT_SIX_CLASS
+    routed_edit_variant: str = ROUTED_EDIT_HYBRID
     saved_context: object = None
+    edit_hotwords: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -238,4 +243,5 @@ class TextProcessingResult:
     model_input: dict | None = None
     routing_mode: str = INPUT_ROUTING_MANUAL
     screen_context: object = None
-    routed_edit_variant: str = ROUTED_EDIT_SIX_CLASS
+    routed_edit_variant: str = ROUTED_EDIT_HYBRID
+    edit_steps: tuple[dict, ...] = ()

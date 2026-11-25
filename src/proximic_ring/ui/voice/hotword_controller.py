@@ -61,7 +61,7 @@ class HotwordController(QObject):
     def summary(self):
         entries = self.store.entries()
         enabled = sum(bool(e["enabled"]) for e in entries)
-        return f"{len(entries)} 个热词 · 下一句使用 {len(self.store.snapshot())} 个 · {enabled - len(self.store.snapshot())} 个超出预算"
+        return f"{len(entries)} 个热词 · 语音识别选用 {len(self.store.snapshot())} 个 · 编辑词典启用 {enabled} 个"
 
     @Property(str, notify=messageChanged)
     def message(self):

@@ -297,8 +297,8 @@ def test_dictation_preferences_follow_selected_text_model(inline_ui, initial):
     assert controller._llm_settings().model in group.property("description") and not switch.property("visible")
     controller.llmProvider = "bailian"
     assert switch.property("visible") and switch.property("checked") is not initial
-    assert controller.routedEditVariant == "original_structured_v1"
-    assert item(root, "routedEditVariantCombo").property("currentText") == "精简编辑提示词"
+    assert controller.routedEditVariant == "hybrid_edit_v1"
+    assert item(root, "routedEditVariantCombo").property("currentText") == "规则＋模型编辑（默认）"
 
 
 def test_switch_online_model_services_restores_independent_credentials(inline_ui):
@@ -307,7 +307,7 @@ def test_switch_online_model_services_restores_independent_credentials(inline_ui
 
     controller, _, _, root, _ = inline_ui
     assert controller.llmProvider == "bailian" and controller.llmModel == "qwen3.8-max"
-    assert controller.routedEditVariant == "original_structured_v1"
+    assert controller.routedEditVariant == "hybrid_edit_v1"
     open_page(root, 5)
     combo = item(root, "llmOnlineServiceCombo")
     assert combo.property("currentIndex") == 0

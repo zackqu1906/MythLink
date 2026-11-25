@@ -39,7 +39,7 @@ def processor_returning(text, *, status="completed"):
 ])
 def test_one_request_returns_plan_and_exact_body(source, output, tasks, body):
     processor,calls=processor_returning(output)
-    final,raw,model_input,plan=processor.process_routed_edit_with_trace("口述",settings(),source,{"messages":[]})
+    final,raw,model_input,plan=processor.process_routed_edit_with_trace("口述",settings(),source,{"messages":[]},variant=ROUTED_EDIT_SIX_CLASS)
     assert final==body and raw==output and (plan.tasks if plan else None)==tasks
     assert len(calls)==1 and calls[0]["thinking"]=={"type":"disabled"} and calls[0]["stream"] is False
     assert "tools" not in calls[0]
@@ -61,14 +61,14 @@ def test_one_request_returns_plan_and_exact_body(source, output, tasks, body):
 def test_invalid_response_never_retries_or_guesses(output,source):
     processor,calls=processor_returning(output)
     with pytest.raises(RuntimeError):
-        processor.process_routed_edit_with_trace("修改",settings(),source)
+        processor.process_routed_edit_with_trace("修改",settings(),source,variant=ROUTED_EDIT_SIX_CLASS)
     assert len(calls)==1
 
 
 def test_incomplete_response_and_unconfigured_model_do_not_write_or_fallback():
     processor,calls=processor_returning("分类：修改\n正文：截断",status="incomplete")
     with pytest.raises(RuntimeError,match="未完整结束"):
-        processor.process_routed_edit_with_trace("修改",settings(),"旧")
+        processor.process_routed_edit_with_trace("修改",settings(),"旧",variant=ROUTED_EDIT_SIX_CLASS)
     assert len(calls)==1
     with pytest.raises(ValueError,match="火山方舟"):
         processor.process_routed_edit_with_trace("修改",LLMSettings(enabled=True,model="other"),"旧")
@@ -119,7 +119,7 @@ def test_worker_filters_ocr_once_and_history_keeps_actual_plan(tmp_path):
         context_provider=SimpleNamespace(close=lambda:None),
         on_result=lambda r:(results.append(r),done.set()))
     request=TextProcessingRequest(1,7,"edit","改成上文的人名",settings(),"请联系张玮",
-        routing_mode=INPUT_ROUTING_ROUTED_EDIT,screen_context=raw_capture())
+        routed_edit_variant=ROUTED_EDIT_SIX_CLASS,routing_mode=INPUT_ROUTING_ROUTED_EDIT,screen_context=raw_capture())
     store=ModificationDatasetCollector(tmp_path,"test")
     store.record_screen_capture(7,request.screen_context,routing=INPUT_ROUTING_ROUTED_EDIT)
     finish_asr(store);store.record_text_request(request)
@@ -156,7 +156,7 @@ def test_failed_request_keeps_returned_classification_and_reason_in_history(tmp_
         on_result=lambda result: (results.append(result), done.set()),
         intent_router=SimpleNamespace(close=lambda: None), context_provider=SimpleNamespace(close=lambda: None))
     request = TextProcessingRequest(1, 7, "edit", "帮我改好一点", settings(), "旧",
-                                    routing_mode=INPUT_ROUTING_ROUTED_EDIT)
+                                    routed_edit_variant=ROUTED_EDIT_SIX_CLASS,routing_mode=INPUT_ROUTING_ROUTED_EDIT)
     store = ModificationDatasetCollector(tmp_path, "test")
     store.record_text_request(request)
     try:
@@ -182,7 +182,7 @@ def test_cancelled_running_single_pass_does_not_publish_result():
             return "新文","分类：润色\n正文：新文",{},EditPlan(("polish",))
     worker=TextProcessingWorker(processor=Processor(),on_result=lambda r:delivered.set(),
         intent_router=SimpleNamespace(close=lambda:None),context_provider=SimpleNamespace(close=lambda:None))
-    worker.submit(TextProcessingRequest(11,7,"edit","不用改",settings(),"原文",routing_mode=INPUT_ROUTING_ROUTED_EDIT))
+    worker.submit(TextProcessingRequest(11,7,"edit","不用改",settings(),"原文",routed_edit_variant=ROUTED_EDIT_SIX_CLASS,routing_mode=INPUT_ROUTING_ROUTED_EDIT))
     assert started.wait(5)
     worker.cancel_request(11);release.set();worker.close(wait=True)
     assert not delivered.is_set()

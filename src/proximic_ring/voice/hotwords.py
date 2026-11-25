@@ -87,7 +87,8 @@ class HotwordStore:
 
     def _refresh_snapshot(self):
         ordered = self._state["entries"]
-        self._selected = tuple(select_hotwords(e["word"] for e in ordered if e["enabled"]))
+        self._enabled_words = tuple(e["word"] for e in ordered if e["enabled"])
+        self._selected = tuple(select_hotwords(self._enabled_words))
         self._transactions = set()
         for entry in ordered:
             for source in entry["evidence"]:
@@ -146,6 +147,11 @@ class HotwordStore:
     def snapshot(self) -> list[str]:
         with self._lock:
             return list(self._selected)
+
+    def enabled_words(self) -> tuple[str, ...]:
+        """Full vocabulary for local editing, independent of the ASR request budget."""
+        with self._lock:
+            return self._enabled_words
 
     def add(self, word: str):
         word = normalize_word(word)

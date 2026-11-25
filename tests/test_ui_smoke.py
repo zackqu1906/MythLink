@@ -132,7 +132,7 @@ def test_ark_deepseek_migrates_once_and_preserves_its_profile(provider, saved_mo
             assert controller.llmProvider == "bailian"
             assert controller.llmModel == "qwen3.8-max"
             assert controller.llmApiKey == ""
-            assert controller.routedEditVariant == "original_structured_v1"
+            assert controller.routedEditVariant == "hybrid_edit_v1"
             controller.llmProvider = "volcengine"
         assert controller.llmModel == expected_model
         assert controller._settings.value("llm/model") == expected_model

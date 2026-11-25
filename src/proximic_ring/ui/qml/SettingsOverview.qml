@@ -204,7 +204,7 @@ ColumnLayout {
             description: pane.controller.inputRoutingMode === "auto"
                 ? "开始后说话，再结束即可自动判断听写或编辑。请先在服务设置中配置自动路由服务器。"
                 : pane.controller.inputRoutingMode === "manual_routed_edit"
-                  ? "通过手势选择听写或编辑。所选文本模型一次完成编辑，编辑版本可在下方切换。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
+                  ? "通过手势选择听写或编辑。可在下方选择编辑版本。默认点击结束听写，右滑结束编辑，沿用手动手势设置。"
                   : "先听写，通过转换操作将本句作为编辑指令。"
             FigmaSelect {
                 objectName: "inputRoutingModeCombo"
@@ -220,15 +220,17 @@ ColumnLayout {
             objectName: "routedEditVariantRow"
             visible: pane.controller.inputRoutingMode === "manual_routed_edit"
             title: "手动编辑版本"
-            description: pane.controller.routedEditVariant === "six_class_v5"
+            description: pane.controller.routedEditVariant === "hybrid_edit_v1"
+                ? "按口述定位要改的字词，结合上下文处理润色、分行等后续要求。下次录音生效。"
+                : pane.controller.routedEditVariant === "six_class_v5"
                 ? "可使用原文、屏幕上文和已保存资料，一次返回任务类别和完整正文。下次录音生效。"
                 : "可使用原文、屏幕上文和已保存资料，直接返回完整正文。下次录音生效。"
             FigmaSelect {
                 objectName: "routedEditVariantCombo"
                 Layout.fillWidth: true
                 Accessible.name: "手动编辑版本"
-                property var variantKeys: ["six_class_v5", "boundary_only_v1", "original_structured_v1"]
-                model: ["六分类", "无分类边界", "精简编辑提示词"]
+                property var variantKeys: ["six_class_v5", "boundary_only_v1", "original_structured_v1", "hybrid_edit_v1"]
+                model: ["六分类", "无分类边界", "精简编辑提示词", "规则＋模型编辑（默认）"]
                 currentIndex: Math.max(0, variantKeys.indexOf(pane.controller.routedEditVariant))
                 onActivated: pane.controller.routedEditVariant = variantKeys[currentIndex]
             }

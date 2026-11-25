@@ -77,7 +77,7 @@ from ..voice.interaction_associations import (
 from ..voice.modification_dataset import ModificationDatasetCollector
 from ..runtime_paths import app_data_root, is_frozen, resource_root
 from ..text_processing.service_profiles import load_service, select_service
-from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_ORIGINAL,
+from ..text_processing.model import (TEXT_MODE_POLISH, ROUTED_EDIT_HYBRID, ROUTED_EDIT_ORIGINAL,
     LLM_PROVIDER_BAILIAN,
     ROUTED_EDIT_VARIANT_LABELS, selectable_routed_edit_variant)
 from ..text_processing import (
@@ -503,7 +503,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._automatic_dictation_cleanup_enabled = self._bool_setting("input/automaticDictationCleanupEnabled", True)
         text_service = load_service(self._settings)
-        saved_variant = self._settings.value("input/routedEditVariant", ROUTED_EDIT_ORIGINAL)
+        saved_variant = self._settings.value("input/routedEditVariant", ROUTED_EDIT_HYBRID)
+        # The previous release also persisted its default during service migration.
+        # Convert it once so a subsequent explicit selection of the old editor sticks.
+        if not self._settings.contains("input/hybridEditDefaultV1"):
+            if saved_variant == ROUTED_EDIT_ORIGINAL:
+                saved_variant = ROUTED_EDIT_HYBRID
+                self._settings.setValue("input/routedEditVariant", saved_variant)
+            self._settings.setValue("input/hybridEditDefaultV1", True)
         self._routed_edit_variant = selectable_routed_edit_variant(saved_variant)
         if self._routed_edit_variant != saved_variant:
             self._settings.setValue("input/routedEditVariant", self._routed_edit_variant)
@@ -1351,7 +1358,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                            edit_plan=saved.edit_plan, screen_context=replay_context(saved),
                            saved_context=saved.saved_context,
                            routing_mode=saved.routing_mode, reexecuted=True,
-                           routed_edit_variant=saved.routed_edit_variant)
+                           routed_edit_variant=saved.routed_edit_variant, edit_hotwords=saved.edit_hotwords)
         else:
             options = self._inline_edit_options(key)
         request = self._submit_text_processing(
@@ -5671,6 +5678,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         settings=None,
         reexecuted: bool = False,
         routed_edit_variant: str | None = None,
+        edit_hotwords: tuple[str, ...] | None = None,
     ) -> TextProcessingRequest | None:
         normalized_mode = TEXT_MODE_POLISH if mode == TEXT_MODE_POLISH else normalize_input_mode(mode)
         if normalized_mode not in {INPUT_MODE_EDIT, TEXT_MODE_POLISH} and not self._llm_enabled and not force_llm:
@@ -5692,6 +5700,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             return
         self._text_request_id += 1
         request_id = self._text_request_id
+        variant = selectable_routed_edit_variant(routed_edit_variant or self._routed_edit_variant)
+        if (edit_hotwords is None and normalized_mode == INPUT_MODE_EDIT
+                and routing_mode == INPUT_ROUTING_ROUTED_EDIT and variant == ROUTED_EDIT_HYBRID):
+            edit_hotwords = self._hotwords.store.enabled_words()
         request = TextProcessingRequest(
             request_id=request_id,
             session_id=int(session_id),
@@ -5706,7 +5718,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             edit_plan=edit_plan,
             routing_mode=routing_mode,
             reexecuted=reexecuted,
-            routed_edit_variant=selectable_routed_edit_variant(routed_edit_variant or self._routed_edit_variant),
+            routed_edit_variant=variant,
+            edit_hotwords=edit_hotwords or (),
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)

@@ -1,14 +1,16 @@
-"""One-call manual editing with six task labels and the shared editing rules."""
+"""Prompt metadata and single-pass prompts for the manual voice editors."""
 from .task_routing import EDIT_TASK_LABELS
 from .original_edit_prompt import ORIGINAL_EDIT_PROMPT
-from .model import ROUTED_EDIT_ORIGINAL, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_SIX_CLASS, normalize_routed_edit_variant
+from .model import ROUTED_EDIT_HYBRID, ROUTED_EDIT_ORIGINAL, ROUTED_EDIT_BOUNDARY, normalize_routed_edit_variant
 from .boundary_edit_prompt import BOUNDARY_EDIT_PROMPT, BOUNDARY_EDIT_PROMPT_VERSION, manual_edit_rules
 from .general_edit_prompt import GENERAL_EDIT_VARIANTS, GENERAL_EDIT_PROMPT_VERSION, general_edit_prompt
 
 ROUTED_EDIT_PROMPT_VERSION = "manual-edit-six-class-v6-context-source-selection"
 
 
-def routed_edit_prompt_version(variant=ROUTED_EDIT_SIX_CLASS):
+def routed_edit_prompt_version(variant=ROUTED_EDIT_HYBRID):
+    if variant == ROUTED_EDIT_HYBRID:
+        return ROUTED_EDIT_HYBRID
     if variant == ROUTED_EDIT_ORIGINAL:
         return ROUTED_EDIT_ORIGINAL
     if variant in GENERAL_EDIT_VARIANTS:
@@ -17,7 +19,10 @@ def routed_edit_prompt_version(variant=ROUTED_EDIT_SIX_CLASS):
             else ROUTED_EDIT_PROMPT_VERSION)
 
 
-def routed_edit_prompt(target, variant=ROUTED_EDIT_SIX_CLASS):
+def routed_edit_prompt(target, variant=ROUTED_EDIT_HYBRID):
+    if variant == ROUTED_EDIT_HYBRID:
+        # The history collector fills this from the actual steps after routing.
+        return ""
     if variant == ROUTED_EDIT_ORIGINAL:
         return ORIGINAL_EDIT_PROMPT
     if variant in GENERAL_EDIT_VARIANTS:

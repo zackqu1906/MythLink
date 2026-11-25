@@ -11,6 +11,7 @@ from .model import (
     INPUT_MODE_EDIT,
     INPUT_ROUTING_ROUTED_EDIT,
     TEXT_MODE_POLISH,
+    ROUTED_EDIT_HYBRID,
     InputModeRoutingRequest,
     InputModeRoutingResult,
     LLMTraceCollection,
@@ -231,6 +232,7 @@ class TextProcessingWorker:
             screen_context = None
             llm_branches = ()
             winner_branch = ""
+            edit_steps = ()
             used_llm = bool(request.settings.enabled)
             task_type, edit_plan = request.task_type, request.edit_plan
             try:
@@ -248,15 +250,21 @@ class TextProcessingWorker:
                 llm_branches, winner_branch = output.branches, output.winner
                 task_type, edit_plan = output.task_type, output.edit_plan
                 screen_context = output.screen_context
+                edit_steps = output.edit_steps
             except BaseException as exc:
                 # The input method must remain usable when a cloud/local LLM is
                 # unavailable.  Preserve the raw final ASR text as a fallback.
                 error = str(exc)
                 model_output = str(getattr(exc, "model_output", "") or "")
                 model_input = getattr(exc, "model_input", None)
+                edit_steps = tuple(getattr(exc, "edit_steps", ()))
                 llm_branches = tuple(getattr(exc, "branch_traces", ()) or ())
                 final_text = request.target_text or request.raw_text
+            if (request.routing_mode == INPUT_ROUTING_ROUTED_EDIT and request.mode == INPUT_MODE_EDIT
+                    and request.routed_edit_variant == ROUTED_EDIT_HYBRID):
+                used_llm = bool(edit_steps)
             result = TextProcessingResult(
+                edit_steps=edit_steps,
                 request_id=request.request_id,
                 task_type=task_type,
                 edit_plan=edit_plan,
