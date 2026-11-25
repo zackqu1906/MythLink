@@ -41,7 +41,7 @@ $SdkArgs = @()
 if ($SkipDependencyInstall) {
     $SdkArgs += "--no-deps"
 } else {
-    & $Python -m pip install -r (Join-Path $ProjectRoot "requirements-packaging.txt")
+    & $Python -m pip install -c (Join-Path $ProjectRoot "requirements-windows.lock") -r (Join-Path $ProjectRoot "requirements-packaging.txt")
     if ($LASTEXITCODE -ne 0) { throw "Packaging dependency installation failed." }
 }
 if ($BootloaderWithoutCfg) {
@@ -52,18 +52,31 @@ if ($BootloaderWithoutCfg) {
         }
         # R1's Unicorn runtime is incompatible with CFG in the PyInstaller bootloader.
         Write-Host "Rebuilding the Mythlink Windows bootloader without CFG..."
-        $PreviousCompileBootloader = $env:PYINSTALLER_COMPILE_BOOTLOADER
-        $PreviousWafArgs = $env:PYINSTALLER_BOOTLOADER_WAF_ARGS
+        # pip extracts a deeply nested source tree before starting the compiler.
+        $BuildRoot = New-Item -ItemType Directory -Path (Join-Path $ProjectRoot ".build") -Force
+        $BootloaderTemp = New-Item -ItemType Directory -Path (Join-Path $BuildRoot.FullName ([IO.Path]::GetRandomFileName()))
+        $BootloaderEnvironment = @{
+            PYINSTALLER_COMPILE_BOOTLOADER = "1"
+            PYINSTALLER_BOOTLOADER_WAF_ARGS = "--no-cfg"
+            TMPDIR = $BootloaderTemp.FullName
+            TEMP = $BootloaderTemp.FullName
+            TMP = $BootloaderTemp.FullName
+        }
+        $PreviousEnvironment = @{}
         try {
-            $env:PYINSTALLER_COMPILE_BOOTLOADER = "1"
-            $env:PYINSTALLER_BOOTLOADER_WAF_ARGS = "--no-cfg"
+            foreach ($Name in $BootloaderEnvironment.Keys) {
+                $PreviousEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name)
+                [Environment]::SetEnvironmentVariable($Name, $BootloaderEnvironment[$Name])
+            }
             & $Python -m pip install --force-reinstall --no-cache-dir --no-deps --no-binary=PyInstaller $CfgBootloaderRequirement
             if ($LASTEXITCODE -ne 0) {
-                throw "PyInstaller bootloader rebuild failed. Check that Visual Studio C++ Build Tools and the Windows SDK are installed."
+                throw "PyInstaller bootloader rebuild failed (pip exit $LASTEXITCODE). See the pip output above."
             }
         } finally {
-            $env:PYINSTALLER_COMPILE_BOOTLOADER = $PreviousCompileBootloader
-            $env:PYINSTALLER_BOOTLOADER_WAF_ARGS = $PreviousWafArgs
+            foreach ($Name in $PreviousEnvironment.Keys) {
+                [Environment]::SetEnvironmentVariable($Name, $PreviousEnvironment[$Name])
+            }
+            Remove-Item -LiteralPath $BootloaderTemp.FullName -Recurse -Force -ErrorAction SilentlyContinue
         }
         if (Get-CfgBootloaderRequirement) {
             throw "The rebuilt Mythlink Windows bootloader still has CFG enabled."
