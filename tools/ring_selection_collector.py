@@ -24,8 +24,9 @@ DEFAULT_OUTPUT = ROOT / "data" / "recordings" / "selection-eight"
 
 
 class RingWorker:
-    def __init__(self, device, sdk_root, messages):
+    def __init__(self, device, sdk_root, messages, *, protocol=None):
         self.device, self.sdk_root, self.messages = device, sdk_root, messages
+        self.protocol = protocol
         self.stop = threading.Event()
         self.overflow = threading.Event()
         self.thread = threading.Thread(target=self.run, name="SelectionRing", daemon=True)
@@ -47,8 +48,11 @@ class RingWorker:
     async def acquire(self):
         sys.path.insert(0, str(self.sdk_root))
         from ring_python_sdk import RingSession
-        session = RingSession("Ringo", 8.)
+        raw2 = self.protocol == 'raw2'
+        session = (RingSession(self.device, 10., connection_backend='sdk' if raw2 else 'legacy')
+                   if self.protocol else RingSession("Ringo", 8.))
         session.battery_poll_enabled = False
+        session.auto_reconnect = False
         ended = asyncio.Event()
         outcome = []
 
@@ -61,25 +65,45 @@ class RingWorker:
                 raise RuntimeError("未找到或未能连接戒指；请检查名称、蓝牙和其他程序的连接。")
             if self.stop.is_set():
                 return
+            device_info = {}
+            if self.protocol:
+                from ring_python_sdk.ble import send_mic_control, send_swipe_stop
+                if raw2:
+                    from ring_python_sdk.touchpad.raw2_model import raw2_firmware
+                    info = getattr(session._sdk_transport, 'device_info', None)
+                    if not raw2_firmware(info):
+                        version = getattr(info, 'firmware_version', '未知')
+                        raise RuntimeError(f'戒指固件 {version} 不支持 Raw2，可用 --protocol legacy 启动旧协议采集。')
+                    device_info["firmware"] = info.firmware_version
+                await send_mic_control(session.client, session.rx_uuid, on=False)
+                await send_swipe_stop(session.client, session.rx_uuid)
+                device_info["protocol"] = self.protocol
             await session.touchpad_on(
                 on_event=lambda e: self.post("event", asdict(e)),
                 on_stats=lambda s: self.post("stats", asdict(s)),
-                on_tokens=lambda t: self.post("tokens", asdict(t)),
-                on_stopped=stopped, duration_s=None)
-            self.post("ready", {"name": session.target_name, "address": session.target_address})
+                on_tokens=None if raw2 else lambda t: self.post("tokens", asdict(t)),
+                on_stopped=stopped, duration_s=None, protocol=self.protocol or 'legacy')
+            self.post("ready", {"name": session.target_name, "address": session.target_address, **device_info})
             while not self.stop.is_set() and not ended.is_set():
                 await asyncio.sleep(.05)
             if outcome and outcome[-1]:
                 raise outcome[-1]
         finally:
-            await asyncio.wait_for(session.disconnect(), 10.)
+            try:
+                if self.protocol and session.touchpad_active:
+                    await session.touchpad_off()
+            finally:
+                await asyncio.wait_for(session.disconnect(), 10.)
 
 
 class CollectionWindow:
-    def __init__(self, root, output_dir=DEFAULT_OUTPUT, sdk_root=DEFAULT_SDK, device="Ringo", profile=selection_profile):
+    def __init__(self, root, output_dir=DEFAULT_OUTPUT, sdk_root=DEFAULT_SDK, device="Ringo", profile=selection_profile,
+                 *, protocol=None):
         self.profile = profile
         self.prefix = getattr(profile, "FILE_PREFIX", "selection-eight")
         self.root, self.output_dir, self.sdk_root = root, Path(output_dir), Path(sdk_root)
+        self.protocol = protocol
+        self.require_motion = getattr(profile, "REQUIRE_MOTION", False)
         self.session = self.path = self.raw_stream = self.token_stream = self.worker = None
         self.messages = queue.Queue(maxsize=8192)
         # Multi-contact profiles record one written character per sample.
@@ -273,8 +297,10 @@ class CollectionWindow:
         self.path = self.output_dir / f"{self.prefix}-{session['sessionId']}.json"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.raw_stream = self.path.with_suffix(".events.jsonl").open("a", encoding="utf-8")
-        # Raw accel/gyro model inputs, joined to events by token epoch and step.
-        self.token_stream = self.path.with_suffix(".tokens.jsonl").open("a", encoding="utf-8")
+        # The provider stream exposes full move/contact frames, while legacy
+        # additionally exposes raw accel/gyro inputs by token epoch and step.
+        self.token_stream = (None if self.protocol == 'raw2' else
+                             self.path.with_suffix(".tokens.jsonl").open("a", encoding="utf-8"))
         self.capture.reset()
         self.armed = False
         self.persist()
@@ -336,9 +362,10 @@ class CollectionWindow:
     def connect(self):
         if self.worker or not self.session or not self.device.get().strip():
             return
-        self.worker = RingWorker(self.device.get().strip(), self.sdk_root, self.messages)
+        self.worker = RingWorker(self.device.get().strip(), self.sdk_root, self.messages, protocol=self.protocol)
         self.warm = self.worker_error = False
-        self.status.set("正在连接并准备采集…")
+        self.status.set("正在连接并准备采集…" if not self.protocol else
+                        f"正在连接并准备采集（{'Raw2' if self.protocol == 'raw2' else '旧协议'}）…")
         self.worker.thread.start()
         self.render()
 
@@ -380,6 +407,9 @@ class CollectionWindow:
             return
         index = len(self.session["samples"])
         trace = self.session["draft"]
+        if self.require_motion and trace["pathLength"] <= 0:
+            self.status.set("这条旧草稿没有位移。按 2 清除草稿并重写。")
+            return
         sample = {**trace, "taskIndex": index, "task": self.session["tasks"][index],
                   "confirmedAt": now(), "source": "ring-sdk-touchpad"}
         if hasattr(self.profile, "predict_trace"):
@@ -470,10 +500,16 @@ class CollectionWindow:
                 self.connected = True
                 self.session["deviceInfo"] = value
                 self.persist()
-                self.status.set("已连接。等待预热完成，再按 1 开始。")
+                self.status.set("已连接。按 1 开始采集。" if self.warm else
+                                "已连接。等待触摸板就绪，再按 1 开始。")
             elif kind == "stats":
-                self.warm = value["warmup_frames"] >= 200
-                self.stats.set(f"预热 {value['warmup_frames']}/200 · 接触 {value['contact_probability']:.2f}")
+                was_warm = self.warm
+                self.warm = (value["ready"] is True if self.protocol == 'raw2' else value["warmup_frames"] >= 200)
+                phase = (f"Raw2 {'就绪' if self.warm else '启动中'}" if self.protocol == 'raw2' else
+                         f"预热 {value['warmup_frames']}/200")
+                self.stats.set(f"{phase} · 收包 {value['packets']} · 接触 {value['contact_probability']:.2f}")
+                if self.connected and self.warm and not was_warm:
+                    self.status.set("触摸板已就绪。按 1 开始采集。")
             elif kind in {"ended", "error"}:
                 self.connected = self.armed = False
                 self.capture.reset()
@@ -538,6 +574,11 @@ class CollectionWindow:
         if isinstance(result, str):
             self.interrupt(result)
         elif isinstance(result, dict):
+            if self.protocol:
+                result["touchpadProtocol"] = self.protocol
+            if self.require_motion and result["pathLength"] <= 0:
+                self.status.set("检测到触桌，但没有位移。已准备好，请抬手后直接重写。")
+                return
             self.armed = False
             self.session["draft"] = result
             self.persist()

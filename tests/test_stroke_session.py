@@ -24,6 +24,9 @@ def stroke(inline_ui, monkeypatch):
     # branch explicitly when this fixture is run on a Windows development host.
     import proximic_ring.ui.touchpad.touchpad_controller as module
     monkeypatch.setattr(module, 'sys', SimpleNamespace(platform='darwin'))
+    # These scenarios exercise the Raw2 two-finger path, not the development
+    # host's CPU architecture. The legacy case opts out explicitly below.
+    monkeypatch.setattr(module, 'platform', SimpleNamespace(machine=lambda: 'arm64'))
     c, bridge, root, tp, source = idle(inline_ui)
     session = tp.strokeSession
     c._inline_input._source_switch_factory = FakeSource
@@ -39,7 +42,7 @@ def stroke(inline_ui, monkeypatch):
     QTest.qWait(30)
 
 
-def wake(stroke, context=""):
+def wake(stroke, context="", *, word_completions=False):
     c, bridge, tp, source, session = stroke
     tp._run.output.options["on_double_click"]()
     until(lambda: session.phase == "source")
@@ -51,9 +54,30 @@ def wake(stroke, context=""):
     until(lambda: session.phase == "native")
     request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_begin")
     c._inline_input._accept(dict(type="stroke_ready", epoch=c._inline_input._epoch,
-        client_id=request["client_id"], stroke_session=request["stroke_session"], success=True, context=context))
+        client_id=request["client_id"], stroke_session=request["stroke_session"], success=True, context=context,
+        word_completions=word_completions))
     until(lambda: session.phase == "running")
     return helper
+
+
+def test_native_word_completion_sends_only_suffix_and_counts_acknowledged_use(stroke):
+    c, bridge, tp, _, session = stroke
+    store = c.hotwords.store
+    store.learn("voice-edit", ["苏州工业园区"])
+    prefix, suffix = "苏州工业园", "区"  # The prefix is longer than the old context window.
+    wake(stroke, context="去" + prefix, word_completions=True)
+    word = prefix + suffix
+    index = tp.strokeCandidates.index(word)
+    assert tp.strokeCandidateVisuals[index]["status"] == "词库联想"
+    for success in (False, True):
+        tp.selectCandidate(index)
+        request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
+        assert request["text"] == suffix and request["word_prefix"] == prefix
+        c._inline_input._accept(dict(type="stroke_result", epoch=c._inline_input._epoch,
+            client_id=request["client_id"], request_id=request["request_id"], success=success,
+            context="去" + word))
+        assert store.entries()[0].get("stroke_uses", 0) == int(success)
+    assert tp._stroke_context == "去" + word and word not in tp.strokeCandidates
 
 
 def test_external_predictions_clear_on_caret_takeover_and_do_not_leak_to_next_session(stroke):
@@ -112,6 +136,18 @@ def test_double_click_enters_without_any_voice_commands_and_exits_without_source
     assert helper.calls == [("start", ("test.editor", 123)), ("cancel",)]
 
 
+def test_running_stroke_candidate_can_commit_with_pending_voice_state(stroke, monkeypatch):
+    c, bridge, tp, _, _ = stroke
+    wake(stroke)
+    tp.addStroke("h")
+    monkeypatch.setattr(tp, "_speech_busy", lambda: True)
+    tp.selectCandidate(0)
+    request = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
+    c._inline_input._accept(dict(type="stroke_result", epoch=c._inline_input._epoch,
+        client_id=request["client_id"], request_id=request["request_id"], success=True))
+    assert not tp._pending_stroke_commit and not tp.strokeCode
+
+
 def test_confirm_keeps_stroke_mode_and_does_not_show_canonical_shape(stroke):
     c, bridge, tp, _, session = stroke
     wake(stroke)
@@ -126,6 +162,22 @@ def test_confirm_keeps_stroke_mode_and_does_not_show_canonical_shape(stroke):
     c._inline_input._accept(dict(type="stroke_result", epoch=c._inline_input._epoch,
         client_id=request["client_id"], request_id=request["request_id"], success=True))
     assert session.phase == "running" and tp.active and tp._code == "" and tp.blocksVoice
+
+    # Continue in the same native editor/session after the acknowledged caret
+    # advance, then select a second character without reopening the menu.
+    target = c._inline_input.stroke_target
+    c._inline_input._accept(dict(type="state", epoch=target[0], client_id=target[1],
+        ready=True, phase="idle", utterance_id="", selection=[1, 0]))
+    tp.addStroke("h")
+    assert tp.strokeCandidates
+    tp.selectCandidate(0)
+    second = next(m for m in reversed(bridge.messages) if m["type"] == "stroke_commit")
+    assert second["request_id"] != request["request_id"]
+    assert second["stroke_session"] == request["stroke_session"]
+    c._inline_input._accept(dict(type="stroke_result", epoch=target[0], client_id=target[1],
+        request_id=second["request_id"], success=True, context="你好"))
+    assert session.phase == "running" and c._inline_input.stroke_target == target
+    assert not tp._pending_stroke_commit and tp.predictionMode and tp.strokeCandidates
 
 
 def test_external_joined_candidate_renders_and_skips_learning_after_ack(stroke, monkeypatch):
@@ -217,7 +269,7 @@ def test_configured_taps_commit_first_then_space_in_one_acknowledged_request(str
     wake(stroke)
     if has_candidate:
         tp.addStroke('h')
-        tp._move_candidate(1)  # Both mapped actions explicitly use the first candidate.
+        tp._selected = 1  # Both mapped actions explicitly use the first candidate.
     candidate = tp.strokeCandidates[0] if has_candidate else ''
     tp._perform_tap(2 if swapped else 1)
     request = next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_commit')
@@ -239,16 +291,21 @@ def test_configured_taps_commit_first_then_space_in_one_acknowledged_request(str
     assert next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_commit')['text'] == expected
 
 
-def test_external_back_and_forth_clears_ink_without_committing(stroke):
+@pytest.mark.parametrize('points', [
+    [(0., 0.), (-40., 0.), (0., 0.)],
+    [(0., 0.), (40., 0.), (0., 0.), (40., 0.)],
+])
+def test_external_back_and_forth_is_ink_without_editing(stroke, points):
     _, bridge, tp, _, session = stroke
     wake(stroke)
     tp.addStroke('h')
+    bridge.messages.clear()
     run = tp._run
-    run.output.options['on_stroke']([(0., 0.), (40., 0.), (0., 0.), (40., 0.)])
-    until(lambda: not tp._code)
+    run.output.options['on_stroke'](points)
+    until(lambda: len(tp._code) == 2)
+    assert tp._code.startswith('h')
     assert session.phase == 'running'
-    assert any(m['type'] == 'stroke_clear' for m in bridge.messages)
-    assert not any(m['type'] == 'stroke_commit' for m in bridge.messages)
+    assert not any(m['type'] in {'stroke_clear', 'stroke_commit'} for m in bridge.messages)
 
 
 def test_double_click_owns_queued_and_delayed_firmware_taps(stroke):

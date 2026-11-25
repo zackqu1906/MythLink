@@ -167,7 +167,7 @@ ColumnLayout {
         }
         FigmaFormRow {
             preferenceStyle: true
-            visible: pane.controller.inlineInput.enabled
+            visible: pane.controller.inlineInput.enabled && Qt.platform.os === "osx"
             title: "语音输入后切回原输入法"
             description: "完成后自动切回；润色、撤销及右滑历史操作会临时切回 Mythlink。默认关闭。"
             PreferenceSwitch {
@@ -180,7 +180,7 @@ ColumnLayout {
         }
         FigmaFormRow {
             preferenceStyle: true
-            visible: pane.controller.inlineInput.enabled
+            visible: pane.controller.inlineInput.enabled && Qt.platform.os === "osx"
             title: "历史操作模式"
             description: pane.controller.historyActionMode === "system_retry"
                 ? "左滑调用当前应用的撤销。撤回到刚才的编辑指令后，右滑可用原指令重新生成。旧版输入法或开启自动切回输入法时沿用「撤销和重做」。"

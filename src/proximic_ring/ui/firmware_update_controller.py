@@ -66,7 +66,12 @@ class FirmwareUpdateController(QObject):
     def progress(self): return self._percent
 
     @Property(str, notify=changed)
-    def bundledVersion(self): return self._bundle.version if self._bundle else '未包含固件'
+    def bundledVersion(self): return self._bundle.version if self._bundle and not self._connected_r1() else '未包含固件'
+
+    def _connected_r1(self):
+        return (self._source is not None and self._connection is self.owner._disconnect_event
+                and not self._connection.is_set()
+                and getattr(self._source, 'firmware_identity', {}).get('family') == 'R1')
 
     @Property(str, notify=changed)
     def currentVersion(self):
@@ -81,6 +86,7 @@ class FirmwareUpdateController(QObject):
     @Property(str, notify=changed)
     def unavailableReason(self):
         if self._busy: return '固件更新进行中'
+        if self._connected_r1(): return '请在 R1-PC 中更新 R1 固件'
         if not self._bundle: return '当前应用没有可用的随包固件'
         if not self.owner.connected: return '请先连接需要更新的戒指'
         if self.owner.busy: return '请等待设备准备完成'

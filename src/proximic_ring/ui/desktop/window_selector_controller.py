@@ -67,6 +67,9 @@ class WindowSelectorController(QObject):
     @Property(str, notify=cardsChanged)
     def heading(self):
         return "选择应用" if self.atApps else self._groups[self._app_index]["card"]["app"]
+    @Property(str, notify=changed)
+    def confirmGestureLabel(self):
+        return "食指捏合" if self.ring.owner._device_family == "R1" else "单击或 Tap"
     @Property("QVariantMap", notify=changed)
     def globalLabels(self):
         return {**{key: GESTURE_LABELS.get(value, "").split("（")[0] for key, value in self.ring.globalBindings.items()},
@@ -284,7 +287,7 @@ class WindowSelectorController(QObject):
             representative = next((c for c in windows if c.get("focused")), windows[0])
             self._groups.append({"windows": windows, "card": {
                 **representative, "windowCount": len(windows),
-                "title": f"{len(windows)} 个窗口 · 单击或 Tap " + ("展开" if len(windows) > 1 else "进入")}})
+                "title": f"{len(windows)} 个窗口 · {self.confirmGestureLabel} " + ("展开" if len(windows) > 1 else "进入")}})
         self._app_index = None
         self._window_selections = {}
         self._selected = next((i for i, group in enumerate(self._groups)

@@ -66,6 +66,18 @@ def test_long_left_clear_preserves_committed_text_and_predictions(stroke, monkey
     assert not any(m['type'] == 'stroke_commit' for m in bridge.messages)
 
 
+def test_expanded_punctuation_crosses_native_bridge_as_one_commit(stroke):
+    _, bridge, tp, _, _ = stroke
+    wake(stroke)
+    run = tp._run
+    points = [(0, 0), (0, -18), (0, -30), (-9, -21)]
+    tp._receive(run, 'selection_state', (run.output, two_finger_selection(points)))
+    message = next(m for m in reversed(bridge.messages) if m['type'] == 'stroke_selection')
+    assert message['punctuation_pull'] == dict(direction='up', progress=1., opened=True, symbol='……')
+    tp._receive(run, 'selection', (run.output, dict(decision=two_finger_selection(points, finished=True))))
+    assert [m['text'] for m in bridge.messages if m['type'] == 'stroke_commit'] == ['……']
+
+
 @pytest.mark.parametrize('before', [(2048, 0), (3, 2), (0, 3), (0, 0)])
 def test_empty_long_pull_selects_and_verifies_prefix_before_backspace(stroke, monkeypatch, before):
     c, bridge, tp, _, session = stroke

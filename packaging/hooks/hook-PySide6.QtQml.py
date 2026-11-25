@@ -9,9 +9,8 @@ hiddenimports, binaries, datas = add_qt6_dependencies(__file__)
 qml_binaries, qml_datas = pyside6_library_info.collect_qtqml_files()
 
 _ROOTS = {
-    # PyInstaller 6.22 follows the PySide6 6.11 wheel layout. Keep the QtCore,
-    # QtQml, and QtQuick trees because Controls styles import private helpers
-    # below these roots at runtime.
+    # Controls styles import private helpers below the QtCore, QtQml and
+    # QtQuick roots at runtime.
     "PySide6/Qt/qml/QtCore",
     "PySide6/Qt/qml/QtQml",
     "PySide6/Qt/qml/QtQuick",
@@ -51,6 +50,8 @@ _EXCLUDED_QML_SUBTREES = {
 
 def _used_qml_module(item) -> bool:
     destination = PurePath(item[1]).as_posix()
+    # PyInstaller places Windows QML directly in PySide6/qml.
+    destination = destination.replace("PySide6/qml/", "PySide6/Qt/qml/", 1)
     belongs_to_used_root = any(
         destination == root or destination.startswith(root + "/")
         for root in _ROOTS

@@ -142,8 +142,8 @@ Rectangle {
             Image { source: "../assets/figma/redesign-567-32842-usage-indicator1.svg" }
             Label { text: "识别候选"; color: theme.muted; font.pixelSize: 14 }
             Item { Layout.fillWidth: true }
-            Label { text: "自动识别添加"; color: theme.text; font.pixelSize: 16 }
-            FigmaSwitch { objectName: "hotwordAutoLearnToggle"; checked: panel.service.autoLearn; Accessible.name: "从纠正中自动学习热词"; onToggled: panel.service.autoLearn = checked }
+            Label { text: "自动学习"; color: theme.text; font.pixelSize: 16 }
+            FigmaSwitch { objectName: "hotwordAutoLearnToggle"; checked: panel.service.autoLearn; Accessible.name: "自动收录语音纠正词并记住常用联想"; onToggled: panel.service.autoLearn = checked }
             FigmaAction { objectName: "hotwordCollapseButton"; symbol: "close"; quiet: true; implicitWidth: 24; implicitHeight: 32; Accessible.name: "关闭热词库"; onClicked: { panel.cancelDrag(); panel.closeRequested() } }
         }
         Label { text: "添加热词"; color: theme.text; font.pixelSize: 16 }
@@ -297,7 +297,7 @@ Rectangle {
                 Label {
                     anchors.centerIn: parent; width: parent.width - 24
                     visible: vocabulary.count === 0
-                    text: panel.searching ? "没有匹配的热词" : "添加常用的名字与术语，让下一次识别更准确。"
+                    text: panel.searching ? "没有匹配的热词" : "添加名字与术语，用于语音识别、编辑和笔画联想。"
                     horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
                     color: theme.muted; font.pixelSize: 14
                 }
@@ -500,8 +500,8 @@ Rectangle {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Label { Layout.fillWidth: true; text: "用于语音识别和编辑"; color: theme.text; font.pixelSize: 14 }
-                FigmaSwitch { id: renameEnabled; objectName: "hotwordEnabledToggle"; Accessible.name: "用于语音识别和编辑" }
+                Label { Layout.fillWidth: true; text: "用于语音识别、编辑和笔画联想"; color: theme.text; font.pixelSize: 14 }
+                FigmaSwitch { id: renameEnabled; objectName: "hotwordEnabledToggle"; Accessible.name: "用于语音识别、编辑和笔画联想" }
             }
             Label { Layout.fillWidth: true; text: panel.service.message; visible: text.length > 0; wrapMode: Text.Wrap; color: theme.muted }
             RowLayout {

@@ -18,7 +18,7 @@ def component_rules():
         identities.add(rule['id']); families.add(rule['family'])
         if not rule['codes'] or any(not 2 <= len(code) <= 4 or set(code)-set('hspnz') for code in rule['codes']):
             raise ValueError('Invalid joined-component code')
-        for form in rule['forms']:
+        for form in rule.get('forms', ()):
             indices = form['indices']
             if (not indices or indices != list(range(indices[0], indices[-1]+1))
                     or indices[0] < 0 or indices[-1] >= form['strokeCount']):
@@ -32,7 +32,10 @@ def component_registry():
     with path.open('rb') as stream:
         data = json.loads(gzip.decompress(stream.read()))
     rule_bytes = files('proximic_ring').joinpath('assets/stroke-joined-rules.json').read_bytes()
+    # Windows Git checkouts can use CRLF for the same rule file.
+    rule_hashes = {hashlib.sha256(raw).hexdigest()
+                   for raw in (rule_bytes, rule_bytes.replace(b'\r\n', b'\n'))}
     if (data.get('schema') != 'ring-joined-component-positions' or data.get('version') != 1
-            or data['source']['rulesSha256'] != hashlib.sha256(rule_bytes).hexdigest()):
+            or data['source']['rulesSha256'] not in rule_hashes):
         raise ValueError('Joined component positions must be rebuilt for these rules')
     return data

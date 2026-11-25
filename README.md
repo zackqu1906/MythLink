@@ -1,6 +1,6 @@
 # Mythlink
 
-Mythlink 将 Ringo 智能戒指的语音、触摸与手势能力整合到 Windows 和 macOS 桌面应用中。
+Mythlink 在 Windows 和 macOS 上连接 Ringo 和 R1 智能戒指，提供语音输入、触摸和手势交互。
 
 - **语音输入与编辑**：近场语音检测、实时听写、跨应用编辑、本地与云端识别。
 - **鼠标与笔画输入**：触摸板移动、点击、笔画识别和候选字。
@@ -18,6 +18,8 @@ Mythlink 将 Ringo 智能戒指的语音、触摸与手势能力整合到 Window
 完整步骤见[安装与使用](documentation/GETTING_STARTED.md)。
 
 ## 从源码运行
+
+复制完整源码目录后，按目标系统运行安装脚本。Ringo 和 R1 的 SDK 随源码提供。
 
 macOS Apple Silicon：
 
@@ -37,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Compute cpu -SkipL
 
 ## 构建安装包
 
-macOS 使用 `bash scripts/build-macos.sh`，Windows 使用 `scripts/build-windows-installer.ps1`。
+macOS 使用 `bash scripts/build-macos.sh`，Windows 使用 `scripts/build-windows.ps1`。
 构建环境、版本选择、签名与公证配置见[构建与发布](documentation/BUILDING.md)。
 
 产品资源随源码提供；构建不依赖开发者的日志、录音、用户历史或原 `docs/` 目录。

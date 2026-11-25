@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from collections import Counter
 from functools import lru_cache
 import gzip
 from html import escape
@@ -64,14 +65,22 @@ def candidate_glyph(character, variant='', entered=0, fuzzy=(), prediction=False
         return dict(character=character, available=False, source='', states=[], total=0,
                     entered=entered, next='', status='暂缺逐笔字形')
     paths, canonical = glyph['paths'], glyph['code']
+    if character == '纟' and not canonical and len(paths) == 3:
+        canonical = 'zzh'  # The three ordered outlines are 撇折、撇折、提.
     mapping = (stroke_mapping(canonical, variant,
                _heart_components().get(character, ()) if canonical != variant else ())
                if canonical and variant else None)
     if stroke_indices is not None:
-        mapping = (stroke_indices if len(stroke_indices) == len(canonical) == len(variant)
+        from .stroke_components import point_roles, split_stroke_roles
+        counts = Counter(stroke_indices)
+        split = split_stroke_roles(character, canonical) if len(stroke_indices) > len(canonical) else ()
+        mapping = (stroke_indices if len(stroke_indices) == len(variant)
                    and all(type(i) is int for i in stroke_indices)
-                   and sorted(stroke_indices) == list(range(len(canonical)))
-                   and ''.join(canonical[i] for i in stroke_indices) == variant else None)
+                   and sorted(counts) == list(range(len(canonical)))
+                   and all(count == 1 or (count == 2 and i in split) for i, count in counts.items())
+                   and all(canonical[i] == letter or
+                           (letter == 'n' and i in point_roles(character, canonical))
+                           for i, letter in zip(stroke_indices, variant)) else None)
     available = prediction or (mapping is not None and 0 <= entered <= len(mapping))
     states = ['entered' if prediction else 'remaining'] * len(paths)
     next_symbol = ''
@@ -96,11 +105,12 @@ def candidate_glyph(character, variant='', entered=0, fuzzy=(), prediction=False
         parts.append(f'<path d="{escape(path, quote=True)}" {style}/>')
     parts.append('</g></svg>')
     svg = ''.join(parts)
+    total = len(mapping) if mapping is not None and not prediction else len(paths)
     status = ('联想' if prediction else '笔顺版本不同' if not available else
-              '已写完' if entered == len(paths) else f'{entered} / {len(paths)} 笔')
+              '已写完' if entered == total else f'{entered} / {total} 笔')
     if corrections and not prediction:
         positions = '、'.join(str(index+1) for index in corrections)
         status = f'疑似错笔 第{positions}笔 · {status}'
     return dict(character=character, available=available,
                 source='data:image/svg+xml;base64,' + base64.b64encode(svg.encode()).decode(),
-                states=states, total=len(paths), entered=entered, next=next_symbol, status=status)
+                states=states, total=total, entered=entered, next=next_symbol, status=status)

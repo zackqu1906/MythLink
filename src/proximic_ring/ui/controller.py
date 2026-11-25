@@ -36,7 +36,8 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..asr import ASRBackendCache
 from ..asr.backends.bailian import STREAMING_MODEL as BAILIAN_STREAMING_MODEL
-from ..audio.microphone import input_device_choices
+from ..audio.microphone import SYSTEM_DEFAULT_MICROPHONE, input_device_choices
+from ..ring_devices import R1_TAP_ALIASES, matches_tap_gesture, ring_family
 from ..voice.app_runtime import (
     ASR_GAIN_DB_DEFAULT,
     ASR_GAIN_DB_MAX,
@@ -398,6 +399,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._battery_charge_status = -1
         self._battery_query_complete = False
         self._recognition_enabled = False
+        self._ring_microphone_unavailable = ""
         self._voice_runtime_error = ""
         self._voice_retry_pending = False
         self._retry_voice_event = threading.Event()
@@ -536,32 +538,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._speech_control_mode = str(self._settings.value("input/speechControlMode", "gesture"))
         if self._speech_control_mode not in {"proximity", "gesture"}:
             self._speech_control_mode = "proximity"
-        self._audio_source = str(self._settings.value("audio/source", "ring"))
-        if self._audio_source not in {"ring", "microphone"}:
-            self._audio_source = "ring"
-        self._microphone_device = str(self._settings.value("audio/microphoneDevice", ""))
+        self._device_name = str(self._settings.value("ring/name", "Ringo"))
+        self._selector = str(self._settings.value("ring/selector", ""))
+        self._device_family = str(self._settings.value("ring/family", ring_family(self._device_name)))
+        self._load_device_audio_preferences()
         self._microphone_devices: list[dict] = []
         self._microphone_scan_busy = False
         self._microphone_devices_error = ""
-        try:
-            self._gesture_bindings = GestureBindings.from_json(
-                self._settings.value("input/gestureBindings", GestureBindings().to_json())
-            )
-            if not self._bool_setting("gestures/appDefaultsMigrated", False):
-                self._gesture_bindings = migrate_voice_defaults(self._gesture_bindings)
-                self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
-                self._settings.setValue("gestures/appDefaultsMigrated", True)
-            from .gestures.voice_gesture_mapping import single_bindings
-            single = single_bindings(self._gesture_bindings)
-            if single != self._gesture_bindings:
-                if not self._settings.contains("input/gestureBindingsBeforeSingleGesture"):
-                    self._settings.setValue("input/gestureBindingsBeforeSingleGesture", self._gesture_bindings.to_json())
-                self._gesture_bindings = single
-                self._settings.setValue("input/gestureBindings", single.to_json())
-        except (ValueError, TypeError):
-            self._gesture_bindings = GestureBindings()
-            self._settings.setValue("input/gestureBindings", self._gesture_bindings.to_json())
-            self._gesture_settings_error = "原手势设置无效，已恢复默认分配"
+        self._gesture_bindings = self._load_gesture_bindings(restore_selected_ring=True)
         try:
             self._global_gesture_bindings = GlobalGestureBindings.from_json(
                 self._settings.value(GLOBAL_BINDINGS_KEY, GlobalGestureBindings().to_json()))
@@ -620,7 +604,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._available_devices: list[dict[str, object]] = []
         self._device_handles: dict[str, object] = {}
         self._selected_device: object | None = None
-        self._device_search = "Ringo"
+        self._device_search = self._device_family or "Ringo"
         self._discovery_active = False
         self._pending_device_connection = False
         self._scan_message = "打开设备列表后会扫描附近的蓝牙设备"
@@ -672,8 +656,6 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         default_model = assets / BUNDLED_NEAR_MODEL_FILENAME
         default_repo = project_root / "third_party" / "streaming-sensevoice"
         default_funasr_repo = project_root / "third_party" / "Fun-ASR"
-        self._device_name = str(self._settings.value("ring/name", "Ringo"))
-        self._selector = str(self._settings.value("ring/selector", ""))
         # Restore the reconnect action without starting a connection automatically.
         self._can_reconnect = bool(self._selector.strip())
         # Public firmware 1.2.133 uses ADPCM. Migrate old saved Opus/PCM
@@ -911,6 +893,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         from .firmware_update_controller import FirmwareUpdateController
         self._firmware_update = FirmwareUpdateController(self)
         self._touchpad.sourceReady.connect(self._firmware_update.attach)
+        self._touchpad.sourceReady.connect(self._apply_ring_microphone_availability)
         self._proximity.diagnostic.connect(lambda info: self._event_log("PROXIMITY", **info))
         self._proximity.lockPreparing.connect(self._pause_inputs_for_lock)
         self._proximity.locked.connect(self._pause_inputs_for_lock)
@@ -1146,14 +1129,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Property("QVariantList", notify=devicesChanged)
     def availableDevices(self) -> list[dict[str, object]]:
         query = self._device_search.strip().casefold()
-        if not query:
-            return list(self._available_devices)
-        return [
-            item
-            for item in self._available_devices
-            if query in str(item.get("name", "")).casefold()
-            or query in str(item.get("identifier", "")).casefold()
-        ]
+        rows = self._available_devices
+        if query in {"r1", "ringo"}:
+            rows = [item for item in rows if str(item.get("family", "")).casefold() == query]
+        elif query:
+            rows = [item for item in rows if query in str(item.get("name", "")).casefold()
+                    or query in str(item.get("identifier", "")).casefold()]
+        return [{key: value for key, value in item.items() if key != "family"} for item in rows]
 
     @Property(str, notify=deviceSearchChanged)
     def deviceSearch(self) -> str:
@@ -1297,7 +1279,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         elif phase == "starting" and self._recognition_enabled:
             self._set_status("正在准备", f"正在连接输入法，就绪后开始收音；{self.endGestureHint}取消", "starting")
         elif phase == "listening" and self._recognition_enabled:
-            self._set_status("听写 · 可以说话", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
+            if self._ring_mic_on_demand() and not self._utterance_active:
+                self._set_status("正在开启戒指麦克风", "收到音频后即可说话", "starting")
+            else:
+                self._set_status("听写 · 可以说话", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
         elif phase == "finishing" and self._recognition_enabled:
             self._set_status("正在定稿", "正在等待本句识别结果", "processing")
         elif phase == "polishing" and self._recognition_enabled:
@@ -1369,8 +1354,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         )
         self._inline_requests[self._text_request_id] = key
         self._inline_edit_requests[self._text_request_id] = (request, source)
-        if not retry and self._asr_backend == "volcengine":
-            self._hotwords.prepare(key, instruction, original, self._voice_llm_settings(INPUT_MODE_EDIT))
+        if not retry:
+            self._hotwords.prepare(key, instruction, original, request.settings)
         self._set_interaction_state("processing")
 
     def _submit_inline_polish(self, key, text, target) -> None:
@@ -2783,17 +2768,38 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @microphoneDevice.setter
     def microphoneDevice(self, value: str) -> None:
-        if value and not any(row["value"] == value for row in self._microphone_devices):
+        if value and not self._is_selectable_microphone(value):
             return
         self._select_audio_configuration(microphone_device=value)
         self.microphoneDevicesChanged.emit()
+
+    @property
+    def _microphone_preference_key(self):
+        return "audio/r1MicrophoneDevice" if self._device_family == "R1" else "audio/microphoneDevice"
+
+    def _load_device_audio_preferences(self):
+        if self._device_family == "R1":
+            self._audio_source = "microphone"
+            self._microphone_device = str(self._settings.value(self._microphone_preference_key, "")) or SYSTEM_DEFAULT_MICROPHONE
+        else:
+            saved = str(self._settings.value("audio/source", "ring"))
+            self._audio_source = saved if saved in {"ring", "microphone"} else "ring"
+            self._microphone_device = str(self._settings.value(self._microphone_preference_key, ""))
+
+    def _is_selectable_microphone(self, value):
+        return (value == SYSTEM_DEFAULT_MICROPHONE and self._device_family == "R1"
+                or any(row["value"] == value for row in self._microphone_devices))
 
     def _active_audio_configuration(self):
         return AudioConfiguration(self._audio_source, self._microphone_device, self._speech_control_mode)
 
     @Property("QVariantList", notify=microphoneDevicesChanged)
     def audioInputs(self):
-        rows = [{"label": "Ring 麦克风", "value": "ring"}]
+        rows = []
+        if self._device_family == "R1":
+            rows.append({"label": "系统默认麦克风", "value": SYSTEM_DEFAULT_MICROPHONE})
+        elif not self._ring_microphone_unavailable:
+            rows.append({"label": "Ring 麦克风", "value": "ring"})
         for device in self._microphone_devices:
             name = device["name"]
             matches = [item for item in self._microphone_devices if item["name"] == name]
@@ -2837,8 +2843,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     def audioInputLabel(self):
         selection = self.audioSettings
         if selection["audio_source"] == "ring":
-            return "Ring 麦克风"
+            return "请选择电脑麦克风" if self._ring_microphone_unavailable else "Ring 麦克风"
         value = selection["microphone_device"]
+        if value == SYSTEM_DEFAULT_MICROPHONE:
+            return "系统默认麦克风"
         device = self._selected_microphone_choice(value)
         if device is not None:
             return device["name"]
@@ -2851,7 +2859,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     def selectAudioInput(self, value):
         if value == "ring":
             self._select_audio_configuration(audio_source="ring")
-        elif any(row["value"] == value for row in self._microphone_devices):
+        elif self._is_selectable_microphone(value):
             # One request prevents a transient switch to the legacy automatic
             # microphone before the selected device has been applied.
             self._select_audio_configuration(audio_source="microphone", microphone_device=value)
@@ -2882,6 +2890,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._voice_practice.cancel()
         if self._busy or self._quitting:
             return
+        if self._device_family == "R1":
+            if values.get("audio_source") == "ring":
+                return
+            if values.get("microphone_device") == "":
+                values["microphone_device"] = SYSTEM_DEFAULT_MICROPHONE
         if self._runtime_active or self._connected:
             changes = self._audio_settings_changes
             if changes is None or self._disconnect_event.is_set():
@@ -2891,9 +2904,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._audio_settings_error = False
             self._update_audio_settings_readiness()
         else:
-            keys = {"audio_source": "audio/source", "microphone_device": "audio/microphoneDevice",
+            keys = {"audio_source": "audio/source", "microphone_device": self._microphone_preference_key,
                     "speech_control_mode": "input/speechControlMode"}
             for name, value in values.items():
+                if name == "audio_source" and self._device_family == "R1":
+                    continue
                 self._set_setting("_" + name, value, keys[name])
             self._audio_settings_message = ""
             self._audio_settings_error = False
@@ -2947,9 +2962,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             applied = changes.applied
             self._audio_source, self._microphone_device = applied.audio_source, applied.microphone_device
             self._speech_control_mode = applied.speech_control_mode
-            for key, value in (("audio/source", self._audio_source), ("audio/microphoneDevice", self._microphone_device),
-                               ("input/speechControlMode", self._speech_control_mode)):
-                self._settings.setValue(key, value)
+            if self._device_family != "R1":
+                self._settings.setValue("audio/source", self._audio_source)
+            self._settings.setValue(self._microphone_preference_key, self._microphone_device)
+            self._settings.setValue("input/speechControlMode", self._speech_control_mode)
             try:
                 self._modification_dataset.set_capture_configuration(
                     audio_source=self._audio_source, microphone_device=self._microphone_device,
@@ -2973,7 +2989,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Property("QVariantList", notify=microphoneDevicesChanged)
     def microphoneDevices(self) -> list[dict]:
-        rows = [{"label": "自动识别 DJI 麦克风", "value": ""}] + list(self._microphone_devices)
+        default = ({"label": "系统默认麦克风", "value": SYSTEM_DEFAULT_MICROPHONE}
+                   if self._device_family == "R1" else {"label": "自动识别 DJI 麦克风", "value": ""})
+        rows = [default, *self._microphone_devices]
         selected = [self._microphone_device]
         if self._audio_settings_changes is not None:
             selected.append(self._audio_settings_changes.desired.microphone_device)
@@ -3026,11 +3044,88 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 saved = json.loads(self._microphone_device)
                 matches = [row for row in self._microphone_devices if row["name"] == saved["name"] and row["api"] == saved["api"]]
                 if len(matches) == 1:
-                    self._set_setting("_microphone_device", matches[0]["value"], "audio/microphoneDevice")
+                    self._set_setting("_microphone_device", matches[0]["value"], self._microphone_preference_key)
             except (ValueError, TypeError, KeyError):
                 pass
         self.microphoneDevicesChanged.emit()
         self.audioSettingsChanged.emit()
+
+    @property
+    def _gesture_bindings_key(self) -> str:
+        return "input/r1GestureBindings" if self._device_family == "R1" else "input/gestureBindings"
+
+    def _default_gesture_bindings(self) -> GestureBindings:
+        from .gestures.voice_gesture_mapping import RINGO_START_END
+
+        toggle = ("index-pinch", "") if self._device_family == "R1" else RINGO_START_END
+        return GestureBindings(confirm=toggle, end=toggle)
+
+    def _load_gesture_bindings(self, *, restore_selected_ring: bool = False) -> GestureBindings:
+        from .gestures.voice_gesture_mapping import normalize_bindings
+
+        key = self._gesture_bindings_key
+        new_r1_profile = self._device_family == "R1" and not self._settings.contains(key)
+        legacy_r1 = restore_selected_ring and new_r1_profile
+        load_key = "input/gestureBindings" if legacy_r1 else key
+        defaults = self._default_gesture_bindings()
+        fallback = defaults if self._device_family == "R1" and not legacy_r1 else GestureBindings()
+        saved = self._settings.value(load_key, fallback.to_json())
+        migrate_aliases = (load_key == "input/gestureBindings"
+                           and not self._bool_setting("gestures/appDefaultsMigrated", False))
+        migrate_ringo = (key == "input/gestureBindings"
+                         and not self._bool_setting("gestures/ringoPinchDefaultMigrated", False))
+        self._gesture_settings_error = ""
+        try:
+            bindings = GestureBindings.from_json(saved)
+        except (ValueError, TypeError):
+            bindings = defaults
+            self._gesture_settings_error = "原手势设置无效，已恢复默认分配"
+        else:
+            if migrate_aliases:
+                bindings = migrate_voice_defaults(bindings)
+                if not legacy_r1:
+                    self._settings.setValue("gestures/appDefaultsMigrated", True)
+            normalized = normalize_bindings(bindings)
+            backup_key = key + "BeforeSingleGesture"
+            if normalized != bindings and not legacy_r1 and not self._settings.contains(backup_key):
+                self._settings.setValue(backup_key, bindings.to_json())
+            bindings = normalized
+            if legacy_r1 or migrate_ringo:
+                reserved = {name for action, names in bindings.as_dict().items()
+                            if action not in {"confirm", "end"} for name in names}
+                reserved.add(self._settings.value("gestures/inputSourceGesture", ""))
+                updates = {}
+                for action in ("confirm", "end"):
+                    primary = getattr(bindings, action)[0]
+                    pinch = R1_TAP_ALIASES.get(primary)
+                    if pinch and pinch not in reserved:
+                        if legacy_r1:
+                            updates[action] = (pinch, "")
+                        elif primary == "tap":
+                            updates[action] = getattr(defaults, action)
+                bindings = replace(bindings, **updates)
+        if migrate_ringo:
+            self._settings.setValue("gestures/ringoPinchDefaultMigrated", True)
+        if new_r1_profile or migrate_aliases or bindings.to_json() != saved:
+            self._settings.setValue(key, bindings.to_json())
+
+        if sys.platform == "win32" and os.environ.get("MYTHLINK_WINDOWS_TSF") == "1":
+            gestures = {action: tuple("" if matches_tap_gesture(name, self._device_family, "double-tap")
+                                      else name for name in names)
+                        for action, names in bindings.as_dict().items()}
+            if not any(gestures["confirm"]):
+                for action in gestures:
+                    if action not in {"confirm", "end"}:
+                        gestures[action] = tuple("" if name == "swipe-up" else name for name in gestures[action])
+                gestures["confirm"] = ("swipe-up", "")
+            used = {name for action, names in gestures.items() if action not in {"confirm", "end"}
+                    for name in names if name}
+            if not any(gestures["end"]):
+                start = next(name for name in gestures["confirm"] if name)
+                preferred = defaults.end[0]
+                gestures["end"] = (preferred if preferred not in used else start, "")
+            bindings = GestureBindings(**gestures)
+        return bindings
 
     @Property("QVariantMap", notify=gestureSettingsChanged)
     def gestureBindings(self) -> dict:
@@ -3065,18 +3160,20 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             and {key, action} != {"confirm", "end"}
         }
         used.add(self._app_gestures.inputSourceGesture)
+        if self._touchpad.windowsInputPrototype:
+            used.update(name for name in GESTURE_LABELS
+                        if matches_tap_gesture(name, self._device_family, "double-tap"))
         return [{"value": "", "label": "未设置"}] + [
             {"value": name, "label": label}
             for name, label in GESTURE_LABELS.items() if name not in used
         ]
 
-    def _save_gesture_bindings(self, bindings: GestureBindings) -> None:
+    def _set_active_gesture_bindings(self, bindings: GestureBindings) -> None:
         # Publish one immutable snapshot; the gesture worker never reads QSettings.
-        self._settings.setValue("input/gestureBindings", bindings.to_json())
         self._gesture_bindings = bindings
+        self._app_gestures.load_input_source_gesture()
         self._app_gestures._generation += 1
         self._app_gestures.cancel_pending("手势设置已变化，请重新触发手势")
-        self._gesture_settings_error = ""
         self.gestureSettingsChanged.emit()
         self._app_gestures.changed.emit()
         self._app_gestures.catalog.changed.emit()
@@ -3084,11 +3181,18 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._transcript_text = f"正在收听语音 · {self.endGestureHint} 结束"
             self.transcriptChanged.emit()
             self._set_status("正在聆听", f"{self.endGestureHint} 结束本句，Esc 可取消", "listening")
+
+    def _save_gesture_bindings(self, bindings: GestureBindings) -> None:
+        self._settings.setValue(self._gesture_bindings_key, bindings.to_json())
+        self._gesture_settings_error = ""
+        self._set_active_gesture_bindings(bindings)
         self._event_log("USER_SETTING", setting="gesture_bindings", value=bindings.as_dict())
 
     @Slot(str, int, str, result=bool)
     def setGestureBinding(self, action: str, slot: int, name: str) -> bool:
         try:
+            if self._touchpad.windowsInputPrototype and matches_tap_gesture(name, self._device_family, "double-tap"):
+                raise ValueError(f"{GESTURE_LABELS[name]}用于切换语音和触摸板模式")
             if action not in self._gesture_bindings.as_dict() or slot not in (0, 1):
                 raise ValueError("无效的手势设置位置")
             bindings = replace(self._gesture_bindings, **{action: (name, "")})
@@ -3118,9 +3222,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         for gesture, title in VOICE_GESTURES:
             action = action_for(self._gesture_bindings, gesture)
             if action:
-                assigned[action["id"]] = dict(gesture=gesture, gestureLabel=title)
-        return [{**action, **assigned.get(action["id"], dict(gesture="", gestureLabel="无"))}
-                for action in self.voiceGestureActions]
+                assigned.setdefault(action["id"], []).append((gesture, title))
+        rows = self.voiceGestureActions
+        for row in rows:
+            choices = assigned.get(row["id"], [])
+            row["gesture"] = choices[0][0] if choices else ""
+            row["gestureLabel"] = "、".join(title for _, title in choices) or "无"
+        return rows
 
     @Property(QObject, constant=True)
     def gestureMappingHistory(self):
@@ -3138,6 +3246,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     def setVoiceGestureAction(self, gesture, action):
         from .gestures.voice_gesture_mapping import with_action
         try:
+            if action and self._touchpad.windowsInputPrototype and matches_tap_gesture(gesture, self._device_family, "double-tap"):
+                raise ValueError(f"{GESTURE_LABELS[gesture]}用于切换语音和触摸板模式")
             bindings = with_action(self._gesture_bindings, gesture, action)
             self._app_gestures.validate_voice(bindings)
         except ValueError as exc:
@@ -3150,13 +3260,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
 
     @Slot()
     def resetGestureBindings(self) -> None:
+        defaults = self._default_gesture_bindings()
         try:
-            self._app_gestures.validate_voice(GestureBindings())
+            self._app_gestures.validate_voice(defaults)
         except ValueError as exc:
             self._gesture_settings_error = str(exc)
             self.gestureSettingsChanged.emit()
             return
-        self._save_gesture_bindings(GestureBindings())
+        self._save_gesture_bindings(defaults)
 
 
     @Property(bool, notify=textProcessingChanged)
@@ -3785,8 +3896,18 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._proximity_reconnect_attempts = 0
         self._selector = identifier
         self._device_name = display_name
+        previous_gesture_key = self._gesture_bindings_key
+        self._device_family = next((row.get("family", "") for row in self._available_devices
+                                    if row["identifier"].casefold() == identifier.casefold()), ring_family(display_name))
         self._settings.setValue("ring/selector", identifier)
         self._settings.setValue("ring/name", display_name)
+        self._settings.setValue("ring/family", self._device_family)
+        self._load_device_audio_preferences()
+        if self._gesture_bindings_key != previous_gesture_key:
+            self._set_active_gesture_bindings(self._load_gesture_bindings())
+            self._app_gestures.catalog.discoveryChanged.emit()
+        self.microphoneDevicesChanged.emit()
+        self.audioSettingsChanged.emit()
         self.settingsChanged.emit()
         if not self._can_reconnect:
             self._can_reconnect = True
@@ -4093,13 +4214,14 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if remember:
             self._remember_input_setting("input/voiceEnabled", True)
         if self._voice_runtime_error:
-            if remember and not self._voice_retry_pending:
+            requires_computer_mic = self._audio_source == "ring" and self._ring_microphone_unavailable
+            if remember and not self._voice_retry_pending and not requires_computer_mic:
                 self._voice_retry_pending = True
                 self.voiceAvailabilityChanged.emit()
                 self._retry_voice_event.set()
                 self._set_status("正在准备语音", "正在重新检查语音配置，Ring 保持连接", "starting")
             elif not self._voice_retry_pending:
-                self._set_status("语音暂不可用", self._voice_runtime_error, "error")
+                self._show_voice_unavailable()
             return
         self._interaction_recognition_suspended = False
         if not self._touchpad.blocksVoice:
@@ -4110,6 +4232,9 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if self._touchpad.blocksVoice:
             self._set_status("笔画输入中", "语音已启用，结束书写后恢复待命", "paused")
             self._append_log("语音识别已启用，等待笔画输入结束")
+            return
+        if self._ring_mic_on_demand():
+            self._set_ring_mic_idle_status()
             return
         detail = (
             f"{self.confirmGestureHint} 开始，{self.endGestureHint} 结束本句"
@@ -4788,22 +4913,25 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 continue
             key = identifier.casefold()
             current = existing.get(key)
+            name = str(row.get("name", "")).strip()
             if current is None:
                 current = {
-                    "name": str(row.get("name", "")).strip() or "未命名设备",
+                    "name": name or "未命名设备",
                     "identifier": identifier,
                     "rssi": row.get("rssi", ""),
+                    "family": row.get("family", ring_family(name)),
                 }
                 self._available_devices.append(current)
                 existing[key] = current
                 added += 1
             else:
                 current["name"] = (
-                    str(row.get("name", "")).strip()
+                    name
                     or str(current.get("name", ""))
                     or "未命名设备"
                 )
                 current["rssi"] = row.get("rssi", current.get("rssi", ""))
+                current["family"] = row.get("family", ring_family(current["name"]))
         return added
 
     def _refresh_scan_message(self) -> None:
@@ -5043,6 +5171,11 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             if self._ignore_asr_updates_until_next_start:
                 self._resume_recognition_after_interaction()
             return
+        if summary.startswith("[RING_MIC] 启动失败"):
+            if self._inline_audio_prepared:
+                self._inline_input.cancel()
+            self._set_status("戒指麦克风启动失败", "请松开按键或重新触发语音", "error")
+            return
         if summary.startswith("[ASR] END"):
             if self._inline_enabled() and self._ignore_asr_updates_until_next_start:
                 # END can already be in flight when the input method cancels.
@@ -5255,6 +5388,13 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._recognition_event.clear()
         self._cancel_utterance_event.set()
         self._connected = False
+        if self._ring_microphone_unavailable:
+            if self._voice_runtime_error == self._ring_microphone_unavailable:
+                self._voice_runtime_error = ""
+                self.voiceAvailabilityChanged.emit()
+            self._ring_microphone_unavailable = ""
+            self.microphoneDevicesChanged.emit()
+            self.audioSettingsChanged.emit()
         self._recognition_enabled = False
         self._interaction_recognition_suspended = False
         self._ptt_active = False
@@ -5327,6 +5467,23 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             user_requested=self._disconnect_requested_by_user,
         )
 
+    @Slot(object, object)
+    def _apply_ring_microphone_availability(self, source, connection) -> None:
+        if connection is not self._disconnect_event or connection.is_set():
+            return
+        reason = getattr(source, "microphone_unavailable_reason", "")
+        if reason != self._ring_microphone_unavailable:
+            self._ring_microphone_unavailable = reason
+            self.microphoneDevicesChanged.emit()
+            self.audioSettingsChanged.emit()
+
+    def _show_voice_unavailable(self) -> None:
+        if self._voice_runtime_error == self._ring_microphone_unavailable:
+            self._set_status("语音未启用", self._voice_runtime_error, "paused")
+        else:
+            detail = self._voice_runtime_error.rstrip("。")
+            self._set_status("语音暂不可用", f"{detail}。调整语音设置后可再次开启。Ring 保持连接。", "error")
+
     @Slot(object, str)
     def _apply_runtime_voice_availability(self, connection, error: str) -> None:
         if (connection is not self._disconnect_event or connection.is_set()
@@ -5339,7 +5496,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if self._voice_runtime_error:
             self.pauseRecognition(remember=False)
             self._recognition_event.clear()
-            self._set_status("语音暂不可用", self._voice_runtime_error + "；请检查模型配置后再次开启语音，Ring 保持连接。", "error")
+            if not self._busy:
+                self._show_voice_unavailable()
         elif retrying:
             self.startRecognition(remember=False)
 
@@ -5367,13 +5525,17 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._append_log("设备和识别组件已就绪")
         self._event_log("RUNTIME_READY", device_name=self._device_name)
         self._input_restore_connection = self._disconnect_event
+        if sys.platform == "win32":
+            # A temporary stop/mode switch belongs to the previous connection.
+            # The independent startup choice controls the new Windows session.
+            self._settings.setValue("touchpad/enabled", self._touchpad.autoStartOnConnect)
         self._input_restore_pending = {"input/voiceEnabled", "touchpad/enabled"}
         self._event_log("INPUT_PREFERENCES_RESTORE",
                         voice_enabled=self._bool_setting("input/voiceEnabled", True),
                         touchpad_enabled=self._bool_setting("touchpad/enabled", True))
         self._restore_input_preferences()
         if self._voice_runtime_error:
-            self._set_status("语音暂不可用", self._voice_runtime_error + "；配置后可再次开启语音，Ring 保持连接。", "error")
+            self._show_voice_unavailable()
 
     @Slot(str, bool, str, int)
     def _apply_runtime_update(
@@ -7293,8 +7455,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         return (self._hotword_legacy_epoch, "desktop", str(interaction.request_id), 0)
 
     def _learn_applied_hotwords(self, interaction):
-        if (self._asr_backend != "volcengine" or interaction is None
-                or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None):
+        if interaction is None or interaction.mode != INPUT_MODE_EDIT or interaction.original_snapshot is None:
             return
         key = self._legacy_hotword_key(interaction)
         self._hotwords.prepare(key, interaction.raw_text, interaction.original_snapshot.text,
@@ -8325,6 +8486,12 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             self._ptt_active = False
             return
         self._ptt_active = bool(active)
+        if self._ring_mic_on_demand():
+            if active:
+                self._set_status("正在开启戒指麦克风", "收到音频后即可说话，松开按键结束", "starting")
+            elif not self._utterance_active:
+                self._set_ring_mic_idle_status()
+            return
         if active:
             self._set_status("按键监听中", "松开后恢复自动控制", "manual")
         elif self._recognition_enabled:
@@ -8458,6 +8625,19 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         prefix = f"[{' '.join(context)}] " if context else ""
         self._append_log(prefix + str(message))
 
+    def _local_ring_mic_experiment(self) -> bool:
+        return (sys.platform == "win32" and not is_frozen()
+                and (resource_root() / ".runtime" / "ring-mic-on-demand").is_file())
+
+    def _ring_mic_on_demand(self) -> bool:
+        return self._audio_source == "ring" and self._local_ring_mic_experiment()
+
+    def _set_ring_mic_idle_status(self) -> None:
+        detail = f"{self.confirmGestureHint} 开始语音"
+        if self._push_to_talk and self._speech_control_mode != "gesture":
+            detail += "，或按住右 Alt"
+        self._set_status("等待语音触发", detail, "running")
+
     def _runtime_settings(self) -> RuntimeSettings:
         model = self._path_or_none(self._model_path)
         # Model paths are checked by the optional voice pipeline after BLE
@@ -8473,6 +8653,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         # long-lived loop on every platform.
         connection_device = None
         return RuntimeSettings(
+            ring_mic_on_demand=self._local_ring_mic_experiment(),
             asr_end_on_tap=True,
             speech_control_mode=self._speech_control_mode,
             audio_source=self._audio_source,
@@ -8481,6 +8662,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             ring_name=self._device_name.strip(),
             ring_selector=self._selector.strip() or None,
             ring_device=connection_device,
+            ring_family=self._device_family,
             data_dir=app_data_root() / "data",
             encoding=self._audio_encoding,
             detector_model=model,
@@ -8516,6 +8698,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             raise ValueError("请先结束当前输入，再开始练习")
         if self._audio_source == "ring" and not self._connected:
             raise ValueError("请先在首页连接 Ring，或选择电脑麦克风")
+        if self._audio_source == "ring" and self._ring_microphone_unavailable:
+            raise ValueError(self._ring_microphone_unavailable)
         if self._runtime_active and not self._connected:
             raise ValueError("设备正在连接，请稍后再试")
         options = {}

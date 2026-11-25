@@ -1,5 +1,6 @@
 """Closing discovery cancels the scanner and releases the UI immediately."""
 import asyncio
+import json
 import threading
 import time
 
@@ -77,6 +78,54 @@ def test_completed_scan_keeps_results_and_device_handle_for_connection(inline_ui
     assert c.availableDevices == [{"name": "Ringo Test", "identifier": "RING-ID", "rssi": -42}]
     c.connectToDevice("RING-ID", "Ringo Test")
     assert starts == [handle]
+
+
+def test_family_filters_and_audio_defaults_follow_the_selected_ring(inline_ui, monkeypatch):
+    from types import SimpleNamespace
+    from proximic_ring.audio.microphone import SYSTEM_DEFAULT_MICROPHONE
+    from ring_python_sdk import ble
+
+    c, _, _, root, _ = inline_ui
+    rows = [
+        SimpleNamespace(name="桌面测试", pnp_id=bytes.fromhex("02 39 3a 31 52"), identifier="one", rssi=-42, device=object()),
+        SimpleNamespace(name="Ringo1234", identifier="two", rssi=-50, device=object()),
+        SimpleNamespace(name="Other", identifier="manual-search", rssi=-55, device=object()),
+    ]
+
+    async def scan(_timeout):
+        return rows
+
+    starts = []
+    monkeypatch.setattr(ble, "scan_all_devices", scan)
+    monkeypatch.setattr(c, "_start_selected_device", lambda: starts.append(c._runtime_settings()))
+    prepare(c, root)
+    wait_until(lambda: c._scan_worker is None)
+    click(root, "deviceFilterR1")
+    assert [row["identifier"] for row in c.availableDevices] == ["one"]
+    click(root, "deviceFilterRingo")
+    assert [row["identifier"] for row in c.availableDevices] == ["two"]
+    c.deviceSearch = "manual-search"
+    assert [row["identifier"] for row in c.availableDevices] == ["manual-search"]
+
+    c.connectToDevice("one", "桌面测试")
+    assert starts[-1].ring_family == "R1" and starts[-1].audio_source == "microphone"
+    assert starts[-1].gesture_bindings.confirm == starts[-1].gesture_bindings.end == ("index-pinch", "")
+    assert starts[-1].microphone_device == c.audioInputSelection == SYSTEM_DEFAULT_MICROPHONE
+    assert c.audioInputs[0]["label"] == "系统默认麦克风"
+    assert c._settings.value("ring/family") == "R1"
+    c.reconnectDevice()
+    assert starts[-1].ring_family == "R1"
+
+    mic = dict(name="External mic", api="Core Audio", index=2)
+    mic["value"] = json.dumps(mic)
+    c._apply_microphone_scan_finished([mic], "")
+    c.selectAudioInput(mic["value"])
+    c.connectToDevice("two", "Ringo1234")
+    assert starts[-1].ring_family == "Ringo" and starts[-1].audio_source == "ring"
+    assert starts[-1].gesture_bindings.confirm == starts[-1].gesture_bindings.end == ("tap", "index-pinch")
+    assert c.audioInputSelection == "ring"
+    c.connectToDevice("one", "桌面测试")
+    assert starts[-1].microphone_device == mic["value"]
 
 
 @pytest.mark.parametrize("dismiss", ["close", "cancel", "escape"])

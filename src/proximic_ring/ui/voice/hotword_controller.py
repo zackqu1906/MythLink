@@ -108,7 +108,7 @@ class HotwordController(QObject):
 
     @Slot(str, result=bool)
     def add(self, word):
-        return self._mutate(lambda: self.store.add(word), "已添加，将从下一句开始参与识别。")
+        return self._mutate(lambda: self.store.add(word), "已添加，可用于语音识别、编辑和笔画联想。")
 
     @Slot(str, str, result=bool)
     def rename(self, entry_id, word):

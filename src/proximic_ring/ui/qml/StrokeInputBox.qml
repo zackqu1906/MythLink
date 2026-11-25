@@ -14,6 +14,7 @@ Item {
     property bool inputVisible: false
     // Height of the scrolling page around this box; 0 when unknown.
     property real viewportHeight: 0
+    property Item menuViewport: null
     readonly property bool ringWriting: touchpad.active && touchpad.inputMode === "stroke"
     // Same wording as the standalone trial's selection hint.
     readonly property string selectionHint: {
@@ -22,7 +23,10 @@ Item {
         if (state.phase === "selecting") {
             if (state.clear_armed) return touchpad.strokeCode.length ? "抬手清空 · 拉回取消" : "抬手删除前文 · 拉回取消"
             if (state.direction === "left") return touchpad.strokeCode.length ? "抬手删除 · 继续外拉可清空" : "抬手退格 · 外拉删除前文"
-            if (state.direction === "right" && touchpad.handwritingCorrectionEnabled) {
+            if (state.punctuation_pull)
+                return state.punctuation_pull.cancel_progress ? "继续下拉取消 · 抬手输入 " + state.punctuation_pull.symbol
+                    : state.punctuation_pull.opened ? "抬手输入 " + state.punctuation_pull.symbol : "抬手输入 · 继续上滑展开标点"
+            if (state.direction === "right" && touchpad.handwritingCorrectionActive) {
                 if (touchpad.strokeCode.length) return "请先确认正在书写的字"
                 return state.correction_armed ? "抬手修正前文 · 拉回取消" : "继续向右外拉可修正前文"
             }
@@ -59,8 +63,8 @@ Item {
 
     function updateContext() {
         if (inputVisible) {
-            touchpad.observeStrokeEditor(editor.text, editor.cursorPosition)
-            touchpad.setStrokeContext(editor.text.slice(0, editor.cursorPosition))
+            touchpad.observeStrokeEditor(editor.text, editor.selectionStart)
+            touchpad.setStrokeContext(editor.text.slice(0, editor.selectionStart))
         }
     }
     function syncInputTarget() {
@@ -126,6 +130,7 @@ Item {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.alignment: Qt.AlignVCenter
                 text: box.touchpad.strokePreparing ? "正在准备笔画输入…"
                     : box.touchpad.active && box.touchpad.inputMode === "stroke" ? "笔画输入中 · " + box.touchpad.strokeGestureLabel + "回到鼠标"
+                    : box.touchpad.inputMode === "voice" ? "语音模式 · " + box.touchpad.voiceModeSwitchGestureLabel + "回到光标控制"
                     : box.touchpad.active ? "鼠标模式 · 点击「开始试写」进入笔画"
                     : "点击「开始试写」用 Ring 写笔画，也可键入试写"
                 font.pixelSize: 12; color: theme.muted
@@ -268,6 +273,7 @@ Item {
                                     if (box.touchpad.trialActive && cursorPosition !== length) { deselect(); cursorPosition = length }
                                     box.updateContext()
                                 }
+                                onSelectionStartChanged: box.updateContext()
                                 onActiveFocusChanged: box.touchpad.setLocalStrokeFocus(box.inputVisible && activeFocus)
                                 cursorDelegate: Rectangle { width: 1; color: theme.primary; visible: editor.activeFocus && !box.touchpad.strokeCode.length }
                                 Keys.onPressed: function(event) {
@@ -367,6 +373,7 @@ Item {
         Card {
             id: selectionCard
             objectName: "strokeSelectionColumn"
+            z: 1
             Layout.fillWidth: true
             implicitHeight: selection.implicitHeight + 2 * (box.compact ? 8 : 10)
             ColumnLayout {
@@ -430,26 +437,15 @@ Item {
                     }
                 }
 
-                Rectangle {
+                StrokeCorrectionScope {
                     id: correctionScope
-                    objectName: "strokeCorrectionScope"
-                    readonly property bool highlighted: selectionMenu.correcting && box.touchpad.handwritingCorrectionText.length > 0
-                    Layout.fillWidth: true; Layout.preferredHeight: correctionScopeText.implicitHeight + 20
-                    visible: box.touchpad.handwritingCorrectionEnabled &&
-                        ((box.touchpad.selectionState.phase === "selecting" && box.touchpad.selectionState.direction === "right")
-                         || box.touchpad.handwritingCorrectionCanUndo)
-                    radius: 8; color: highlighted ? "#234CDB" : "#E9EFFF"
-                    border.color: highlighted ? "#234CDB" : "#AABCF2"
-                    Text {
-                        id: correctionScopeText
-                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
-                        text: box.touchpad.handwritingCorrectionText.length ? "修正用词「" + box.touchpad.handwritingCorrectionText + "」"
-                            : box.touchpad.handwritingCorrectionMessage || "请在目标文本框中使用修正"
-                        font.pixelSize: 16; font.weight: Font.DemiBold; color: correctionScope.highlighted ? "white" : "#234CDB"
-                        wrapMode: Text.WrapAnywhere
-                        textFormat: Text.PlainText
-                        Accessible.role: Accessible.StaticText; Accessible.name: text
-                    }
+                    touchpad: box.touchpad
+                    highlighted: selectionMenu.correcting && touchpad.handwritingCorrectionText.length > 0
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: implicitHeight
+                    visible: touchpad.handwritingCorrectionActive &&
+                        ((touchpad.selectionState.phase === "selecting" && touchpad.selectionState.direction === "right")
+                         || touchpad.handwritingCorrectionCanUndo)
                 }
 
                 GridLayout {
@@ -461,6 +457,7 @@ Item {
                     columnSpacing: box.bodyGap; rowSpacing: box.bodyGap
                     StrokeTutorial {
                         id: tutorial
+                        compact: box.compact
                         visible: box.tutorialOpen
                         Layout.alignment: Qt.AlignTop
                         Layout.preferredWidth: box.tutorialBeside ? box.tutorialWidth : -1
@@ -475,6 +472,7 @@ Item {
                             id: selectionMenu
                             objectName: "strokeSelectionMenu"
                             touchpad: box.touchpad
+                            viewport: box.menuViewport
                             x: clearPullGutter; width: box.menuSide; height: box.menuSide
                         }
                     }
@@ -528,7 +526,7 @@ Item {
                     objectName: "strokeCommitMessage"
                     Layout.fillWidth: true; Layout.minimumWidth: 0
                     text: box.touchpad.state === "error" ? box.touchpad.message : box.touchpad.commitMessage
-                    visible: text.length > 0 && (!correctionScope.visible || text !== correctionScopeText.text)
+                    visible: text.length > 0 && (!correctionScope.visible || text !== correctionScope.text)
                     font.pixelSize: 11
                     color: box.touchpad.state === "error" || text.indexOf("失败") >= 0 ? "#B54756" : box.mutedInk
                     wrapMode: Text.Wrap
@@ -609,12 +607,22 @@ Item {
                             onClicked: box.touchpad.addStroke(modelData.code)
                         }
                     }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
                     CheckBox {
                         objectName: "strokeFuzzyToggle"
                         text: "模糊匹配"; checked: box.touchpad.fuzzyMatching
                         enabled: !box.touchpad.strokeCommitPending
                         focusPolicy: Qt.NoFocus; font.pixelSize: 12
                         onToggled: { box.touchpad.fuzzyMatching = checked; editor.forceActiveFocus() }
+                    }
+                    CheckBox {
+                        objectName: "strokeJoinedToggle"
+                        text: "连笔识别"; checked: box.touchpad.joinedMatching
+                        enabled: !box.touchpad.strokeCommitPending
+                        focusPolicy: Qt.NoFocus; font.pixelSize: 12
+                        onToggled: { box.touchpad.joinedMatching = checked; editor.forceActiveFocus() }
                     }
                 }
                 GridLayout {

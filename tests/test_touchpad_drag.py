@@ -36,6 +36,8 @@ def native(cls=MacSystemMouse, *args):
         kCGMouseEventClickState='count', kCGMouseEventDeltaX='delta_x', kCGMouseEventDeltaY='delta_y',
         kCGHIDEventTap=6, kCGScrollEventUnitPixel=0,
         CGPreflightPostEventAccess=lambda: True,
+        kCGEventSourceStateCombinedSessionState=0,
+        CGEventSourceKeyState=lambda _state, _key: False,
         CGEventCreateMouseEvent=lambda _, kind, point, button: dict(kind=kind, point=point, button=button),
         CGEventSetIntegerValueField=lambda event, field, value: event.update({field: value}),
         CGEventCreateScrollWheelEvent=lambda _, unit, axes, dy: dict(kind='scroll', dy=dy),

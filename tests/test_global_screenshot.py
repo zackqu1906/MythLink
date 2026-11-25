@@ -76,12 +76,14 @@ def test_two_clicks_reselect_save_and_copy_only_after_confirmation(screenshot):
     assert list(root.glob('*.png')) == paths
 
 
-@pytest.mark.parametrize('gesture', ['tap', 'swipe-right'])
+@pytest.mark.parametrize('gesture', ['tap', 'swipe-right', 'index-pinch'])
 @pytest.mark.parametrize('pointer_active', [False, True])
 def test_confirmation_gestures_are_independent_of_pointer_clicks(screenshot, gesture, pointer_active):
     from PySide6.QtGui import QCursor
     from test_ui_touchpad import prepare
     owner, cap, _, root = screenshot
+    if gesture == 'index-pinch':
+        owner._device_family = 'R1'
     if pointer_active:
         pointer, source = prepare(owner)
         pointer.start(); QTest.qWait(20)

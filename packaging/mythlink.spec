@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import importlib.util
 import os
 import platform
 import runpy
@@ -29,6 +30,8 @@ streaming_root = project_root / "third_party" / "streaming-sensevoice"
 funasr_root = project_root / "third_party" / "Fun-ASR"
 workflow_policy = runpy.run_path(str(project_root / 'packaging/legacy_workflows.py'))
 legacy_excludes = workflow_policy['excluded_modules'](source_root)
+if importlib.util.find_spec('ring_python_sdk_r1') is None:
+    raise RuntimeError('Install the project R1 wheel with tools/install_r1_sdk.py before building.')
 
 datas = [item for item in collect_data_files("proximic_ring")
          if workflow_policy['include_data'](item[0]) and '/assets/firmware/' not in Path(item[0]).as_posix()]
@@ -75,6 +78,9 @@ if notices.is_file():
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
 hiddenimports += collect_submodules("ring_python_sdk.process")
 hiddenimports += collect_submodules('smpclient') + collect_submodules('smp')
+datas += collect_data_files('ring_python_sdk_r1', includes=['assets/*'])
+binaries += collect_dynamic_libs('unicorn')
+hiddenimports += ['unicorn.unicorn_py3.arch.arm64']
 if platform.system() == "Darwin":
     hiddenimports += ["Vision", "CoreML", "ring_mac_sdk.model", "onnxruntime"]
 if platform.system() in {"Darwin", "Windows"}:

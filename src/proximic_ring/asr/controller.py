@@ -201,6 +201,11 @@ class ProximitySessionController:
             return self._accept_tap and self._tap_requested_ns is None
 
     @property
+    def gesture_start_pending(self) -> bool:
+        with self._tap_lock:
+            return self._gesture_start_requested
+
+    @property
     def gesture_busy(self) -> bool:
         """Include a start queued by inference but not yet visible to the GUI."""
         with self._tap_lock:

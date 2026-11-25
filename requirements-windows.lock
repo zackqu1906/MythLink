@@ -14,6 +14,7 @@ PySide6-Essentials==6.11.1
 shiboken6==6.11.1
 # Versions below match the ring_windows_sdk 0.4.0 delivery's constraints.
 bleak==1.1.1
+smpclient==5.2.0
 winrt-runtime==4.1.0
 winrt-Windows.Devices.Bluetooth==4!10.0.28000.2957
 winrt-Windows.Devices.Bluetooth.Advertisement==4!10.0.28000.2957

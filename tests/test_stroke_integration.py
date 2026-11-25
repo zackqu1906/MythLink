@@ -77,10 +77,10 @@ def test_default_gestures_are_consumed_before_scene_and_voice(inline_ui, monkeyp
     tp.addStroke("h")
     candidates = tp.strokeCandidates
     assert len(candidates) == tp.candidatePageSize
-    for name, selected in [("swipe-right", 1), ("swipe-left", 0)]:
+    for name in ("swipe-right", "swipe-left"):
         assert not c._ring_gestures.filter(SimpleNamespace(name=name), False, c._disconnect_event)
         QTest.qWait(10)
-        assert tp.selectedCandidate == selected
+        assert tp.selectedCandidate == 0
     entered = []
     tp.localCharacterCommitted.connect(entered.append)
     assert not c._ring_gestures.filter(SimpleNamespace(name="tap"), False, c._disconnect_event)
@@ -89,10 +89,10 @@ def test_default_gestures_are_consumed_before_scene_and_voice(inline_ui, monkeyp
     tp._receive(tp._run, 'contact_tap', (tp._run.output, {'points': [(0, 0)] * 10}))
     assert entered == [candidates[0]] and tp._code == ""
     tp.addStroke("h"); tp.addStroke("s")
-    for name, code in [("swipe-up", "h"), ("swipe-down", "")]:
+    for name in ("swipe-up", "swipe-down"):
         assert not c._ring_gestures.filter(SimpleNamespace(name=name), False, c._disconnect_event)
         QTest.qWait(10)
-        assert tp._code == code
+        assert tp._code == "hs"
     tp.stop(); QTest.qWait(10)
     assert not tp.consume_gesture(SimpleNamespace(name="tap"), c._disconnect_event)
 
@@ -180,6 +180,12 @@ def test_local_editor_candidates_and_layout(inline_ui, size, tmp_path):
     tp.selectCandidate(0); QTest.qWait(20)
     editor = root.findChild(QObject, "strokeTestEditor")
     assert editor.property("text")
+    c.hotwords.add("苏州工业园区")
+    editor.setProperty("text", "去苏州")
+    editor.setProperty("cursorPosition", 3)
+    assert "苏州工业园区" in tp.strokeCandidates
+    tp.selectCandidate(tp.strokeCandidates.index("苏州工业园区"))
+    assert editor.property("text") == "去苏州工业园区"
     for name in ["strokeSearchShell", "strokeCandidateRow", "strokeTools"]:
         item = root.findChild(QObject, name)
         point = item.mapToScene(QPointF())

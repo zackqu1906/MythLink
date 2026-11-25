@@ -8,7 +8,7 @@ import pytest
 
 from proximic_ring.touchpad.stroke.stroke_common import common_characters
 from proximic_ring.touchpad.stroke.stroke_dictionary_orders import (
-    filter_order_variants, grass_components, is_order_variant, reference_orders,
+    ACCEPTED_WRITING_VARIANTS, filter_order_variants, grass_components, is_order_variant, reference_orders,
 )
 from proximic_ring.touchpad.stroke.stroke_fuzzy import stroke_evidence
 from proximic_ring.touchpad.stroke.stroke_input import StrokeDictionary
@@ -41,6 +41,16 @@ def test_builtin_dictionary_keeps_whole_and_component_orders(character, codes):
     assert codes <= {row[1] for row in StrokeDictionary().by_character[character]}
 
 
+@pytest.mark.parametrize('code', ['szhshzp', 'szhhzp'])
+def test_nan_matches_standard_and_six_stroke_writing_literally(code):
+    dictionary = StrokeDictionary()
+    assert '男' in dictionary.candidates(code, limit=5, allowed_characters=common_characters())
+    evidence = [stroke_evidence(stroke) for stroke in code]
+    match = next(row for row in dictionary.encoding_candidates(evidence, fuzzy=False)
+                 if row['char'] == '男')
+    assert match['exact_match'] and not match.get('corrections')
+
+
 def test_component_exception_does_not_keep_other_shape_changes_or_guess_grass_from_prefix():
     dictionary = StrokeDictionary()
     assert not {'hsspshz', 'hshspshz', 'shhspshz'} & {
@@ -63,7 +73,8 @@ def test_filter_preserves_character_coverage_and_only_removes_reviewed_variants(
     for character, rows in dictionary.by_character.items():
         reference = references.get(character)
         if reference and any(row[1] == reference for row in rows):
-            assert all(is_order_variant(reference, row[1], grass_components().get(character, ()))
+            assert all(row[1] in ACCEPTED_WRITING_VARIANTS.get(character, ())
+                       or is_order_variant(reference, row[1], grass_components().get(character, ()))
                        for row in rows)
     custom = [['甲', 'h', 1], ['甲', 'n', 2]]
     assert StrokeDictionary(dict(entries=custom, ranks={}, templates=[])).entries == custom

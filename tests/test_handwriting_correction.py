@@ -177,7 +177,7 @@ def test_correction_key_pins_process_and_rejects_duplicate(stroke, monkeypatch):
     assert len(calls) == 1
 
 
-def test_right_pull_scope_is_complete_and_switch_is_on_stroke_page(inline_ui):
+def test_right_pull_scope_and_punctuation_share_the_stroke_menu(stroke, inline_ui, tmp_path):
     c, _, _, root, _ = inline_ui
     tp = c.touchpad
     root.setProperty('currentPage', 3)
@@ -204,7 +204,16 @@ def test_right_pull_scope_is_complete_and_switch_is_on_stroke_page(inline_ui):
     tp._selection_state = two_finger_selection([(0, 0), (30, 0)], correction_enabled=True)
     tp.changed.emit(); tp.selectionChanged.emit(); QTest.qWait(30)
     assert scope.property('highlighted') and scope.property('color').name() == '#234cdb'
-    assert root.grabWindow().save('/private/tmp/mythlink-handwriting-correction-settings.png')
+    right_pull = menu.findChild(QQuickItem, 'strokeCorrectionPull')
+    more_punctuation = menu.findChild(QQuickItem, 'strokeMorePunctuation')
+    assert right_pull.isVisible() and not more_punctuation.isVisible()
+    assert root.grabWindow().save(str(tmp_path / 'handwriting-correction.png'))
+
+    tp._selection_state = two_finger_selection([(0, 0), (0, -30)], correction_enabled=True)
+    tp.selectionChanged.emit()
+    QTest.qWait(220)
+    assert more_punctuation.isVisible() and not right_pull.isVisible()
+    assert not menu.property('correcting')
     tp._selection_state = two_finger_selection([(0, 0), (24, 0)], correction_enabled=True)
     tp.changed.emit(); tp.selectionChanged.emit(); QTest.qWait(30)
     assert not scope.property('highlighted') and scope.property('color').name() == '#e9efff'

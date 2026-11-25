@@ -25,10 +25,13 @@ def distances(query, templates, weight=.15, radius=6):
     previous[:, 0] = 0
     for i in range(1, 33):
         current = np.full_like(previous, np.inf)
-        for j in range(max(1, i-radius), min(32, i+radius)+1):
-            diff = query[:, i-1]-templates[:, :, j-1]
-            cost = (diff[:, :2]**2).sum(axis=1)+weight*(diff[:, 2:]**2).sum(axis=1)
-            current[:, j] = cost+np.minimum(np.minimum(previous[:, j], current[:, j-1]), previous[:, j-1])
+        start, end = max(1, i-radius), min(32, i+radius)
+        diff = query[:, i-1, None] - templates[:, :, start-1:end]
+        squared = diff**2
+        costs = squared[:, :2].sum(axis=1) + weight*squared[:, 2:].sum(axis=1)
+        from_previous = np.minimum(previous[:, start:end+1], previous[:, start-1:end])
+        for offset, j in enumerate(range(start, end+1)):
+            current[:, j] = costs[:, offset] + np.minimum(from_previous[:, offset], current[:, j-1])
         previous = current
     return previous[:, -1]/32
 

@@ -334,6 +334,7 @@ def test_context_is_fresh_and_truncated_only_for_asr(bridge):
     stream.close(); sock.close()
 
 
+@pytest.mark.mac_only
 def test_clipboard_palette_ack_works_without_active_input_method_client(bridge):
     server, messages = bridge
     sock, stream = connect(server)

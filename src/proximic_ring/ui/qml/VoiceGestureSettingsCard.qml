@@ -19,11 +19,6 @@ ColumnLayout {
     objectName: "voiceGestureSettingsCard"
     spacing: 16
     FigmaTheme { id: theme }
-    Label {
-        Layout.fillWidth: true
-        text: "每项语音功能只能配置一个手势。修改后自动保存，对所有应用生效。"
-        color: theme.muted; font.pixelSize: 14; wrapMode: Text.Wrap
-    }
     UiScrollView {
         id: scroll
         objectName: "voiceGestureBindingsScroll"
@@ -67,7 +62,7 @@ ColumnLayout {
                                 VoiceGesturePreview {
                                     visible: row.selectedGestures.length > 0
                                     gestures: row.selectedGestures.map(function(gesture) { return gesture.key })
-                                    Layout.preferredWidth: 35
+                                    Layout.preferredWidth: row.selectedGestures.length > 1 ? 60 : 35
                                     Layout.preferredHeight: 32
                                 }
                                 Label {
@@ -149,9 +144,7 @@ ColumnLayout {
                                             border.width: option.visualFocus ? 2 : 0; border.color: theme.primary
                                         }
                                         onClicked: {
-                                            var gesture = modelData.key || (row.selectedGestures[0] || {}).key
-                                            var action = modelData.key ? row.modelData : {id:"", voiceAction:""}
-                                            var success = !gesture || card.history.apply("voice", "", "regular", gesture, action)
+                                            var success = card.history.apply("voice", "", "regular", modelData.key, row.modelData)
                                             card.feedback = success ? "" : card.history.error || "保存失败，请重试"
                                             if (success) gestureMenu.close()
                                         }

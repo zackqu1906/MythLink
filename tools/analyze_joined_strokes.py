@@ -46,7 +46,7 @@ def summarize(paths):
             baselineMeasured=len(measured),
             baselineShapes=dict(Counter(p['shape'] if p else 'unrecognized' for p in predictions)))
         if kind == 'joined':
-            row['note'] = '现有单笔模型每条轨迹最多输出一笔；本报告不宣称已实现两笔恢复。'
+            row['note'] = '单笔基线每条轨迹最多输出一笔。连笔恢复情况由建模回放单独检查。'
         else:
             row['baselineCategoryCorrect'] = sum(
                 bool(s['singleStrokeBaseline']) and s['singleStrokeBaseline']['category'] in s['task']['expectedCodes']

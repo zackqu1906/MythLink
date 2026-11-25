@@ -77,6 +77,8 @@ class RingAudioSource(AudioSource):
         name_keyword: str = "Ringo",
         selector: str | None = None,
         device: object | None = None,
+        ring_family: str = "",
+        pairing_observer: Callable[[], None] | None = None,
         timeout_s: float = 8.0,
         encoding: str = "adpcm",
         data_root: str | Path = "data",
@@ -109,6 +111,8 @@ class RingAudioSource(AudioSource):
         self.name_keyword = name_keyword
         self.selector = selector
         self.device = device
+        self.ring_family = ring_family
+        self.pairing_observer = pairing_observer
         self.timeout_s = float(timeout_s)
         self.encoding = encoding
         self.data_root = Path(data_root)
@@ -133,6 +137,7 @@ class RingAudioSource(AudioSource):
         self.battery_observer = battery_observer
         self.imu_hz = int(imu_hz)
         self.audio_enabled = bool(audio_enabled)
+        self.microphone_unavailable_reason = ""
         self._cancel_event = cancel_event
 
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_blocks)
@@ -183,6 +188,7 @@ class RingAudioSource(AudioSource):
             raise RuntimeError("RingAudioSource is already open")
 
         self.firmware_identity = {}
+        self.microphone_unavailable_reason = ""
         self._clear_queue()
         self._pending = np.empty(0, dtype=np.float32)
         self._pending_start_monotonic_ns = None
@@ -225,7 +231,7 @@ class RingAudioSource(AudioSource):
         self._thread.start()
 
         # Scan + connection may each consume the configured BLE timeout.
-        wait_s = max(15.0, self.timeout_s * 2.0 + 5.0)
+        wait_s = 160.0 if self.ring_family == "R1" else max(15.0, self.timeout_s * 2.0 + 5.0)
         if not self._connected_ready.wait(timeout=wait_s):
             self.close()
             raise TimeoutError(
@@ -245,13 +251,16 @@ class RingAudioSource(AudioSource):
         """
         if self._thread is None:
             self.connect()
+        if self.audio_enabled and self.microphone_unavailable_reason:
+            self.close()
+            raise RuntimeError(self.microphone_unavailable_reason)
         if buffer_audio and self.audio_enabled:
             self._buffer_audio.set()
         else:
             self._buffer_audio.clear()
         self._start_stream.set()
         endpoint = "Ring microphone audio" if self.audio_enabled else "Ring gesture endpoints"
-        wait_s = max(6.0, _INITIAL_PCM_TIMEOUT_S + 2.0)
+        wait_s = 15.0 if self.ring_family == "R1" else max(6.0, _INITIAL_PCM_TIMEOUT_S + 2.0)
         if not self._ready.wait(timeout=wait_s):
             self.close()
             raise TimeoutError(
@@ -350,6 +359,8 @@ class RingAudioSource(AudioSource):
             self._pending = np.empty(0, dtype=np.float32)
             self._pending_start_monotonic_ns = None
             return
+        if self.microphone_unavailable_reason:
+            raise RuntimeError(self.microphone_unavailable_reason)
         self.audio_enabled = True
         try:
             self.begin_buffering()
@@ -667,7 +678,7 @@ class RingAudioSource(AudioSource):
             ):
                 await asyncio.sleep(0.05)
 
-            if session.battery_pct is None or session.battery_mv is None:
+            if session.battery_pct is None:
                 print("Ring battery: unavailable (no BATTERY STATUS reply)")
                 self._publish_battery_status(None, None, None)
                 return
@@ -677,7 +688,7 @@ class RingAudioSource(AudioSource):
                 session.battery_mv,
                 session.charge_status,
             )
-            text = format_battery(
+            text = f"{session.battery_pct}%" if session.battery_mv is None else format_battery(
                 battery_pct=session.battery_pct,
                 battery_mv=session.battery_mv,
                 charge_status=session.charge_status,
@@ -882,14 +893,21 @@ class RingAudioSource(AudioSource):
                 f"sample_width={contract[2]} bytes; expected 16000/mono/PCM16"
             )
 
-        session = RingSession(
-            name_keyword=self.name_keyword,
-            timeout_s=self.timeout_s,
-            data_root=self.data_root,
-            auto_reconnect=False,
-            battery_poll_enabled=False,
-            connection_backend=_connection_backend(),
-        )
+        if self.ring_family == "R1":
+            try:
+                from .r1_session import R1Session
+            except ImportError as exc:
+                raise RuntimeError("当前构建缺少 R1-PC SDK") from exc
+            session = R1Session(on_pairing=self.pairing_observer)
+        else:
+            session = RingSession(
+                name_keyword=self.name_keyword,
+                timeout_s=self.timeout_s,
+                data_root=self.data_root,
+                auto_reconnect=False,
+                battery_poll_enabled=False,
+                connection_backend=_connection_backend(),
+            )
         battery_refresh_task: asyncio.Task[None] | None = None
 
         try:
@@ -901,10 +919,15 @@ class RingAudioSource(AudioSource):
                 raise RuntimeError(f"Ringo device {target!r} not found or connection failed")
             connected_at = time.monotonic()
             transport = getattr(session, '_sdk_transport', None)
-            info = getattr(transport, 'device_info', None) or getattr(session, 'device_info', None)
+            device_info = getattr(session, 'device_info', None)
+            info = getattr(transport, 'device_info', None) or device_info
+            is_r1 = self.ring_family == "R1" or getattr(device_info, 'hw_rev', None) == 2
+            if is_r1 or not getattr(device_info, 'microphone_available', True):
+                self.microphone_unavailable_reason = "当前戒指没有可用的麦克风，请选择电脑麦克风"
             self.firmware_identity = {
                 'address': getattr(session, 'target_address', ''),
                 'version': getattr(info, 'firmware_version', getattr(info, 'fw_version', '')),
+                'family': 'R1' if is_r1 else 'Ringo',
             }
 
             # BLE and the required NUS service are now validated.  Release the
@@ -1271,6 +1294,8 @@ class RingAudioSource(AudioSource):
         Reads an immutable INFO snapshot; safe from the UI thread.
         """
         endpoint = self._touchpad_endpoint
+        if endpoint and self.ring_family == 'R1':
+            return True
         transport = getattr(endpoint[1], '_sdk_transport', None) if endpoint else None
         info = getattr(transport, 'device_info', None)
         if info is None:

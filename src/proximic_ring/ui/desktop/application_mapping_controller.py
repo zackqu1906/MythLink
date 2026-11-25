@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot, Qt, QTimer
 
 from ...gestures.app_gestures import AppBinding, normalize_shortcut
 from ...gestures.gesture_settings import GESTURE_LABELS, GLOBAL_ACTION_LABELS
+from ...ring_devices import R1_TAP_ALIASES
 from ...platforms.macos.native_access import NativeAccessChannel
 from ...desktop.application_catalog import installed_applications
 from ...desktop.host_application import HOST_BUNDLE, HOST_LABEL, host_candidate
@@ -27,7 +28,7 @@ from ...scenes.adapters.presentation import PROFILES
 from ...scenes.capabilities import (presentation_profile, installed_presentation_profile,
     application_scene_profiles, installed_scene_profiles, BROWSERS, MUSIC_APPS)
 from ...scenes.models import PRESENTATION, MUSIC, VIDEO
-from ...scenes.resolver import catalog_actions
+from ...scenes.resolver import catalog_actions, resolve_action
 from ...scenes import configuration
 from ...scenes.configuration import SETTINGS_KEY
 
@@ -160,6 +161,10 @@ class ApplicationMappingController(QObject):
                 if scenes and not removed:
                     self._apps[bundle]["scenes"] = scenes
                 app = self._apps[bundle]
+                disabled_aliases = data.get('r1TapAliasesDisabled')
+                if isinstance(disabled_aliases, list):
+                    app['r1TapAliasesDisabled'] = [scene for scene in TEMPLATES
+                                                   if scene in disabled_aliases and 'tap' in TEMPLATES[scene]]
                 pending_chat = data.get("pendingChatBindings", {})
                 if (not isinstance(pending_chat, dict) or any(gesture not in GESTURE_LABELS
                         or meaning not in CHAT_ACTIONS for gesture, meaning in pending_chat.items())):
@@ -230,11 +235,24 @@ class ApplicationMappingController(QObject):
         return {bundle: {g: dict(item) for g, item in self._bindings_for(bundle).items()}
                 for bundle, app in self._apps.items() if not app.get("removed")}
 
-    def _bindings_for(self, bundle, scene="regular"):
+    def _r1_tap_alias(self, app, scene, bindings):
+        pinch = R1_TAP_ALIASES['tap']
+        return (self.service.owner._device_family == 'R1' and 'tap' in TEMPLATES.get(scene, {})
+                and pinch not in bindings and pinch not in app.get('bindings', {})
+                and scene not in app.get('r1TapAliasesDisabled', ()))
+
+    def _bindings_for(self, bundle, scene="regular", *, r1_defaults=True):
         app = self._apps.get(bundle, {})
         if not self._is_added(bundle):
             return {}
         bindings = app.get("bindings", {}) if scene == "regular" else app.get("scenes", {}).get(scene, {})
+        tap = bindings.get('tap')
+        if r1_defaults and tap and self._r1_tap_alias(app, scene, bindings):
+            # Check the existing default meaning, including a discovered menu key.
+            menus = (tap,) if ':' not in tap['id'] else ()
+            profile = app.get('sceneProfiles', {}).get(scene, '')
+            if tap == resolve_action(bundle, scene, TEMPLATES[scene]['tap'], profile, menus):
+                bindings = {**bindings, R1_TAP_ALIASES['tap']: tap}
         return {**bindings, **shared_navigation(bundle, app.get("bindings", {}))}
 
     @Property(str, notify=changed)
@@ -432,11 +450,16 @@ class ApplicationMappingController(QObject):
 
     @Property("QVariantMap", notify=discoveryChanged)
     def pendingBindings(self):
+        app = self._apps.get(self._bundle, {})
         if self._scene == "regular":
             return {gesture: CHAT_ACTIONS[meaning] for gesture, meaning in
-                    self._apps.get(self._bundle, {}).get("pendingChatBindings", {}).items()}
+                    app.get("pendingChatBindings", {}).items()}
+        pending = app.get('pendingDefaults', {}).get(self._scene, {})
+        bindings = app.get('scenes', {}).get(self._scene, {})
+        if 'tap' in pending and self._r1_tap_alias(app, self._scene, bindings):
+            pending = {**pending, R1_TAP_ALIASES['tap']: pending['tap']}
         return {gesture: action_label(self._scene, action) for gesture, action in
-                self._apps.get(self._bundle, {}).get("pendingDefaults", {}).get(self._scene, {}).items()}
+                pending.items()}
 
     @Property(int, notify=changed)
     def pendingDefaultCount(self):
@@ -755,6 +778,7 @@ class ApplicationMappingController(QObject):
             "pendingChatBindings": pending_chat_defaults(bundle, app["label"], defaults.get("regular", {})),
             "initializedScenes": [scene for scene in TEMPLATES if scene in self._profiles_for(bundle)],
             "pendingDefaults": pending, "sceneDefaultsVersion": SCENE_DEFAULTS_VERSION, "defaultsCleared": False,
+            "r1TapAliasesDisabled": [],
             "scenes": {scene: items for scene, items in defaults.items() if scene != "regular"},
             "defaultsVersion": DEFAULTS_VERSION,
             "pendingStart": bool(PRESENTATION in self._profiles_for(bundle) and "snap" not in defaults.get("regular", {}))}}
@@ -825,7 +849,7 @@ class ApplicationMappingController(QObject):
         return self._store_binding(bundle, gesture, action) if action else False
 
     def _store_binding(self, bundle, gesture, action):
-        bindings = dict(self._bindings_for(bundle, self._scene))
+        bindings = self._bindings_for(bundle, self._scene, r1_defaults=False)
         if action:
             bindings[gesture] = {key: action[key] for key in ("id", "label", "path", "shortcut")}
         else:
@@ -850,6 +874,8 @@ class ApplicationMappingController(QObject):
             pending = {scene: dict(items) for scene, items in app.get("pendingDefaults", {}).items()}
             pending.get(self._scene, {}).pop(gesture, None)
             updated["pendingDefaults"] = {scene: items for scene, items in pending.items() if items}
+            if not action and gesture == R1_TAP_ALIASES['tap'] and self._r1_tap_alias(app, self._scene, bindings):
+                updated['r1TapAliasesDisabled'] = [*app.get('r1TapAliasesDisabled', []), self._scene]
         self._apps = {**self._apps, bundle: updated}
         self._save()
         self._message = (f"已保存，仅在此应用前台处于{self.selectedSceneLabel}且未输入文字时生效" if self._scene != "regular"

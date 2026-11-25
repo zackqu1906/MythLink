@@ -41,8 +41,10 @@ jobs:
         run: |
           $Python = ".\.runtime\venv\Scripts\python.exe"
           & $Python -m pip install -c requirements-windows.lock `
-            ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" `
+            ".[ring-opus,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" `
             -r requirements-packaging.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $Python tools/install_r1_sdk.py
       - name: Install Windows Opus runtime
         shell: pwsh
         run: ./scripts/install-opus-runtime.ps1
@@ -59,6 +61,9 @@ jobs:
 
   macos:
     runs-on: macos-15
+    env:
+      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' && '1' || '0' }}
+      HAS_APPLE_NOTARY: ${{ secrets.APPLE_NOTARY_APPLE_ID != '' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - name: Require release signing secrets
@@ -84,7 +89,7 @@ jobs:
             fi
           done
       - name: Import Developer ID certificate
-        if: ${{ secrets.APPLE_CERTIFICATE_BASE64 != '' }}
+        if: env.HAS_APPLE_CERTIFICATE == '1'
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -106,7 +111,7 @@ jobs:
           security list-keychains -d user -s "$SIGNING_KEYCHAIN"
           security default-keychain -d user -s "$SIGNING_KEYCHAIN"
       - name: Configure Apple notarization
-        if: ${{ secrets.APPLE_NOTARY_APPLE_ID != '' }}
+        if: env.HAS_APPLE_NOTARY == '1'
         env:
           APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
           APPLE_NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}

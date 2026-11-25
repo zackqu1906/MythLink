@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from proximic_ring.gestures.gesture_settings import BoundGestureEvent, GestureBindings, GESTURE_LABELS
+from proximic_ring.ui.gestures.voice_gesture_mapping import RINGO_START_END
 from proximic_ring.voice.voice_actions import voice_action_for_gesture
 from test_interaction_controls import _controller, _close
 
@@ -44,18 +45,20 @@ def test_legacy_confirm_bindings_keep_toggle_until_controller_migration():
 def test_saved_start_choice_survives_legacy_migrations(tmp_path, monkeypatch, start, aliases_migrated):
     controller = _controller(tmp_path, monkeypatch)
     try:
-        assert controller.gestureBindings["confirm"] == controller.gestureBindings["end"] == ["tap", ""]
+        assert controller.gestureBindings["confirm"] == controller.gestureBindings["end"] == list(RINGO_START_END)
         controller._settings.setValue("input/gestureBindings", GestureBindings(confirm=(start, "")).to_json())
         controller._settings.setValue("gestures/appDefaultsMigrated", aliases_migrated)
         controller._settings.setValue("gestures/doubleTapDefaultMigrated", False)
+        controller._settings.remove("gestures/ringoPinchDefaultMigrated")
     finally:
         _close(controller)
     migrated = _controller(tmp_path, monkeypatch)
     try:
-        assert migrated.gestureBindings["confirm"] == [start, ""]
-        assert migrated.gestureBindings["end"] == ["tap", ""]
-        assert migrated.confirmGestureHint == GestureBindings(confirm=(start, "")).confirm_hint
-        assert migrated.endGestureHint == "单击 tap"
+        expected = GestureBindings(confirm=RINGO_START_END if start == "tap" else (start, ""),
+                                   end=RINGO_START_END)
+        assert migrated.gestureBindings == expected.as_dict()
+        assert migrated.confirmGestureHint == expected.confirm_hint
+        assert migrated.endGestureHint == "单击 tap / 食指捏合"
         assert not migrated.setGestureBinding("undo", 1, "tap")
         assert migrated.setGestureBinding("confirm", 0, "double-tap")
         assert migrated.setGestureBinding("end", 0, "double-tap")
@@ -149,7 +152,7 @@ def test_settings_save_restore_conflicts_and_immediate_dispatch(tmp_path, monkey
         restarted = _controller(tmp_path, monkeypatch)
         assert restarted.gestureBindings == controller.gestureBindings
         restarted.resetGestureBindings()
-        assert restarted.gestureBindings == GestureBindings().as_dict()
+        assert restarted.gestureBindings == GestureBindings(confirm=RINGO_START_END, end=RINGO_START_END).as_dict()
         assert restarted.gestureSettingsError == ""
     finally:
         if restarted:
@@ -180,9 +183,10 @@ def test_corrupt_saved_configuration_recovers_as_one_consistent_default(tmp_path
     _close(first)
     recovered = _controller(tmp_path, monkeypatch)
     try:
-        assert recovered.gestureBindings == GestureBindings().as_dict()
+        defaults = GestureBindings(confirm=RINGO_START_END, end=RINGO_START_END)
+        assert recovered.gestureBindings == defaults.as_dict()
         assert "恢复默认" in recovered.gestureSettingsError
-        assert GestureBindings.from_json(recovered._settings.value("input/gestureBindings")) == GestureBindings()
+        assert GestureBindings.from_json(recovered._settings.value("input/gestureBindings")) == defaults
     finally:
         _close(recovered)
 
@@ -201,3 +205,51 @@ def test_multi_gesture_settings_migrate_once_with_original_backup(tmp_path, monk
             assert GestureBindings.from_json(controller._settings.value("input/gestureBindings")) == controller._gesture_bindings
         finally:
             _close(controller)
+
+
+def test_r1_migrates_tap_endpoints_then_persists_its_own_gestures(tmp_path, monkeypatch):
+    controller = _controller(tmp_path, monkeypatch)
+    try:
+        legacy = GestureBindings(confirm=("double-tap", ""), undo=("snap", ""))
+        controller._settings.setValue("input/gestureBindings", legacy.to_json())
+        controller._settings.setValue("ring/family", "R1")
+        controller._settings.setValue("ring/selector", "r1-test-device")
+    finally:
+        _close(controller)
+
+    controller = _controller(tmp_path, monkeypatch)
+    try:
+        bindings = controller._runtime_settings().gesture_bindings
+        assert bindings.confirm == ("double-index-pinch", "")
+        assert bindings.end == ("index-pinch", "")
+        assert bindings.undo == legacy.undo
+        assert controller.confirmGestureHint == "双食指捏合"
+        assert controller.endGestureHint == "食指捏合"
+        assert controller.setVoiceGestureAction("clench", "start_end")
+        assert GestureBindings.from_json(controller._settings.value("input/gestureBindings")) == legacy
+    finally:
+        _close(controller)
+
+    restarted = _controller(tmp_path, monkeypatch)
+    try:
+        assert restarted.gestureBindings["confirm"] == restarted.gestureBindings["end"] == ["clench", ""]
+        restarted.resetGestureBindings()
+        assert restarted.gestureBindings["confirm"] == restarted.gestureBindings["end"] == ["index-pinch", ""]
+    finally:
+        _close(restarted)
+
+
+def test_first_r1_selection_uses_its_own_defaults_with_a_custom_ringo_profile(tmp_path, monkeypatch):
+    controller = _controller(tmp_path, monkeypatch)
+    monkeypatch.setattr(controller, "_connect_after_discovery", lambda: None)
+    try:
+        assert controller.setVoiceGestureAction("snap", "start_end")
+        controller.connectToDevice("r1-test-device", "R1ABCD")
+        assert controller.gestureBindings["confirm"] == controller.gestureBindings["end"] == ["index-pinch", ""]
+        assert controller.setVoiceGestureAction("clench", "start_end")
+        controller.connectToDevice("ringo-test-device", "Ringo")
+        assert controller.gestureBindings["confirm"] == controller.gestureBindings["end"] == ["snap", ""]
+        controller.connectToDevice("r1-test-device", "R1ABCD")
+        assert controller.gestureBindings["confirm"] == controller.gestureBindings["end"] == ["clench", ""]
+    finally:
+        _close(controller)

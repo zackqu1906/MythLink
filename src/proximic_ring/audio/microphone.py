@@ -9,6 +9,8 @@ import numpy as np
 
 from .base import AudioSource
 
+SYSTEM_DEFAULT_MICROPHONE = "system-default"
+
 
 def _sounddevice():
     try:
@@ -126,7 +128,7 @@ class MicrophoneSource(AudioSource):
         with self._lock:
             if self._stopped.is_set():
                 raise RuntimeError("麦克风启动已取消")
-            if self.selection is not None:
+            if self.selection not in {None, SYSTEM_DEFAULT_MICROPHONE}:
                 selected = resolve_input_device(self.selection)
                 self.device = selected["index"]
                 self.device_name = selected["name"]

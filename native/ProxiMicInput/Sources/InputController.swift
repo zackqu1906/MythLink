@@ -1260,7 +1260,8 @@ final class ProxiMicInputController: IMKInputController {
             let prefix = adapter.strokeContext()
             guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter else { return }
             IMEService.shared.send(["type": "stroke_ready", "client_id": clientID, "stroke_session": token,
-                                    "success": true, "panel_visible": true, "context": prefix ?? ""])
+                                    "success": true, "panel_visible": true, "context": prefix ?? "",
+                                    "word_completions": true])
             sendState()
         case "stroke_trace":
             guard strokeActive else { return }
@@ -1306,7 +1307,8 @@ final class ProxiMicInputController: IMKInputController {
                                    clearDistance: message["clear_distance"] as? Double ?? 30,
                                    clearProgress: message["clear_progress"] as? Double ?? 0,
                                    correctionArmed: message["correction_armed"] as? Bool ?? false,
-                                   correctionProgress: message["correction_progress"] as? Double ?? 0)
+                                   correctionProgress: message["correction_progress"] as? Double ?? 0,
+                                   punctuationPull: message["punctuation_pull"] as? [String: Any] ?? [:])
         case "stroke_correction_undo":
             guard strokeActive, strokeCode.isEmpty, strokeCorrection?.canUndo == true else { return }
             isWriting = true
@@ -1322,11 +1324,25 @@ final class ProxiMicInputController: IMKInputController {
         case "stroke_commit":
             let request = message["request_id"] as? String ?? ""
             let value = message["text"] as? String ?? ""
+            let wordPrefix = message["word_prefix"] as? String ?? ""
             // Commit the first candidate and space together so focus cannot split them.
-            let candidateWithSpace = strokeCandidates.first.map { value == $0 + " " } ?? false
+            let candidate = wordPrefix + value
+            let candidateWithSpace = strokeCandidates.first.map { candidate == $0 + " " } ?? false
+            let validValue: Bool
+            if wordPrefix.isEmpty {
+                validValue = (value.count == 1 && strokeCandidates.contains(value))
+                    || (candidateWithSpace && value.count == 2)
+                    || value == " " || StrokeCandidatePanel.punctuationSymbols.contains(value)
+            } else {
+                validValue = !value.trimmingCharacters(in: .whitespaces).isEmpty
+                    && strokeActive && !token.isEmpty && strokeCode.isEmpty
+                    && (candidateWithSpace || strokeCandidates.contains(candidate))
+                    && adapter.strokeContext()?.hasSuffix(wordPrefix) == true
+                guard activated, ownsActivation, currentClientID == clientID, self.adapter === adapter,
+                      strokeSessionID == token else { return }
+            }
             let accepted = !request.isEmpty
-                && (candidateWithSpace || (value.count == 1
-                    && (strokeCandidates.contains(value) || ["，", "。", "？", " "].contains(value))))
+                && validValue
                 && (!strokeCode.isEmpty || (strokeActive && !token.isEmpty))
             var prefix: String?
             if accepted {

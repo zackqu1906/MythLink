@@ -553,6 +553,19 @@ def test_tap_executes_exact_selected_task_once_and_invalidates_queued_gestures(h
     assert controller.count == 3
 
 
+def test_r1_pinch_accepts_the_visible_recommendation(hud):
+    from PySide6.QtCore import QCoreApplication
+
+    controller, agent, _ = hud
+    agent.owner._device_family = 'R1'
+    controller.open()
+    gesture = SimpleNamespace(name='index-pinch')
+    assert '食指捏合' in controller.interactionHint
+    assert controller.filter_gesture(gesture, agent.owner._disconnect_event)
+    QCoreApplication.processEvents()
+    assert len(agent.commands) == 1 and not controller.visible
+
+
 @pytest.mark.parametrize("issue", ["stale", "connection", "lock", "busy", "voice"])
 def test_stale_or_blocked_gesture_never_executes(hud, issue):
     controller, agent, _ = hud

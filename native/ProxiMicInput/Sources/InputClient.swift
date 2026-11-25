@@ -197,10 +197,10 @@ final class NativeInputClient: HandoffClient {
         guard isCurrent() else { return nil }
         let selected = client.selectedRange()
         guard isCurrent(), isValidRange(selected) else { return nil }
-        let count = min(8, selected.location)
+        let count = min(82, selected.location)  // Max vocabulary word plus a boundary in UTF-16.
         let value = readText(in: NSRange(location: selected.location - count, length: count))
         guard isCurrent(), client.selectedRange() == selected, isCurrent() else { return nil }
-        return value.map { String($0.suffix(4)) }
+        return value.map { String($0.suffix(41)) }
     }
 
     private func validateReadLease() throws {

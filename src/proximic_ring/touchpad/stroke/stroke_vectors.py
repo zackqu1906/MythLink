@@ -84,12 +84,13 @@ class StrokeVectorModel:
         if entry is None or entry['code'] != code:
             return None
         observed, template = [], []
+        split = {i for i in mapping if mapping.count(i) > 1} if mapping and len(mapping) > len(code) else ()
         for i, stroke in enumerate(evidence):
             j = mapping[i] if mapping else i
             vector = stroke.get('vector')
             if vector is None or stroke.get('manual', False) or j is None or j >= len(entry['vectors']):
                 continue
-            if self.skip_folds and code[j] == 'z':
+            if j in split or (self.skip_folds and code[j] == 'z'):
                 continue
             observed.append(vector)
             template.append(entry['vectors'][j])
@@ -114,13 +115,14 @@ class StrokeVectorModel:
             terms.append(term)
             if term is not None:
                 known.setdefault(row.get('key', (0,))[0], []).append(term)
+        means = {tier: sum(values)/len(values) for tier, values in known.items()}
         for row, term in zip(rows, terms):
-            tier = known.get(row.get('key', (0,))[0])
-            if not tier:
+            mean = means.get(row.get('key', (0,))[0])
+            if mean is None:
                 continue
             row['vector_term'] = term
             base = row.get('final_score', row.get('score', 0.))
-            row['vector_score'] = base + (term if term is not None else sum(tier)/len(tier))
+            row['vector_score'] = base + (term if term is not None else mean)
         return rows
 
     def cost(self, character, code, evidence):

@@ -23,7 +23,7 @@ def test_voice_configuration_navigation_and_voice_page_enable_state(mapping_ui):
     pointer_click(root, "openVoiceGestureSettingsButton")
     assert root.property("currentPage") == 1
     assert find(root, "voiceGestureBindingDialog").property("visible")
-    assert find(root, "voiceFunctionGestures_start_end").property("text") == "点击"
+    assert find(root, "voiceFunctionGestures_start_end").property("text") == "点击、食拇捏合"
     assert find(root, "voiceFunctionGestures_confirm").property("text") == "无"
     assert find(root, "voiceFunctionGestures_end").property("text") == "无"
     for enabled in (False, True):
@@ -57,6 +57,10 @@ def test_voice_dialog_saves_without_overwriting_global_or_application(mapping_ui
     before_voice = c.gestureBindings
     root.setProperty("currentPage", 1)
     click(root, "openVoiceGestureSettingsButton")
+    choose_voice_gesture(root, "start_end", "")
+    assert not any(c.gestureBindings["confirm"] + c.gestureBindings["end"])
+    click(root, "undoVoiceGestureMappingButton")
+    assert c.gestureBindings == before_voice
     bridge.messages.clear()
     choose_voice_gesture(root, "start_end", "snap")
     assert c.gestureBindings["confirm"] == ["snap", ""]
@@ -113,7 +117,7 @@ def test_voice_functions_replace_the_previous_gesture_and_never_appear_in_gestur
         assert c.voiceGestureAction(gesture)["voiceAction"] == "undo"
         assert [g for g in c.gestureBindings["undo"] if g] == [gesture]
     assert not c.voiceGestureAction("swipe-left")
-    assert not any(c.gestureBindings["end"])
+    assert c.gestureBindings["end"] == ["index-pinch", ""]
     QMetaObject.invokeMethod(find(root, "voiceGestureBindingDialog"), "close")
     root.setProperty("currentPage", 2)
     for app_scope in (False, True):

@@ -18,7 +18,7 @@ import uuid
 
 PROTOCOL = 1
 MAX_MESSAGE = 8 * 1024 * 1024
-STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_cleared", "stroke_ink_cleared",
+STROKE_REPLIES = frozenset({"stroke_ready", "stroke_result", "stroke_delete_result", "stroke_cleared", "stroke_ink_cleared",
                           "stroke_correction_state", "stroke_correction_requested", "stroke_correction_key"})
 SUSPENSION_REPLIES = frozenset({"input_suspended", "input_resumed"})
 
@@ -230,7 +230,7 @@ class IMEBridge:
                 if (not request_id or ui_probe
                         or kind in {"wechat_key", "activation_recovery"} | STROKE_REPLIES | SUSPENSION_REPLIES):
                     self._notify(message)
-        except (OSError, ValueError, TypeError):
+        except (EOFError, OSError, ValueError, TypeError):
             pass
         finally:
             with self._condition:
@@ -401,7 +401,8 @@ class IMEBridge:
         original = state["original"]
         result = {"status": "captured" if original else "empty", "source": "input_method",
                   "source_char_count": len(original), "application": str(state.get("application", "")),
-                  "target_key": f"{epoch}:{state.get('client_id', '')}", "read_method": "IMKTextInput",
+                  "target_key": f"{epoch}:{state.get('client_id', '')}",
+                  "read_method": state.get("read_method", "IMKTextInput"),
                   "context_complete": True}
         if original:
             result["text"] = original[-max_chars:]

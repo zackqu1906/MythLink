@@ -17,7 +17,7 @@ from .click_diagnostics import ClickTrace, drag_record, start_click_diagnostics
 class TouchpadMouseOutput:
     def __init__(self, *, connection, gain, clicks, invert_y, on_ready, on_end,
                  mouse_factory=None, on_double_click=None, on_gesture=None, on_diagnostic=None,
-                 click_context=None, on_capture_click=None, scroll=True, double_click=True,
+                 click_context=None, on_capture_click=None, on_mode_switch=None, scroll=True, double_click=True,
                  right_click=True, scroll_gain=1., raw2=False, invert_scroll=False, horizontal_swipe=True,
                  dwell_drag=True, dwell_ms=400):
         self.connection = connection
@@ -26,6 +26,8 @@ class TouchpadMouseOutput:
         self.mouse_factory = mouse_factory
         self.on_double_click = on_double_click
         self.on_gesture = on_gesture
+        self.on_mode_switch = on_mode_switch
+        self.input_since = 0.
         self.on_diagnostic = on_diagnostic
         self.click_context = click_context or (lambda: (0, 'closed'))
         self.on_capture_click = on_capture_click
@@ -473,6 +475,9 @@ class TouchpadMouseOutput:
         if blocked or key != self._stream_key:
             self._finish_click(trace, blocked or 'session_reset')
             return
+        if event.timestamp < self.input_since:
+            self._finish_click(trace, 'previous_input_mode')
+            return
         source = getattr(event, 'source_timestamp', None)
         if (event.timestamp if source is None else source) < self._input_gap_at:
             self._finish_click(trace, 'input_gap')
@@ -552,6 +557,10 @@ class TouchpadMouseOutput:
                 self._two_finger_click(event, trace, context)
                 return
             self._flush_right_click(force=True)
+            if self.on_mode_switch and event.button == 'left' and event.count == 2:
+                self.on_mode_switch(event)
+                self._finish_click(trace, 'input_mode_switch', outcome='routed')
+                return
             enabled = (singles if event.count == 1 else doubles) if event.button == 'left' else right
             if event.button not in {'left', 'right'} or event.count not in {1, 2}:
                 self._finish_click(trace, 'invalid_click')

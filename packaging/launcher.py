@@ -30,8 +30,14 @@ def _self_check_requested() -> bool:
 
 
 def _verify_touchpad_runtime() -> None:
+    from importlib.util import find_spec
+
+    if find_spec('ring_python_sdk_r1') is None:
+        raise RuntimeError('安装包缺少 R1-PC SDK')
+
     import numpy as np
     from ring_python_sdk.touchpad import TouchpadBackbone
+    from ring_python_sdk_r1._model import TouchpadModel as R1TouchpadModel
     velocities = TouchpadBackbone().step(np.zeros(6, dtype=np.float32))
     if velocities.shape != (5, 3) or not np.isfinite(velocities).all():
         raise RuntimeError('触摸板模型自检失败')
@@ -46,6 +52,10 @@ def _verify_touchpad_runtime() -> None:
         if raw2.shape != (2, 4) or not np.isfinite(raw2).all():
             raise RuntimeError('新版触摸板模型自检失败')
         print('[startup] Raw2 touchpad model ready')
+    result = R1TouchpadModel().step((0.,) * 8)
+    if len(result) != 8 or not np.isfinite(result).all():
+        raise RuntimeError('R1 触摸板模型自检失败')
+    print('[startup] R1 touchpad model ready')
 
 
 def _verify_bundled_qml_runtime(resource_root: Path) -> None:

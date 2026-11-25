@@ -195,7 +195,7 @@ def test_raw2_firmware_matches_ringo_touchpad_builds_only(hardware, version, exp
 
 def test_audio_source_reports_connected_firmware_from_sdk_info():
     from proximic_ring.audio.ring import RingAudioSource
-    source = SimpleNamespace(_touchpad_endpoint=None)
+    source = SimpleNamespace(_touchpad_endpoint=None, ring_family='Ringo')
     probe = RingAudioSource.connected_raw2_firmware
     assert probe(source) is None
     session = SimpleNamespace(_sdk_transport=SimpleNamespace(device_info=SimpleNamespace(
@@ -206,6 +206,8 @@ def test_audio_source_reports_connected_firmware_from_sdk_info():
     assert probe(source) is True
     source._touchpad_endpoint = (None, SimpleNamespace(_sdk_transport=None))  # legacy connection
     assert probe(source) is None
+    source.ring_family = 'R1'
+    assert probe(source) is True
 
 
 def test_windows_timer_hold_is_reference_counted_and_idempotent():

@@ -1,4 +1,6 @@
 import AppKit
+import CoreText
+import QuartzCore
 
 private final class StrokePalette: NSPanel {
     override var canBecomeKey: Bool { false }
@@ -157,56 +159,91 @@ private final class StrokeSelectionPathView: NSView {
     }
 }
 
-/// Appears outside the delete cell; only its fill changes during the pull.
-private final class StrokeClearPullView: FlippedView {
+/// The same rounded, directional fill for each pull gesture.
+private final class StrokePullView: FlippedView {
     private let surface = NSView()
     private let fill = NSView()
     private let arrow = NSImageView()
     private let label = NSTextField(labelWithString: "清空")
+    enum Direction { case left, right, up, down }
+    private let direction: Direction
     private var progress = 0.0
-    private let correction: Bool
+    private var shown = false
+    private var destructive: Bool { direction == .left }
 
-    init(correction: Bool = false) {
-        self.correction = correction
+    init(direction: Direction, name: String) {
+        self.direction = direction
         super.init(frame: .zero)
-        identifier = NSUserInterfaceItemIdentifier(correction ? "strokeCorrectionPull" : "strokeClearPull")
+        identifier = NSUserInterfaceItemIdentifier(name)
         wantsLayer = true
-        layer?.shadowColor = NSColor(hex: correction ? 0x234CDB : 0x9C2F2A).cgColor
+        layer?.shadowColor = NSColor(hex: destructive ? 0x9C2F2A : 0x234CDB).cgColor
         layer?.shadowRadius = 5
         layer?.shadowOffset = .zero
         surface.wantsLayer = true
         surface.layer?.cornerRadius = 16
         surface.layer?.masksToBounds = true
-        surface.layer?.backgroundColor = NSColor(hex: correction ? 0xE9EFFF : 0xFCE9E6).cgColor
+        let background: UInt32 = destructive ? 0xFCE9E6 : direction == .right ? 0xE9EFFF : 0xEDF2FB
+        surface.layer?.backgroundColor = NSColor(hex: background).cgColor
         surface.layer?.borderWidth = 1
-        surface.layer?.borderColor = NSColor(hex: correction ? 0x345EE5 : 0xC2413B).cgColor
-        fill.identifier = NSUserInterfaceItemIdentifier(correction ? "strokeCorrectionPullFill" : "strokeClearPullFill")
+        surface.layer?.borderColor = NSColor(hex: destructive ? 0xC2413B : 0x345EE5).cgColor
+        fill.identifier = NSUserInterfaceItemIdentifier(name + "Fill")
         fill.wantsLayer = true
         surface.addSubview(fill)
-        arrow.identifier = NSUserInterfaceItemIdentifier(correction ? "strokeCorrectionArrow" : "strokeClearArrow")
-        arrow.image = NSImage(systemSymbolName: correction ? "chevron.right.2" : "chevron.left.2",
-                              accessibilityDescription: correction ? "向右外拉" : "向左外拉")?
+        let icon: String
+        switch direction {
+        case .left:
+            arrow.identifier = NSUserInterfaceItemIdentifier("strokeClearArrow")
+            icon = "chevron.left.2"
+        case .right:
+            arrow.identifier = NSUserInterfaceItemIdentifier("strokeCorrectionArrow")
+            icon = "chevron.right.2"
+        case .up: icon = "chevron.up"
+        case .down: icon = "chevron.down"
+        }
+        arrow.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold))
         arrow.imageScaling = .scaleProportionallyUpOrDown
         label.alignment = .center
         label.font = .systemFont(ofSize: 12, weight: .medium)
         [surface, arrow, label].forEach { addSubview($0) }
-        isHidden = true
+        alphaValue = 0
         update(progress: 0, armed: false)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    func show(_ value: Bool) {
+        guard shown != value else { return }
+        shown = value
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().alphaValue = value ? 1 : 0
+        }
+    }
+
     func update(progress: Double, armed: Bool, deleteBefore: Bool = false) {
         self.progress = armed ? 1 : progress.isFinite ? min(1, max(0, progress)) : 0
-        fill.layer?.backgroundColor = NSColor(hex: correction ? (armed ? 0x234CDB : 0xAABCF2)
-                                                             : (armed ? 0x9C2F2A : 0xEDABA5)).cgColor
+        fill.layer?.backgroundColor = NSColor(hex: destructive ? (armed ? 0x9C2F2A : 0xEDABA5) : (armed ? 0x234CDB : 0xAABCF2)).cgColor
         layer?.shadowOpacity = armed ? 0.28 : 0
-        let ink = armed ? NSColor.white : NSColor(hex: correction ? 0x234CDB : 0xA6322C)
+        let ink = armed ? NSColor.white : NSColor(hex: destructive ? 0xA6322C : 0x234CDB)
         arrow.contentTintColor = ink
         label.textColor = ink
-        label.stringValue = correction ? "修正" : deleteBefore ? "删除前文" : "清空"
-        setAccessibilityLabel((armed ? "抬手" : correction ? "继续向右外拉" : "继续向左外拉")
-            + (correction ? "修正前文" : deleteBefore ? "删除前文" : "清空笔画"))
+        let action: String
+        switch direction {
+        case .left:
+            label.stringValue = deleteBefore ? "删除前文" : "清空"
+            action = (armed ? "抬手" : "继续向左外拉") + (deleteBefore ? "删除前文" : "清空笔画")
+        case .right:
+            label.stringValue = "修正"
+            action = (armed ? "抬手" : "继续向右外拉") + "修正前文"
+        case .up:
+            label.stringValue = "更多"
+            action = label.stringValue
+        case .down:
+            label.stringValue = "取消"
+            action = label.stringValue
+        }
+        setAccessibilityLabel(action)
         needsLayout = true
     }
 
@@ -214,8 +251,13 @@ private final class StrokeClearPullView: FlippedView {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         surface.frame = bounds
-        fill.frame = NSRect(x: correction ? 0 : bounds.width * (1 - progress), y: 0,
-                            width: bounds.width * progress, height: bounds.height)
+        if destructive || direction == .right {
+            fill.frame = NSRect(x: destructive ? bounds.width * (1 - progress) : 0, y: 0,
+                                width: bounds.width * progress, height: bounds.height)
+        } else {
+            fill.frame = NSRect(x: 0, y: direction == .up ? bounds.height * (1 - progress) : 0,
+                                width: bounds.width, height: bounds.height * progress)
+        }
         layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: 16, cornerHeight: 16, transform: nil)
         CATransaction.commit()
         arrow.frame = NSRect(x: (bounds.width - 24) / 2, y: 9, width: 24, height: 20)
@@ -272,6 +314,11 @@ private final class StrokeMenuCell: FlippedView {
         character = value
         chosen = isChosen
         label.stringValue = value.isEmpty ? "—" : value
+        let size = value.count > 1 ? max(14, min(23, 100 / CGFloat(value.count))) : 44
+        label.font = NSFont(name: "Kaiti SC", size: size) ?? .systemFont(ofSize: size)
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = value.count > 1 ? value : nil
+        needsLayout = true
         image.image = nil
         label.isHidden = false
         if let glyph, glyph["character"] == value, let png = glyph["png"], png.count < 200_000,
@@ -326,14 +373,145 @@ private final class StrokeMenuCell: FlippedView {
 }
 
 /// The in-app trial's 3×3 menu, shown next to the caret in other applications.
+private final class StrokePunctuationGlyph: NSView {
+    let symbol: String
+    private let font: NSFont
+    var textColor = NSColor.labelColor { didSet { needsDisplay = true } }
+
+    init(_ symbol: String, size: CGFloat) {
+        self.symbol = symbol
+        font = .systemFont(ofSize: size)
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier("strokeMorePunctuation-\(symbol)")
+        setAccessibilityLabel(symbol)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let text = NSAttributedString(string: symbol, attributes: [.font: font, .foregroundColor: textColor])
+        let line = CTLineCreateWithAttributedString(text)
+        context.saveGState()
+        context.textMatrix = .identity
+        context.textPosition = .zero
+        let ink = CTLineGetImageBounds(line, context)
+        context.textPosition = CGPoint(x: bounds.midX - ink.midX, y: bounds.midY - ink.midY)
+        CTLineDraw(line, context)
+        context.restoreGState()
+    }
+}
+
 /// Pending strokes stay in the client's marked text; this palette only shows
 /// choices and never takes focus or mouse input.
+private final class StrokePunctuationOverlay: FlippedView {
+    static let symbols = [
+        ["、"], ["“", "”"], ["；"],
+        ["《", "》"], ["！"], ["（", "）"],
+        ["……"], ["——"], ["："]
+    ]
+    static let side: CGFloat = 188
+    static let cancelSpace: CGFloat = 62
+    private let surface = FlippedView()
+    private let slider = StrokePullView(direction: .up, name: "strokePunctuationPull")
+    private let cancelSlider = StrokePullView(direction: .down, name: "strokeCancelPunctuation")
+    private var buttons: [(FlippedView, StrokePunctuationGlyph)] = []
+    private var opened = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        surface.frame = NSRect(x: 0, y: 0, width: Self.side, height: Self.side)
+        surface.wantsLayer = true
+        surface.layer?.cornerRadius = 14
+        surface.layer?.borderWidth = 1
+        surface.layer?.borderColor = NSColor(hex: 0xAABCF2).cgColor
+        surface.layer?.backgroundColor = NSColor(hex: 0xF3F6FC, alpha: 0.93).cgColor
+        surface.layer?.shadowColor = NSColor(hex: 0x24334D).cgColor
+        surface.layer?.shadowOpacity = 0.2
+        surface.layer?.shadowRadius = 5
+        surface.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        surface.alphaValue = 0
+        addSubview(surface)
+
+        let cellSide = (Self.side - 24) / 3
+        for (index, symbols) in Self.symbols.enumerated() {
+            let cell = FlippedView(frame: NSRect(x: 8 + CGFloat(index % 3) * (cellSide + 4),
+                                                y: 8 + CGFloat(index / 3) * (cellSide + 4),
+                                                width: cellSide, height: cellSide))
+            cell.wantsLayer = true
+            cell.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.8).cgColor
+            cell.layer?.cornerRadius = 10
+            cell.layer?.borderWidth = 1
+            cell.layer?.borderColor = NSColor(hex: 0xDCE4F0).cgColor
+            surface.addSubview(cell)
+            let width = (cellSide - 4) / CGFloat(symbols.count)
+            for (part, symbol) in symbols.enumerated() {
+                let button = FlippedView(frame: NSRect(x: 2 + CGFloat(part) * width, y: 2,
+                                                       width: width, height: cellSide - 4))
+                button.wantsLayer = true
+                button.layer?.cornerRadius = 8
+                let label = StrokePunctuationGlyph(symbol, size: symbols.count == 2 ? 20 : 24)
+                label.frame = button.bounds
+                button.addSubview(label)
+                cell.addSubview(button)
+                buttons.append((button, label))
+            }
+            if symbols.count == 2 {
+                let divider = NSView(frame: NSRect(x: cellSide / 2, y: 6, width: 1, height: cellSide - 12))
+                divider.wantsLayer = true
+                divider.layer?.backgroundColor = NSColor(hex: 0xDCE4F0).cgColor
+                cell.addSubview(divider)
+            }
+        }
+        slider.frame.size = NSSize(width: 60, height: 58)
+        cancelSlider.frame = NSRect(x: (Self.side - 60) / 2, y: Self.side + 4, width: 60, height: 58)
+        [slider, cancelSlider].forEach { addSubview($0) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(start: NSPoint?, progress: CGFloat, open: Bool, symbol: String, cancelProgress: CGFloat = 0) {
+        if let start {
+            let center = Self.side / 2
+            slider.frame.origin = NSPoint(x: start.x + (center - start.x) * progress - slider.frame.width / 2,
+                                          y: start.y + (center - start.y) * progress - slider.frame.height / 2)
+            slider.update(progress: Double(progress), armed: progress >= 1)
+        }
+        slider.show(start != nil && !open)
+        cancelSlider.update(progress: Double(cancelProgress), armed: cancelProgress >= 1)
+        cancelSlider.show(open)
+        if opened != open {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = open ? 0.18 : 0.14
+                surface.animator().alphaValue = open ? 1 : 0
+            }
+        }
+        if opened != open, let layer = surface.layer {
+            let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+            let currentScale = (layer.presentation()?.value(forKeyPath: "transform.scale") as? NSNumber)?.doubleValue
+            scale.values = open ? [currentScale ?? 0.64, 1.04, 1] : [currentScale ?? 1, 0.75]
+            scale.duration = open ? 0.22 : 0.14
+            scale.timingFunctions = open ? [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+                : [CAMediaTimingFunction(name: .easeIn)]
+            layer.add(scale, forKey: "punctuationScale")
+        }
+        opened = open
+        for (button, label) in buttons {
+            let selected = open && label.symbol == symbol
+            label.textColor = selected ? .white : NSColor(hex: 0x24334D)
+            button.layer?.backgroundColor = selected ? NSColor(hex: 0x234CDB).cgColor : NSColor.clear.cgColor
+        }
+    }
+}
+
 final class StrokeCandidatePanel {
     static let cellSize: CGFloat = 78
     static let cellGap: CGFloat = 6
     static let inset: CGFloat = 8
     static let hintHeight: CGFloat = 38
     static let clearGutter: CGFloat = 60
+    static let punctuationSymbols = punctuationCells.filter { $0.0 != "left" }.map { $0.4 }
+        + StrokePunctuationOverlay.symbols.flatMap { $0 }
     static var gridSide: CGFloat { inset * 2 + cellSize * 3 + cellGap * 2 }
     static var menuSize: NSSize { NSSize(width: gridSide + clearGutter, height: gridSide + hintHeight) }
     // Same order as stroke_menu.CANDIDATE_CELLS / PUNCTUATION_CELLS / ACTION_CELLS.
@@ -348,6 +526,12 @@ final class StrokeCandidatePanel {
     var exitGestureLabel = "双指双击" { didSet { exitHint.stringValue = exitGestureLabel + "退出" } }
     var tapHint = "单指空格 · 双指首选" { didSet { refreshHint() } }
     private let panel: NSPanel
+    private let punctuationPanel = StrokePalette(
+        contentRect: NSRect(x: 0, y: 0, width: StrokePunctuationOverlay.side, height: StrokePunctuationOverlay.side),
+        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    private let punctuationOverlay = StrokePunctuationOverlay()
+    private var punctuationPull: [String: Any] = [:]
+    private var punctuationScreenBounds: NSRect?
     private let content = FlippedView()
     private let hint = NSTextField(labelWithString: "")
     private let exitHint = NSTextField(labelWithString: "双指双击退出")
@@ -356,8 +540,8 @@ final class StrokeCandidatePanel {
     private var cells: [StrokeMenuCell] = []
     private let trail = StrokeTraceView()
     private let selectionPath = StrokeSelectionPathView()
-    private let clearPull = StrokeClearPullView()
-    private let correctionPull = StrokeClearPullView(correction: true)
+    private let clearPull = StrokePullView(direction: .left, name: "strokeClearPull")
+    private let correctionPull = StrokePullView(direction: .right, name: "strokeCorrectionPull")
     private let correctionScope = NSTextField(wrappingLabelWithString: "")
     private var correctionEnabled = false
     private var correctionText = ""
@@ -405,6 +589,15 @@ final class StrokeCandidatePanel {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
+        punctuationPanel.isOpaque = false
+        punctuationPanel.backgroundColor = .clear
+        punctuationPanel.hasShadow = false
+        punctuationPanel.ignoresMouseEvents = true
+        punctuationPanel.hidesOnDeactivate = false
+        punctuationPanel.collectionBehavior = panel.collectionBehavior
+        punctuationPanel.contentView = punctuationOverlay
+        panel.addChildWindow(punctuationPanel, ordered: .above)
+        punctuationPanel.orderOut(nil)
         choices.identifier = NSUserInterfaceItemIdentifier("strokeCandidateBar")
         choices.cornerRadius = 14
         hint.font = .systemFont(ofSize: 11)
@@ -438,6 +631,8 @@ final class StrokeCandidatePanel {
         content.frame = NSRect(origin: .zero, size: Self.menuSize)
         content.addSubview(choices)
         content.addSubview(clearPull)
+        correctionPull.alphaValue = 1
+        correctionPull.isHidden = true
         content.addSubview(correctionPull)
         content.addSubview(selectionPath)
         content.addSubview(hint)
@@ -479,26 +674,29 @@ final class StrokeCandidatePanel {
     func selection(phase value: String, progress: Double, direction: String,
                    origin: [Double], points: [[Double]], selectDistance: Double,
                    clearArmed: Bool = false, clearDistance: Double = 30, clearProgress: Double = 0,
-                   correctionArmed: Bool = false, correctionProgress: Double = 0) {
+                   correctionArmed: Bool = false, correctionProgress: Double = 0,
+                   punctuationPull: [String: Any] = [:]) {
         phase = value
         selectionDirection = direction
         self.progress = progress.isFinite ? min(100, max(0, progress)) : 0
         let selecting = value == "selecting"
+        self.punctuationPull = selecting ? punctuationPull : [:]
         clearing = selecting && direction == "left" && clearArmed
         correcting = selecting && direction == "right" && correctionEnabled && correctionArmed
         choices.interactionColor = selecting ? NSColor(hex: clearing ? 0x9C2F2A : direction == "left" ? 0xC2413B : 0x345EE5) : nil
         let target = selecting ? (direction.isEmpty ? "center" : direction) : ""
         cells.forEach { $0.set(active: $0.direction == target); $0.setClearing(clearing, deleteBefore: code.isEmpty) }
-        clearPull.isHidden = !selecting || direction != "left"
+        clearPull.show(selecting && direction == "left")
         clearPull.update(progress: clearProgress, armed: clearing, deleteBefore: code.isEmpty)
         correctionPull.isHidden = !selecting || direction != "right" || !correctionEnabled
         correctionPull.update(progress: correctionProgress, armed: correcting)
         trail.isHidden = selecting
-        selectionPath.isHidden = !selecting
+        selectionPath.isHidden = !selecting || !self.punctuationPull.isEmpty
         selectionPath.update(origin: origin, points: selecting ? points : [], direction: direction,
                              threshold: selectDistance, clearDistance: clearDistance)
         refreshHint()
         layoutHint()
+        updatePunctuationOverlay()
     }
 
     func correction(enabled: Bool, text: String, message: String, busy: Bool, canUndo: Bool) {
@@ -514,6 +712,10 @@ final class StrokeCandidatePanel {
         case "selecting":
             hint.stringValue = clearing ? (code.isEmpty ? "抬手删除前文 · 拉回取消" : "抬手清空 · 拉回取消")
                 : selectionDirection == "left" ? (code.isEmpty ? "抬手退格 · 外拉删除前文" : "抬手删除 · 继续外拉可清空")
+                : punctuationPull["opened"] as? Bool == true
+                    ? ((punctuationPull["cancel_progress"] as? Double ?? 0) > 0 ? "继续下拉取消 · " : "")
+                        + "抬手输入 \(punctuationPull["symbol"] as? String ?? "")"
+                : !punctuationPull.isEmpty ? "抬手输入 · 继续上滑展开标点"
                 : selectionDirection.isEmpty ? "已识别双指 · 滑动选字" : "双指选字 · 抬手确认"
             if correctionEnabled && selectionDirection == "right" {
                 hint.stringValue = !code.isEmpty ? "请先确认正在书写的字" : correcting
@@ -557,6 +759,32 @@ final class StrokeCandidatePanel {
         trail.update(points: points, finished: finished, style: style)
     }
 
+    private func updatePunctuationOverlay() {
+        guard panel.isVisible, let bounds = punctuationScreenBounds,
+              let direction = punctuationPull["direction"] as? String,
+              let cell = cells.first(where: { $0.direction == direction }) else {
+            punctuationOverlay.update(start: nil, progress: 0, open: false, symbol: "")
+            return
+        }
+        let side = StrokePunctuationOverlay.side
+        let cellX = panel.frame.minX + choices.frame.minX + cell.frame.midX
+        let cellY = panel.frame.maxY - choices.frame.minY - cell.frame.midY
+        let gridTop = panel.frame.maxY - choices.frame.minY
+        let left = min(max(cellX - side / 2, bounds.minX), max(bounds.minX, bounds.maxX - side))
+        let totalHeight = side + StrokePunctuationOverlay.cancelSpace
+        let top = min(max(gridTop - 8 + side / 2, bounds.minY + totalHeight), bounds.maxY)
+        let bottom = min(top - totalHeight, cellY - 29)
+        punctuationPanel.setFrame(NSRect(x: left, y: bottom, width: side, height: top - bottom), display: false)
+        if !punctuationPanel.isVisible { punctuationPanel.orderFront(nil) }
+        let progress = punctuationPull["progress"] as? Double ?? 0
+        let cancelProgress = punctuationPull["cancel_progress"] as? Double ?? 0
+        punctuationOverlay.update(start: NSPoint(x: cellX - left, y: top - cellY),
+                                  progress: CGFloat(progress.isFinite ? min(1, max(0, progress)) : 0),
+                                  open: punctuationPull["opened"] as? Bool == true,
+                                  symbol: punctuationPull["symbol"] as? String ?? "",
+                                  cancelProgress: CGFloat(cancelProgress.isFinite ? min(1, max(0, cancelProgress)) : 0))
+    }
+
     /// Default: directly below the caret, centered on it. Flip above when the
     /// screen has no room below; clamp inside the visible frame either way.
     static func placement(caret: NSRect, bounds: NSRect, size: NSSize, gap: CGFloat) -> (NSPoint, Bool) {
@@ -573,10 +801,12 @@ final class StrokeCandidatePanel {
     func position(caret: NSRect?, clientLevel: Int32) {
         guard showing, let caret = anchor.observe(caret),
               let screen = NSScreen.screens.first(where: { $0.frame.intersects(caret.insetBy(dx: -1, dy: -1)) }) else {
+            punctuationPanel.orderOut(nil)
             panel.orderOut(nil)
             return
         }
         let bounds = screen.visibleFrame.insetBy(dx: 6, dy: 6)
+        punctuationScreenBounds = bounds
         let size = displaySize
         let (origin, above) = Self.placement(caret: caret.offsetBy(dx: correctionEnabled ? Self.clearGutter / 2 : 0, dy: 0),
                                            bounds: bounds, size: size, gap: InputPaletteStyle.caretGap)
@@ -589,10 +819,13 @@ final class StrokeCandidatePanel {
         panel.setFrameOrigin(anchor.place(origin, size: size))
         panel.level = NSWindow.Level(rawValue: max(Int(clientLevel) + 1, NSWindow.Level.popUpMenu.rawValue))
         panel.orderFrontRegardless()
+        if !punctuationPull.isEmpty { updatePunctuationOverlay() }
     }
 
     func hide() {
         showing = false
+        punctuationScreenBounds = nil
+        punctuationPanel.orderOut(nil)
         panel.orderOut(nil)
         anchor = ActionPanelAnchor()
         trail.update(points: [], finished: false, style: [:])

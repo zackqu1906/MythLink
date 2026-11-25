@@ -11,13 +11,14 @@ def _device(name: str | None, identifier: str):
     return SimpleNamespace(name=name, address=identifier)
 
 
-def _advertisement(*, local_name: str | None = None, rssi: int | None = None):
-    return SimpleNamespace(local_name=local_name, rssi=rssi)
+def _advertisement(*, local_name: str | None = None, rssi: int | None = None, service_data=None):
+    return SimpleNamespace(local_name=local_name, rssi=rssi, service_data=service_data or {})
 
 
 def test_scan_all_devices_keeps_non_ringo_and_macos_identifiers(monkeypatch):
     printer = _device("Office Printer", "AA:BB:CC:DD:EE:01")
     unnamed_ring = _device(None, "57A74F5D-18EA-4C3B-83B2-987ED0512456")
+    r1_pnp_id = bytes.fromhex("02 39 3a 31 52")
 
     class FakeScanner:
         def __init__(self, *, detection_callback):
@@ -27,8 +28,10 @@ def test_scan_all_devices_keeps_non_ringo_and_macos_identifiers(monkeypatch):
             self.callback(printer, _advertisement(rssi=-70))
             self.callback(
                 unnamed_ring,
-                _advertisement(local_name="My Voice Ring", rssi=-42),
+                _advertisement(local_name="My Voice Ring", rssi=-50,
+                               service_data={"0000180a-0000-1000-8000-00805f9b34fb": r1_pnp_id}),
             )
+            self.callback(unnamed_ring, _advertisement(rssi=-42))
 
         async def stop(self):
             return None
@@ -44,6 +47,7 @@ def test_scan_all_devices_keeps_non_ringo_and_macos_identifiers(monkeypatch):
     assert [item.name for item in found] == ["My Voice Ring", "Office Printer"]
     assert found[0].identifier == "57A74F5D-18EA-4C3B-83B2-987ED0512456"
     assert found[0].rssi == -42
+    assert found[0].pnp_id == r1_pnp_id
 
 
 def test_legacy_scan_rings_still_supports_cli_name_filter(monkeypatch):

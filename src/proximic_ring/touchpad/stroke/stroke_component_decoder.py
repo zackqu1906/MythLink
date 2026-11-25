@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import defaultdict
 from functools import lru_cache
 
-from .stroke_components import RULES, ENCLOSURES, VARIANT_COST
+from .stroke_components import RULES, ENCLOSURES, REORDERED_POINTS, VARIANT_COST
 from .stroke_fuzzy import match_prefix, DEFAULT_FUZZY_POLICY, far_budget
 
 MAX_PATHS = 32  # Per character, per input position; surfaced in diagnostics.
@@ -51,7 +51,20 @@ class ComponentGraph:
         self._frontier_cache = {0: ()}
         occurrences = annotation['components']
         self._validate(occurrences)
+        self.max_strokes = len(self.code) + sum(
+            max(map(len, RULES[row['component']][1])) - len(row['indices'])
+            for row in occurrences)
+        self.point_indices = {
+            (row['component'], tuple(row['indices']), variant): frozenset(row['indices'][i] for i in roles)
+            for row in occurrences for (component, variant), roles in REORDERED_POINTS.items()
+            if row['component'] == component}
+        self.left_point_indices = frozenset(min(indices) for indices in self.point_indices.values())
         self.start = self._sequence(_plan(0, len(self.code), occurrences), 0)
+
+    def letter(self, index, tags):
+        if self.point_indices and any(index in self.point_indices.get(tag, ()) for tag in tags):
+            return 'n'
+        return self.code[index]
 
     def _validate(self, occurrences):
         scopes = []
@@ -127,7 +140,7 @@ class ComponentDecoder:
         self.graphs = {char: ComponentGraph(row) for char, row in annotations.items()}
         self.by_initial = defaultdict(list)
         for char, graph in self.graphs.items():
-            for letter in {graph.code[index] for _, index, _, _ in graph.frontier(graph.start)}:
+            for letter in {graph.letter(index, tags) for _, index, _, tags in graph.frontier(graph.start)}:
                 self.by_initial[letter].append(char)
 
     def snapshot(self):
@@ -148,7 +161,7 @@ class ComponentDecoder:
             if allowed is not None and char not in allowed:
                 continue
             graph = self.graphs[char]
-            if len(evidence) > len(graph.code):
+            if len(evidence) > graph.max_strokes:
                 continue
             dots = set((left_dots or {}).get((char, graph.code), ()))
             # state, observed->expected, component path, variant cost, ink cost,
@@ -159,21 +172,25 @@ class ComponentDecoder:
                 following = {}
                 for state, mapping, tags, component_cost, ink_cost, rescues, corrections, dot_changes, far in active:
                     for target, index, extra, new_tags in graph.frontier(state):
-                        letter = graph.code[index]
-                        cache_key = (position, letter, index in dots)
+                        next_tags = tags+new_tags
+                        letter = graph.letter(index, next_tags)
+                        left_point = index in dots or (letter == 'n' and index in graph.left_point_indices)
+                        cache_key = (position, letter, left_point)
                         if cache_key not in one_stroke_cache:
                             one_stroke_cache[cache_key] = match_prefix(letter, [stroke],
-                                left_dots=(0,) if index in dots else (), policy=policy, far_limit=budget)
+                                left_dots=(0,) if left_point else (), policy=policy, far_limit=budget)
                         ink = one_stroke_cache[cache_key]
                         if (ink is None or rescues+ink['rescues'] > policy.max_rescues
                                 or len(far)+len(ink['far_corrections']) > budget):
                             continue
-                        path = (target, mapping+(index,), tags+new_tags, component_cost+extra,
+                        path = (target, mapping+(index,), next_tags, component_cost+extra,
                                 ink_cost+ink['cost'], rescues+ink['rescues'],
                                 corrections+((position,) if ink['corrections'] else ()),
                                 dot_changes+((position,) if ink['left_dot_corrections'] else ()),
                                 far+((position,) if ink['far_corrections'] else ()))
-                        key = (target, path[1])
+                        # Point aliases can meet at the same suffix and retain identical
+                        # index mappings while spelling the observed prefix differently.
+                        key = (target, path[1], tuple(tag for tag in next_tags if tag in graph.point_indices))
                         old = following.get(key)
                         if old is None or path[3]+path[4] < old[3]+old[4]:
                             following[key] = path
@@ -187,14 +204,14 @@ class ComponentDecoder:
                 # Reference paths are included to unify evidence for annotated
                 # characters already recalled by legacy whole-character codes.
                 rows.append(dict(char=char, reference_code=graph.code,
-                    code=''.join(graph.code[i] for i in full_mapping),
+                    code=''.join(graph.letter(i, tags) for i in full_mapping),
                     observed_to_expected=full_mapping,
                     component_path=[dict(component=c, indices=list(indices), variant=v) for c, indices, v in tags],
                     component_cost=component_cost, order_variant=variant, cost=ink_cost,
                     rescues=rescues, corrections=list(corrections), left_dot_corrections=list(dot_changes),
                     far_corrections=list(far), **({'replacement_corrections': list(far)} if far else {}),
-                    is_complete=len(mapping) == len(graph.code), encoding_valid=not corrections,
-                    exact_match=len(mapping) == len(graph.code) and not corrections,
+                    is_complete=state == 0, encoding_valid=not corrections,
+                    exact_match=state == 0 and not corrections,
                     match_type='component', search_truncated=truncated))
         return rows
 

@@ -135,12 +135,15 @@ def test_right_swipe_accepts_once_and_never_uses_configured_edit_or_app_action(s
     assert pastes == [('editor-a', 7)] and not voices
 
 
-def test_tap_preempts_queued_right_swipe_even_with_custom_voice_binding(suggestion):
+@pytest.mark.parametrize('gesture', ['tap', 'index-pinch'])
+def test_tap_preempts_queued_right_swipe_even_with_custom_voice_binding(suggestion, gesture):
     c, owner, _, _, _, pastes, voices = suggestion
+    if gesture == 'index-pinch':
+        owner._device_family = 'R1'
     owner._gesture_bindings = GestureBindings(confirm=('snap', ''), end=('double-tap', ''))
     offer = show(suggestion)
     assert not request(owner, 'swipe-right', deliver=False)
-    assert not request(owner, 'tap', deliver=False)
+    assert not request(owner, gesture, deliver=False)
     assert offer.cancelled.is_set()
     wait_for(lambda: len(voices) == 1)
     assert voices[0][0] == 'start' and not pastes

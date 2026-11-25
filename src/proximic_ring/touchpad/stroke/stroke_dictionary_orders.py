@@ -1,8 +1,12 @@
-"""Keep order changes as literal input; leave shape and count errors to correction."""
+"""Keep order changes and explicitly accepted handwriting variants as literal input."""
 from collections import Counter, defaultdict
 from functools import lru_cache
 from importlib.resources import files
 import json
+
+
+# The last 撇 in 男 can also serve as the vertical through 田.
+ACCEPTED_WRITING_VARIANTS = {'男': ('szhhzp',)}
 
 
 @lru_cache(maxsize=1)
@@ -44,6 +48,11 @@ def filter_order_variants(entries):
     references, grass = reference_orders(), grass_components()
     reviewed = {character: code for character, code in references.items()
                 if code in by_character.get(character, ())}
-    return [entry for entry in entries
-            if entry[0] not in reviewed
-            or is_order_variant(reviewed[entry[0]], entry[1], grass.get(entry[0], ()))]
+    accepted = [entry for entry in entries
+                if entry[0] not in reviewed
+                or entry[1] in ACCEPTED_WRITING_VARIANTS.get(entry[0], ())
+                or is_order_variant(reviewed[entry[0]], entry[1], grass.get(entry[0], ()))]
+    for character, codes in ACCEPTED_WRITING_VARIANTS.items():
+        if character in by_character:
+            accepted.extend([character, code, 0] for code in codes if code not in by_character[character])
+    return accepted

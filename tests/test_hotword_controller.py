@@ -8,7 +8,7 @@ from PySide6.QtCore import QCoreApplication
 
 from proximic_ring.text_processing import LLMSettings, TextProcessingResult
 from proximic_ring.text_processing.model import (
-    INPUT_ROUTING_ROUTED_EDIT, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL, ROUTED_EDIT_SIX_CLASS,
+    INPUT_ROUTING_ROUTED_EDIT, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_HYBRID, ROUTED_EDIT_ORIGINAL, ROUTED_EDIT_SIX_CLASS,
 )
 from proximic_ring.ui.voice.hotword_controller import HotwordController
 from test_app_gestures import route
@@ -202,10 +202,14 @@ def test_reapplying_a_reverted_edit_can_learn_again(service):
     pump_until(lambda: c.store.snapshot() == ["张玮"])
 
 
-@pytest.mark.parametrize("variant", [None, ROUTED_EDIT_SIX_CLASS, ROUTED_EDIT_BOUNDARY, ROUTED_EDIT_ORIGINAL])
-def test_app_routes_edit_result_ack_and_undo_to_learning(route, monkeypatch, variant):
+@pytest.mark.parametrize("variant,backend", [
+    (None, "volcengine"), (ROUTED_EDIT_SIX_CLASS, "volcengine"),
+    (ROUTED_EDIT_BOUNDARY, "volcengine"), (ROUTED_EDIT_ORIGINAL, "volcengine"),
+    (ROUTED_EDIT_HYBRID, "funasr_nano"),
+])
+def test_app_routes_edit_result_ack_and_undo_to_learning(route, monkeypatch, variant, backend):
     c, _, inline, _, sent, messages, _ = route
-    c._asr_backend = "volcengine"
+    c._asr_backend = backend
     c._latest_asr_session_id = 12
     if variant is not None:
         c.routedEditVariant = variant
@@ -227,23 +231,26 @@ def test_app_routes_edit_result_ack_and_undo_to_learning(route, monkeypatch, var
     assert messages[-1][0] == "edit_result" and not model.calls
     receive(inline, "settled", phase="edited", revision=2, text="联系张玮")
     pump_until(lambda: c.hotwords.store.snapshot() == ["张玮"])
+    assert c.hotwords.store.enabled_words() == ("张玮",)
+    assert c.hotwords.store.stroke_completions("联系张") == [("张玮", "张")]
     assert model.calls == [("联系张伟", "王字旁的玮", "联系张玮")]
     receive(inline, "settled", phase="dictated", revision=3, text="王字旁的玮")
     assert c.hotwords.store.snapshot() == [] and not sent
+    assert c.hotwords.store.enabled_words() == () and c.hotwords.store.stroke_completions("联系张") == []
 
 
-@pytest.mark.parametrize("before,instruction,after,word", [
-    ("进行哔哩哔哩。飞书。", "鼠标的鼠。", "进行哔哩哔哩。飞鼠。", "飞鼠"),
-    ("进行哔哩哔哩。飞鼠。miss 绘制。", "myth 绘制。", "进行哔哩哔哩。飞鼠。myth 绘制。", "myth"),
+@pytest.mark.parametrize("backend,before,instruction,after,word", [
+    ("volcengine", "进行哔哩哔哩。飞书。", "鼠标的鼠。", "进行哔哩哔哩。飞鼠。", "飞鼠"),
+    ("funasr_nano", "进行哔哩哔哩。飞鼠。miss 绘制。", "myth 绘制。", "进行哔哩哔哩。飞鼠。myth 绘制。", "myth"),
 ])
 def test_replayed_ellipsis_results_save_notify_and_retract(route, monkeypatch, caplog,
-                                                        before, instruction, after, word):
+                                                        backend, before, instruction, after, word):
     """Two previously missed utterances using the word-only response format."""
     from proximic_ring.text_processing import OpenAICompatibleTextProcessor
     from proximic_ring.voice.hotwords import HotwordStore
     c, _, inline, _, sent, messages, _ = route
     caplog.set_level(logging.INFO)
-    c._asr_backend = "volcengine"
+    c._asr_backend = backend
     c._latest_asr_session_id = 12
     settings = LLMSettings(enabled=True, provider="volcengine", model="fixture",
                            base_url="https://example.invalid", api_key_env="TEST_UNUSED_API_KEY")

@@ -4,6 +4,7 @@ import time
 from PySide6.QtCore import QObject, Property, QTimer, Qt, Signal, Slot
 
 from proximic_ring.runtime_paths import cache_root
+from proximic_ring.ring_devices import matches_tap_gesture
 from ..history.history_contract import execution_command, load_cache, usable
 from ..history.history_service import HistoryService
 
@@ -123,7 +124,9 @@ class HistoryRecommendationController(QObject):
 
     @Property(str, notify=changed)
     def interactionHint(self):
-        return "↑ ↓ 切换 · tap 打开" if self.opensCodex else "↑ ↓ 切换 · tap 执行"
+        gesture = "食指捏合" if getattr(self.agent.owner, "_device_family", "") == "R1" else "tap"
+        action = "打开" if self.opensCodex else "执行"
+        return f"↑ ↓ 切换 · {gesture} {action}"
 
     @staticmethod
     def _open_codex(thread_id):
@@ -296,6 +299,8 @@ class HistoryRecommendationController(QObject):
         invocation = self.agent.owner._global_gesture_bindings.workflow_recommendations
         if not self._enabled or self._closed:
             return False
+        if name != invocation and matches_tap_gesture(name, getattr(self.agent.owner, "_device_family", "")):
+            name = "tap"
         if self._visible and name in {"tap", "swipe-up", "swipe-down", invocation}:
             self._gesture.emit(name, connection, time.monotonic(), self._epoch)
             return True

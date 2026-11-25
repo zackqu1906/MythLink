@@ -66,8 +66,11 @@ assert not owner.agent.recommendations.owns_input_focus()
 # Probe the shared endpoint with the actual omitted release modules. A QML
 # startup alone previously missed the first-gesture None input crash.
 from types import SimpleNamespace
+bindings = owner._gesture_bindings
+voice_gestures = set(bindings.confirm + bindings.end) - {''}
+assert voice_gestures
 for _ in range(3):
-    for name in ('tap', 'double-tap'):
+    for name in voice_gestures:
         assert owner.ringGestures.filter(SimpleNamespace(name=name), True,
                                          owner._disconnect_event)
 assert not owner._disconnect_event.is_set()

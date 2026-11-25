@@ -9,7 +9,7 @@ from proximic_ring.screenshots.controller import ScreenCaptureController
 
 class CaptureController(ScreenCaptureController):
     confirm_label = '加入输入框 →'
-    confirm_hint = 'tap / 右滑加入输入框'
+    confirm_hint_action = '加入输入框'
 
     def __init__(self, agent):
         self.agent = agent

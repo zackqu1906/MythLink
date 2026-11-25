@@ -9,14 +9,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from types import SimpleNamespace
 
 import pytest
 from PySide6.QtTest import QTest
 
 from proximic_ring.voice.ime.ime_bridge import IMEBridge
 from proximic_ring.touchpad.stroke.stroke_common import common_characters
-from proximic_ring.touchpad.stroke.stroke_menu import two_finger_selection
+from proximic_ring.touchpad.stroke.stroke_menu import CANDIDATE_CELLS, two_finger_selection
 from test_inline_ui import inline_ui
 from test_stroke_session import stroke, until
 from test_two_finger_stroke_toggle import Mouse, click
@@ -102,11 +101,16 @@ def test_two_finger_double_shows_native_palette_commits_and_returns_to_mouse(str
             assert not tp.predictionMode
             index = next(i for i, char in enumerate(tp.strokeCandidates)
                          if model.suggestions(prefix + char, allowed_characters=common_characters()))
-            for step in range(index):
-                assert tp.consume_gesture(SimpleNamespace(name="swipe-right"), c._disconnect_event)
-                until(lambda: tp.selectedCandidate == step + 1)
+            def select(index):
+                if index == 0:
+                    tp._receive(run, 'two_finger_tap', (run.output, None))
+                else:
+                    direction = CANDIDATE_CELLS[index][0]
+                    tp._receive(run, 'selection', (run.output, dict(
+                        decision=dict(phase='selecting', direction=direction))))
+
             prefix += tp.strokeCandidates[index]
-            tp.selectCandidate(index)
+            select(index)
             until(lambda: any(m.get("type") == "stroke_result" and m.get("success") for m in received)
                   and not tp._pending_stroke_commit and not tp._code)
             assert session.phase == "running"  # Confirmation keeps the palette open.
@@ -116,11 +120,8 @@ def test_two_finger_double_shows_native_palette_commits_and_returns_to_mouse(str
                 assert tp.strokeCandidates == model.suggestions(prefix, allowed_characters=common_characters())[:tp.candidatePageSize]
                 index = next(i for i, char in enumerate(tp.strokeCandidates)
                              if model.suggestions(prefix + char, allowed_characters=common_characters()))
-                for step in range(index):
-                    assert tp.consume_gesture(SimpleNamespace(name="swipe-right"), c._disconnect_event)
-                    until(lambda: tp.selectedCandidate == step + 1)
                 prefix += tp.strokeCandidates[index]
-                tp.selectCandidate(index)
+                select(index)
                 until(lambda: sum(m.get("type") == "stroke_result" and bool(m.get("success")) for m in received) == count
                       and not tp._pending_stroke_commit)
             tp.addStroke("h")

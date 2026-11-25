@@ -7,15 +7,17 @@ Rectangle {
     id: tutorial
     objectName: "strokeTutorial"
     signal closeRequested()
+    property bool compact: false
     readonly property color ink: "#24334D"
     readonly property color mutedInk: theme.muted
     readonly property color accent: "#345EE5"
     readonly property color faint: "#C9D4EC"
     readonly property bool running: visible && Window.window !== null && Window.window.visible
-    // 0..1 loop shared by the three illustrations.
+    // 0..1 loop shared by the illustrations.
     property real phase: 0
     implicitWidth: 260
-    implicitHeight: body.implicitHeight + 24
+    readonly property int inset: compact ? 8 : 12
+    implicitHeight: body.implicitHeight + 2 * inset
     radius: 12; color: "#F7F9FE"
     border.color: "#E0E6F0"; border.width: 1
     FigmaTheme { id: theme }
@@ -33,15 +35,16 @@ Rectangle {
     }
     component Figure: Rectangle {
         Layout.alignment: Qt.AlignTop
-        Layout.preferredWidth: 76; Layout.preferredHeight: 60
+        Layout.preferredWidth: tutorial.compact ? 58 : 76
+        Layout.preferredHeight: tutorial.compact ? 46 : 60
         radius: 8; color: "#FFFFFF"
         border.color: "#E0E6F0"; border.width: 1
     }
 
     ColumnLayout {
         id: body
-        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-        spacing: 12
+        anchors { left: parent.left; right: parent.right; top: parent.top; margins: tutorial.inset }
+        spacing: tutorial.compact ? 4 : 12
 
         RowLayout {
             Layout.fillWidth: true; spacing: 6
@@ -116,7 +119,7 @@ Rectangle {
             objectName: "strokeTutorialSelect"
             Layout.fillWidth: true; spacing: 8
             StepText {
-                text: "<b>单击动作</b>可在笔画输入页设置。<br><b>双指左滑</b>退格，继续外拉清空笔画。"
+                text: "<b>单击动作</b>可在笔画输入页设置。<br><b>双指滑向目标格</b>，抬手确认。"
             }
             Figure {
                 Grid {
@@ -130,7 +133,7 @@ Rectangle {
                         model: 9
                         delegate: Rectangle {
                             required property int index
-                            width: 15; height: 15; radius: 3
+                            width: tutorial.compact ? 12 : 15; height: width; radius: 3
                             color: index === miniGrid.active ? tutorial.accent
                                 : index === 4 ? "#DCE4F7" : "#EEF2FA"
                             border.color: "#D3DCEE"; border.width: index === miniGrid.active ? 0 : 1
@@ -146,65 +149,90 @@ Rectangle {
             }
         }
 
-        // 3. Show a four-pass swipe (→ ← → ←) to clear the pending strokes.
+        RowLayout {
+            objectName: "strokeTutorialPunctuation"
+            Layout.fillWidth: true; spacing: 8
+            StepText {
+                text: "双指滑到<b>句号</b>再上滑展开。<br>滑选标点，抬手确认。<br>成对符号各占半格。<br>沿中列下拉填满<b>取消</b>返回。"
+            }
+            Figure {
+                id: punctuationFigure
+                readonly property bool expanded: tutorial.phase >= .48
+                Column {
+                    anchors.centerIn: parent
+                    scale: tutorial.compact ? .8 : 1
+                    spacing: 3
+                    UiIcon {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 14; height: 14
+                        symbol: "chevron-left"; rotation: 90; ink: tutorial.accent
+                    }
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: !punctuationFigure.expanded
+                        width: 22; height: 17; radius: 3; color: tutorial.accent
+                        Text { anchors.centerIn: parent; text: "。"; color: "white"; font.pixelSize: 11 }
+                    }
+                    Grid {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: punctuationFigure.expanded
+                        columns: 3; spacing: 2
+                        Repeater {
+                            model: ["、", "“”", "；", "《》", "！", "（）", "…", "—", "："]
+                            delegate: Rectangle {
+                                required property string modelData
+                                required property int index
+                                width: 16; height: 11; radius: 2
+                                color: index === 4 ? tutorial.accent : "#EEF2FA"
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: parent.modelData; font.pixelSize: 8
+                                    color: parent.index === 4 ? "white" : tutorial.ink
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Continue the two-finger left swipe to the clear threshold.
         RowLayout {
             objectName: "strokeTutorialClear"
             Layout.fillWidth: true; spacing: 8
             ColumnLayout {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 6
-                StepText { text: "<b>单指来回滑动</b>，清空全部笔画。" }
+                StepText { text: "<b>双指左滑</b>退一笔，继续向左外拉后抬手清空。" }
                 Label {
-                    text: "沿箭头连续折返后抬手。"
+                    text: "没有笔画时，短滑退格，长拉删除前文。"
                     Layout.fillWidth: true; wrapMode: Text.Wrap
                     font.family: theme.family; font.pixelSize: 11; color: tutorial.mutedInk
                 }
             }
             Figure {
                 Canvas {
-                    objectName: "strokeTutorialZigzag"
+                    objectName: "strokeTutorialLeftPull"
                     anchors.fill: parent; anchors.margins: 6
                     property real phase: tutorial.phase
                     onPhaseChanged: requestPaint()
                     onPaint: {
                         const ctx = getContext("2d")
                         ctx.reset()
-                        const w = width, h = height
-                        const pts = [[6, h * 0.12], [w - 6, h * 0.31], [6, h * 0.50],
-                                     [w - 6, h * 0.69], [6, h * 0.88]]
-                        ctx.lineCap = "round"; ctx.lineJoin = "round"
-                        // Keep the whole path visible, including while the dot pauses at the end.
+                        const start = width - 8, end = 8
+                        const progress = Math.min(1, phase / 0.8)
+                        const x = start + (end - start) * progress
+                        ctx.lineCap = "round"
                         ctx.lineWidth = 2; ctx.strokeStyle = "#8EA4D4"
-                        ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1])
-                        for (let i = 1; i < pts.length; ++i) ctx.lineTo(pts[i][0], pts[i][1])
-                        ctx.stroke()
-                        const progress = Math.min(1, phase / 0.8) * (pts.length - 1)
-                        ctx.lineWidth = 3; ctx.strokeStyle = tutorial.accent
-                        ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1])
-                        let head = pts[0]
-                        for (let i = 1; i < pts.length && progress > i - 1; ++i) {
-                            const f = Math.min(1, progress - (i - 1))
-                            head = [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * f,
-                                    pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * f]
-                            ctx.lineTo(head[0], head[1])
-                        }
-                        ctx.stroke()
-                        // One arrow per pass makes both reversals readable in a still image.
-                        ctx.lineWidth = 1.5
-                        for (let i = 1; i < pts.length; ++i) {
-                            const start = pts[i - 1], end = pts[i]
-                            const x = (start[0] + end[0]) / 2, y = (start[1] + end[1]) / 2
-                            const angle = Math.atan2(end[1] - start[1], end[0] - start[0])
-                            ctx.strokeStyle = tutorial.accent
-                            ctx.beginPath()
-                            ctx.moveTo(x - 6 * Math.cos(angle - 0.6), y - 6 * Math.sin(angle - 0.6))
-                            ctx.lineTo(x, y)
-                            ctx.lineTo(x - 6 * Math.cos(angle + 0.6), y - 6 * Math.sin(angle + 0.6))
+                        for (const y of [height * 0.35, height * 0.65]) {
+                            ctx.strokeStyle = "#8EA4D4"
+                            ctx.beginPath(); ctx.moveTo(start, y); ctx.lineTo(end, y)
+                            ctx.moveTo(end + 5, y - 4); ctx.lineTo(end, y); ctx.lineTo(end + 5, y + 4)
                             ctx.stroke()
+                            ctx.strokeStyle = tutorial.accent
+                            ctx.beginPath(); ctx.moveTo(start, y); ctx.lineTo(x, y); ctx.stroke()
+                            ctx.fillStyle = tutorial.accent
+                            ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill()
                         }
-                        ctx.fillStyle = tutorial.accent
-                        ctx.strokeStyle = "white"
-                        ctx.beginPath(); ctx.arc(head[0], head[1], 4, 0, Math.PI * 2); ctx.fill()
-                        ctx.stroke()
                     }
                 }
             }

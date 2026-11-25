@@ -19,6 +19,7 @@ import uuid
 # Use UTF-8 bytes as a conservative proxy, not an exact Seed token count.
 HOTWORD_BUDGET = 90
 MAX_WORD_CHARS = 40
+STROKE_CONTEXT_CHARS = MAX_WORD_CHARS + 1  # Keep a trailing space or an ASCII word boundary.
 
 
 def normalize_word(value: str) -> str:
@@ -64,6 +65,8 @@ class HotwordStore:
             for entry in value["entries"]:
                 normalize_word(entry["word"])
                 if (not isinstance(entry["evidence"], dict) or not isinstance(entry["id"], str)
+                        or type(entry.get("stroke_uses", 0)) is not int
+                        or not 0 <= entry.get("stroke_uses", 0) <= 10_000
                         or not all(isinstance(entry[k], bool) for k in ("manual", "enabled", "pinned"))
                         or not all(isinstance(t, (int, float)) and math.isfinite(t)
                                    for t in [entry["updated_at"], *entry["evidence"].values()])
@@ -89,6 +92,7 @@ class HotwordStore:
         ordered = self._state["entries"]
         self._enabled_words = tuple(e["word"] for e in ordered if e["enabled"])
         self._selected = tuple(select_hotwords(self._enabled_words))
+        self._stroke_words = tuple(e for e in ordered if e["enabled"] and len(e["word"]) > 1)
         self._transactions = set()
         for entry in ordered:
             for source in entry["evidence"]:
@@ -153,6 +157,55 @@ class HotwordStore:
         with self._lock:
             return self._enabled_words
 
+    @staticmethod
+    def _matches_tail(context, prefix):
+        if not context.endswith(prefix):
+            return False
+        start = len(context) - len(prefix)
+        # An English prefix should start at a word boundary (e.g. "Vi" in
+        # "用 Vi", but not the last two letters of "Neovi").
+        return not (start and prefix[0].isascii() and prefix[0].isalnum()
+                    and context[start - 1].isascii()
+                    and (context[start - 1].isalnum() or context[start - 1] == "_"))
+
+    def stroke_completions(self, context, limit=2):
+        """Return (display word, already typed prefix) for local stroke suggestions."""
+        with self._lock:
+            matches = []
+            for entry in self._stroke_words:
+                word = entry["word"]
+                first = unicodedata.name(word[0], "")
+                minimum = 1 if first.startswith(("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH")) else 2
+                if self._matches_tail(context, word):
+                    continue
+                for length in range(min(len(word) - 1, len(context)), minimum - 1, -1):
+                    prefix = word[:length]
+                    if self._matches_tail(context, prefix):
+                        uses = max(0, entry.get("stroke_uses", 0) - 1)
+                        matches.append((-length, not entry["pinned"], -uses, word, prefix))
+                        break
+            # Stable sort leaves the existing library order as the final tiebreaker.
+            return [(word, prefix) for *_, word, prefix in sorted(matches, key=lambda row: row[:3])[:limit]]
+
+    def record_stroke_use(self, context, inserted, *, word=None):
+        """Count a known word completed by a confirmed insertion; never store editor text."""
+        inserted = inserted.removesuffix(" ")
+        context = context.removesuffix(" ")
+        if not inserted or not context.endswith(inserted):
+            return False
+        with self._lock:
+            if not self.auto_learn:
+                return False
+            entry = max((e for e in self._stroke_words if (word is None or e["word"] == word)
+                         and len(e["word"]) > len(inserted) and self._matches_tail(context, e["word"])),
+                        key=lambda e: len(e["word"]), default=None)
+            if entry is None or entry.get("stroke_uses", 0) >= 10_000:
+                return False
+            def mutate(state):
+                target = next(e for e in state["entries"] if e["id"] == entry["id"])
+                target["stroke_uses"] = target.get("stroke_uses", 0) + 1
+            return self._change(mutate)
+
     def add(self, word: str):
         word = normalize_word(word)
         def mutate(state):
@@ -183,6 +236,7 @@ class HotwordStore:
                 state["blocked"] = list(set(state["blocked"]) | {entry["word"].casefold()})
                 state["blocked"] = [k for k in state["blocked"] if k != word.casefold()]
                 entry.update(word=word, manual=True, evidence={}, updated_at=time.time())
+                entry.pop("stroke_uses", None)
             if enabled is not None:
                 entry["enabled"] = bool(enabled)
             if pinned is not None:

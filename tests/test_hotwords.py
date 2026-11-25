@@ -36,6 +36,29 @@ def test_delete_blocks_learning_and_manual_add_allows_it_again(tmp_path):
     assert len(store.entries()) == 1 and store.snapshot() == ["Java"]
 
 
+def test_stroke_completions_rank_confirmed_use_and_respect_library_controls(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    store.learn("voice-edit", ["苏州工业园区"])
+    store.add("苏州中心")
+    assert store.stroke_completions("去苏州") == [("苏州中心", "苏州"), ("苏州工业园区", "苏州")]
+    assert not store.record_stroke_use("去苏州工业园", "工业园区", word="苏州工业园区")
+    for _ in range(2):
+        assert store.record_stroke_use("去苏州工业园区 ", "工业园区 ", word="苏州工业园区")
+    store = HotwordStore(store.path)
+    assert store.stroke_completions("去苏州")[0] == ("苏州工业园区", "苏州")
+    assert store.snapshot() == ["苏州中心", "苏州工业园区"]  # Keep the user's ASR order.
+    store.set_auto_learn(False)
+    assert not store.record_stroke_use("去苏州中心", "心")
+    assert store.stroke_completions("去苏州")
+    store.retract("voice-edit")
+    assert store.stroke_completions("去苏州") == [("苏州中心", "苏州")]
+    store.update(store.entries()[0]["id"], enabled=False)
+    assert not store.stroke_completions("去苏州")
+    store.add("Vision Pro")
+    assert store.stroke_completions("用Vi") == [("Vision Pro", "Vi")]
+    assert not store.stroke_completions("NeoviVi")
+
+
 def test_disabled_word_stays_disabled_and_rename_becomes_manual(tmp_path):
     store = HotwordStore(tmp_path / "words.json")
     store.learn("one", ["张玮"])

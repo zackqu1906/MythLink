@@ -6,6 +6,7 @@ from concurrent.futures import CancelledError as WorkerCancelledError
 import threading
 
 from proximic_ring.ble_runtime import run_ble
+from proximic_ring.ring_devices import ring_family
 
 
 class DeviceScanWorker(threading.Thread):
@@ -49,7 +50,8 @@ class DeviceScanWorker(threading.Thread):
         try:
             rows = [
                 {"name": item.name or "未命名设备", "identifier": item.identifier,
-                 "rssi": item.rssi if item.rssi is not None else "", "_device": item.device}
+                 "rssi": item.rssi if item.rssi is not None else "", "_device": item.device,
+                 "family": ring_family(item.name or "", getattr(item, "pnp_id", None))}
                 for item in run_ble(self._scan())
             ]
         except (asyncio.CancelledError, WorkerCancelledError):

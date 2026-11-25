@@ -27,11 +27,16 @@ VOICE_GESTURES = (
     ("circle-clockwise", "顺时针"), ("circle-counterclockwise", "逆时针"),
 )
 
+RINGO_START_END = ("tap", "index-pinch")
 
-def single_bindings(bindings):
-    """Keep the first saved choice when upgrading an older multi-gesture setting."""
-    return GestureBindings(**{key: (next((value for value in values if value), ""), "")
-                              for key, values in bindings.as_dict().items()})
+
+def normalize_bindings(bindings):
+    """Keep the first legacy choice and preserve the Ringo start/end pair."""
+    return GestureBindings(**{
+        key: RINGO_START_END if key in {"confirm", "end"} and tuple(values) == RINGO_START_END
+        else (next((value for value in values if value), ""), "")
+        for key, values in bindings.as_dict().items()
+    })
 
 
 def action_for(bindings, gesture):
@@ -42,16 +47,18 @@ def action_for(bindings, gesture):
 
 
 def with_action(bindings, gesture, action):
-    if gesture not in GESTURE_LABELS:
+    if gesture not in GESTURE_LABELS and (gesture or not action):
         raise ValueError("请选择有效的手势")
     targets = next((keys for key, _, keys in VOICE_ACTIONS if key == action), None)
     if action and targets is None:
         raise ValueError("请选择有效的语音功能")
     targets = targets or ()
-    values = single_bindings(bindings).as_dict()
-    for key, slots in values.items():
-        if key not in targets:
-            values[key] = ["" if value == gesture else value for value in slots]
-    for key in targets:
-        values[key] = [gesture, ""]
-    return GestureBindings(**{key: tuple(slots) for key, slots in values.items()})
+    values = bindings.as_dict()
+    if gesture:
+        for key, slots in values.items():
+            values[key] = [gesture, ""] if key in targets else [value for value in slots if value != gesture]
+    else:
+        for key in targets:
+            values[key] = [value for value in values[key]
+                           if (action_for(bindings, value) or {}).get("voiceAction") != action]
+    return normalize_bindings(GestureBindings(**{key: tuple(slots) for key, slots in values.items()}))

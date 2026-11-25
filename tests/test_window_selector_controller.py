@@ -42,6 +42,17 @@ def opened(c, service):
     until(lambda: service.phase == "ready")
 
 
+def test_r1_pinch_confirms_only_inside_window_selector(selector):
+    c, _, s, _, d, _, _, _, sent = selector
+    c._device_family = 'R1'
+    opened(c, s)
+    assert s.confirmGestureLabel == '食指捏合'
+    assert not request(c, 'index-pinch') and not s.atApps
+    assert not request(c, 'index-pinch')
+    until(lambda: not s.blocked.is_set())
+    assert len(d.activated) == 1 and not sent
+
+
 @pytest.mark.parametrize("mode", ["operation"])
 def test_gestures_navigate_confirm_exact_window_and_never_start_voice(selector, mode):
     c, _, s, _, d, calls, notices, threads, sent = selector

@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QGuiApplication
 
 from ..desktop.browser_action_queue import BrowserActionQueue
+from ...ring_devices import matches_tap_gesture
 
 
 @dataclass
@@ -235,6 +236,8 @@ class ClipboardSuggestionController(QObject):
         """Firmware-thread gate, before mappings or touchpad click delivery."""
         offer = self._offer
         name = str(getattr(event, 'name', ''))
+        if matches_tap_gesture(name, self.owner._device_family):
+            name = 'tap'
         if (not offer or not offer.shown or self._clock() >= offer.expires
                 or connection is not offer.connection or connection.is_set()
                 or name not in {'tap', 'swipe-right'}):

@@ -66,7 +66,7 @@ let hint = find("strokeSelectionHint", in: content) as! NSTextField
 let exitHint = find("strokeExitHint", in: content) as! NSTextField
 let clearPull = find("strokeClearPull", in: content)!
 let clearFill = find("strokeClearPullFill", in: content)!
-precondition(clearPull.isHidden && clearPull.frame.minX >= 6)
+precondition(clearPull.alphaValue == 0 && clearPull.frame.minX >= 6)
 precondition(abs(clearPull.frame.maxX - (bar.frame.minX + delete.frame.minX)) < 0.01)
 precondition(exitHint.stringValue == "双指双击退出" && exitHint.font!.pointSize < hint.font!.pointSize)
 precondition(!exitHint.isHidden && !exitHint.frame.intersects(bar.frame), "exit reminder must stay outside the writing grid")
@@ -93,9 +93,10 @@ func screenshot(_ suffix: String) throws {
 try screenshot("two-finger")
 palette.selection(phase: "selecting", progress: 100, direction: "left", origin: [0, 0],
                   points: [[0, 0], [-2, 0], [-4, 0], [-6, 0]], selectDistance: 6)
+RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.16))
 let stationaryWindow = panel.frame, stationaryGrid = bar.frame
 content.layoutSubtreeIfNeeded()
-precondition(!clearPull.isHidden && clearFill.frame.width == 0 && clearPull.layer?.shadowOpacity == 0)
+precondition(clearPull.alphaValue == 1 && clearFill.frame.width == 0 && clearPull.layer?.shadowOpacity == 0)
 precondition(delete.layer?.backgroundColor == NSColor(srgbRed: 0xC2 / 255, green: 0x41 / 255, blue: 0x3B / 255, alpha: 1).cgColor,
              "delete must turn red")
 precondition(bar.layer?.borderWidth == 3 && bar.layer?.borderColor != selectionBorder)
@@ -129,7 +130,8 @@ palette.position(caret: NSRect(x: screen.minX, y: screen.midY, width: 1, height:
 precondition(panel.frame.minX + clearPull.frame.minX >= screen.minX)
 precondition(panel.frame.maxX <= screen.maxX)
 palette.selection(phase: "idle", progress: 0, direction: "", origin: [], points: [], selectDistance: 3)
-precondition(bar.layer?.borderWidth == 0.5 && exitHint.stringValue == "双指双击退出" && clearPull.isHidden)
+RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.16))
+precondition(bar.layer?.borderWidth == 0.5 && exitHint.stringValue == "双指双击退出" && clearPull.alphaValue == 0)
 try screenshot("writing")
 palette.update(code: "", candidates: ["好"], selected: 0)
 palette.selection(phase: "selecting", progress: 100, direction: "left", origin: [0, 0],
