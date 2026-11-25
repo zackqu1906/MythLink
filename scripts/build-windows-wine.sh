@@ -61,7 +61,9 @@ MYTHLINK_BUILD_VERSION=$(wine "$windows_python" tools/build_version.py --version
 export MYTHLINK_BUILD_VERSION
 
 wine "$windows_python" -m pip install --upgrade 'pip==26.2.1' 'setuptools==81.0.0' 'wheel==0.48.0'
-wine "$windows_python" -m pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.11.0' 'torchaudio==2.11.0'
+# Resolve the shared Python dependencies from PyPI with the application.
+wine "$windows_python" -m pip install --no-deps --index-url https://download.pytorch.org/whl/cpu \
+    'torch==2.11.0' 'torchaudio==2.11.0'
 wine "$windows_python" -m pip install -c requirements-windows.lock \
     '.[ring,touchpad,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]' -r requirements-packaging.txt
 wine "$windows_python" tools/install_r1_sdk.py
