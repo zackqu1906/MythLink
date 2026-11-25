@@ -12,7 +12,7 @@ import check_bailian_binary as base
 from check_bailian_six_tasks import ROOT, write_json
 from data.bailian_binary_cases_20261116 import FAMILIES
 
-RENDERER=Path('/Users/admin/.codex/skills/llm-eval-report/scripts/render_report.py')
+RENDERER=Path(__file__).with_name('eval_report.py')
 LABELS=base.LABELS
 NAMES={'compact-v1':'规则在问题中＋对象 state','boundary-v2':'强化边界＋对象 state',
        'shared-rules-v3':'共同规则在 state 中','text-state-v4':'强化边界＋文本 state',

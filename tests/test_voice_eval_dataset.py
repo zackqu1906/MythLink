@@ -140,6 +140,22 @@ def test_model_input_never_exposes_answers_or_metadata(master):
     assert c['input']['context']['messages'] == []
 
 
+@pytest.mark.parametrize('screen', [{}, {'source': 'screen_ocr', 'status': 'ok', 'context': '团队询问进度。'}])
+def test_edit_replay_preserves_captured_screen_context_shape(master, screen):
+    data = deepcopy(master)
+    case = by_id(data, 'precise-replace')
+    case['annotation'].pop('semantic_review', None)
+    case['input']['context'] = screen
+    case['input_sha256'] = corpus.fingerprint(case['input'])
+    corpus.validate_master(data)
+    assert corpus.model_input(case)['screen_context'] == screen
+
+    case['input']['context'] = {'source': 'screen_ocr', 'status': 'ok', 'context': {'raw_output': 'x'}}
+    case['input_sha256'] = corpus.fingerprint(case['input'])
+    with pytest.raises(ValueError, match='Prepared screen context must be text'):
+        corpus.validate_master(data)
+
+
 def test_fragment_completion_stays_separate_from_editing_and_hides_references(master):
     filters = json.loads(corpus.DEFAULT_SUBSETS.read_text())['subsets']['fragment_completion']
     cases = corpus.select_cases(master, **filters)
