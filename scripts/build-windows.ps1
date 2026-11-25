@@ -3,7 +3,8 @@ param(
     [string]$Version,
     [switch]$AutoVersion,
     [string]$Firmware,
-    [switch]$SkipDependencyInstall
+    [switch]$SkipDependencyInstall,
+    [switch]$InstallerOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +18,8 @@ if ($Version -and $AutoVersion) {
 $InstallerArgs = @{
     SkipDependencyInstall = $SkipDependencyInstall
     BootloaderWithoutCfg = $true
+    PrepareRuntime = $true
+    InstallerOnly = $InstallerOnly
 }
 if ($Version) { $InstallerArgs.Version = $Version }
 if ($AutoVersion) { $InstallerArgs.AutoVersion = $true }
@@ -26,13 +29,4 @@ if ($Firmware) {
     $InstallerArgs.Firmware = $FirmwareFile.FullName
 }
 
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
-Push-Location -LiteralPath $ProjectRoot
-try {
-    if (-not $SkipDependencyInstall) {
-        & (Join-Path $PSScriptRoot "setup.ps1") -Compute cpu -SkipLocalLLM
-    }
-    & (Join-Path $PSScriptRoot "build-windows-installer.ps1") @InstallerArgs
-} finally {
-    Pop-Location
-}
+& (Join-Path $PSScriptRoot "build-windows-installer.ps1") @InstallerArgs
