@@ -8,6 +8,48 @@ from proximic_ring.text_processing import LLMSettings, OpenAICompatibleTextProce
 from proximic_ring.text_processing.prompts import HOTWORD_EXTRACTION_PROMPT, EDIT_FRAGMENT_PROMPT, POLISH_PROMPT
 
 
+def test_polish_uses_confirmed_asr_forms_only_until_undo(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    store.add("Myth")
+    source = json.dumps(["epoch", "client", "utterance", 2])
+    store.learn(source, ["Myth"], before="使用 miss 绘制", after="使用 Myth 绘制")
+    store = HotwordStore(store.path)
+    assert store.polish_candidates("重新用 miss 绘制") == (("Myth", "miss"),)
+    assert not store.polish_candidates("dismiss()")
+    assert not store.polish_candidates("make more room")
+    entry_id = store.entries()[0]["id"]
+    store.update(entry_id, enabled=False)
+    assert not store.polish_candidates("miss 绘制")
+    store.update(entry_id, enabled=True)
+    assert store.retract_transaction(("epoch", "client", "utterance"))
+    assert store.polish_candidates("miss 绘制") == (("Myth", ""),)
+    store.learn("truncated", ["Myth"], before="miss 绘制", after="Myth")
+    assert "truncated" not in store.entries()[0].get("asr_forms", {})
+    store.update(entry_id, word="别的名字")
+    assert not store.polish_candidates("miss 绘制")
+
+
+def test_polish_shortlists_old_and_new_entries_including_homophones(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    store.learn("old", ["飞鼠", "DeepSeek", "张玮", "张炜"])
+    for word in ["个人词条甲", "个人词条乙", "个人词条丙"]:
+        store.add(word)
+    assert store.polish_candidates("连接飞书，再打开 deep seek") == (("飞鼠", ""), ("DeepSeek", ""))
+    assert set(store.polish_candidates("联系张伟")) == {("张玮", ""), ("张炜", "")}
+    assert store.polish_candidates("今天早点回家") == ()
+    assert store.polish_candidates("飞。书") == ()
+    assert store.polish_candidates("xxdeepseek123") == ()
+
+
+def test_polish_shortlist_prioritizes_learned_form_over_other_possible_spellings(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    store.learn("confirmed", ["飞鼠"], before="设备飞书", after="设备飞鼠")
+    for word in ("非书", "非树", "非鼠", "飞梳", "飞树", "飞数", "飞叔"):
+        store.add(word)
+    candidates = store.polish_candidates("连接飞书")
+    assert len(candidates) == 6 and candidates[0] == ("飞鼠", "飞书")
+
+
 def test_manual_and_independent_corrections_survive_individual_undo(tmp_path):
     store = HotwordStore(tmp_path / "words.json")
     store.learn("edit-one", ["张玮", "Kubernetes"])

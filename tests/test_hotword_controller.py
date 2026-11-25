@@ -69,6 +69,7 @@ def test_learning_waits_for_native_confirmation_and_undo_removes_it(service):
     c.settle(KEY, "edited", "联系张玮。原有后缀")
     model.release.set()
     pump_until(lambda: c.store.snapshot() == ["张玮"])
+    assert c.store.polish_candidates("联系张伟") == (("张玮", "张伟"),)
     assert len(model.calls) == 1 and model.calls[0] == ("联系张伟", "是张玮，王字旁的玮", "联系张玮")
     c.settle((*KEY[:3], 3), "dictated", "是张玮，王字旁的玮")
     assert c.store.snapshot() == []

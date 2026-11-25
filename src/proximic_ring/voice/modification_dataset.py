@@ -797,7 +797,7 @@ class ModificationDatasetCollector:
             elif task_type == "edit":
                 model_input = edit_model_input(raw_text, target_text, context, edit_plan=getattr(request, "edit_plan", None))
             else:
-                model_input = self._llm_input(mode, raw_text, target_text)
+                model_input = self._llm_input(mode, raw_text, target_text, getattr(request, "polish_candidates", ()))
             llm_request = {
                 "request_id": request_id,
                 "reexecuted": bool(getattr(request, "reexecuted", False)),
@@ -2305,22 +2305,17 @@ class ModificationDatasetCollector:
         self._write_json(self._interaction_path(interaction_id), record)
 
     @staticmethod
-    def _llm_input(mode: str, raw_text: str, target_text: str) -> dict:
+    def _llm_input(mode: str, raw_text: str, target_text: str, polish_candidates=()) -> dict:
         from ..text_processing.prompts import (
             DICTATION_PROMPT,
-            POLISH_PROMPT,
+            polish_model_input,
             EDIT_FRAGMENT_PROMPT,
             EDIT_FULL_TEXT_PROMPT,
             EDIT_TOOL_REQUIRED_PROMPT,
         )
 
         if str(mode) == "polish":
-            return {
-                "instruction": raw_text,
-                "target_text": "",
-                "user_content": f"<语音转写>\n{raw_text}\n</语音转写>",
-                "system_prompt": POLISH_PROMPT,
-            }
+            return polish_model_input(raw_text.strip(), polish_candidates)
         if str(mode) == "edit":
             user_content = (
                 "<待修改文本>\n"

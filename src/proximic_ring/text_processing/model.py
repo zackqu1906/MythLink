@@ -178,6 +178,7 @@ class TextProcessingRequest:
     routed_edit_variant: str = ROUTED_EDIT_HYBRID
     saved_context: object = None
     edit_hotwords: tuple[str, ...] = ()
+    polish_candidates: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

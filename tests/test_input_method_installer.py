@@ -31,6 +31,7 @@ def installer(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setattr(module.Path, 'home', classmethod(lambda cls: home))
     monkeypatch.setattr(module.sys, 'platform', 'darwin')
+    monkeypatch.setattr(module, '_ENABLE_DELAYS', (0, 0, 0))
     value = module.InputMethodInstaller(payload)
     value.system_destination = tmp_path / 'system/Input Methods/ProxiMicInput.app'
     state = {'selected': False, 'enabled': True, 'fail': '', 'running': '', 'ps': ''}
@@ -257,12 +258,35 @@ def test_invalid_signature_leaves_installed_bundle_untouched(installer):
     assert (value.destination / 'marker').read_text() == 'previous'
 
 
-def test_system_must_confirm_enabled_source_or_install_rolls_back(installer):
+def test_fresh_install_survives_login_session_that_cannot_enable_the_mode(installer):
     value, state, _ = installer
     state['enabled'] = False
-    with pytest.raises(RuntimeError, match='尚未确认'):
-        value.install()
-    assert not value.destination.exists()
+    result = value.install()
+    assert result['installed'] and result['activation_pending']
+    assert (value.destination / 'marker').read_text() == 'new'
+    version = value.version_status()
+    pending = value.activation_status(version)
+    assert not pending['current'] and '注销' in pending['detail']
+    state['enabled'] = True
+    assert value.activation_status(version)['current']
+
+
+def test_delayed_mode_is_retried_without_copying_or_registering_again(installer, monkeypatch):
+    value, state, calls = installer
+    original_run = value._run
+    def run(args, **kwargs):
+        if args[1] == 'enable' and not any(call[1] == 'enable' for call in calls):
+            calls.append(args)
+            state['enabled'] = False
+            return subprocess.CompletedProcess(args, module.ENABLE_PENDING, '', 'waiting for login session')
+        if args[1] == 'enable':
+            state['enabled'] = True
+        return original_run(args, **kwargs)
+    monkeypatch.setattr(value, '_run', run)
+    result = value.install()
+    assert result['installed'] and not result.get('activation_pending')
+    assert sum(call[1] == 'enable' for call in calls) == 2
+    assert sum(call[1] == 'register' for call in calls) == 1
 
 
 @pytest.mark.parametrize('mode', [None, {'enabled': False, 'selectable': False},
@@ -278,21 +302,21 @@ def test_enabled_parent_does_not_prove_dictation_is_available(installer, mode, e
     if mode is not None:
         state['sources'].append({'id': module.BUNDLE_ID + '.dictation',
                                  'selected': False, **mode})
-    with pytest.raises(RuntimeError, match='尚未确认'):
-        value.install()
     if existing:
+        with pytest.raises(RuntimeError, match='尚未确认'):
+            value.install()
         assert (value.destination / 'marker').read_text() == 'previous'
     else:
-        assert not value.destination.exists()
+        assert value.install()['activation_pending']
+        assert (value.destination / 'marker').read_text() == 'new'
 
 
 def test_another_selectable_mode_does_not_prove_dictation_is_available(installer):
     value, state, _ = installer
     state['sources'] = [{'id': module.BUNDLE_ID + '.other', 'enabled': True,
                          'selected': False, 'selectable': True}]
-    with pytest.raises(RuntimeError, match='尚未确认'):
-        value.install()
-    assert not value.destination.exists()
+    assert value.install()['activation_pending']
+    assert not value.activation_status(value.version_status())['current']
 
 
 @pytest.mark.posix_only
@@ -358,6 +382,7 @@ def test_version_status_compares_numeric_release_and_build_without_native_calls(
 def test_missing_or_unreadable_version_never_claims_current(installer):
     value, _, calls = installer
     assert value.version_status()['state'] == 'not_installed'
+    assert '尚未安装' in value.version_status()['detail']
     bundle(value.destination, module.BUNDLE_ID, 'installed')
     plist = value.destination / 'Contents/Info.plist'
     for content in (b'not a plist', b'<?xml version="1.0"?><plist><dict>',
@@ -492,3 +517,112 @@ def test_development_detection_never_rebuilds_frozen_payload(tmp_path, monkeypat
     assert value._development_root() == root
     monkeypatch.setattr(module.sys, 'frozen', True, raising=False)
     assert value._development_root() is None
+
+
+@pytest.mark.parametrize("sources,expected", [
+    ([], "IME-SOURCE-ABSENT"),
+    ([{"id": module.BUNDLE_ID, "enabled": True}], "IME-MODE-MISSING"),
+    ([{"id": module.BUNDLE_ID, "enabled": False}], "IME-PARENT-DISABLED"),
+    ([{"id": module.BUNDLE_ID + ".dictation", "enabled": False}], "IME-MODE-DISABLED"),
+    ([{"id": module.BUNDLE_ID + ".dictation", "enabled": True, "in_enabled_list": False}],
+     "IME-MODE-NOT-LISTED"),
+    ([{"id": module.BUNDLE_ID + ".dictation", "enabled": True, "selectable": False}],
+     "IME-MODE-UNAVAILABLE"),
+])
+def test_copied_component_records_the_observed_tis_state(installer, sources, expected):
+    value, state, _ = installer
+    state["sources"] = sources
+    result = value.install()
+    assert result["activation_pending"] and result["code"] == expected
+    report = value.diagnostic
+    assert report["code"] == expected and report["outcome"] == "pending"
+    assert report["user_before"]["present"] is False
+    checks = [event["snapshot"] for event in report["events"]
+              if event["stage"] == "IME-ENABLE" and event["command"] == "status"]
+    assert len(checks) == len(module._ENABLE_DELAYS)
+    assert checks[-1] == {"installed": True, "sources": sources}
+    assert expected in value.activation_status(value.version_status())["detail"]
+
+
+def test_null_tis_list_is_distinct_from_successful_empty_list(installer, monkeypatch):
+    value, _, _ = installer
+    monkeypatch.setattr(value, "status", lambda: {"installed": True, "installed_list_readable": False,
+                                                  "sources": []})
+    check = value.activation_status({"detail": "test"})
+    assert check["state"] == "activation_unknown" and check["code"] == "IME-STATUS"
+
+
+def test_selected_but_unselectable_source_is_reported_as_inconsistent(installer, monkeypatch):
+    value, _, _ = installer
+    monkeypatch.setattr(value, "status", lambda: {"installed": True, "sources": [
+        {"id": module.BUNDLE_ID, "enabled": False},
+        {"id": module.BUNDLE_ID + ".dictation", "enabled": True, "selected": True,
+         "in_enabled_list": True, "selectable": False}]})
+    check = value.activation_status({"detail": "test"})
+    assert check["code"] == "IME-STATE-CONFLICT"
+    assert check["snapshot"]["sources"][0]["enabled"] is False
+
+
+def test_register_error_keeps_native_osstatus_and_evidence_before_rollback(installer, monkeypatch, caplog):
+    value, state, _ = installer
+    original = module.subprocess.run
+    state["sources"] = []
+    native = {"api": "TISRegisterInputSource", "os_status": -50}
+    def run(args, **kwargs):
+        if args == [str(value.helper), "register"]:
+            return subprocess.CompletedProcess(args, 1, json.dumps({"tis_calls": [native]}), "注册失败：-50")
+        return original(args, **kwargs)
+    monkeypatch.setattr(module.subprocess, "run", run)
+    with caplog.at_level("INFO", logger=module.__name__), pytest.raises(module.InstallFailure, match="IME-REGISTER"):
+        value.install()
+    report = value.diagnostic
+    assert report["outcome"] == "failed" and report["code"] == "IME-REGISTER"
+    command = next(event for event in report["events"] if event["command"] == "register")
+    assert command["exit_code"] == 1 and command["tis_calls"] == [native]
+    assert report["rollback"] == {"before": {"installed": True, "sources": []}, "bundle": "new_removed"}
+    assert not value.destination.exists()
+    assert "[INPUT_METHOD_INSTALL_REPORT]" in caplog.text
+    assert json.dumps(report, ensure_ascii=False) in caplog.text
+
+
+def test_rollback_probe_failure_does_not_replace_install_failure(installer, monkeypatch):
+    value, state, _ = installer
+    state["fail"] = "register"
+    original = value.status
+    def status():
+        if value._stage == "before_rollback":
+            raise TimeoutError("read timeout")
+        return original()
+    monkeypatch.setattr(value, "status", status)
+    with pytest.raises(module.InstallFailure, match="IME-REGISTER"):
+        value.install()
+    assert value.diagnostic["rollback"]["probe_error"] == "read timeout"
+
+
+@pytest.mark.parametrize("failure,code", [("signature", "IME-SIGN-BUNDLE"), ("register", "IME-REGISTER"),
+                                          ("enable", "IME-ENABLE"), ("status", "IME-STATUS")])
+def test_install_failure_stage_is_reported_in_ui_message_and_record(installer, failure, code):
+    value, state, _ = installer
+    state["fail"] = failure
+    with pytest.raises(module.InstallFailure, match=code):
+        value.install()
+    assert value.diagnostic["code"] == code
+
+
+def test_failed_file_restoration_reports_both_errors_and_retains_backup(installer, monkeypatch):
+    value, state, _ = installer
+    bundle(value.destination, module.BUNDLE_ID, "previous")
+    state["fail"] = "register"
+    replace = module.os.replace
+    def fail_restore(source, target):
+        if Path(source).name == "previous.app":
+            raise PermissionError("restore permission denied")
+        return replace(source, target)
+    monkeypatch.setattr(module.os, "replace", fail_restore)
+    with pytest.raises(module.InstallFailure, match="IME-REGISTER.*IME-ROLLBACK"):
+        value.install()
+    report = value.diagnostic
+    assert report["code"] == "IME-REGISTER"
+    assert report["rollback"]["error"] == "restore permission denied"
+    backup = value.destination.parent / report["rollback"]["saved_backup"]
+    assert (backup / "marker").read_text() == "previous"

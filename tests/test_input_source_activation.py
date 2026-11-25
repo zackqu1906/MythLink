@@ -362,8 +362,11 @@ def test_slow_selection_uses_remaining_budget_for_native_activation(component, m
     assert len(updates) == 1 and updates[0]['utterance_id'] == utterance
 
 
-@pytest.mark.parametrize('mode', ['voice', 'stroke'])
-def test_selection_and_focus_recovery_cannot_extend_one_second_startup(component, monkeypatch, mode):
+@pytest.mark.parametrize(('mode', 'timeout_message'), [
+    ('voice', '输入法未连接到当前文本框，请重新点入文本框'),
+    ('stroke', '输入法未确认当前文本框，请重新点入文本框'),
+])
+def test_selection_and_focus_recovery_cannot_extend_one_second_startup(component, monkeypatch, mode, timeout_message):
     c, _ = component
     now = [100.0]
     monkeypatch.setattr(time, 'monotonic', lambda: now[0])
@@ -388,7 +391,7 @@ def test_selection_and_focus_recovery_cannot_extend_one_second_startup(component
     assert 1 <= c._reply_timer.interval() <= 150
     now[0] = 101.01
     c._refresh_activation()
-    assert failed == ['输入法未连接到当前文本框，请重新点入文本框']
+    assert failed == [timeout_message]
     assert not ready and c._source_activation is None
     assert recovery.calls[-1] == ('cancel',)
     assert not c._reply_timer.isActive() and not c._activation_timer.isActive()

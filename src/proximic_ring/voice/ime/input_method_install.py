@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -17,9 +18,27 @@ import time
 from xml.parsers.expat import ExpatError
 
 from .component_fingerprint import SOURCE_FINGERPRINT_KEY, source_fingerprint
+from .install_diagnostics import activation_issue, command_event, diagnostic_detail, environment, source_snapshot
 
 BUNDLE_ID = "com.proximic.inputmethod.ProxiMicVoice"
+ACTIVATION_GUIDANCE = ("在“系统设置 → 键盘 → 文字输入 → 编辑”中点“＋”，在“简体中文”下添加“Mythlink 语音”。"
+                       "如果列表中没有它，请保存工作，注销并重新登录 Mac 后再添加。")
+# The helper uses exit 2 only when the registered mode is not yet available.
+ENABLE_PENDING = 2
+_ENABLE_DELAYS = (0, .25, .75, 1.0)
 _logger = logging.getLogger(__name__)
+
+
+class InstallFailure(RuntimeError):
+    def __init__(self, code, detail):
+        self.code = code
+        super().__init__(f"[{code}] {detail}")
+
+
+def _dictation_available(state: dict) -> bool:
+    return any(source.get("id") == BUNDLE_ID + ".dictation"
+               and source.get("enabled") is True and source.get("selectable") is True
+               for source in state["sources"])
 
 
 def _version_parts(value: str) -> tuple[int, ...]:
@@ -57,8 +76,9 @@ def product_bundle(path: Path) -> bool:
         return False
     try:
         with (path / "Contents/Info.plist").open("rb") as stream:
-            return plistlib.load(stream).get("CFBundleIdentifier") == BUNDLE_ID
-    except (OSError, ValueError):
+            info = plistlib.load(stream)
+        return isinstance(info, dict) and info.get("CFBundleIdentifier") == BUNDLE_ID
+    except (OSError, ValueError, ExpatError):
         return False
 
 
@@ -78,6 +98,9 @@ class InputMethodInstaller:
         self.source = self.payload / "ProxiMicInput.app"
         self.destination = Path.home() / "Library/Input Methods/ProxiMicInput.app"
         self.system_destination = Path("/Library/Input Methods/ProxiMicInput.app")
+        self.diagnostic = {}
+        self._stage = ""
+        self._started = 0.0
 
     def _development_root(self) -> Path | None:
         root = self.payload.parent.parent
@@ -111,7 +134,9 @@ class InputMethodInstaller:
         installed = _bundle_version(installed_path)
         bundled = _bundle_version(self.source)
         label = lambda value: f"{value[0]} ({value[1]})" if value else "无法读取"
-        detail = f"已安装：{label(installed)}；随应用提供：{label(bundled)}"
+        present = installed_path.exists() or installed_path.is_symlink()
+        installed_detail = f"已安装：{label(installed)}" if present else "尚未安装"
+        detail = f"{installed_detail}；随应用提供：{label(bundled)}"
         try:
             if self._needs_build():
                 return dict(state="needs_build", text="待构建更新", current=False,
@@ -119,7 +144,7 @@ class InputMethodInstaller:
         except OSError:
             return dict(state="unknown", text="版本待确认", current=False,
                         detail=detail + "；无法校验输入法源码，请检查源码是否完整。")
-        if not installed_path.exists() and not installed_path.is_symlink():
+        if not present:
             state, text = "not_installed", "未安装"
         elif installed is None or bundled is None:
             state, text = "unknown", "版本待确认"
@@ -146,7 +171,19 @@ class InputMethodInstaller:
                 and (self.source / "Contents/MacOS/ProxiMicInput").is_file())
 
     def _run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+        except (OSError, subprocess.SubprocessError) as exc:
+            if self._stage:
+                self.diagnostic["events"].append(dict(stage=self._stage,
+                    elapsed_ms=round((time.monotonic() - self._started) * 1000), command=Path(args[0]).name,
+                    operation=args[1] if args[0] == str(self.helper) else None,
+                    exception=type(exc).__name__, errno=getattr(exc, "errno", None), detail=diagnostic_detail(exc)))
+            raise
+        if self._stage and (args[0] == str(self.helper) or args[0] == "/usr/bin/codesign" or result.returncode > 1):
+            event = command_event(self._stage, args, result)
+            event["elapsed_ms"] = round((time.monotonic() - self._started) * 1000)
+            self.diagnostic["events"].append(event)
         if check and result.returncode:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "输入法安装命令未完成")
         return result
@@ -155,20 +192,69 @@ class InputMethodInstaller:
         if self._needs_build():
             raise RuntimeError("输入法源码有未构建的更改，请先构建或点击更新输入法。")
         if not self.available:
-            raise RuntimeError("安装包缺少语音输入法组件，请重新安装完整应用。源码运行请先构建输入法组件。")
-        self._run(["/usr/bin/codesign", "--verify", "--strict", str(self.source)])
-        self._run(["/usr/bin/codesign", "--verify", "--strict", str(self.helper)])
+            if not self.helper.is_file():
+                detail = "安装包缺少 InputMethodAdmin 安装工具"
+            elif not self.source.is_dir():
+                detail = "安装包缺少 ProxiMicInput.app 组件"
+            elif not product_bundle(self.source):
+                detail = "输入法组件的标识或 Info.plist 无效"
+            elif not (self.source / "Contents/MacOS/ProxiMicInput").is_file():
+                detail = "输入法组件缺少 ProxiMicInput 可执行文件"
+            else:
+                detail = "此安装工具仅支持 macOS"
+            raise RuntimeError(detail + "。请重新安装完整应用。源码运行请先构建输入法组件。")
+        for path, code in ((self.source, "IME-SIGN-BUNDLE"), (self.helper, "IME-SIGN-HELPER")):
+            try:
+                self._run(["/usr/bin/codesign", "--verify", "--strict", str(path)])
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                raise InstallFailure(code, diagnostic_detail(exc)) from exc
         for path in (self.helper, self.source / "Contents/MacOS/ProxiMicInput"):
             if not os.access(path, os.X_OK):
-                raise RuntimeError("输入法组件缺少执行权限，请重新安装完整应用。")
+                raise InstallFailure("IME-EXEC-PERMISSION", f"{path.name} 缺少执行权限，请重新安装完整应用。")
 
     def status(self) -> dict:
         if sys.platform != "darwin" or not self.helper.is_file():
-            raise RuntimeError("未找到 macOS 输入法安装工具")
-        state = json.loads(self._run([str(self.helper), "status"]).stdout)
-        if not isinstance(state.get("sources"), list):
-            raise RuntimeError("无法读取当前输入法状态")
+            raise InstallFailure("IME-STATUS", "未找到 macOS 输入法安装工具")
+        try:
+            state = json.loads(self._run([str(self.helper), "status"]).stdout)
+        except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            raise InstallFailure("IME-STATUS", f"无法读取当前输入法状态：{diagnostic_detail(exc)}") from exc
+        if (not isinstance(state, dict) or not isinstance(state.get("sources"), list)
+                or not all(isinstance(source, dict) for source in state["sources"])):
+            raise InstallFailure("IME-STATUS", "输入法工具返回的状态格式无效")
         return state
+
+    def activation_status(self, version: dict) -> dict:
+        """Refine an up-to-date disk version with a read-only, fresh TIS snapshot."""
+        try:
+            state = self.status()
+            if _dictation_available(state):
+                return version
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            return dict(state="activation_unknown", text="启用状态待确认", current=False, code="IME-STATUS",
+                        detail=f"{version['detail']}。{exc}")
+        code, reason = activation_issue(state, BUNDLE_ID)
+        return dict(state="activation_unknown" if code == "IME-STATUS" else "activation_pending",
+                    text="启用状态待确认" if code == "IME-STATUS" else "已安装，待启用", current=False,
+                    code=code, snapshot=source_snapshot(state),
+                    detail=f"{version['detail']}。[{code}] {reason}。{ACTIVATION_GUIDANCE}")
+
+    def _enable_registered_mode(self) -> dict:
+        for delay in _ENABLE_DELAYS:
+            if delay:
+                time.sleep(delay)
+            result = self._run([str(self.helper), "enable"], check=False)
+            if result.returncode not in (0, ENABLE_PENDING):
+                raise RuntimeError(result.stderr.strip() or "系统启用输入法失败")
+            state = self.status()
+            if state.get("installed") is not True:
+                raise InstallFailure("IME-INSTALLED-BUNDLE", "系统无法读取刚复制的输入法组件。")
+            _logger.info("[INPUT_METHOD_INSTALL] enable=%s detail=%s sources=%s",
+                         result.returncode, result.stderr.strip(), state["sources"])
+            if _dictation_available(state):
+                return state
+        code, reason = activation_issue(state, BUNDLE_ID)
+        return {**state, "activation_pending": True, "code": code, "reason": reason}
 
     def _require_unselected(self) -> None:
         if any(source.get("selected") for source in self.status()["sources"]):
@@ -240,53 +326,134 @@ class InputMethodInstaller:
             time.sleep(.1)
 
     def install(self) -> dict:
+        def bundle_info(path):
+            try:
+                return dict(present=path.exists() or path.is_symlink(), version=_bundle_version(path))
+            except OSError as exc:
+                return dict(read_error=diagnostic_detail(exc), errno=exc.errno)
+
+        self.diagnostic = {**environment(), "bundled": bundle_info(self.source),
+                           "user_before": bundle_info(self.destination),
+                           "system_before": bundle_info(self.system_destination), "events": []}
+        self._started = time.monotonic()
+        self._stage = "IME-BUILD"
+        try:
+            result = self._install()
+            if result.get("activation_pending"):
+                self.diagnostic.update(outcome="pending", code=result["code"], detail=result["reason"])
+            elif result.get("input_source_restore_error"):
+                self.diagnostic.update(outcome="installed_with_warning", code="IME-RESTORE",
+                                       detail=diagnostic_detail(result["input_source_restore_error"]))
+            else:
+                self.diagnostic.update(outcome="ready", code="OK")
+            return result
+        except Exception as exc:
+            code = getattr(exc, "code", self._stage)
+            self.diagnostic.update(outcome="failed", code=code, detail=diagnostic_detail(exc),
+                                   exception=type(exc).__name__, errno=getattr(exc, "errno", None))
+            if isinstance(exc, InstallFailure):
+                raise
+            raise InstallFailure(code, diagnostic_detail(exc)) from exc
+        finally:
+            self._stage = ""
+            _logger.info("[INPUT_METHOD_INSTALL_REPORT] %s", json.dumps(self.diagnostic, ensure_ascii=False))
+
+    @contextmanager
+    def _staging_directory(self):
+        directory = Path(tempfile.mkdtemp(prefix=".ProxiMic-install-", dir=self.destination.parent))
+        try:
+            yield directory
+        finally:
+            rollback = self.diagnostic.get("rollback", {})
+            if rollback.get("error") and (directory / "previous.app").exists():
+                # Never discard the user's only previous copy if restoring the file failed.
+                rollback["saved_backup"] = f"{directory.name}/previous.app"
+            else:
+                shutil.rmtree(directory)
+
+    def _rollback(self, installed: bool, backup: Path, original_error: BaseException) -> None:
+        failed_stage = self._stage
+        rollback = self.diagnostic["rollback"] = {"bundle": "unchanged"}
+        try:
+            if installed:
+                self._stage = "before_rollback"
+                try:
+                    rollback["before"] = source_snapshot(self.status())
+                except Exception as probe_error:
+                    rollback["probe_error"] = diagnostic_detail(probe_error)
+            self._stage = "IME-ROLLBACK"
+            if installed and self.destination.exists():
+                shutil.rmtree(self.destination)
+                rollback["bundle"] = "new_removed"
+            if backup.exists():
+                os.replace(backup, self.destination)
+                rollback["bundle"] = "previous_restored"
+                for command in ("register", "enable"):
+                    result = self._run([str(self.helper), command], check=False)
+                    rollback[command + "_exit"] = result.returncode
+        except Exception as recovery_error:
+            rollback["error"] = diagnostic_detail(recovery_error)
+            raise InstallFailure(getattr(original_error, "code", failed_stage),
+                                 f"{original_error}；[IME-ROLLBACK] {rollback['error']}") from recovery_error
+        finally:
+            self._stage = failed_stage
+
+    def _install(self) -> dict:
         self._build_if_needed()
+        self._stage = "IME-PAYLOAD"
         self.verify_payload()
+        self.diagnostic["bundled"] = dict(present=True, version=_bundle_version(self.source))
+        self._stage = "IME-DESTINATION"
         if self.destination.exists() or self.destination.is_symlink():
             if not product_bundle(self.destination):
                 raise RuntimeError("目标位置不是本产品的输入法组件，不会覆盖。")
+        self._stage = "IME-COPY"
         self.destination.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix=".ProxiMic-install-", dir=self.destination.parent) as directory:
-            staged = Path(directory) / self.destination.name
-            backup = Path(directory) / "previous.app"
+        with self._staging_directory() as directory:
+            staged = directory / self.destination.name
+            backup = directory / "previous.app"
             shutil.copytree(self.source, staged, symlinks=True)
+            self._stage = "IME-SIGN-COPY"
             self._run(["/usr/bin/codesign", "--verify", "--strict", str(staged)])
             # Stage and verify before touching the user's input source or process.
+            self._stage = "IME-HANDOFF"
             handoff = self._prepare_update()
             try:
                 self._require_unselected()
+                self._stage = "IME-PROCESS"
                 self._stop_inactive_component()
+                self._stage = "IME-HANDOFF"
                 self._require_unselected()
                 installed = False
                 try:
+                    self._stage = "IME-REPLACE"
                     if self.destination.exists():
                         os.replace(self.destination, backup)
                     os.replace(staged, self.destination)
                     installed = True
+                    self._stage = "IME-REGISTER"
                     self._run([str(self.helper), "register"])
                     _logger.info("[INPUT_METHOD_INSTALL] registered sources=%s", self.status()["sources"])
-                    self._run([str(self.helper), "enable"])
-                    state = self.status()
-                    _logger.info("[INPUT_METHOD_INSTALL] enabled sources=%s", state["sources"])
-                    if not state.get("installed") or not any(
-                            s.get("id") == BUNDLE_ID + ".dictation"
-                            and s.get("enabled") is True and s.get("selectable") is True
-                            for s in state["sources"]):
-                        raise RuntimeError("组件已复制，但系统尚未确认 Mythlink 语音模式可切换。")
-                except BaseException:
-                    if installed and self.destination.exists():
-                        shutil.rmtree(self.destination)
-                    if backup.exists():
-                        os.replace(backup, self.destination)
-                        self._run([str(self.helper), "register"], check=False)
-                        self._run([str(self.helper), "enable"], check=False)
+                    self._stage = "IME-ENABLE"
+                    state = self._enable_registered_mode()
+                    if state.get("activation_pending") and (backup.exists() or product_bundle(self.system_destination)):
+                        raise InstallFailure(state["code"], "系统尚未确认新版 Mythlink 语音模式可切换。"
+                                             + state["reason"] + "。")
+                except BaseException as exc:
+                    self._rollback(installed, backup, exc)
                     raise
             except BaseException as exc:
+                failed_stage = self._stage
+                self._stage = "IME-RESTORE"
                 restored = self._restore_after_update(handoff)
+                self._stage = failed_stage
                 if restored.get("input_source_restore_error"):
-                    raise RuntimeError(f"{exc}；未能恢复输入法选择，请从菜单栏选择 Mythlink。") from exc
+                    self.diagnostic["restore_error"] = diagnostic_detail(restored["input_source_restore_error"])
+                    raise InstallFailure(getattr(exc, "code", failed_stage),
+                                         f"{exc}；未能恢复输入法选择 [IME-RESTORE]，请从菜单栏选择 Mythlink。") from exc
                 raise
             # A restoration failure must not roll back a successfully installed bundle.
+            self._stage = "IME-RESTORE"
             return {**state, **self._restore_after_update(handoff)}
 
     def uninstall(self) -> None:
@@ -317,7 +484,9 @@ def main(argv: list[str] | None = None) -> int:
             print("已移除当前用户的 Mythlink 输入法。主程序、模型和用户数据保留。")
         else:
             result = installer.install()
-            if result.get("input_source_restore_error"):
+            if result.get("activation_pending"):
+                print(f"组件已安装，等待系统启用。[{result['code']}] {result['reason']}。{ACTIVATION_GUIDANCE}")
+            elif result.get("input_source_restore_error"):
                 print("已安装并启用；未能自动恢复输入法，请从菜单栏选择 Mythlink。")
             elif result.get("input_source_restored"):
                 print("已安装并启用，已恢复 Mythlink 输入法。")

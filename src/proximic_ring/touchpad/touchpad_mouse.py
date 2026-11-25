@@ -9,6 +9,7 @@ import sys
 
 from .touchpad_clicks import TouchpadClicks, TwoFingerClicks
 from .touchpad_drag import TouchpadDrag
+from .pointer_gesture_guard import PointerGestureGuard
 from .touchpad_swipe import TouchpadSwipe
 from .touchpad_diagnostics import note
 from .click_diagnostics import ClickTrace, drag_record, start_click_diagnostics
@@ -38,6 +39,7 @@ class TouchpadMouseOutput:
         self.stopped = threading.Event()
         self.wake = threading.Event()
         self.lock = threading.Lock()
+        self._gesture_guard = PointerGestureGuard()
         self.events = deque(maxlen=32)
         self.overflowed = False
         self._stop_reason = ''
@@ -66,8 +68,11 @@ class TouchpadMouseOutput:
         self.thread.start()
 
     def activate(self):
-        self.active = True
-        self.paused = False
+        with self.lock:
+            if self.paused:
+                self._gesture_guard.reset()  # Release edges may have arrived while paused.
+            self.active = True
+            self.paused = False
 
     def configure(self, *, clicks, double_click, right_click, scroll, scroll_gain,
                   invert_scroll=False, horizontal_swipe=True, gain=None, invert_y=None,
@@ -81,6 +86,7 @@ class TouchpadMouseOutput:
 
     def _reset_stream(self, event):
         with self.lock:
+            self._gesture_guard.reset()
             key = (event.session_id, event.generation)
             if key == self._stream_key:
                 # 0.4 keeps the same generation across quiet input. Release
@@ -104,8 +110,7 @@ class TouchpadMouseOutput:
         if event.kind == 'contact' and event.state == 'reset' and getattr(event, 'session_id', None) is not None:
             self._reset_stream(event)
             return
-        if event.kind not in {"move", "click", "pointer_contact"} and not (
-                self.clicks and event.kind == "contact" and event.state == "reset"):
+        if event.kind not in {"move", "click", "pointer_contact", "contact"}:
             return  # Stroke metadata must not occupy the pointer's bounded queue.
         # Capture uses the SDK's already-classified first click immediately;
         # waiting for double-click pairing would lose its original position.
@@ -120,6 +125,15 @@ class TouchpadMouseOutput:
             if blocked:
                 if trace: trace.finish(blocked)
                 return
+            # Formal clicks can arrive after pairing. Use their physical source
+            # time so the verdict cannot start a second protection window.
+            source = getattr(event, 'source_timestamp', None)
+            stamp = event.timestamp if source is None else source
+            key = (getattr(event, 'session_id', None), getattr(event, 'generation', None))
+            if self._stream_key in (None, key) and stamp >= max(self.input_since, self._input_gap_at):
+                self._gesture_guard.observe(event, stamp, time.monotonic())
+            if event.kind == 'contact' and not (self.clicks and event.state == 'reset'):
+                return  # Legacy down/up are arbitration signals only.
             if len(self.events) == self.events.maxlen:
                 if getattr(event, 'session_id', None) is not None:
                     # A lost Raw2 event must not turn a partial gesture into input.
@@ -140,6 +154,12 @@ class TouchpadMouseOutput:
                 self._pending_clicks[trace.fields['click_id']] = trace
                 trace.record('queued', queue_depth=len(self.events))
         self.wake.set()
+
+    def firmware_gesture_epoch(self):
+        with self.lock:
+            if self._blocked_reason():
+                return self._gesture_guard.epoch
+            return self._gesture_guard.gesture_epoch(time.monotonic())
 
     def _blocked_reason(self):
         if self.connection.is_set(): return 'disconnected'

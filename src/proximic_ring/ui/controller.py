@@ -4040,6 +4040,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                         self._ring_gestures.envelope(event), gesture_connection
                     ),
                     on_gesture_health=lambda healthy: self._runtimeGestureHealth.emit(gesture_connection, healthy),
+                    firmware_gesture_epoch=self._touchpad.firmware_gesture_epoch,
                     on_gesture_detected=lambda event: (
                         None if self._voice_practice.active else self._gesture_trigger.submit(event.name, gesture_connection)
                     ),
@@ -5882,6 +5883,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             reexecuted=reexecuted,
             routed_edit_variant=variant,
             edit_hotwords=edit_hotwords or (),
+            polish_candidates=self._hotwords.store.polish_candidates(text) if normalized_mode == TEXT_MODE_POLISH else (),
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)

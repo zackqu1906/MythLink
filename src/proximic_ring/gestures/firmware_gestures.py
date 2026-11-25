@@ -49,6 +49,7 @@ class FirmwareGestureWorker:
         if queue_capacity < 1:
             raise ValueError("queue_capacity must be positive")
         self.on_gesture = on_gesture
+        self.gesture_epoch = lambda: 0  # None while the pointer owns input.
         self.can_end_tap_immediately = None
         self._queue = queue.Queue(queue_capacity)
         self._closing = threading.Event()
@@ -93,15 +94,20 @@ class FirmwareGestureWorker:
                 return
             self.received_events += 1
             self._last_received = event.received_at
+            epoch = self.gesture_epoch()
+            if epoch is None:
+                return  # Neither half of a mouse interaction may seed a pair.
             if self._queue.full():
                 try:
                     self._queue.get_nowait()
                     self.dropped_events += 1
                 except queue.Empty:
                     pass  # The consumer may have drained it since full().
-            self._queue.put_nowait((event, self._last_received, pair_on_host))
+            self._queue.put_nowait((event, self._last_received, pair_on_host, epoch))
 
-    def _deliver(self, event):
+    def _deliver(self, event, epoch):
+        if self.gesture_epoch() != epoch:
+            return  # Ownership changed while this gesture waited for a pair.
         self.on_gesture(event)
         with self._lock:
             self.processed_events += 1
@@ -110,6 +116,7 @@ class FirmwareGestureWorker:
     def _run(self):
         pending = None
         delivered_tap = None
+        epoch = None
         detectors = {'tap':self._double_tap, 'middle-pinch':self._double_middle, 'index-pinch':self._double_index}
         waits = {'tap':SINGLE_TAP_WAIT_S, 'middle-pinch':SINGLE_MIDDLE_WAIT_S, 'index-pinch':SINGLE_INDEX_WAIT_S}
         def reset():
@@ -119,20 +126,26 @@ class FirmwareGestureWorker:
                 timeout = (max(0.0, pending[1] + waits[pending[0].name] - time.monotonic())
                            if pending is not None else .05)
                 try:
-                    event, received_at, pair_on_host = self._queue.get(timeout=timeout)
+                    event, received_at, pair_on_host, received_epoch = self._queue.get(timeout=timeout)
                 except queue.Empty:
                     if pending is not None and time.monotonic() >= pending[1] + waits[pending[0].name]:
-                        self._deliver(pending[0])
+                        self._deliver(pending[0], epoch)
                         pending = None
                         reset()
                     continue
                 if self._closing.is_set():
                     break
+                if received_epoch != self.gesture_epoch():
+                    continue
+                if received_epoch != epoch:
+                    reset()
+                    pending = delivered_tap = None
+                    epoch = received_epoch
                 if not pair_on_host:
-                    self._deliver(event)
+                    self._deliver(event, epoch)
                     continue
                 if pending is not None and received_at > pending[1] + waits[pending[0].name]:
-                    self._deliver(pending[0])
+                    self._deliver(pending[0], epoch)
                     pending = None
                     reset()
                 pairs = [detector.feed(event.raw) for detector in detectors.values()]
@@ -145,13 +158,13 @@ class FirmwareGestureWorker:
                     confidence = [value for value in (pair.first.confidence, pair.second.confidence)
                                   if value is not None]
                     self._deliver(replace(event, name=pair.name, raw=pair,
-                                          confidence=min(confidence) if confidence else None))
+                                          confidence=min(confidence) if confidence else None), epoch)
                 elif event.name in detectors:
                     detector = detectors[event.name]
                     if pending is not None and detector.pending_first is pending[0].raw:
                         continue  # Repeated/too-fast tap cannot commit a single.
                     if pending is not None:
-                        self._deliver(pending[0])
+                        self._deliver(pending[0], epoch)
                     pending = (event, received_at) if detector.pending_first is event.raw else None
                     if pending is not None and event.raw is delivered_tap:
                         pending = None  # Retransmission of the already delivered first tap.
@@ -159,12 +172,12 @@ class FirmwareGestureWorker:
                           and self.can_end_tap_immediately and self.can_end_tap_immediately()):
                         delivered_tap = event.raw
                         pending = None
-                        self._deliver(replace(event, end_only=True))
+                        self._deliver(replace(event, end_only=True), epoch)
                 else:
                     if pending is not None and detectors[pending[0].name].pending_first is None:
-                        self._deliver(pending[0])
+                        self._deliver(pending[0], epoch)
                         pending = None
-                    self._deliver(event)
+                    self._deliver(event, epoch)
         except Exception as exc:
             self.error = exc
 

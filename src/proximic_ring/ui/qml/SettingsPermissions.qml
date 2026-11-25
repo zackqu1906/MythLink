@@ -69,9 +69,12 @@ PreferenceSection {
     }
     PreferenceRow {
         Layout.fillWidth: true; title: "Ring 输入法"; visible: pane.input.enabled
+        id: inputMethodRow
+        readonly property string versionState: pane.input.inputMethodVersion.state
+        readonly property bool needsInputSettings: versionState === "activation_pending" || versionState === "activation_unknown"
         descriptionObjectName: "inputMethodInstallationMessage"
         description: pane.input.inputMethodVersion.detail
-            + (pane.input.installationMessage.length ? "\n" + pane.input.installationMessage : "")
+            + (!needsInputSettings && pane.input.installationMessage.length ? "\n" + pane.input.installationMessage : "")
         SettingsStatusAction {
             preferenceStyle: true
             statusObjectName: "inputMethodVersionStatus"
@@ -79,13 +82,24 @@ PreferenceSection {
             statusReady: !pane.input.installing && pane.input.inputMethodVersion.current
             statusHint: pane.input.inputMethodVersion.detail
             buttonObjectName: "settingsInputMethodButton"
-            text: pane.input.inputMethodVersion.current ? "输入设置" : pane.input.inputMethodVersion.state === "not_installed" ? "安装输入法" : "更新输入法"
-            buttonEnabled: !pane.input.installing
+            text: inputMethodRow.needsInputSettings ? "打开键盘设置" : pane.input.inputMethodVersion.current ? "输入设置"
+                : inputMethodRow.versionState === "checking" ? "确认中…" : inputMethodRow.versionState === "not_installed" ? "安装输入法" : "更新输入法"
+            buttonEnabled: !pane.input.installing && inputMethodRow.versionState !== "checking"
             onClicked: {
-                if (pane.input.inputMethodVersion.current) pane.input.openInputSettings()
+                if (pane.input.inputMethodVersion.current || inputMethodRow.needsInputSettings) pane.input.openInputSettings()
                 else pane.input.installInputMethod()
             }
         }
+    }
+    FigmaAction {
+        objectName: "copyInputMethodInstallDiagnostics"
+        Layout.alignment: Qt.AlignRight; Layout.rightMargin: 16
+        visible: pane.input.enabled && pane.input.hasInstallDiagnostics
+        enabled: !pane.input.installing
+        quiet: true; implicitHeight: 32
+        text: copiedTimer.running ? "已复制安装诊断" : "复制输入法安装诊断"
+        onClicked: if (pane.input.copyInstallDiagnostics()) copiedTimer.restart()
+        Timer { id: copiedTimer; interval: 1800 }
     }
     PreferenceRow {
         Layout.fillWidth: true; title: "自动锁屏组件"

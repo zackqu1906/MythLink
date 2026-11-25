@@ -601,6 +601,7 @@ class RecognitionRuntime:
         on_raw_imu: Callable[[int, object, dict], None] | None = None,
         on_gesture: Callable[[object], None] | None = None,
         on_gesture_detected: Callable[[object], None] | None = None,
+        firmware_gesture_epoch: Callable[[], object | None] | None = None,
         on_gesture_health: Callable[[bool], None] | None = None,
         on_battery: Callable[
             [int | None, int | None, int | None], None
@@ -994,6 +995,8 @@ class RecognitionRuntime:
                             dispatch_gesture(event)
 
                     gesture_worker = FirmwareGestureWorker(on_gesture=publish_gesture)
+                    if firmware_gesture_epoch is not None:
+                        gesture_worker.gesture_epoch = firmware_gesture_epoch
                     if allow_immediate_end_tap is not None:
                         gesture_worker.can_end_tap_immediately = can_end_tap_now
                     gesture_worker.start()

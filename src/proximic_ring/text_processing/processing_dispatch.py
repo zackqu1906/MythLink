@@ -23,7 +23,8 @@ class ProcessingOutput:
 def process_manual(processor, request, on_trace):
     """Original explicit dictation/edit/polish and its candidate trace."""
     if request.mode == TEXT_MODE_POLISH:
-        text, raw = processor.polish_with_trace(request.raw_text, request.settings)
+        options = {"candidates": request.polish_candidates} if request.polish_candidates else {}
+        text, raw = processor.polish_with_trace(request.raw_text, request.settings, **options)
         return ProcessingOutput(text, raw)
     args = (request.raw_text, request.mode, request.settings, request.target_text,
             EDIT_MODE_RACE if normalize_input_mode(request.mode) == INPUT_MODE_EDIT else "")

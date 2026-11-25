@@ -248,7 +248,7 @@ class HotwordController(QObject):
             self._show(error)
         elif words:
             before = {e["id"] for e in self.store.entries()}
-            if self._mutate(lambda: self.store.learn(edit.source, words)):
+            if self._mutate(lambda: self.store.learn(edit.source, words, before=edit.before, after=edit.after)):
                 added = [e["word"] for e in self.store.entries() if e["id"] not in before]
                 if added:
                     self._show("已收录热词：" + "、".join(added))

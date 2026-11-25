@@ -188,13 +188,16 @@ precondition(enabledIDs == [installProduct, voice])
 // Existing enabled sources remain usable; no input source is selected here.
 enabledIDs = []
 _ = try enableSources { enabledIDs.append($0) }
-precondition(enabledIDs == [installProduct, voice])
+precondition(enabledIDs.isEmpty)
 // A parent's successful enable cannot hide a missing/wrong mode.
 installSources = [installSource(installProduct, enabled: true),
                   installSource("test.voice.other", enabled: true, selectable: true)]
 enabledIDs = []
-rejects { try enableSources { enabledIDs.append($0) } }
-precondition(enabledIDs == [installProduct])
+do {
+    _ = try enableSources { enabledIDs.append($0) }
+    fatalError("Unlisted mode must be pending")
+} catch is SourceEnablePending {}
+precondition(enabledIDs.isEmpty)
 // Rejected enable and native failures must never be swallowed.
 installSources = [installSource(installProduct, enabled: true), installSource(voice, capable: false)]
 rejects { try enableSources { _ in } }
@@ -217,5 +220,5 @@ rejects { try enableSources { _ in } }
 installSources = [installSource(voice, enabled: true, selectable: true)]
 enabledIDs = []
 _ = try enableSources { enabledIDs.append($0) }
-precondition(enabledIDs == [voice])
+precondition(enabledIDs.isEmpty)
 print("Input method enable: 9 scenarios passed; no real source registration, enable or selection")
