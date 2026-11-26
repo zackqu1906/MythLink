@@ -15,6 +15,7 @@ Rectangle {
     required property string gestureTitle
     required property string currentDescription
     required property bool applicationScope
+    required property string applicationName
     FigmaTheme { id: theme }
     readonly property var catalog: service.catalog
     readonly property var history: voiceController.gestureMappingHistory
@@ -29,7 +30,7 @@ Rectangle {
         return globalController.globalActionOptions(gesture)
     }
     readonly property var saved: {
-        if (applicationScope) return (catalog.bindings[bundle] || {})[gesture] || null
+        if (applicationScope) return catalog.selectedBindings[gesture] || null
         var bindings = globalController.globalBindings
         var action = globalController.globalBindingAction(gesture)
         return action.id ? action : null
@@ -43,10 +44,6 @@ Rectangle {
         var scene = catalog.selectedScene
         var occupied = catalog.globalOccupancy
         return gesture.length > 0 && (applicationScope ? bundle.length > 0 && service.supported && catalog.canBind(gesture) : globalOptions.length > 0)
-    }
-    readonly property string applicationName: {
-        var app = catalog.apps.filter(function(a) { return a.value === editor.bundle })[0]
-        return app ? app.label : "尚未添加应用"
     }
     readonly property var bindingActions: applicationScope ? catalog.actions : globalOptions
     readonly property var availableActions: bindingActions.concat(ActionPresentation.systemShortcuts(Qt.platform.os).filter(function(preset) {
@@ -63,12 +60,12 @@ Rectangle {
         if (action.applicationBundle) return Boolean(selection && selection.applicationBundle === action.applicationBundle)
         return Boolean(action.keyboardPreset && selection && ActionPresentation.presetFor(selection, Qt.platform.os)?.id === action.id)
     }
-    readonly property var filteredActions: availableActions.filter(function(a) {
+    readonly property var filteredActions: !searching ? [] : availableActions.filter(function(a) {
         var query = search.text.trim().toLowerCase()
         var inCategory = matchesCategory(a)
         return inCategory && (a.label + " " + a.path + " " + a.shortcut + " " + editor.actionDescription(a)).toLowerCase().indexOf(query) >= 0
     })
-    readonly property var savedAction: saved ? availableActions.filter(function(a) { return a.id === editor.savedId })[0] || null : null
+    readonly property var savedAction: saved ? bindingActions.find(function(a) { return a.id === editor.savedId }) || null : null
     readonly property string globalEffect: {
         return saved && saved.effect ? saved.effect : "选择后自动保存并生效。"
     }

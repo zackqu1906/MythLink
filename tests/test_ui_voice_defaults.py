@@ -28,7 +28,7 @@ def test_new_and_unmodified_profiles_get_defaults_without_overwriting_choices(in
         "undo", "next", "retry", "system_retry"].index(history)
     if history == "system_retry":
         assert history_combo.property("currentText") == "无撤销栈撤销"
-    assert root.findChild(QObject, "dictationPolishMode").property("currentText") == "自动润色预览"
+    assert root.findChild(QObject, "dictationPolishMode").property("currentText") == "下滑润色"
     begin = next(message for message in reversed(bridge.messages) if message["type"] == "begin")
     assert begin["routed_edit_mode"] == (routing == "manual_routed_edit")
     assert begin["automatic_mode"] == (routing == "auto")
@@ -36,7 +36,7 @@ def test_new_and_unmodified_profiles_get_defaults_without_overwriting_choices(in
     assert begin.get("host_posts_undo", False) == (history == "system_retry")
     configure = next(message for message in reversed(bridge.messages) if message["type"] == "configure")
     assert configure["history_action_mode"] == ("retry" if history == "system_retry" else history)
-    assert configure["automatic_polish"] is True
+    assert configure["automatic_polish"] is False
 
 
 @pytest.mark.parametrize("inline_ui", [{"input/routingMode": None}], indirect=True)
@@ -50,16 +50,17 @@ def test_user_selection_survives_restart_with_new_defaults(inline_ui):
     # Reading defaults must not turn them into explicit preferences.
     assert not controller._settings.contains("input/routingMode")
     assert not controller._settings.contains("input/historyActionMode")
-    for name in ("inputRoutingModeCombo", "historyActionModeCombo", "dictationPolishMode"):
+    assert not controller._settings.contains("input/automaticPolish")
+    for name, index in (("inputRoutingModeCombo", 1), ("historyActionModeCombo", 1), ("dictationPolishMode", 0)):
         combo = root.findChild(QObject, name)
-        combo.setProperty("currentIndex", 1)
-        assert QMetaObject.invokeMethod(combo, "activated", Q_ARG(int, 1))
+        combo.setProperty("currentIndex", index)
+        assert QMetaObject.invokeMethod(combo, "activated", Q_ARG(int, index))
     controller._settings.sync()
     restarted = AppController(inline_input_enabled=True)
     try:
         assert restarted.inputRoutingMode == "manual"
         assert restarted.historyActionMode == "next"
-        assert not restarted.automaticPolish
+        assert restarted.automaticPolish
         assert not restarted.inlineInput.routed_edit_mode
     finally:
         restarted._text_processing_worker.close(wait=True)

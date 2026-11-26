@@ -58,6 +58,8 @@ def _keyboard_binding(gesture, item):
 
 class ApplicationMappingController(QObject):
     changed = Signal()
+    scopeChanged = Signal()
+    candidatesChanged = Signal()
     discoveryChanged = Signal()
     applicationBindingsCleared = Signal(str)
     _result = Signal(str, int, str, object, str)
@@ -65,6 +67,7 @@ class ApplicationMappingController(QObject):
 
     def __init__(self, service, *, channel=None):
         super().__init__(service)
+        self.changed.connect(self.scopeChanged)  # Configuration changes also update the editor.
         self.service = service
         self.channel = channel or NativeAccessChannel()  # Menu reads never block the key-posting channel.
         self._apps = {}
@@ -225,7 +228,7 @@ class ApplicationMappingController(QObject):
         return [dict(value=bundle, label=app["label"], path=app.get("path", ""))
                 for bundle, app in self._apps.items() if not app.get("removed")]
 
-    @Property("QVariantMap", notify=changed)
+    @Property("QVariantMap", notify=scopeChanged)
     def bindings(self):
         return {bundle: {g: dict(item) for g, item in self._bindings_for(bundle, self._scene).items()}
                 for bundle, app in self._apps.items() if not app.get("removed")}
@@ -234,6 +237,14 @@ class ApplicationMappingController(QObject):
     def regularBindings(self):
         return {bundle: {g: dict(item) for g, item in self._bindings_for(bundle).items()}
                 for bundle, app in self._apps.items() if not app.get("removed")}
+
+    @Property("QVariantMap", notify=scopeChanged)
+    def selectedBindings(self):
+        return self._bindings_for(self._bundle, self._scene)
+
+    @Property("QVariantMap", notify=scopeChanged)
+    def selectedRegularBindings(self):
+        return self._bindings_for(self._bundle)
 
     def _r1_tap_alias(self, app, scene, bindings):
         pinch = R1_TAP_ALIASES['tap']
@@ -255,7 +266,7 @@ class ApplicationMappingController(QObject):
                 bindings = {**bindings, R1_TAP_ALIASES['tap']: tap}
         return {**bindings, **shared_navigation(bundle, app.get("bindings", {}))}
 
-    @Property(str, notify=changed)
+    @Property(str, notify=scopeChanged)
     def selectedScopeLabel(self):
         return self.selectedSceneLabel
 
@@ -276,7 +287,8 @@ class ApplicationMappingController(QObject):
 
     @Property("QVariantList", notify=changed)
     def voiceGestures(self):
-        return [g for g in GESTURE_LABELS if g in self.voice_group()]
+        voice = self.voice_group()
+        return [g for g in GESTURE_LABELS if g in voice]
 
     def voice_group(self):
         return self.service.input_gestures()
@@ -291,17 +303,17 @@ class ApplicationMappingController(QObject):
     def voiceOverrideNotice(self):
         return ""
 
-    @Property(str, notify=changed)
+    @Property(str, notify=scopeChanged)
     def globalConflictNotice(self):
         conflicts = [GESTURE_LABELS[g] for g in self._bindings_for(self._bundle, self._scene)
                      if g in self.globalOccupancy]
         return ("以下应用绑定优先于全局配置；与输入手势重叠时，输入框内优先执行输入功能：" + "、".join(conflicts)) if conflicts else ""
 
-    @Property(str, notify=changed)
+    @Property(str, notify=scopeChanged)
     def selectedScene(self):
         return self._scene
 
-    @Property(bool, notify=changed)
+    @Property(bool, notify=scopeChanged)
     def supportsPresentation(self):
         return PRESENTATION in self._profiles_for(self._bundle) and self._is_added(self._bundle)
 
@@ -319,19 +331,19 @@ class ApplicationMappingController(QObject):
         app = self._apps.get(bundle, {})
         return enabled_profiles(bundle, self._all_profiles_for(bundle), app.get("primaryScene", ""), app.get("enabledScenes"))
 
-    @Property(bool, notify=changed)
+    @Property(bool, notify=scopeChanged)
     def isBrowser(self):
         return self._bundle.casefold() in BROWSERS
 
-    @Property(str, notify=changed)
+    @Property(str, notify=scopeChanged)
     def primaryScene(self):
         return primary_scene(self._bundle, self._all_profiles_for(self._bundle), self._apps.get(self._bundle, {}).get("primaryScene", ""))
 
-    @Property("QVariantList", notify=changed)
+    @Property("QVariantList", notify=scopeChanged)
     def primarySceneOptions(self):
         return [dict(value=scene, label=SCENE_LABELS[scene]) for scene in scene_choices(self._all_profiles_for(self._bundle))]
 
-    @Property("QVariantList", notify=changed)
+    @Property("QVariantList", notify=scopeChanged)
     def addableScenes(self):
         if not self._is_added(self._bundle):
             return []
@@ -393,13 +405,13 @@ class ApplicationMappingController(QObject):
             self._save()
         return True
 
-    @Property("QVariantList", notify=changed)
+    @Property("QVariantList", notify=scopeChanged)
     def availableScenes(self):
         scenes = [dict(value=scene, label=SCENE_LABELS[scene]) for scene in self._profiles_for(self._bundle)
                   if self._is_added(self._bundle)]
         return [dict(value="regular", label="默认配置")] + scenes
 
-    @Property(str, notify=changed)
+    @Property(str, notify=scopeChanged)
     def selectedSceneLabel(self):
         return SCENE_LABELS.get(self._scene, "默认配置")
 
@@ -435,7 +447,7 @@ class ApplicationMappingController(QObject):
         if scene != self._scene:
             self._scene = scene
             # Editor selection never changes runtime scene, settings or epochs.
-            self.changed.emit()
+            self.scopeChanged.emit()
             self.discoveryChanged.emit()
 
     @Slot(str, result=int)
@@ -443,7 +455,7 @@ class ApplicationMappingController(QObject):
         app = self._apps.get(bundle, {})
         return len(self._bindings_for(bundle)) + sum(len(items) for items in app.get("scenes", {}).values())
 
-    @Property(bool, notify=changed)
+    @Property(bool, notify=scopeChanged)
     def hasDefaultMappings(self):
         app = self._apps.get(self._bundle, {})
         return self._is_added(self._bundle) and bool(self._defaults_for(self._bundle, app))
@@ -461,7 +473,7 @@ class ApplicationMappingController(QObject):
         return {gesture: action_label(self._scene, action) for gesture, action in
                 pending.items()}
 
-    @Property(int, notify=changed)
+    @Property(int, notify=scopeChanged)
     def pendingDefaultCount(self):
         return len(self._apps.get(self._bundle, {}).get("pendingChatBindings", {})) + sum(len(items) for scene, items in self._apps.get(self._bundle, {}).get("pendingDefaults", {}).items()
                    if scene in self._profiles_for(self._bundle))
@@ -476,7 +488,7 @@ class ApplicationMappingController(QObject):
             return "场景预设已保存，等待读取此应用的快捷键：" + "、".join(self.pendingBindings.values()) + "。打开应用后刷新快捷键，或手动绑定。"
         return ""
 
-    @Property("QVariantList", notify=discoveryChanged)
+    @Property("QVariantList", notify=candidatesChanged)
     def candidates(self):
         return self._candidates
 
@@ -497,7 +509,7 @@ class ApplicationMappingController(QObject):
         # Real menu commands lead the application category; adapters are fallbacks.
         return _custom_actions(app) + sorted(menus, key=_system_menu_action) + presets
 
-    @Property(str, notify=discoveryChanged)
+    @Property(str, notify=scopeChanged)
     def selectedApp(self):
         return self._bundle
 
@@ -680,6 +692,7 @@ class ApplicationMappingController(QObject):
                 self._upgrade_scene_defaults()
             if self._defaults_dirty:
                 self._save()
+            self.candidatesChanged.emit()
             self.changed.emit()
             if not error and sys.platform != "win32":
                 self._queue_running_menus()
@@ -719,6 +732,7 @@ class ApplicationMappingController(QObject):
         if self._closed or not self._config_valid or self.owns(candidate["value"]):
             return False
         self._candidates = [item for item in self._candidates if item["value"] != candidate["value"]] + [dict(candidate)]
+        self.candidatesChanged.emit()
         return self.addApplication(candidate["value"])
 
     @Slot(str, result=bool)
@@ -744,7 +758,8 @@ class ApplicationMappingController(QObject):
     def _select_application(self, bundle, *, refresh=False):
         self._generation["menu"] += 1
         selected = bundle if self._is_added(bundle) else ""
-        if selected != self._bundle:
+        switching = selected != self._bundle
+        if switching:
             self._scene = "regular"
         self._bundle = selected
         self._menu_revisions[selected] = self._menu_revisions.get(selected, 0) + 1
@@ -765,7 +780,8 @@ class ApplicationMappingController(QObject):
         self._message = "正在读取应用菜单…" if self._busy else "先添加一个应用"
         if self._bundle and not self._busy:
             self._show_menu_result(cached)
-        self.changed.emit()
+        if switching:
+            self.scopeChanged.emit()
         self.discoveryChanged.emit()
         if self._busy:
             self._request("menu", self._bundle)
@@ -921,6 +937,9 @@ class ApplicationMappingController(QObject):
 
     def owns(self, bundle):
         return bundle in self._apps
+
+    def is_unconfigured(self, bundle):
+        return bool(bundle) and self._config_valid and not self._is_added(bundle)
 
     def uses(self, gesture, *, bundle=None):
         bundles = self._apps if bundle is None else (bundle,)

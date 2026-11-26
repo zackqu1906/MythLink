@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 
 from .task_routing import EditPlan
 from .general_edit_prompt import GENERAL_EDIT_VARIANTS
@@ -179,6 +180,15 @@ class TextProcessingRequest:
     saved_context: object = None
     edit_hotwords: tuple[str, ...] = ()
     polish_candidates: tuple[tuple[str, str], ...] = ()
+    polish_glossary: tuple[str, ...] = ()
+
+    @cached_property
+    def edit_pipeline(self):
+        if (self.routing_mode == INPUT_ROUTING_ROUTED_EDIT and self.mode == INPUT_MODE_EDIT
+                and self.routed_edit_variant == ROUTED_EDIT_HYBRID):
+            from .hybrid_edit.trace import EditPipeline
+            return EditPipeline()
+        return None
 
 
 @dataclass(frozen=True)
@@ -246,3 +256,4 @@ class TextProcessingResult:
     screen_context: object = None
     routed_edit_variant: str = ROUTED_EDIT_HYBRID
     edit_steps: tuple[dict, ...] = ()
+    edit_pipeline: dict | None = None

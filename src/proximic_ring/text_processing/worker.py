@@ -8,10 +8,8 @@ from typing import Callable
 
 from .llm import OpenAICompatibleTextProcessor
 from .model import (
-    INPUT_MODE_EDIT,
     INPUT_ROUTING_ROUTED_EDIT,
     TEXT_MODE_POLISH,
-    ROUTED_EDIT_HYBRID,
     InputModeRoutingRequest,
     InputModeRoutingResult,
     LLMTraceCollection,
@@ -260,11 +258,12 @@ class TextProcessingWorker:
                 edit_steps = tuple(getattr(exc, "edit_steps", ()))
                 llm_branches = tuple(getattr(exc, "branch_traces", ()) or ())
                 final_text = request.target_text or request.raw_text
-            if (request.routing_mode == INPUT_ROUTING_ROUTED_EDIT and request.mode == INPUT_MODE_EDIT
-                    and request.routed_edit_variant == ROUTED_EDIT_HYBRID):
+            pipeline = request.edit_pipeline
+            if pipeline is not None:
                 used_llm = bool(edit_steps)
             result = TextProcessingResult(
                 edit_steps=edit_steps,
+                edit_pipeline=pipeline.snapshot() if pipeline is not None else None,
                 request_id=request.request_id,
                 task_type=task_type,
                 edit_plan=edit_plan,

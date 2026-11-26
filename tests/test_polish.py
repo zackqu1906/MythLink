@@ -152,7 +152,7 @@ def test_polish_log_keeps_its_own_prompt():
     assert payload["target_text"] == ""
 
 
-def test_swipe_down_passes_only_candidate_spellings_in_the_original_call(manual_polish_route, monkeypatch):
+def test_swipe_down_passes_matching_spans_and_glossary_in_the_original_call(manual_polish_route, monkeypatch):
     import json
     from proximic_ring.text_processing.processing_dispatch import process_text_request
     from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
@@ -171,6 +171,80 @@ def test_swipe_down_passes_only_candidate_spellings_in_the_original_call(manual_
     result = process_text_request(processor, request, on_trace=None)
     call, = calls
     assert result.text == "用 Myth 绘制"
-    assert json.loads(call["user_content"]) == {"asr_final": raw, "personal_vocabulary": [{"word": "Myth"}]}
-    history = ModificationDatasetCollector._llm_input(request.mode, raw, "", request.polish_candidates)
+    payload = json.loads(call["user_content"])
+    assert payload == {
+        "asr_final": raw, "correction_draft": "用 Myth 绘制",
+        "personal_vocabulary": [{"word": "Myth", "heard": "miss"}],
+        "options": [["miss", "Myth"]], "glossary": ["飞鼠"],
+    }
+    history = ModificationDatasetCollector._llm_input(request.mode, raw, "", request.polish_candidates,
+                                                      request.polish_glossary)
     assert (history["user_content"], history["system_prompt"]) == (call["user_content"], call["system_prompt"])
+
+
+@pytest.mark.parametrize(("raw", "heard", "word"), [
+    ("使用编辑代码写程序。口腔。", "口腔", "烤匠"),
+    ("这个东西交给 Clark 去做", "Clark", "Codex"),
+])
+def test_practice_and_inline_swipe_send_the_same_hotword_request(manual_polish_route, monkeypatch, raw, heard, word):
+    import json
+    from types import SimpleNamespace
+    from test_hotword_controller import pump_until
+
+    c, _, inline, _, _, messages, emit = manual_polish_route
+    practice = c._voice_practice
+    settings = LLMSettings(provider="bailian", model="qwen3.8-max", api_key="test-only")
+    monkeypatch.setattr(c, "_llm_settings", lambda: settings)
+    final = raw.replace(heard, word)
+    calls = []
+    def reply(self, settings, **request):
+        calls.append((settings.model, request["system_prompt"], request["user_content"]))
+        return final
+    monkeypatch.setattr(OpenAICompatibleTextProcessor, "_request_chat", reply)
+
+    assert practice.arm()
+    c.hotwords.store.add(word)
+    practice.setText(raw)
+    assert practice.consume_gesture(SimpleNamespace(name="swipe-down"))
+    pump_until(lambda: practice.text == final)
+    practice.cancel()
+
+    c._text_processing_worker = TextProcessingWorker(on_result=c._textProcessed.emit)
+    inline._view.update(phase="dictated", raw=raw)
+    emit("swipe-down")
+    assert messages[-1][0] == "polish"
+    receive(inline, phase="polishing", ready=True, revision=3)
+    receive(inline, "polish_requested", revision=3, text=raw)
+    pump_until(lambda: messages[-1][0] == "polish_result")
+    assert messages[-1][1] == {"revision": 3, "text": final, "error": ""}
+    assert len(calls) == 2 and calls[0] == calls[1]
+    model, _, body = calls[0]
+    assert model == "qwen3.8-max"
+    assert {"heard": heard, "word": word} in json.loads(body)["personal_vocabulary"]
+
+
+def test_polish_can_use_glossary_without_a_literal_candidate(monkeypatch):
+    import json
+    from proximic_ring.voice.modification_dataset import ModificationDatasetCollector
+
+    processor = OpenAICompatibleTextProcessor()
+    sent = []
+    monkeypatch.setattr(processor, "_request_chat", lambda settings, **kwargs: sent.append(kwargs) or "启用 pinch 手势。")
+    text = "启用片区手势"
+    processor.polish_with_trace(text, LLMSettings(enabled=True, model="test"), glossary=("pinch",))
+    request, = sent
+    payload = json.loads(request["user_content"])
+    assert payload["personal_vocabulary"] == [{"word": "pinch", "heard": "片区"}]
+    assert payload["glossary"] == ["pinch"]
+    assert payload["correction_draft"] == "启用pinch手势"
+    recorded = ModificationDatasetCollector._llm_input("polish", text, "", (), ("pinch",))
+    assert recorded["user_content"] == request["user_content"]
+
+
+def test_explicit_spelling_takes_precedence_over_model_but_trace_keeps_the_reply(monkeypatch):
+    processor = OpenAICompatibleTextProcessor()
+    monkeypatch.setattr(processor, "_request_chat", lambda *args, **kwargs: "是伟大的伟，张玮。")
+    result, trace = processor.polish_with_trace("是伟大的伟，张伟", LLMSettings(enabled=True, model="test"),
+                                               candidates=(("张玮", ""),))
+    assert result == "是伟大的伟，张伟。"
+    assert trace == "是伟大的伟，张玮。"

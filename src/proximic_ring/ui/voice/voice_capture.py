@@ -27,6 +27,10 @@ class VoiceCaptureMixin:
                     self._append_log(f"输入上下文记录保存失败：{exc}")
         self._begin_automatic_voice()
 
+        if inline and self._hotwords.store.enabled_words():
+            from ...voice.polish_vocabulary import warm_polish_segmenter
+            warm_polish_segmenter()
+
     def _voice_input_context(self, *, inline, verified, target=None):
         view = self._inline_input._view if inline and verified else {}
         # Preserve the verified BEGIN snapshot, not a later/current foreground field.

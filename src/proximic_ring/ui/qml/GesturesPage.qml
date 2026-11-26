@@ -26,7 +26,12 @@ UiScrollView {
     readonly property var visibleAddableScenes: catalog.addableScenes.filter(function(scene) { return page.sceneVisible(scene.value) })
     readonly property bool sceneScope: applicationScope && catalog.selectedScene !== "regular"
     readonly property bool showVoiceMappings: controller.recognitionEnabled
-    readonly property var selectedApplication: catalog.apps.filter(function(app) { return app.value === page.selectedApp })[0] || null
+    readonly property var selectedApplication: applicationTabsModel.find(function(app) { return app.value === page.selectedApp }) || null
+    readonly property var scopeBindings: catalog.selectedBindings
+    readonly property var regularBindings: sceneScope ? catalog.selectedRegularBindings : ({})
+    readonly property var pendingBindings: catalog.pendingBindings
+    readonly property var globalOccupancy: catalog.globalOccupancy
+    readonly property var voiceGestures: catalog.voiceGestures
     property string managementFeedback: ""
     onSelectedAppChanged: {
         managementFeedback = ""
@@ -65,13 +70,13 @@ UiScrollView {
     }
     function regularDescription(key) {
         if (applicationScope) {
-            var binding = (catalog.bindings[selectedApp] || {})[key]
+            var binding = scopeBindings[key]
             if (binding) return binding.label
-            if (catalog.pendingBindings[key]) return catalog.pendingBindings[key] + " · 等待快捷键"
-            var regular = sceneScope && (catalog.regularBindings[selectedApp] || {})[key]
+            if (pendingBindings[key]) return pendingBindings[key] + " · 等待快捷键"
+            var regular = sceneScope && regularBindings[key]
             if (regular) return "沿用应用 · " + regular.label
         }
-        var fallback = catalog.globalOccupancy[key]
+        var fallback = globalOccupancy[key]
         return fallback ? (applicationScope ? "沿用全局 · " : "") + fallback : ""
     }
     function mappingHint(key) {
@@ -86,12 +91,12 @@ UiScrollView {
     }
     function locked(key) { return applicationScope && sceneScope && catalog.isSharedNavigation(key) }
     function sourceLabel(key) {
-        if (applicationScope && catalog.isSharedNavigation(key) && (catalog.bindings[selectedApp] || {})[key]) return "浏览器通用"
-        if (applicationScope && (catalog.bindings[selectedApp] || {})[key]) return "应用优先"
-        if (sceneScope && (catalog.regularBindings[selectedApp] || {})[key]) return "应用默认"
-        if (catalog.globalOccupancy[key]) return applicationScope ? "全局默认" : "全局功能"
-        if (applicationScope && catalog.pendingBindings[key]) return "已保存预设"
-        return catalog.voiceGestures.indexOf(key) >= 0 ? "输入框内优先输入" : "不受输入焦点影响"
+        if (applicationScope && catalog.isSharedNavigation(key) && scopeBindings[key]) return "浏览器通用"
+        if (applicationScope && scopeBindings[key]) return "应用优先"
+        if (sceneScope && regularBindings[key]) return "应用默认"
+        if (globalOccupancy[key]) return applicationScope ? "全局默认" : "全局功能"
+        if (applicationScope && pendingBindings[key]) return "已保存预设"
+        return voiceGestures.indexOf(key) >= 0 ? "输入框内优先输入" : "不受输入焦点影响"
     }
     clip: true
     contentWidth: availableWidth
@@ -434,7 +439,7 @@ UiScrollView {
                                 destructive: true
                                 text: "清空此应用的映射"
                                 enabled: {
-                                    var bindings = page.catalog.bindings
+                                    var bindings = page.scopeBindings
                                     return page.catalog.bindingCount(page.selectedApp) > 0 || page.catalog.pendingDefaultCount > 0
                                 }
                                 onTriggered: managementDialog.review("clear")
@@ -525,6 +530,7 @@ UiScrollView {
             service: page.controller.appGestures; globalController: page.controller.ringGestures; voiceController: page.controller
             gesture: page.selectedGesture; gestureTitle: page.selectedTitle
             currentDescription: page.description(page.selectedGesture); applicationScope: page.applicationScope
+            applicationName: page.selectedApplication ? page.selectedApplication.label : "尚未添加应用"
         }
         Label {
             objectName: "applicationManagementFeedback"

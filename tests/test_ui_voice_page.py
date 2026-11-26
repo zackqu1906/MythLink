@@ -32,8 +32,11 @@ def seed_history(controller):
 
 
 @pytest.mark.parametrize("size", [(1440, 940), (940, 700)])
-@pytest.mark.parametrize("routing", ["manual", "auto", "manual_routed_edit"])
-def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypatch, size, routing):
+@pytest.mark.parametrize("routing,variant", [
+    ("manual", "six_class_v5"), ("auto", "six_class_v5"),
+    ("manual_routed_edit", "six_class_v5"), ("manual_routed_edit", "hybrid_edit_v1"),
+])
+def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypatch, size, routing, variant):
     from PySide6.QtCore import QCoreApplication, QObject, QMetaObject, QPoint, QPointF, Qt
     from PySide6.QtGui import QImage, QPainter, QColor, QFont, QWheelEvent
     from PySide6.QtTest import QTest
@@ -51,11 +54,15 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     finish_asr(collector)
     source = "输入框原文\n" + "没有空格的长文本" * 120 + "\nhttps://example.test/" + "abcdefgh0123456789" * 100
     collector.record_text_request(TextProcessingRequest(20, 7, "edit", "把今晚改成明晚",
-        LLMSettings(enabled=True, model="deepseek-test"), source, routing_mode=routing))
+        LLMSettings(enabled=True, model="deepseek-test"), source, routing_mode=routing, routed_edit_variant=variant))
     result_text = "我们明晚开会。\n" + "没有空格的长文本" * 250 + "\nhttps://example.test/" + "abcdefgh0123456789" * 100
     collector.record_llm_result(20, TextProcessingResult(20, 7, "edit", "把今晚改成明晚", result_text, .8, True,
-        target_text=source, routing_mode=routing,
-        edit_plan=EditPlan(("modify",)) if routing == "manual_routed_edit" else None,
+        target_text=source, routing_mode=routing, routed_edit_variant=variant,
+        edit_pipeline={"route": "规则生成初稿 → 模型复核替换初稿", "steps": [
+            {"kind": "rule", "label": "定位原词并生成替换初稿", "duration_ms": 0.25, "status": "completed"},
+            {"kind": "model", "label": "复核替换初稿", "duration_ms": 750, "status": "completed"},
+        ]} if variant == "hybrid_edit_v1" else None,
+        edit_plan=EditPlan(("modify",)) if routing == "manual_routed_edit" and variant == "six_class_v5" else None,
         model_input={"utterance": "把今晚改成明晚", "editable_text": source, "screen_context": {}}))
     identifier = collector.interaction_id_for_session(7)
     from proximic_ring.text_processing.screen_context import ScreenContext
@@ -90,6 +97,9 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     entry = visual_child(view, "voiceHistoryEntry")
     before = (list(bridge.messages), controller.inlineInput._view.copy())
     assert not reads and visual_child(entry, "voiceHistoryDetails") is None
+    if variant == "hybrid_edit_v1":
+        route_preview = visual_child(entry, "voiceHistoryEditRoute")
+        assert route_preview.isVisible() and "规则生成初稿 → 模型复核替换初稿" in route_preview.property("text")
     assert visual_child(entry, "voiceHistoryDetailsToggle") is None
     QMetaObject.invokeMethod(visual_child(entry, "voiceHistoryMoreButton"), "click")
     QTest.qWait(100)
@@ -100,7 +110,11 @@ def test_history_details_open_once_for_both_modes(inline_ui, tmp_path, monkeypat
     QTest.qWait(220)
     panel = visual_child(entry, "voiceHistoryDetails")
     assert panel is not None and reads == [identifier]
-    if routing == "manual_routed_edit":
+    if variant == "hybrid_edit_v1":
+        assert visual_child(panel, "voiceHistoryDetail_llm_0_pipeline").property("text") == "规则生成初稿 → 模型复核替换初稿"
+        assert visual_child(panel, "voiceHistoryStepTime_llm_0_pipeline_0").property("text") == "0.25 毫秒"
+        assert visual_child(panel, "voiceHistoryStepTime_llm_0_pipeline_1").property("text") == "750.00 毫秒"
+    elif routing == "manual_routed_edit":
         assert visual_child(panel, "voiceHistoryClassification_llm_0").property("text") == "编辑分类：修改"
     assert visual_child(entry, "automaticVoiceDetailsToggle") is None
     directory = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))

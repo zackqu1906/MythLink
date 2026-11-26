@@ -39,11 +39,57 @@ def polish_vocabulary_payload(candidates):
     return [dict(word=word, previous_asr=form) if form else dict(word=word) for word, form in candidates]
 
 
-def polish_model_input(text, candidates=()):
-    if candidates:
-        content = json.dumps({"asr_final": text, "personal_vocabulary": polish_vocabulary_payload(candidates)},
-                             ensure_ascii=False)
-        prompt = POLISH_PROMPT + POLISH_VOCABULARY_GUIDANCE
+MANUAL_HOTWORD_GUIDANCE = (
+    "\n用户主动请求按个人词表校对 ASR。先阅读 asr_final 判断说话场景，再审核 correction_draft 的每个替换。"
+    "若原句在这个场景已经清楚、自然地表达另一层意思，保留原词。明确引述、对比、拼写或解释的原词也应保留。"
+    "若原词在上下文中搭配异常、或两个读法同样贴切，优先使用用户词表的标准写法。"
+    "personal_vocabulary 是本句优先核对的候选，heard 是对应的原句片段。options 用于草稿，alternatives 也要逐项核对。"
+    "对于孤立词、名称或被指派做事的对象，当候选热词能解释原句且缺少支持另一种身份的线索时，优先采用热词。"
+    "如果上下文明确指向另一人或另一种意思，保留原词。首字母相同本身不足以确定身份。"
+    "不要破坏其他正常词。verbatim 是应保留的原字。只输出最终正文，尽量沿用原句表达。"
+)
+
+
+def polish_model_input(text, candidates=(), glossary=()):
+    if candidates or glossary:
+        from ..voice.polish_vocabulary import (
+            alternative_spellings, correction_draft, draft_protections, nearby_forms, observed_asr_form, polish_heard_form, review_forms,
+        )
+
+        hints = polish_vocabulary_payload(candidates)
+        exact = []
+        for hint in hints:
+            heard = (observed_asr_form(text, hint["previous_asr"]) if "previous_asr" in hint
+                     else polish_heard_form(text, hint["word"]))
+            if heard:
+                hint["heard"] = heard
+                exact.append((heard, hint["word"]))
+        words = [word for word, _ in candidates] + list(glossary)
+        options = list(dict.fromkeys(exact + nearby_forms(text, words)))
+        confirmed = [(h["heard"], h["word"]) for h in hints if h.get("heard") and h.get("previous_asr")]
+        protected = draft_protections(text, options, exact, words)
+        permitted = [(heard, word) for heard, word in options if heard not in protected]
+        payload = {"asr_final": text, "correction_draft": correction_draft(text, permitted, [(a, b) for a, b in confirmed if a not in protected])}
+        payload["options"] = permitted
+        possible = list(dict.fromkeys(alternative_spellings(text, permitted, words) + review_forms(text, words)))
+        excluded = set(protected) | set(draft_protections(text, possible, exact, words))
+        alternatives = [pair for pair in possible if pair[0] not in excluded and pair not in permitted][:8]
+        # Expose the same scoped suggestions to the model and the history viewer.
+        # A new phonetic suggestion is never labelled as a previously confirmed ASR error.
+        known = {(hint.get("heard"), hint["word"]) for hint in hints}
+        for heard, word in permitted + alternatives:
+            if (heard, word) not in known:
+                hints.append({"word": word, "heard": heard})
+                known.add((heard, word))
+        payload["personal_vocabulary"] = hints
+        if glossary:
+            payload["glossary"] = glossary
+        if alternatives:
+            payload["alternatives"] = alternatives
+        if protected:
+            payload["verbatim"] = protected
+        content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        prompt = POLISH_PROMPT + MANUAL_HOTWORD_GUIDANCE
     else:
         content = f"<语音转写>\n{text}\n</语音转写>"
         prompt = POLISH_PROMPT

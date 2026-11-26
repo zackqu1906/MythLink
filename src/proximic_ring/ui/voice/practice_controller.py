@@ -18,7 +18,7 @@ from ...asr.factory import ASRBackendSettings, asr_backend_kind, create_asr_back
 from ...audio.microphone import MicrophoneSource
 from ...gestures.gesture_settings import GestureBindings
 from ...text_processing.llm import OpenAICompatibleTextProcessor
-from ...text_processing.model import LLMSettings
+from ...text_processing.model import LLMSettings, TEXT_MODE_POLISH
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,7 @@ class PracticeConfiguration:
     bindings: GestureBindings
     gain_db: float = 0.0
     hotwords: tuple[str, ...] = ()
+    manual_polish_hints: Callable[[str], tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] | None = None
 
 
 class VoicePracticeController(QObject):
@@ -373,7 +374,7 @@ class VoicePracticeController(QObject):
             if not text:
                 raise ValueError("未识别到文字，请重新录音")
             if mode == "edit":
-                text = self._process_text(text, mode, config.llm, target)
+                text = self._process_text(text, mode, config, target)
             self._result.emit(token, mode, text, "")
         except Exception as exc:
             if not cancel.is_set():
@@ -384,10 +385,15 @@ class VoicePracticeController(QObject):
                 cleanup()
 
     @staticmethod
-    def _process_text(text, mode, settings, target=""):
+    def _process_text(text, mode, config, target=""):
         processor = OpenAICompatibleTextProcessor()
         try:
-            return processor.process(text, mode, replace(settings, enabled=True), target_text=target)
+            settings = replace(config.llm, enabled=True)
+            if mode == TEXT_MODE_POLISH:
+                candidates, glossary = config.manual_polish_hints(text) if config.manual_polish_hints else ((), ())
+                final, _ = processor.polish_with_trace(text, settings, candidates, glossary)
+                return final
+            return processor.process(text, mode, settings, target_text=target)
         finally:
             processor.close()
 
@@ -405,7 +411,7 @@ class VoicePracticeController(QObject):
 
         def work():
             try:
-                result = self._process_text(text, "polish", config.llm)
+                result = self._process_text(text, TEXT_MODE_POLISH, config)
                 if not cancel.is_set():
                     self._result.emit(token, "polish", result, "")
             except Exception as exc:

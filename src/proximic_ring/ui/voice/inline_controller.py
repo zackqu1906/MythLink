@@ -23,7 +23,7 @@ from .input_source_return import InputSourceReturn
 
 
 DEFAULT_HISTORY_ACTION_MODE = "system_retry"
-DEFAULT_AUTOMATIC_POLISH = True
+DEFAULT_AUTOMATIC_POLISH = False
 _PENDING_ACTIVATION_MESSAGE = "组件已安装，等待系统启用。"
 
 

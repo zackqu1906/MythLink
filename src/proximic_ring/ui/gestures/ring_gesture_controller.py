@@ -488,6 +488,11 @@ class RingGestureController(QObject):
         action = self.owner._global_gesture_bindings.action_for(source.name)
         if not action:
             service._stop_trace(event, "binding_missing")
+            target = event.target
+            if (target is not None and source.name in GESTURE_LABELS
+                    and service.catalog.is_unconfigured(target.bundle)
+                    and service.foreground_identity() == (target.bundle, target.pid)):
+                service.notify("当前应用未配置手势")
             return
         if action == 'clipboard_paste':
             from ...gestures.app_gestures import AppBinding

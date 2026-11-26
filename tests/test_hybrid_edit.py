@@ -202,3 +202,100 @@ def test_local_completion_through_worker_and_history(tmp_path, utterance, expect
         and record["system_prompt"] == ""
         and record["edit_steps"] == []
     )
+
+
+@pytest.mark.parametrize("utterance,replies,expected_models,route_fragment", [
+    ("删除最后一句", [], [], "规则直接处理"),
+    ("把交图改成审图算了别改了", [], [], "句尾被明确撤回"),
+    ("把交图改成审图", [{"decision": "keep", "modified_text": ""}], ["复核替换初稿"], "采用替换初稿"),
+    ("改成审图", [{"index": 1}, {"decision": "keep", "modified_text": ""}],
+     ["选择候选位置", "复核替换初稿"], "规则筛选位置 → 模型选择候选位置 → 规则生成初稿"),
+    ("改成审图", [{"index": 0}], ["选择候选位置"], "保留原文"),
+    ("把交图改成审图然后分两行",
+     [{"decision": "keep", "modified_text": ""}, {"modified_text": "先审图。\n再核对地图。"}],
+     ["复核替换初稿", "补做剩余要求"], "模型补做剩余要求"),
+    ("把这句话说得客气一点", [{"modified_text": "烦请先交图，再核对地图。"}], ["生成编辑正文"], "模型生成编辑正文"),
+    ("把第二项改成审图", [{"decision": "keep", "old": "", "new": "", "occurrence": 0, "tail": ""}],
+     ["定位指定次序的原词"], "保留原文"),
+    ("帮我回复对方", [{"modified_text": ""}, {"modified_text": "收到，我会先交图。"}],
+     ["拟写回复", "按校验反馈重做"], "模型拟写回复 → 模型按校验反馈重做"),
+    ("改成审图", [{"index": "1"}], ["选择候选位置"], "模型选择候选位置"),
+])
+def test_saved_pipeline_matches_executed_steps(tmp_path, monkeypatch, utterance, replies, expected_models, route_fragment):
+    from itertools import count
+    from proximic_ring.text_processing.hybrid_edit import trace
+
+    # Equal clock ticks at real boundaries expose overlaps or missing intervals.
+    monkeypatch.setattr(trace, "perf_counter_ns", count(0, 1_250_000).__next__)
+    processor, calls = service(*replies)
+    request = TextProcessingRequest(20, 7, "edit", utterance, settings(), "先交图。再核对地图。",
+                                    routing_mode=INPUT_ROUTING_ROUTED_EDIT)
+    history = ModificationDatasetCollector(tmp_path, "test")
+    history.record_text_request(request)
+    done = threading.Event()
+
+    def save(result):
+        history.record_llm_result(result.request_id, result)
+        done.set()
+
+    worker = TextProcessingWorker(processor=processor, on_result=save)
+    try:
+        worker.submit(request)
+        assert done.wait(5)
+    finally:
+        worker.close(wait=True)
+
+    interaction = history.interaction_id_for_session(7)
+    history = ModificationDatasetCollector(tmp_path, "test")
+    saved = history._interaction_data(interaction)["llm"]["requests"][0]
+    steps = saved["edit_pipeline"]["steps"]
+    assert len(calls) == len(expected_models)
+    assert [s["label"] for s in steps if s["kind"] == "model"] == expected_models
+    assert all(s["duration_ms"] == 1.25 for s in steps)
+    assert all(s["status"] == "completed" for s in steps[:-1])
+    invalid = replies == [{"index": "1"}]
+    assert steps[-1]["status"] == ("failed" if invalid else "completed")
+    assert steps[0]["kind"] == "context" and steps[-1]["kind"] == "rule"
+    decision = history.load_details(interaction)["sections"][0]["items"][0]
+    assert route_fragment in decision["text"]
+    assert len(decision["pipelineSteps"]) == len(steps)
+    assert all("1.25 毫秒" in row["time"] for row in decision["pipelineSteps"])
+    assert ("失败" in decision["pipelineSteps"][-1]["time"]) == invalid
+
+
+def test_cancelled_model_wait_keeps_only_elapsed_steps(tmp_path, monkeypatch):
+    from proximic_ring.text_processing.hybrid_edit import trace
+
+    now = [0]
+    monkeypatch.setattr(trace, "perf_counter_ns", lambda: now[0])
+    started, release, delivered = threading.Event(), threading.Event(), threading.Event()
+
+    def pause():
+        started.set()
+        assert release.wait(5)
+
+    history = ModificationDatasetCollector(tmp_path, "test")
+    processor, calls = service({"index": 1}, after_call=pause)
+    request = TextProcessingRequest(5, 7, "edit", "改成审图", settings(), "先交图。",
+                                    routing_mode=INPUT_ROUTING_ROUTED_EDIT)
+    history.record_text_request(request)
+    worker = TextProcessingWorker(processor=processor, on_result=lambda _: delivered.set())
+    try:
+        worker.submit(request)
+        assert started.wait(5)
+        now[0] = 2_500_000_000
+        worker.cancel_request(5)
+        history.finish_pending_llm_request(5, reason="手动取消")
+        now[0] += 5_000_000_000
+    finally:
+        release.set()
+        worker.close(wait=True)
+    assert not delivered.is_set() and len(calls) == 1
+    interaction = history.interaction_id_for_session(7)
+    saved = history._interaction_data(interaction)["llm"]["requests"][0]
+    assert saved["status"] == "cancelled"
+    step = saved["edit_pipeline"]["steps"][-1]
+    assert step == {"kind": "model", "label": "选择候选位置", "duration_ms": 2500, "status": "cancelled"}
+    assert request.edit_pipeline.snapshot() == saved["edit_pipeline"]
+    row = history.load_details(interaction)["sections"][0]["items"][0]
+    assert row["pipelineSteps"][-1]["time"] == "2.50 秒 · 已中止"
