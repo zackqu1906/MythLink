@@ -266,4 +266,51 @@ struct ServiceTest {
 };
 }
 
-int main() { ServiceTest::run(); }
+// Load the packaged DLL directly. This verifies the taskbar item through a
+// real TSF manager without registering a profile or switching keyboards.
+static void checkIndicator(const wchar_t* dllPath) {
+    assert(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)));
+    HMODULE dll = LoadLibraryW(dllPath);
+    assert(dll);
+    {
+        const auto factoryFor = reinterpret_cast<decltype(&DllGetClassObject)>(
+            GetProcAddress(dll, "DllGetClassObject"));
+        ComPtr<IClassFactory> factory;
+        assert(factoryFor && SUCCEEDED(factoryFor(serviceId, IID_IClassFactory, reinterpret_cast<void**>(factory.out()))));
+        ComPtr<ITfTextInputProcessor> service;
+        assert(SUCCEEDED(factory->CreateInstance(nullptr, IID_ITfTextInputProcessor, reinterpret_cast<void**>(service.out()))));
+        ComPtr<ITfThreadMgrEx> manager;
+        assert(SUCCEEDED(CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER,
+                                          IID_ITfThreadMgrEx, reinterpret_cast<void**>(manager.out()))));
+        TfClientId client{};
+        assert(SUCCEEDED(manager->ActivateEx(&client, TF_TMAE_NOACTIVATETIP)));
+        assert(SUCCEEDED(service->Activate(manager.get(), client)));
+        ComPtr<ITfLangBarItemMgr> bar;
+        assert(SUCCEEDED(manager->QueryInterface(IID_ITfLangBarItemMgr, reinterpret_cast<void**>(bar.out()))));
+        ComPtr<ITfLangBarItem> item;
+        assert(SUCCEEDED(bar->GetItem(mythlinkInputModeItem, item.out())) && item);
+        TF_LANGBARITEMINFO info{};
+        assert(SUCCEEDED(item->GetInfo(&info)) && info.clsidService == serviceId &&
+               info.dwStyle & TF_LBI_STYLE_SHOWNINTRAY && std::wstring(info.szDescription) == L"MythLink");
+        ComPtr<ITfLangBarItemButton> button;
+        assert(SUCCEEDED(item->QueryInterface(IID_ITfLangBarItemButton, reinterpret_cast<void**>(button.out()))));
+        HICON icon{};
+        assert(SUCCEEDED(button->GetIcon(&icon)) && icon);
+        DestroyIcon(icon);
+        assert(SUCCEEDED(service->Deactivate()));
+        assert(FAILED(bar->GetItem(mythlinkInputModeItem, item.out())) || !item);
+        manager->Deactivate();
+    }
+    FreeLibrary(dll);
+    CoUninitialize();
+    std::cout << "TSF input indicator registered, supplied the MythLink icon and was removed\n";
+}
+
+int main(int argc, char** argv) {
+    ServiceTest::run();
+    if (argc == 2) {
+        wchar_t path[MAX_PATH]{};
+        assert(MultiByteToWideChar(CP_ACP, 0, argv[1], -1, path, MAX_PATH));
+        checkIndicator(path);
+    }
+}

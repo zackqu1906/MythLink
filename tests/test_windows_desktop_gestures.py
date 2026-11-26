@@ -63,6 +63,21 @@ def test_windows_input_selection_replaces_stale_pipe_and_rechecks_focus(switch_f
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows TSF startup")
+def test_pinch_waits_for_the_windows_editor_to_grant_text_access():
+    origin = ("win32:34", 34)
+    bridge = SimpleNamespace(connected=True, epoch="current")
+    states = iter([False, True])
+    def focus(**_):
+        ready = next(states)
+        return dict(epoch="current", application=origin[0], client_id="text",
+                    ready=ready, selection=[0, 0] if ready else [-1, -1])
+    bridge.focus_state = focus
+    result = probe_input_focus(bridge, lambda: origin, lambda *_: pytest.fail("already selected"),
+                               reconnect_on_selection=True)
+    assert result.status == "text" and result.target[1] == "text"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows TSF startup")
 def test_external_strokes_wait_for_the_selected_windows_text_client(monkeypatch):
     from PySide6.QtWidgets import QApplication
     from proximic_ring.ui.voice.inline_controller import InlineInputController

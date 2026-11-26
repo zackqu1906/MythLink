@@ -55,7 +55,7 @@ class RingGestureController(QObject):
     mainWindowRequested = Signal()
     hideRequested = Signal()
     sceneHudRequested = Signal(str, object)
-    _sceneHudReady = Signal(int, float, object, object)
+    _sceneHudReady = Signal(object, object)
     _requested = Signal(object, object)
     _sceneRequested = Signal(object, object)
     _globalTargetReady = Signal(object, object, bool, object)
@@ -568,8 +568,8 @@ class RingGestureController(QObject):
         if self.session_blocked():
             return
         if not self.speech_busy():
-            generation, created, connection = self._generation, time.monotonic(), self.owner._disconnect_event
-            self._pending_hud = (generation, created, connection)
+            request = (self._generation, time.monotonic(), self.owner._disconnect_event)
+            self._pending_hud = request
             self._hud_timer.start()
             def work():
                 try:
@@ -582,7 +582,7 @@ class RingGestureController(QObject):
                 except Exception:
                     target, focus = None, None
                 try:
-                    self._sceneHudReady.emit(generation, created, connection, (target, focus))
+                    self._sceneHudReady.emit(request, (target, focus))
                 except RuntimeError:
                     pass
             threading.Thread(target=work, name="GestureSceneHints", daemon=True).start()
@@ -595,7 +595,7 @@ class RingGestureController(QObject):
         self._pending_hud = None
 
     def _take_scene_hud(self, request):
-        if request is None or request != self._pending_hud:
+        if request is None or request is not self._pending_hud:
             return False
         self._cancel_scene_hud()
         generation, _, connection = request
@@ -610,10 +610,11 @@ class RingGestureController(QObject):
             self.owner._event_log("RING_GESTURE", action="hint_fallback", reason="scene_lookup_timeout")
             self.showRequested.emit(self.mode, "")
 
-    @Slot(int, float, object, object)
-    def _show_scene_hud(self, generation, created, connection, target):
-        if not self._take_scene_hud((generation, created, connection)):
+    @Slot(object, object)
+    def _show_scene_hud(self, request, target):
+        if not self._take_scene_hud(request):
             return
+        _, created, _ = request
         if time.monotonic() - created > 1.0:
             self.owner._event_log("RING_GESTURE", action="hint_fallback", reason="scene_lookup_timeout")
             self.showRequested.emit(self.mode, "")

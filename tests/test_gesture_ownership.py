@@ -36,6 +36,22 @@ def observe_window_switch(controller, monkeypatch):
     return starts
 
 
+def test_windows_pointer_pinch_starts_and_ends_voice_without_mapping_hud(route):
+    c, _, inline, _, sent, _, _ = route
+    c._device_family = "R1"
+    c._gesture_bindings = c._default_gesture_bindings()
+    tp = c.touchpad
+    tp._windows_ime, tp._state = True, "running"
+    assert tp.active and tp.inputMode == "pointer" and not tp.blocksVoice
+    menus = []
+    c.ringGestures.showRequested.connect(lambda *args: menus.append(args))
+    c.ringGestures.sceneHudRequested.connect(lambda *args: menus.append(args))
+    assert c.ringGestures.globalBindings["show_menu"] == "index-pinch"
+    assert request(c, "index-pinch") and inline._pending_gesture_focus is not None
+    assert request(c, "index-pinch", busy=True)
+    assert not menus and not sent
+
+
 @pytest.mark.parametrize("gesture", list(GESTURE_LABELS))
 def test_app_binding_can_share_every_input_or_global_gesture_without_disabling_voice(route, monkeypatch, gesture):
     c, service, inline, backend, sent, messages, _ = route

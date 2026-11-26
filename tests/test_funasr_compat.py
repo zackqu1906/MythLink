@@ -4,6 +4,46 @@ import importlib
 from pathlib import Path
 import sys
 
+import pytest
+
+
+@pytest.mark.parametrize("finish", [False, True])
+def test_sensevoice_progress_counts_resumed_bytes_once_and_closes(monkeypatch, tmp_path, finish):
+    from proximic_ring.asr import funasr_compat as compat
+    monkeypatch.setenv("MODELSCOPE_CACHE", str(tmp_path))
+    snapshot = tmp_path / "models/iic--SenseVoiceSmall/snapshots/master"
+    snapshot.mkdir(parents=True)
+    for name in compat._SENSEVOICE_FILES:
+        if name != "model.pt":
+            (snapshot / name).touch()
+    partial = snapshot / "model.pt.incomplete"
+    partial.write_bytes(bytes(20))
+    ticks = iter(range(1, 20))
+    monkeypatch.setattr(compat, "time", type("Clock", (), {"monotonic": lambda: next(ticks)}))
+    events = []
+    def transfer(model_id, *, progress_callbacks, **options):
+        callback = progress_callbacks[0]("model.pt", 100)
+        callback.update(20)
+        callback.update(20)  # Hub repeats the saved offset when retrying.
+        partial.write_bytes(bytes(55))
+        callback.update(35)
+        if finish:
+            partial.write_bytes(bytes(100))
+            partial.rename(snapshot / "model.pt")
+            callback.end()
+        return str(snapshot)
+    hub = importlib.import_module("modelscope_hub.compat.snapshot_download")
+    monkeypatch.setattr(hub, "snapshot_download", transfer)
+    if finish:
+        assert compat.download_sensevoice(events.append) == str(snapshot)
+        assert events[-2] == (100, 100)
+        assert compat.download_sensevoice(lambda _: pytest.fail("cached model")) == str(snapshot)
+    else:
+        with pytest.raises(RuntimeError, match="model.pt"):
+            compat.download_sensevoice(events.append)
+    assert events[:4] == [(0, 0), (20, 100), (20, 100), (55, 100)]
+    assert events[-1] is None
+
 
 def test_frozen_funasr_compat_reuses_legacy_modelscope_cache(
     monkeypatch, tmp_path: Path

@@ -39,7 +39,7 @@ def test_expired_context_reply_falls_back_even_if_qt_timer_has_not_fired(pending
     c, ring, backend, _, defaults, scenes = pending_hints
     ring.showMenu()
     ring._pending_hud = (ring._generation, time.monotonic() - 2, c._disconnect_event)
-    ring._show_scene_hud(*ring._pending_hud, backend.target)
+    ring._show_scene_hud(ring._pending_hud, backend.target)
     assert defaults == [('input', '')] and not scenes
     assert not ring._hud_timer.isActive()
 
@@ -62,7 +62,9 @@ def test_pending_hint_cannot_resurrect_after_a_newer_ui_or_session_state(pending
     assert defaults == expected and not scenes
 
 
-def test_repeated_request_keeps_only_the_latest_scene_hint(pending_hints):
+def test_repeated_request_keeps_only_the_latest_scene_hint(pending_hints, monkeypatch):
+    import proximic_ring.ui.gestures.ring_gesture_controller as module
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 100.0))
     c, ring, _, tasks, defaults, scenes = pending_hints
     ring.showMenu()
     ring.showMenu()

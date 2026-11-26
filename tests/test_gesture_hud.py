@@ -99,7 +99,7 @@ def check_layout(count):
         assert not any(rect.intersects(other) for other in labels), (index, rect, labels)
         labels.append(rect)
 
-check_layout(6)
+check_layout(5)
 assert hud.window.grabWindow().save(str(shots / 'input-hud.png'))
 hud.preview('operation')
 assert root.property('entranceTime') < 50
@@ -118,19 +118,19 @@ assert not root.property('animationRunning')
 hud.show_mode('input', input_fields_available=False)
 QTest.qWait(1900)
 assert root.property('inputFieldsAvailable') is None
-check_layout(6)
+check_layout(5)
 remaining, entrance = hud._timer.remainingTime(), root.property('entranceTime')
 hud.update_input_fields(False, '输入框读取未完成，请重试')
 assert root.property('inputFieldsHint') is None
 assert root.property('fieldHint') is None
 assert root.property('entranceTime') >= entrance
 assert hud._timer.remainingTime() <= remaining
-check_layout(6)
+check_layout(5)
 hud.update_input_fields(True, '')
 assert root.property('inputFieldsAvailable') is None
 hud.update_input_fields(True, '部分区域未提供控件')
 assert root.property('inputFieldsAvailable') is None
-check_layout(6)
+check_layout(5)
 hud.show_mode('input', message='请先结束本句')
 assert root.property('notice') == '请先结束本句'
 assert root.property('entranceTime') < 50
@@ -145,7 +145,7 @@ rows = [dict(key=g, gesture=g, action='很长的场景动作名称用于检查�
 hud.show_mode('operation', scene_actions=rows)
 QTest.qWait(1900)
 assert next(item for item in visual_items(root) if item.objectName() == 'gestureHudHub').isVisible()
-assert not root.property('voiceDisabled') and root.property('overflow') == 7
+assert not root.property('voiceDisabled') and root.property('overflow') == 6
 assert root.property('sceneActive') and root.property('modeTitle') == '放映'
 assert root.property('fieldHint') is None
 assert not next(item for item in visual_items(root) if item.objectName() == 'gestureHudGlobalShortcuts').isVisible()

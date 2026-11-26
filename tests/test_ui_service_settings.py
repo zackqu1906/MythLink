@@ -47,6 +47,24 @@ def scroll_bottom(root):
     QTest.qWait(40)
 
 
+def test_sensevoice_download_progress_tracks_current_connection(inline_ui):
+    import threading
+    c, _, _, root, _ = inline_ui
+    c.asrBackend = "streaming_sensevoice"
+    open_page(root, 4)
+    bar = item(root, "senseVoiceDownloadProgress")
+    connection = c._disconnect_event
+    assert not bar.isVisible()
+    c._runtimeAsrDownload.emit(connection, (0, 0))
+    assert bar.isVisible() and bar.property("indeterminate")
+    c._runtimeAsrDownload.emit(connection, (25_000_000, 100_000_000))
+    assert not bar.property("indeterminate") and bar.property("value") == pytest.approx(.25)
+    c._runtimeAsrDownload.emit(threading.Event(), None)
+    assert bar.isVisible()
+    c._runtimeAsrDownload.emit(connection, None)
+    assert not bar.isVisible()
+
+
 def screenshot(root, tmp_path, name):
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)

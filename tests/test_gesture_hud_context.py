@@ -53,7 +53,7 @@ def test_detected_scene_hides_other_actions_then_restores_app_modes_on_exit(pres
     ring.sceneHudRequested.connect(lambda mode, rows: views.append(hint_view(mode, rows)))
     def show(target):
         ring._pending_hud = (ring._generation, time.monotonic(), c._disconnect_event)
-        ring._show_scene_hud(*ring._pending_hud, (target, InputFocus(target.input_context)))
+        ring._show_scene_hud(ring._pending_hud, (target, InputFocus(target.input_context)))
     for mode in ("input", "operation"):
         ring._mode = mode
         show(backend.target)
@@ -79,6 +79,6 @@ def test_delayed_context_does_not_replace_newer_hints(presentation, change):
     if change == "generation": generation -= 1
     else: connection = threading.Event()
     ring._pending_hud = (generation, created, connection)
-    ring._show_scene_hud(generation, created, connection, (backend.target, InputFocus('nontext')))
+    ring._show_scene_hud(ring._pending_hud, (backend.target, InputFocus('nontext')))
     assert not shown
 

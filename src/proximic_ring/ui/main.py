@@ -19,8 +19,11 @@ def _check_streaming_transcription(wav_path: Path) -> None:
         if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) != (1, 2, 16000):
             raise ValueError("The ASR check expects mono 16 kHz PCM16 audio")
         audio = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2").astype(np.float32) / 32768
+    def unexpected_download(_progress):
+        raise RuntimeError("The offline ASR check attempted a model download")
+
     backend = create_streaming_asr_backend("streaming_sensevoice", ASRBackendSettings(
-        model=model_id, device="cpu", language="zh",
+        model=model_id, device="cpu", language="zh", download_progress=unexpected_download,
     ))
     backend.start()
     for offset in range(0, len(audio), 6400):
