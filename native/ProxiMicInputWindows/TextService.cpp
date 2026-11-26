@@ -12,12 +12,26 @@
 #include <optional>
 #include <utility>
 #include "Pipe.h"
+#include "resource.h"
+#include "InputIndicator.h"
 
 namespace {
 const CLSID serviceId = {0x40b2749b, 0xc169, 0x4a28, {0x92, 0x1c, 0xc3, 0x36, 0x7b, 0x96, 0x48, 0x2b}};
 const GUID profileId = {0xd31dd85f, 0x750d, 0x498b, {0xa2, 0xc3, 0x62, 0x82, 0xdd, 0x4e, 0x75, 0x52}};
 constexpr LANGID language = MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED);
-constexpr wchar_t description[] = L"Mythlink";
+constexpr wchar_t description[] = L"MythLink";
+#ifdef __MINGW32__
+// MinGW's msctf.h omits these Windows SDK category identifiers.
+constexpr GUID GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT =
+    {0x13a016df, 0x560b, 0x46cd, {0x94, 0x7a, 0x4c, 0x3a, 0xf1, 0xe0, 0xe3, 0x5d}};
+constexpr GUID GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT =
+    {0x25504fb4, 0x7bab, 0x4bc1, {0x9c, 0x69, 0xcf, 0x81, 0x89, 0x0f, 0x0e, 0xf5}};
+#endif
+const GUID profileCategories[] = {
+    GUID_TFCAT_TIP_KEYBOARD,
+    GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+    GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+};
 HMODULE module;
 std::atomic<long> objects{};
 
@@ -37,6 +51,68 @@ public:
     T* get() const { return ptr_; }
     T* operator->() const { return ptr_; }
     explicit operator bool() const { return ptr_ != nullptr; }
+};
+
+class InputIndicator final : public ITfLangBarItemButton, public ITfSource {
+    ULONG refs_ = 1;
+    ComPtr<ITfLangBarItemSink> sink_;
+public:
+    InputIndicator() { ++objects; }
+    ~InputIndicator() { --objects; }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (iid == IID_IUnknown || iid == IID_ITfLangBarItem || iid == IID_ITfLangBarItemButton)
+            *out = static_cast<ITfLangBarItemButton*>(this);
+        else if (iid == IID_ITfSource) *out = static_cast<ITfSource*>(this);
+        else return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override { const auto n = --refs_; if (!n) delete this; return n; }
+    HRESULT STDMETHODCALLTYPE GetInfo(TF_LANGBARITEMINFO* info) override {
+        if (!info) return E_POINTER;
+        *info = {serviceId, mythlinkInputModeItem, TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_SHOWNINTRAY, 0, L"MythLink"};
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetStatus(DWORD* status) override {
+        if (!status) return E_POINTER;
+        *status = 0;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE Show(BOOL) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetText(BSTR* text) override {
+        if (!text) return E_POINTER;
+        *text = SysAllocString(description);
+        return *text ? S_OK : E_OUTOFMEMORY;
+    }
+    HRESULT STDMETHODCALLTYPE GetTooltipString(BSTR* text) override { return GetText(text); }
+    HRESULT STDMETHODCALLTYPE GetIcon(HICON* icon) override {
+        if (!icon) return E_POINTER;
+        *icon = static_cast<HICON>(LoadImageW(module, MAKEINTRESOURCEW(IDI_MYTHLINK), IMAGE_ICON,
+                                               GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
+        return *icon ? S_OK : E_FAIL;
+    }
+    HRESULT STDMETHODCALLTYPE OnClick(TfLBIClick, POINT, const RECT*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE InitMenu(ITfMenu* menu) override {
+        return menu ? menu->AddMenuItem(1, TF_LBMENUF_CHECKED, nullptr, nullptr, description,
+                                        static_cast<ULONG>(std::size(description) - 1), nullptr) : E_POINTER;
+    }
+    HRESULT STDMETHODCALLTYPE OnMenuSelect(UINT) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE AdviseSink(REFIID iid, IUnknown* source, DWORD* cookie) override {
+        if (!source || !cookie) return E_POINTER;
+        if (iid != IID_ITfLangBarItemSink) return CONNECT_E_CANNOTCONNECT;
+        if (sink_) return CONNECT_E_ADVISELIMIT;
+        const HRESULT hr = source->QueryInterface(iid, reinterpret_cast<void**>(sink_.out()));
+        if (SUCCEEDED(hr)) *cookie = 1;
+        return hr;
+    }
+    HRESULT STDMETHODCALLTYPE UnadviseSink(DWORD cookie) override {
+        if (!sink_ || cookie != 1) return CONNECT_E_NOCONNECTION;
+        sink_.reset();
+        return S_OK;
+    }
 };
 
 class Edit final : public ITfEditSession {
@@ -67,6 +143,8 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
 #endif
     ULONG refs_ = 1;
     ComPtr<ITfThreadMgr> manager_;
+    ComPtr<ITfLangBarItemMgr> langBar_;
+    ComPtr<ITfLangBarItem> indicator_;
     ComPtr<ITfContext> context_;
     ComPtr<ITfComposition> composition_;
     TfClientId client_{};
@@ -938,10 +1016,17 @@ public:
             Deactivate();
             return FAILED(hr) ? hr : E_FAIL;
         }
+        if (SUCCEEDED(manager->QueryInterface(IID_ITfLangBarItemMgr, reinterpret_cast<void**>(langBar_.out())))) {
+            *indicator_.out() = new (std::nothrow) InputIndicator();
+            if (indicator_ && FAILED(langBar_->AddItem(indicator_.get()))) indicator_.reset();
+        }
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE Deactivate() override {
         enabled_ = false;
+        if (indicator_ && langBar_) langBar_->RemoveItem(indicator_.get());
+        indicator_.reset();
+        langBar_.reset();
         if (window_) DestroyWindow(std::exchange(window_, nullptr));
         if (!windowClass_.empty()) {
             UnregisterClassW(windowClass_.c_str(), module);
@@ -1047,6 +1132,53 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
 
 STDAPI DllCanUnloadNow() { return objects == 0 ? S_OK : S_FALSE; }
 
+// A user-initiated input gesture selects our registered profile. The host
+// still waits for a fresh TSF client from the original target before writing.
+STDAPI MythlinkSelectProfile(DWORD expectedPid, DWORD timeoutMs) {
+    HWND window = GetForegroundWindow();
+    DWORD pid = 0;
+    DWORD thread = GetWindowThreadProcessId(window, &pid);
+    if (!thread || !expectedPid || pid != expectedPid) return E_ABORT;
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(com) && com != RPC_E_CHANGED_MODE) return com;
+    HRESULT hr;
+    {
+        ComPtr<ITfInputProcessorProfileMgr> profiles;
+        hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+                              IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(profiles.out()));
+        const auto selectProfile = [&]() -> HRESULT {
+            if (GetForegroundWindow() != window) return E_ABORT;
+            return profiles->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, language,
+                serviceId, profileId, nullptr, TF_IPPMF_FORSESSION | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE);
+        };
+        if (SUCCEEDED(hr)) hr = selectProfile();
+        if (hr == S_OK && LOWORD(reinterpret_cast<ULONG_PTR>(GetKeyboardLayout(thread))) != language) {
+            // TSF defers a cross-language selection until the foreground app
+            // accepts the corresponding input language change.
+            HKL layout = nullptr;
+            HKL loaded[256];
+            int count = GetKeyboardLayoutList(static_cast<int>(std::size(loaded)), loaded);
+            for (int i = 0; i < count; ++i) {
+                if (LOWORD(reinterpret_cast<ULONG_PTR>(loaded[i])) == language) {
+                    layout = loaded[i];
+                    break;
+                }
+            }
+            if (!layout) layout = LoadKeyboardLayoutW(L"00000804", KLF_NOTELLSHELL);
+            DWORD_PTR result = 0;
+            if (!layout || GetForegroundWindow() != window) hr = E_ABORT;
+            else if (!SendMessageTimeoutW(window, WM_INPUTLANGCHANGEREQUEST, 0,
+                         reinterpret_cast<LPARAM>(layout), SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                         timeoutMs, &result)) hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+            // The editor may have activated its own last-used Chinese keyboard
+            // while processing the language change. Select the exact TIP again.
+            else hr = selectProfile();
+        }
+    }
+    if (SUCCEEDED(com)) CoUninitialize();
+    return hr;
+}
+
 STDAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void** out) {
     if (clsid != serviceId) return CLASS_E_CLASSNOTAVAILABLE;
     auto* factory = new (std::nothrow) Factory;
@@ -1066,7 +1198,8 @@ STDAPI DllUnregisterServer() {
             profiles->UnregisterProfile(serviceId, language, profileId, 0);
         if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
                                        IID_ITfCategoryMgr, reinterpret_cast<void**>(categories.out()))))
-            categories->UnregisterCategory(serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+            for (const auto& category : profileCategories)
+                categories->UnregisterCategory(serviceId, category, serviceId);
     }
     if (SUCCEEDED(com)) CoUninitialize();
     const auto result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, registryPath().c_str());
@@ -1094,10 +1227,14 @@ STDAPI DllRegisterServer() {
         if (SUCCEEDED(hr)) hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
                                                 IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(profiles.out()));
         if (SUCCEEDED(hr)) hr = profiles->RegisterProfile(serviceId, language, profileId, description,
-            static_cast<ULONG>(std::size(description) - 1), path, length, 0, nullptr, 0, TRUE, 0);
+            static_cast<ULONG>(std::size(description) - 1), path, length,
+            static_cast<ULONG>(-IDI_MYTHLINK), nullptr, 0, TRUE, 0);
         if (SUCCEEDED(hr)) hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
                                                 IID_ITfCategoryMgr, reinterpret_cast<void**>(categories.out()));
-        if (SUCCEEDED(hr)) hr = categories->RegisterCategory(serviceId, GUID_TFCAT_TIP_KEYBOARD, serviceId);
+        for (const auto& category : profileCategories) {
+            if (FAILED(hr)) break;
+            hr = categories->RegisterCategory(serviceId, category, serviceId);
+        }
     }
     if (FAILED(hr)) DllUnregisterServer();
     if (SUCCEEDED(com)) CoUninitialize();

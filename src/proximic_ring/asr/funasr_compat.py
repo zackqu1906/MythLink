@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import sys
 import os
+import threading
+import time
+from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
+
+
+_MODEL_FILES = ("model.pt", "configuration.json", "config.yaml")
+_SENSEVOICE_FILES = _MODEL_FILES + ("am.mvn", "chn_jpn_yue_eng_ko_spectok.bpe.model")
+DownloadProgress = Callable[[tuple[int, int] | None], None]
 
 
 def _modelscope_cache_root() -> Path:
@@ -15,11 +23,90 @@ def _modelscope_cache_root() -> Path:
 
 def cached_modelscope_snapshot(model_id: str, revision: str = "master") -> Path | None:
     snapshot = _modelscope_cache_root() / "models" / model_id.replace("/", "--") / "snapshots" / revision
-    files = ("model.pt", "configuration.json", "config.yaml")
-    if model_id == "iic/SenseVoiceSmall":
-        files += ("am.mvn", "chn_jpn_yue_eng_ko_spectok.bpe.model")
+    files = _SENSEVOICE_FILES if model_id == "iic/SenseVoiceSmall" else _MODEL_FILES
     # The hub creates the snapshot directory before all downloads finish.
     return snapshot if all((snapshot / name).is_file() for name in files) else None
+
+
+def download_sensevoice(on_progress: DownloadProgress) -> str:
+    """Resolve the desktop model, reporting the bytes needed by this download."""
+    from modelscope_hub.compat.snapshot_download import snapshot_download
+
+    model_id = "iic/SenseVoiceSmall"
+    cached = cached_modelscope_snapshot(model_id)
+    if cached is not None:
+        return str(cached)
+    root = _modelscope_cache_root()
+    # The Hub reuses a non-empty legacy cache ahead of the new snapshot layout.
+    snapshot = root / "models/iic--SenseVoiceSmall/snapshots/master"
+    for legacy in (root / "models" / model_id, root / "hub/models" / model_id):
+        if legacy.is_dir() and any(legacy.iterdir()):
+            snapshot = legacy
+            break
+    missing = {name for name in _SENSEVOICE_FILES if not (snapshot / name).is_file()}
+    if not missing:
+        return str(snapshot)
+
+    sizes: dict[str, int] = {}
+    finished: set[str] = set()
+    lock = threading.Lock()
+    last_update = 0.0
+
+    def publish() -> None:
+        # Read staged bytes at UI refresh rate. Hub retries can report an
+        # existing range more than once, so summing callback deltas overcounts.
+        received = 0
+        for name, size in sizes.items():
+            if name in finished:
+                received += size
+                continue
+            partial = snapshot / (name + ".incomplete")
+            try:
+                if partial.is_file():
+                    received += partial.stat().st_size
+                else:
+                    # Multipart downloads write <filename>_<start>_<end>.
+                    received += sum(part.stat().st_size for part in snapshot.glob(name + "_[0-9]*_[0-9]*"))
+            except FileNotFoundError:
+                pass  # A worker just renamed or merged a staged file.
+        total = sum(sizes.values()) if missing <= sizes.keys() and all(sizes.values()) else 0
+        on_progress((min(received, total) if total else received, total))
+
+    class FileProgress:
+        def __init__(self, filename: str, file_size: int):
+            self.name = filename
+            with lock:
+                sizes[filename] = file_size
+                finished.discard(filename)
+
+        def update(self, _size: int) -> None:
+            nonlocal last_update
+            with lock:
+                now = time.monotonic()
+                if now - last_update >= 0.25:
+                    last_update = now
+                    publish()
+
+        def end(self) -> None:
+            with lock:
+                finished.add(self.name)
+                if not sizes[self.name]:
+                    target = snapshot / self.name
+                    if target.is_file():
+                        sizes[self.name] = target.stat().st_size
+                publish()
+
+    on_progress((0, 0))
+    try:
+        path = Path(snapshot_download(model_id, revision="master", cache_dir=str(root),
+                                      allow_patterns=list(_SENSEVOICE_FILES), progress_callbacks=[FileProgress]))
+        # The Hub may return a snapshot even if a file worker failed.
+        absent = [name for name in _SENSEVOICE_FILES if not (path / name).is_file()]
+        if absent:
+            raise RuntimeError("SenseVoice 模型下载未完成，请重试。缺少 " + "、".join(absent))
+        return str(path)
+    finally:
+        on_progress(None)
 
 
 def prepare_funasr_runtime() -> None:
@@ -76,6 +163,10 @@ def _install_modelscope_download_shim() -> None:
         cached_snapshot = cached_modelscope_snapshot(model_id, str(revision or "master"))
         if cached_snapshot is not None:
             return str(cached_snapshot)
+        # The frozen app ships the implementation. Fetch only the checkpoint
+        # and frontend/tokenizer data used by that implementation.
+        if model_id == "iic/SenseVoiceSmall" and not {"allow_patterns", "allow_file_pattern"}.intersection(kwargs):
+            kwargs["allow_patterns"] = list(_SENSEVOICE_FILES)
         return str(
             hub_snapshot_download(
                 model_id=model_id,

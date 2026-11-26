@@ -405,6 +405,7 @@ UiScrollView {
                             objectName: "applicationManagementMenu"
                             FigmaMenuItem {
                                 objectName: "refreshApplicationMenu"
+                                visible: !page.catalog.selectedApp.startsWith("win.")
                                 text: page.catalog.busy ? "读取中…" : "刷新快捷键"
                                 enabled: !page.catalog.busy
                                 onTriggered: page.catalog.refreshMenu()

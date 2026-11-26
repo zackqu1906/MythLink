@@ -6,6 +6,7 @@ cannot save a result after its worker completes. Each destination owns its
 completion behavior. Full-screen frames live only in memory.
 """
 import threading
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -36,7 +37,7 @@ class ScreenCaptureController(QObject):
         self.windows = []
         self.epoch = self.revision = self.pointer_revision = 0
         self.cancelled = threading.Event()
-        self.backend = capture_screens
+        self.backend = None if sys.platform == "win32" else capture_screens
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='ScreenCapture')
         self._started_pointer = False
         self._connection = None
@@ -121,19 +122,31 @@ class ScreenCaptureController(QObject):
                               'scale': screen.devicePixelRatio()})
                 screen.geometryChanged.connect(self._screen_changed)
                 screen.availableGeometryChanged.connect(self._available_geometry_changed)
+            images = None
+            if self.backend is None:
+                # Qt grabs each screen on the GUI thread. Hide the attachment
+                # panel and finish the desktop repaint before creating any overlay.
+                import ctypes
+                self.presented()
+                ctypes.windll.dwmapi.DwmFlush()
+                images = [screen.grabWindow(0).toImage() for screen in self.screens]
             self.windows = [CaptureOverlay(self, i, spec) for i, spec in enumerate(specs)]
             current = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
             # Key a new panel BEFORE hiding the task, so AppKit never needs to
             # choose the main settings window as a replacement key window.
             for i, window in enumerate(self.windows):
                 window.present(focus=self.screens[i] is current)
-            self.presented()
+            if images is None:
+                self.presented()
             self._started_pointer = not touchpad.active and touchpad.available
             touchpad._capture_epoch += 1
             touchpad._capture_target = self
             touchpad._sync_voice_gate()
             touchpad.changed.emit()
             if self._started_pointer: touchpad.start()
+            if images is not None:
+                self._loaded(self.epoch, images, None)
+                return
             excluded = self._excluded_windows()
             epoch, cancelled = self.epoch, self.cancelled
             future = self.worker.submit(self.backend, specs, excluded, cancelled)

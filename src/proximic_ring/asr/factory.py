@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .base import ASRBackend
+from .funasr_compat import DownloadProgress
 from .streaming import StreamingASRBackend
 
 
@@ -21,6 +22,7 @@ class ASRBackendSettings:
     status_callback: Callable[[str], None] | None = field(
         default=None, compare=False, repr=False
     )
+    download_progress: DownloadProgress | None = field(default=None, compare=False, repr=False)
 
 
 def _normalize_name(name: str) -> str:

@@ -27,7 +27,7 @@ class InputFocus:
 
 def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
                       activation_timeout=1.5, native_fallback=None, require_selection=True,
-                      refresh_context=None):
+                      refresh_context=None, reconnect_on_selection=False):
     """Run on the gesture worker, reserving focus time after source activation.
 
     A live client uses only the focus budget. An inactive source gets one
@@ -60,6 +60,11 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
                           native_target, require_selection)
 
     def changed():
+        nonlocal epoch
+        if selected and reconnect_on_selection:
+            # Windows hosts a separate TSF client in each editor process.
+            # Selection may replace the old pipe before the new client replies.
+            epoch = bridge.epoch
         return foreground() != origin or bool(epoch and bridge.epoch != epoch)
 
     native_checked, native_target = False, None
@@ -97,7 +102,8 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
                 return unavailable("foreground_or_connection_changed")
             if time.monotonic() >= deadline:
                 break
-            if state and state.get("application") == origin[0] and state.get("client_id"):
+            if (state and state.get("application") == origin[0] and state.get("client_id")
+                    and (not reconnect_on_selection or state.get("epoch") == epoch)):
                 if state.get("ready") and (not require_selection or valid_selection(state.get("selection"))):
                     if (not require_selection and absent_selection(state.get("selection"))
                             and not refreshed and refresh_context is not None
@@ -119,6 +125,15 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
                         continue
                     return result("text", state=state)
                 if absent_selection(state.get("selection")):
+                    if reconnect_on_selection and select_source is not None:
+                        # TSF can answer a ping before the focused editor grants
+                        # its first read session. Only a native non-text control
+                        # warrants routing a shared voice gesture to the menu.
+                        outside = native_focus()
+                        if outside is not None:
+                            return outside
+                        time.sleep(min(.04, max(0, deadline - time.monotonic())))
+                        continue
                     if select_source is None:
                         return result("nontext", "input_method_no_focus", state=state)
                     return native_focus() or result("nontext", "input_method_no_focus", state=state)
@@ -126,7 +141,7 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
                     # A known editor that is not ready still owns this gesture.
                     return result("unavailable", "input_method_not_ready")
                 return unavailable("input_method_not_ready")
-            if connected and state is None and not selected:
+            if connected and state is None and not selected and not (select_source and reconnect_on_selection):
                 return unavailable("input_method_timeout")
             if not selected:
                 native = native_focus()
@@ -144,12 +159,12 @@ def probe_input_focus(bridge, foreground, select_source, *, timeout=0.8,
                     break
                 # Inactive means our IMK does not own the editor yet, not that
                 # the editor is absent. Select once, then require fresh proof.
+                selected = True
                 select_source(origin[1], timeout=remaining)
                 if changed():
                     return unavailable("foreground_or_connection_changed")
                 if time.monotonic() >= activation_deadline:
                     return unavailable("input_method_timeout")
-                selected = True
                 # A TIS selection receipt can precede process launch and IMK
                 # preparation. Keep their remaining startup allowance instead
                 # of treating source selection as proof of readiness.

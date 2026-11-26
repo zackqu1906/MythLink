@@ -14,7 +14,7 @@ import pytest
 
 from ring_python_sdk.touchpad import raw2_model
 from ring_python_sdk.touchpad.windows import WindowsSystemMouse, WHEEL_UNITS_PER_PIXEL, _Input, _Point
-from ring_python_sdk.touchpad.events import Raw2PointerClick, Raw2PointerMove
+from ring_python_sdk.touchpad.events import Raw2PointerClick, Raw2PointerContact, Raw2PointerMove
 from proximic_ring.touchpad.touchpad_mouse import TouchpadMouseOutput
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +115,48 @@ def enabled_mouse():
     mouse = WindowsSystemMouse(api)
     mouse.enable()
     return mouse, api
+
+
+@pytest.mark.parametrize('dx,button', [(100, 1), (-100, 2)])
+def test_windows_swipe_posts_navigation_and_keeps_moving(dx, button):
+    api = User32()
+    finished = threading.Event()
+    errors = []
+    def ended(reason, error):
+        errors.append(error)
+        finished.set()
+    worker = TouchpadMouseOutput(connection=threading.Event(), gain=1, clicks=True, invert_y=False,
+        on_ready=lambda: None, on_end=ended, mouse_factory=lambda: WindowsSystemMouse(api), raw2=True)
+    worker.activate()
+    now = time.monotonic()
+    worker.submit(Raw2PointerContact('BEGIN', 'TWO_FINGER', 1, 1, now, now, session_id='w'))
+    worker.submit(Raw2PointerMove(dx, 0, 1, 1, now, mode='TWO_FINGER', episode_id=1, session_id='w'))
+    worker.submit(Raw2PointerContact('END', 'TWO_FINGER', 1, 1, now, now, end_timestamp=now, session_id='w'))
+    worker.submit(Raw2PointerMove(3, 4, 1, 1, now, mode='SINGLE', episode_id=2, session_id='w'))
+    worker.start()
+    try:
+        deadline = time.monotonic() + 1
+        while api.position != [3, 4] and not finished.is_set() and time.monotonic() < deadline:
+            time.sleep(.001)
+    finally:
+        worker.stop()
+        assert finished.wait(1)
+    assert errors == [None]
+    assert api.calls == [[(0x0080, button), (0x0100, button)], ('move', 3, 4)]
+
+
+def test_windows_navigation_expiry_and_drag_cleanup():
+    mouse, api = enabled_mouse()
+    assert not mouse.navigate('back', expires_at=time.monotonic()-1)['navigations_posted']
+    mouse.apply([dict(kind='button_down'), dict(kind='button_down')])
+    assert not mouse.navigate('back', expires_at=time.monotonic()-1)['navigations_posted']
+    mouse.apply([dict(kind='drag', dx=3, dy=4)])
+    mouse.disable()
+    mouse.release_drag()
+    assert not mouse.navigate('forward', expires_at=time.monotonic()+1)['navigations_posted']
+    mouse.enable()
+    mouse.apply([dict(kind='drag', dx=3, dy=4)])
+    assert api.calls == [[(2, 0)], ('move', 3, 4), [(4, 0)]]
 
 
 def test_right_and_double_clicks_post_receipts_and_ignore_duplicates():

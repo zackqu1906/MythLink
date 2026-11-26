@@ -265,6 +265,7 @@ def _build_session_controller(
     streaming_observer=None,
     desktop_overlay=None,
     on_state=print,
+    on_asr_download=None,
     show_streaming_console: bool = True,
     push_to_talk_observer=None,
     desktop_should_inject=None,
@@ -378,6 +379,7 @@ def _build_session_controller(
             language=args.asr_language,
             options=option_map.get(name, {}),
             status_callback=on_state,
+            download_progress=on_asr_download,
         )
         kind = asr_backend_kind(name)
         backend = (

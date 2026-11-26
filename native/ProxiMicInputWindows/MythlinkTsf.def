@@ -1,6 +1,7 @@
 LIBRARY MythlinkTsf
 EXPORTS
     DllCanUnloadNow PRIVATE
+    MythlinkSelectProfile
     DllGetClassObject PRIVATE
     DllRegisterServer PRIVATE
     DllUnregisterServer PRIVATE

@@ -1,5 +1,6 @@
 """Global screenshot saves survive redraw/cancel and do not enter Agent drafts."""
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import os
 import time
@@ -44,6 +45,24 @@ def screenshot(capture, tmp_path, monkeypatch):
     cap.setDirectory(str(tmp_path / 'saved-images'))
     yield owner, cap, sent, tmp_path / 'saved-images'
     cap.cancel()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Qt Windows display capture")
+def test_windows_freezes_displays_before_showing_selection(screenshot, monkeypatch):
+    from PySide6.QtGui import QPixmap, QScreen
+    _, cap, _, _ = screenshot
+    calls = []
+    def grab(screen, window_id):
+        assert window_id == 0 and not cap.windows
+        calls.append(screen.name())
+        pixmap = QPixmap(screen.size())
+        pixmap.fill(Qt.green)
+        return pixmap
+    monkeypatch.setattr(QScreen, "grabWindow", grab)
+    cap.backend = None
+    start(cap)
+    assert calls == [screen.name() for screen in cap.screens]
+    assert all(window.image.pixelColor(0, 0) == Qt.green for window in cap.windows)
 
 
 def test_two_clicks_reselect_save_and_copy_only_after_confirmation(screenshot):
@@ -249,7 +268,8 @@ def test_two_click_hints_follow_selection_not_touchpad_dwell(screenshot):
     assert window.title.text() == '点击另一个角' and '移动光标预览' in window.hint.text()
     assert not window.confirm.isEnabled()
     QTest.mouseClick(window, Qt.LeftButton, pos=QPoint(200, 160))
-    assert '点击画面重新选区' in window.hint.text() and '左滑退出' in window.back.text()
+    expected_exit = '左滑 / 中指捏合退出' if sys.platform == "win32" else '左滑退出'
+    assert '点击画面重新选区' in window.hint.text() and expected_exit in window.back.text()
     assert 'tap / 右滑保存并复制后退出' in window.hint.text()
     assert window.confirm.toolTip() == cap.confirm_hint
     assert window.confirm.isEnabled()

@@ -1,6 +1,7 @@
 """Exercise the new mapping UI with a fake menu provider and isolated settings."""
 from pathlib import Path
 import os
+import sys
 
 import pytest
 
@@ -347,6 +348,10 @@ def mapping_ui(inline_ui, monkeypatch):
         result = ([dict(value=BUNDLE, label="文本编辑", path="/System/Applications/TextEdit.app", running=True),
                    dict(value="com.example.Other", label="终端", path="/System/Applications/Utilities/Terminal.app", running=False)]
                   if kind == "apps" else dict(actions=ACTIONS))
+        if kind == "apps" and sys.platform == "win32":
+            # This fixture models the macOS application catalog on both hosts.
+            from proximic_ring.desktop.host_application import host_candidate
+            result.insert(0, host_candidate())
         if kind == 'menu' and bundle in {'com.openai.codex', 'com.tencent.workbuddy.mac'}:
             result = dict(actions=ACTIONS + [dict(id=direction.lower()+'-chat',
                 label=direction+' Sidebar Item' if bundle == 'com.openai.codex' else direction+' Chat',
@@ -391,7 +396,27 @@ def mapping_ui(inline_ui, monkeypatch):
     yield c, bridge, root, catalog, requests, click, add
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows application and shortcut picker")
+def test_windows_app_defaults_and_system_snipping_preset(mapping_ui):
+    from PySide6.QtCore import QObject
+    from proximic_ring.desktop.windows_applications import candidate
+    _, _, root, catalog, requests, click, _ = mapping_ui
+    edge = candidate(r"C:\Apps\Edge\msedge.exe", "Microsoft Edge")
+    catalog._candidates = [edge]
+    assert catalog.addApplication(edge["value"])
+    click("gestureApplication_" + edge["value"])
+    click("gestureCard_circle-clockwise")
+    editor = root.findChild(QObject, "gestureActionEditor")
+    assert editor.property("savedId") == "windows:next-tab"
+    assert ("menu", edge["value"]) not in requests
+    click("menuAction_keyboard:screenshot")
+    assert catalog.bindings[edge["value"]]["circle-clockwise"]["shortcut"] == "Win+Shift+S"
+    assert catalog.restoreDefaultMappings(edge["value"])
+    assert catalog.bindings[edge["value"]]["circle-clockwise"]["shortcut"] == "Ctrl+Tab"
+
+
 @pytest.mark.parametrize("bundle,browser", [("com.google.Chrome", "chrome"), ("com.apple.Safari", "safari")])
+@pytest.mark.mac_only
 @pytest.mark.parametrize("size", [(1200, 780), (940, 700), (940, 560)])
 def test_browser_mode_bar_opens_matching_setup_and_preserves_mapping_context(mapping_ui, tmp_path, monkeypatch, bundle, browser, size):
     from PySide6.QtCore import QObject, QPointF, QRectF, Qt
@@ -739,7 +764,8 @@ def test_global_custom_shortcut_recording_and_builtin_rebinding(mapping_ui, tmp_
     position = field.mapToScene(QPointF(field.width()/2, field.height()/2)).toPoint()
     QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, position)
     QTest.keyClick(root, Qt.Key_K, Qt.ControlModifier | Qt.ShiftModifier)
-    assert dialog.property('capturedShortcut') == 'Cmd+Shift+K'
+    expected = 'Cmd+Shift+K' if sys.platform == 'darwin' else 'Ctrl+Shift+K'
+    assert dialog.property('capturedShortcut') == expected
     shots = Path(os.environ.get('MYTHLINK_SCREENSHOT_DIR', str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(shots / f'global-custom-recorder-{size[0]}.png'))
@@ -749,10 +775,10 @@ def test_global_custom_shortcut_recording_and_builtin_rebinding(mapping_ui, tmp_
         c.ringGestures.globalBindings, editor.property('feedback'), dialog.property('errorText'),
         dialog.property('shortcutValue'), root.findChild(QObject, 'customShortcutName').property('text'))
     saved = GlobalGestureBindings.from_json(c._settings.value(GLOBAL_BINDINGS_KEY))
-    assert saved.custom_for('circle-clockwise').shortcut == 'Cmd+Shift+K'
+    assert saved.custom_for('circle-clockwise').shortcut == expected
     assert catalog.globalOccupancy['circle-clockwise'] == '测试全局快捷键'
     assert root.findChild(QObject, 'savedMenuBinding') is None
-    assert c._global_gesture_bindings.custom_for('circle-clockwise').shortcut == 'Cmd+Shift+K'
+    assert c._global_gesture_bindings.custom_for('circle-clockwise').shortcut == expected
     assert root.grabWindow().save(str(shots / f'global-custom-saved-{size[0]}.png'))
     click('gestureCard_double-middle-pinch')
     assert editor.property('savedId') == 'agent'
@@ -787,18 +813,19 @@ def test_custom_shortcut_recording_save_and_menu_error(mapping_ui, tmp_path, siz
     QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, position)
     assert c.appGestures.recording
     QTest.keyClick(root, Qt.Key_BracketLeft, Qt.ControlModifier | Qt.ShiftModifier)
-    assert dialog.property("capturedShortcut") == "Cmd+Shift+[" and not c.appGestures.recording
+    expected = "Cmd+Shift+[" if sys.platform == "darwin" else "Ctrl+Shift+["
+    assert dialog.property("capturedShortcut") == expected and not c.appGestures.recording
     shots = Path(os.environ.get("MYTHLINK_SCREENSHOT_DIR", str(tmp_path)))
     shots.mkdir(parents=True, exist_ok=True)
     assert root.grabWindow().save(str(shots / f"custom-shortcut-{size[0]}.png"))
     click("useCustomShortcutButton")
     QTest.qWait(160)
-    assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == "Cmd+Shift+["
+    assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == expected
     click("gestureCard_circle-counterclockwise")
     click("gestureCard_circle-clockwise")
     assert editor.property("savedId").startswith("custom:")
 
-    assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == "Cmd+Shift+["
+    assert catalog.bindings[BUNDLE]["circle-clockwise"]["shortcut"] == expected
     assert "自定义快捷键" in root.findChild(QObject, "gestureActionEditor").property("savedStatus")
     assert c.gestureBindings == before and bridge.messages == messages
     click("customShortcutButton")
@@ -838,7 +865,7 @@ def test_manual_custom_shortcut_validation_and_clearing_saved_custom_action(mapp
     choices = editor.property("menuRows").toVariant()
     assert any(a["id"].startswith("custom:") for a in choices)
     system_ids = {a["id"] for a in choices if a.get("keyboardPreset")}
-    assert "keyboard:spotlight" in system_ids
+    assert ("keyboard:search" if sys.platform == "win32" else "keyboard:spotlight") in system_ids
     catalog.clearApplicationBindings(BUNDLE)
     QTest.qWait(30)
     assert {a["id"] for a in editor.property("menuRows").toVariant()} == system_ids

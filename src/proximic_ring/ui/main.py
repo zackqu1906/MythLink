@@ -6,6 +6,31 @@ import signal
 import sys
 
 
+def _check_streaming_transcription(wav_path: Path) -> None:
+    import wave
+    import numpy as np
+    from ..asr.factory import ASRBackendSettings, create_streaming_asr_backend
+    from ..asr.funasr_compat import cached_modelscope_snapshot
+
+    model_id = "iic/SenseVoiceSmall"
+    if cached_modelscope_snapshot(model_id) is None:
+        raise RuntimeError("The offline ASR check requires a cached SenseVoiceSmall model")
+    with wave.open(str(wav_path), "rb") as wav:
+        if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) != (1, 2, 16000):
+            raise ValueError("The ASR check expects mono 16 kHz PCM16 audio")
+        audio = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2").astype(np.float32) / 32768
+    backend = create_streaming_asr_backend("streaming_sensevoice", ASRBackendSettings(
+        model=model_id, device="cpu", language="zh",
+    ))
+    backend.start()
+    for offset in range(0, len(audio), 6400):
+        backend.feed(audio[offset:offset + 6400])
+    text = backend.finish(audio)
+    if not text.strip():
+        raise RuntimeError("Packaged SenseVoice produced an empty transcription")
+    print(f"[startup] offline SenseVoice transcription: {text}")
+
+
 def main(argv: list[str] | None = None) -> int:
     from ..platforms.macos.mac_app_activation import require_gui_session
 
@@ -176,6 +201,14 @@ def main(argv: list[str] | None = None) -> int:
         StreamingSenseVoiceASR._load_external_class(
             resource_root() / "third_party" / "streaming-sensevoice"
         )
+        # Exercise the tokenizer package initializer that runs during FunASR
+        # discovery, even on packaging hosts with no cached model weights.
+        from funasr.models.sense_voice.whisper_lib.tokenizer import get_tokenizer
+        if not callable(get_tokenizer):
+            raise RuntimeError("Bundled SenseVoice tokenizer is unavailable")
+        check_audio = os.environ.get("MYTHLINK_ASR_CHECK_WAV")
+        if check_audio:
+            _check_streaming_transcription(Path(check_audio))
         nano_repo = resource_root() / "third_party" / "Fun-ASR"
         nano_probe = object.__new__(FunASRNanoStreamingASR)
         nano_probe.repo_path = nano_repo

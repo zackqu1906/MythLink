@@ -34,7 +34,7 @@ def shortcut_from_key(key, modifiers, *, native_key=None):
         return ""
     # Qt swaps Command and Control on macOS. The stored shortcut names do not.
     names = [(Qt.ControlModifier, "Cmd" if sys.platform == "darwin" else "Ctrl"),
-             (Qt.MetaModifier, "Ctrl" if sys.platform == "darwin" else "Cmd"),
+             (Qt.MetaModifier, "Ctrl" if sys.platform == "darwin" else "Win" if sys.platform == "win32" else "Cmd"),
              (Qt.AltModifier, "Alt"), (Qt.ShiftModifier, "Shift")]
     # Keep semantic navigation/function keys (e.g. Fn+Down -> PageDown).
     # Physical-key recovery is needed for printable Shift/Option characters.

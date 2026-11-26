@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 
-from PySide6.QtCore import QObject, Property, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Property, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 
 from ...desktop.desktop_target import DesktopTargetRef
@@ -120,9 +120,10 @@ class InlineInputController(QObject):
         self._inputMethodChecked.connect(self._input_method_checked)
         self._installationFinished.connect(self._installation_finished)
         self._reply_stage = ""
-        self._source_switch_factory = source_switch_factory or InputSourceActivation
+        from .input_source_activation import WindowsInputSourceActivation
+        self._source_switch_factory = source_switch_factory or (WindowsInputSourceActivation if self._windows else InputSourceActivation)
         self._gesture_source_activation = GestureSourceActivation(self, foreground=lambda: self._foreground_identity())
-        self._warm_enabled = bridge_factory is None
+        self._warm_enabled = bridge_factory is None and not self._windows
         self._source_activation = None
         self._source_pending = False
         self._focus_recovery_attempted = False
@@ -357,7 +358,7 @@ class InlineInputController(QObject):
         if self._transport_error:
             return "输入法连接失败：" + self._transport_error
         if self._windows:
-            return "Mythlink 输入法已就绪" if self.ready else "请在目标文本框用 Win+空格选中 Mythlink 输入法"
+            return "Mythlink 输入法已就绪" if self.ready else "点入文本框后开始听写或笔画输入，将自动切换到 Mythlink"
         if self._epoch:
             return "输入法已连接 · 已就绪" if self.ready else "输入法已连接 · 点入文本框后触发开始语音手势"
         installed = [Path.home() / "Library/Input Methods/ProxiMicInput.app", Path("/Library/Input Methods/ProxiMicInput.app")]
@@ -513,9 +514,12 @@ class InlineInputController(QObject):
         """Prefer live IMK text; confirmed shows may tolerate unavailable focus."""
         from ...voice.ime.focus_probe import probe_input_focus, InputFocus
         if self._windows:
-            if self._closed or self.stroke_mode or not self._bridge or not self._bridge.connected:
+            if self._closed or self.stroke_mode or not self._bridge:
                 return InputFocus("unavailable", reason="windows_tsf_not_selected")
-            proof = probe_input_focus(self._bridge, self._foreground_identity, None)
+            from ...voice.ime.input_source_switch import select_voice_input_source
+            proof = probe_input_focus(self._bridge, self._foreground_identity,
+                                      select_voice_input_source if allow_activation else None,
+                                      native_fallback=native_fallback, reconnect_on_selection=True)
             return (InputFocus("unavailable", reason="windows_tsf_not_selected", elapsed_ms=proof.elapsed_ms)
                     if proof.reason == "unknown_focus" else proof)
         from ...voice.ime.system_input_source import activate_voice_input_source
@@ -968,7 +972,7 @@ class InlineInputController(QObject):
         return matches if context == self._startup_context() else None
 
     def _recover_selected_source(self):
-        if self._focus_recovery_attempted or self._source_activation is None:
+        if self._windows or self._focus_recovery_attempted or self._source_activation is None:
             return
         self._focus_recovery_attempted = True
         self._source_activation.cancel()
@@ -1070,15 +1074,16 @@ class InlineInputController(QObject):
         """Shared source selection/readiness transaction for voice and strokes."""
         self._begin_origin = origin
         self._startup_buffering = buffering
-        self._startup_deadline = time.monotonic() + INPUT_ACTIVATION_TIMEOUT_MS / 1000
+        self._startup_deadline = time.monotonic() + (2.3 if self._windows else INPUT_ACTIVATION_TIMEOUT_MS / 1000)
         self._activation_timer.start()
         if auto_select:
-            if not self._epoch:
+            if not self._epoch and not self._windows:
                 self._warm_input_method()
             self._source_pending = True
             source = self._source_switch_factory(self)
             self._source_activation = source
-            source.event.connect(lambda message: self._source_event(source, message))
+            source.event.connect(lambda message: self._source_event(source, message),
+                                 Qt.QueuedConnection if self._windows else Qt.AutoConnection)
             self._wait_for_reply("ready")
             self._diagnose("begin", reason="checking_input_source")
             self.changed.emit()
@@ -1098,10 +1103,7 @@ class InlineInputController(QObject):
             return
         self._input_preparation = (token, ready, failed)
         try:
-            self._start_input_activation(origin, auto_select=not self._windows, buffering=False)
-            if self._windows:
-                self._wait_for_reply("ready")
-                self._bridge.send({"type": "ping"})
+            self._start_input_activation(origin, auto_select=True, buffering=False)
         except Exception as exc:
             self._transport_failed(str(exc))
 
@@ -1176,7 +1178,7 @@ class InlineInputController(QObject):
             self._startup_focus_target = focus
         if not self._windows:
             self._source_return.begin(origin, self._startup_focus_target)
-        auto_select = (auto_select or self._source_return.enabled) and not self._windows
+        auto_select = auto_select or self._windows or self._source_return.enabled
         self._sentence_origin = origin
         needs_activation = auto_select or not self.ready or bool(origin and self._view.get("application") != origin[0])
         if needs_activation and (origin is None or self._transport_error or self._bridge is None):
@@ -1275,7 +1277,7 @@ class InlineInputController(QObject):
         if not stage or self._closed:
             return
         if self._input_preparation:
-            self._transport_failed(self.connectionStatus if self._windows and not self.ready else
+            self._transport_failed("未能连接目标文本框，请用 Win+空格选中 Mythlink 后重试" if self._windows else
                                    "输入法未确认当前文本框，请重新点入文本框")
             return
         # Retire this exact transaction; never retry its text write.

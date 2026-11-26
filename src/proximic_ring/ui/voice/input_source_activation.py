@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
@@ -63,6 +64,34 @@ def warm_input_method():
     bundle = Path.home() / "Library/Input Methods/ProxiMicInput.app"
     if (bundle / "Contents/MacOS/ProxiMicInput").is_file():
         QProcess.startDetached("/usr/bin/open", ["-g", str(bundle)])
+
+
+class WindowsInputSourceActivation(QObject):
+    event = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancelled = threading.Event()
+
+    def start(self, origin):
+        from ...voice.ime.input_source_switch import select_voice_input_source
+        def work():
+            if self._cancelled.is_set():
+                return
+            try:
+                select_voice_input_source(origin[1])
+                result = {"event": "selected"}
+            except (OSError, RuntimeError, AttributeError) as exc:
+                result = {"event": "error", "error": str(exc)}
+            try:
+                self.event.emit(result)
+            except RuntimeError:
+                pass  # The controller closed while the system call was pending.
+        threading.Thread(target=work, daemon=True, name="WindowsInputSelection").start()
+
+    def cancel(self):
+        self._cancelled.set()
+        self.deleteLater()
 
 
 class InputSourceActivation(QObject):

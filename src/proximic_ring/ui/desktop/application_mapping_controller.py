@@ -483,6 +483,9 @@ class ApplicationMappingController(QObject):
     @Property("QVariantList", notify=discoveryChanged)
     def actions(self):
         app = self._apps.get(self._bundle, {})
+        if self._bundle.startswith("win."):
+            from ...desktop.windows_shortcuts import application_actions
+            return _custom_actions(app) + application_actions(app.get("path", ""))[0]
         presets = catalog_actions(self._bundle, self._scene, self._profiles_for(self._bundle),
                                   presentation=self._profile_for(self._bundle))
         known_ids = {item["id"] for item in presets}
@@ -535,14 +538,17 @@ class ApplicationMappingController(QObject):
                     # behind the in-flight native call, not just their replies.
                     if self._closed or generation != self._generation[kind]:
                         return
-                    if kind == "apps":
+                    if kind == "apps" and sys.platform == "win32":
+                        from ...desktop.windows_applications import installed_windows_applications
+                        result = installed_windows_applications()
+                    elif kind == "apps":
                         try:
                             result = self.channel.call("application_candidates")
                         except Exception:
                             result = []  # Installed-app discovery needs no AX permission.
                     else:
                         result = self.channel.call("application_menu", bundle=bundle)
-                if kind == "apps" and not self._closed:
+                if kind == "apps" and sys.platform != "win32" and not self._closed:
                     result = installed_applications(result)
                 error = ""
             except TimeoutError:
@@ -562,14 +568,14 @@ class ApplicationMappingController(QObject):
 
     @Slot()
     def initializeInstalledApplications(self):
-        if self._defaults_scan_started or self._closed or not self._config_valid or sys.platform != "darwin":
+        if self._defaults_scan_started or self._closed or not self._config_valid or sys.platform not in {"darwin", "win32"}:
             return
         self._defaults_scan_started = True
         self.refreshApplications()
 
     @Slot()
     def refreshApplications(self):
-        if sys.platform != "darwin" or self._closed:
+        if sys.platform not in {"darwin", "win32"} or self._closed:
             return
         self._list_busy = True
         self._list_message = ""
@@ -675,7 +681,7 @@ class ApplicationMappingController(QObject):
             if self._defaults_dirty:
                 self._save()
             self.changed.emit()
-            if not error:
+            if not error and sys.platform != "win32":
                 self._queue_running_menus()
         elif bundle == self._bundle and self._is_added(bundle):
             result = result or {}
@@ -695,6 +701,18 @@ class ApplicationMappingController(QObject):
             self._save()
         self.selectApplication(bundle)
         return True
+
+    @Slot(result=str)
+    def browseExecutable(self):
+        from PySide6.QtWidgets import QFileDialog
+        from ...desktop.windows_applications import candidate
+        path, _ = QFileDialog.getOpenFileName(None, "选择应用", "", "Windows 应用 (*.exe)")
+        app = candidate(path)
+        if not app:
+            return ""
+        self._candidates = [a for a in self._candidates if a["value"] != app["value"]] + [app]
+        self.discoveryChanged.emit()
+        return app["value"]
 
     def addDiscoveredApplication(self, candidate):
         """Called only after opt-in; never resurrect removals or replace mappings."""
@@ -733,6 +751,14 @@ class ApplicationMappingController(QObject):
         self._background_menus = [item for item in self._background_menus if item != selected]
         cached = self._menu_cache.get(selected, {})
         self._menus = cached.get("actions", [])
+        if selected.startswith("win."):
+            self._busy = False
+            self._menu_state = "ready"
+            self._menu_read_at = ""
+            self._message = "可选择 Windows 预设或录入应用的实际快捷键"
+            self.changed.emit()
+            self.discoveryChanged.emit()
+            return
         self._busy = bool(self._bundle) and (refresh or selected not in self._menu_cache)
         self._menu_state = "loading" if self._busy else "idle"
         self._menu_read_at = cached.get("read_at", "")

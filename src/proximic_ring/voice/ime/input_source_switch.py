@@ -10,6 +10,12 @@ from .input_method_install import BUNDLE_ID, payload_directory
 
 
 def foreground_pid() -> int:
+    if sys.platform == "win32":
+        from .windows_bridge import foreground_identity
+        target = foreground_identity()
+        if not target:
+            raise RuntimeError("未找到前台应用，请点入文本框后重试")
+        return target[1]
     if sys.platform != "darwin":
         raise RuntimeError("输入法切换仅支持 macOS")
     from ...platforms.macos.mac_workspace import frontmost_application
@@ -20,6 +26,18 @@ def foreground_pid() -> int:
 
 
 def select_voice_input_source(pid: int, *, helper: Path | None = None, timeout=3) -> None:
+    if sys.platform == "win32" and helper is None:
+        import ctypes
+        from ...runtime_paths import resource_root, is_frozen
+        root = resource_root() if is_frozen() else resource_root() / ".build"
+        library = ctypes.WinDLL(str(root / "windows-ime" / "MythlinkTsf.dll"))
+        select = library.MythlinkSelectProfile
+        select.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        select.restype = ctypes.c_int32
+        result = select(pid, max(1, min(250, int(timeout * 1000))))
+        if result != 0:
+            raise RuntimeError(f"无法选中 Mythlink 输入法（0x{result & 0xffffffff:08X}），请用 Win+空格检查输入法列表")
+        return
     helper = helper if helper is not None else payload_directory() / "InputMethodAdmin"
     if not helper.is_file():
         raise RuntimeError("缺少输入法切换工具，请构建或更新完整应用")

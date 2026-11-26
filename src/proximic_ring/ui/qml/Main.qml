@@ -1046,7 +1046,12 @@ ApplicationWindow {
                                     objectName: "openAppGestureSettingsButton"
                                     Layout.alignment: Qt.AlignRight
                                     text: "设置快捷键"
-                                    onClicked: root.showSettings(7)
+                                    onClicked: {
+                                        if (Qt.platform.os === "windows") {
+                                            runtimeSettingsDialog.close()
+                                            root.currentPage = 2
+                                        } else root.showSettings(7)
+                                    }
                                 }
                             }
 

@@ -80,6 +80,11 @@ def test_r1_menu_unbinds_and_only_forgets_a_confirmed_binding(inline_ui, runtime
         runtime.callbacks["on_connected"]()
         runtime.callbacks["on_ring_source"](SimpleNamespace(ring_family="R1", request_unbind=request_unbind))
         wait_until(lambda: menu.property("visible"))
+        main = root.findChild(QObject, "homeConnectionButton")
+        # Qt schedules layout polish after the connection callback makes the menu visible.
+        wait_until(lambda: menu.mapToScene(QPointF(0, 0)) == main.mapToScene(QPointF(main.width(), 0)))
+        assert menu.height() == main.height()
+        assert menu.property("primaryColor") == main.property("primaryColor")
         click(root, "homeR1ConnectionMenuButton")
         click(root, "unbindR1MenuItem")
         assert len(attempts) == 1 and runtime.stop.is_set()

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 
 UiScrollView {
@@ -91,31 +92,52 @@ UiScrollView {
                             text: page.controller.deviceName || "我的 Ring"
                             color: theme.text; font.pixelSize: 22; font.weight: Font.Bold; elide: Text.ElideRight
                         }
-                        FigmaAction {
-                            objectName: "homeConnectionButton"
-                            text: page.connection.actionText
-                            primary: page.connection.primary
-                            primaryColor: page.connection.destructive ? "#B44852" : theme.primary
-                            primaryHoverColor: page.connection.destructive ? "#C35A64" : theme.primaryHover
-                            primaryPressedColor: page.connection.destructive ? "#933843" : theme.primaryPressed
-                            enabled: page.connection.enabled
-                            onClicked: page.connectionRequested()
-                        }
-                        FigmaAction {
-                            objectName: "homeR1ConnectionMenuButton"
-                            symbol: "chevron-down"
-                            quiet: true
-                            Layout.preferredWidth: 30
-                            visible: page.controller.canUnbindR1
-                            Accessible.name: "戒指连接选项"
-                            onClicked: r1ConnectionMenu.open()
-                            FigmaMenu {
-                                id: r1ConnectionMenu
-                                FigmaMenuItem {
-                                    objectName: "unbindR1MenuItem"
-                                    text: "解绑并断开"
-                                    enabled: page.controller.canUnbindR1
-                                    onTriggered: page.controller.unbindDevice()
+                        RowLayout {
+                            spacing: 0
+                            FigmaAction {
+                                id: connectionAction
+                                objectName: "homeConnectionButton"
+                                joinedRight: connectionMenuButton.visible
+                                text: page.connection.actionText
+                                primary: page.connection.primary
+                                primaryColor: page.connection.destructive ? "#B44852" : theme.primary
+                                primaryHoverColor: page.connection.destructive ? "#C35A64" : theme.primaryHover
+                                primaryPressedColor: page.connection.destructive ? "#933843" : theme.primaryPressed
+                                enabled: page.connection.enabled
+                                onClicked: page.connectionRequested()
+                            }
+                            FigmaAction {
+                                id: connectionMenuButton
+                                objectName: "homeR1ConnectionMenuButton"
+                                joinedLeft: true
+                                primary: connectionAction.primary
+                                primaryColor: connectionAction.primaryColor
+                                primaryHoverColor: connectionAction.primaryHoverColor
+                                primaryPressedColor: connectionAction.primaryPressedColor
+                                contentItem: Item {
+                                    IconImage {
+                                        anchors.centerIn: parent
+                                        source: "../assets/figma/redesign-383-9247-frame1.svg"
+                                        sourceSize: Qt.size(16, 16)
+                                        color: connectionMenuButton.contentColor
+                                    }
+                                    Rectangle {
+                                        anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                                        width: 1; height: 20; color: connectionMenuButton.contentColor; opacity: 0.4
+                                    }
+                                }
+                                Layout.preferredWidth: 30
+                                visible: page.controller.canUnbindR1
+                                Accessible.name: "戒指连接选项"
+                                onClicked: r1ConnectionMenu.open()
+                                FigmaMenu {
+                                    id: r1ConnectionMenu
+                                    FigmaMenuItem {
+                                        objectName: "unbindR1MenuItem"
+                                        text: "解绑并断开"
+                                        enabled: page.controller.canUnbindR1
+                                        onTriggered: page.controller.unbindDevice()
+                                    }
                                 }
                             }
                         }

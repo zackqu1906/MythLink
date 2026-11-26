@@ -48,6 +48,9 @@ def resolve_pending_chat_bindings(bundle, app, menus):
 
 
 def defaults_for(bundle, app, menus=()):
+    if bundle.startswith("win."):
+        from ..desktop.windows_shortcuts import application_actions
+        return application_actions(app.get("path", ""))[1]
     profiles = enabled_profiles(bundle, app.get("sceneProfiles", {}), app.get("primaryScene", ""), app.get("enabledScenes"))
     return default_mappings(bundle, app.get("label", ""),
                             presentation=profiles.get(PRESENTATION, ""),

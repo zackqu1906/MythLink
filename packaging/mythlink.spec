@@ -47,6 +47,15 @@ if platform.system() == 'Windows':
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
 datas += collect_data_files("funasr", includes=["version.txt"])
+# Fun-ASR-Nano uses SenseVoice's tokenizer. The upstream package initializer
+# also imports Whisper transcription and JIT word alignment during discovery.
+whisper_package = "funasr.models.sense_voice.whisper_lib"
+whisper_dir = whisper_package.replace(".", "/")
+funasr_dir = Path(importlib.util.find_spec("funasr").origin).parent
+datas += [
+    (str(project_root / "packaging/funasr_tokenizer/__init__.py"), whisper_dir),
+    (str(funasr_dir / "models/sense_voice/whisper_lib/tokenizer.py"), whisper_dir),
+]
 datas += [(str(streaming_root), "third_party/streaming-sensevoice")]
 datas += [
     (str(funasr_root / "model.py"), "third_party/Fun-ASR"),
@@ -103,7 +112,9 @@ hiddenimports += [
     "funasr.auto.auto_model",
     "funasr.frontends.wav_frontend",
     "funasr.models.llm_asr.adaptor",
-    "funasr.models.sense_voice.whisper_lib.tokenizer",
+    "funasr.models.specaug.specaug",
+    "funasr.models.sense_voice",
+    "tiktoken",
     "funasr.tokenizer.hf_tokenizer",
     "funasr.tokenizer.sentencepiece_tokenizer",
     "funasr.tokenizer.whisper_tokenizer",
@@ -143,6 +154,7 @@ a = Analysis(
         "librosa",
         "numba",
         "llvmlite",
+        whisper_package,
         "scipy",
         "sklearn",
         "soxr",

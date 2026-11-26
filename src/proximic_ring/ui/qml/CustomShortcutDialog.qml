@@ -80,7 +80,7 @@ FigmaDialog {
             id: typedShortcut
             objectName: "customShortcutText"
             Layout.fillWidth: true; implicitHeight: 42; visible: dialog.manualInput
-            hintText: "例如：Cmd+Shift+[ 或 Ctrl+Fn+Left"; maximumLength: 80; color: theme.text
+            hintText: Qt.platform.os === "windows" ? "例如：Win+Shift+S 或 Ctrl+Tab" : "例如：Cmd+Shift+[ 或 Ctrl+Fn+Left"; maximumLength: 80; color: theme.text
             onTextEdited: dialog.errorText = ""
             background: Rectangle { radius: 8; color: theme.surface; border.color: typedShortcut.activeFocus ? theme.primary : theme.line }
         }

@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('Build', 'Install', 'Uninstall', 'Run', 'Status')]
+    [ValidateSet('Build', 'Install', 'Uninstall', 'Enable', 'Disable', 'Run', 'Status')]
     [string]$Action,
     [string]$Compiler
 )
@@ -13,6 +13,21 @@ $Dll = Join-Path $Build 'MythlinkTsf.dll'
 $BundledDll = Join-Path $PSScriptRoot 'MythlinkTsf.dll'
 $InstallDirectory = Join-Path $env:ProgramFiles 'Mythlink TSF Prototype'
 $RegistrationKey = 'HKLM:\Software\Classes\CLSID\{40b2749b-c169-4a28-921c-c3367b96482b}\InprocServer32'
+
+# Apply the simplified Chinese TSF profile to the invoking user's input list.
+if ($Action -in @('Enable', 'Disable')) {
+    Add-Type -Namespace Mythlink -Name UserInput -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("input.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, ExactSpelling = true)]
+[System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
+public static extern bool InstallLayoutOrTip(string profile, uint flags);
+"@
+    $Profile = '0x0804:{40B2749B-C169-4A28-921C-C3367B96482B}{D31DD85F-750D-498B-A2C3-6282DD4E7552}'
+    $Flags = if ($Action -eq 'Disable') { 1 } else { 0 }
+    if (![Mythlink.UserInput]::InstallLayoutOrTip($Profile, $Flags)) {
+        throw "Windows could not $Action the Mythlink input profile."
+    }
+    return
+}
 
 if ($Action -eq 'Status') {
     $Key = Get-Item -LiteralPath $RegistrationKey -ErrorAction SilentlyContinue
@@ -34,7 +49,10 @@ if ($Action -eq 'Status') {
 if ($Action -eq 'Build') {
     New-Item -Path $Build -ItemType Directory -Force | Out-Null
     if ($Compiler) {
-        & $Compiler -std=c++17 -O2 -static -shared "$Source/TextService.cpp" "$Source/MythlinkTsf.def" -o $Dll -lole32 -loleaut32 -ladvapi32 -luuid
+        $Windres = & $Compiler -print-prog-name=windres
+        & $Windres -I $Source -i "$Source/MythlinkTsf.rc" -O coff -o "$Build/MythlinkTsf.res.o"
+        if ($LASTEXITCODE) { throw "Could not compile the input method icon." }
+        & $Compiler -std=c++17 -O2 -static -shared "$Source/TextService.cpp" "$Source/MythlinkTsf.def" "$Build/MythlinkTsf.res.o" -o $Dll -lole32 -loleaut32 -ladvapi32 -luuid
     } else {
         $CMake = Join-Path $Root '.runtime/venv/Scripts/cmake.exe'
         if (!(Test-Path -LiteralPath $CMake -PathType Leaf)) {

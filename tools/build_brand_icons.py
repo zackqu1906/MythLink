@@ -58,9 +58,38 @@ def main():
     if sys.platform == "darwin":
         subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(exports / "mythlink.icns")], check=True)
 
-    # Windows ICO supports PNG payloads, preserving alpha at every DPI size.
-    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
     sizes = (16, 24, 32, 48, 64, 128, 256)
+    write_ico(exports / "mythlink.ico", {size: images[size] for size in sizes})
+    write_ime_icon(root)
+    print("Exported Mythlink symbol and app icons from the original sidebar artwork.")
+
+
+def write_ime_icon(root):
+    from PySide6.QtCore import QByteArray
+    # Windows displays a monochrome brand glyph on a light tile in the input flyout.
+    svg = ET.parse(root / "src/proximic_ring/ui/assets/mythlink-mark.svg").getroot()
+    path = svg.find("{http://www.w3.org/2000/svg}path").attrib["d"]
+    view_box = svg.attrib["viewBox"]
+    x, y, width, height = map(float, view_box.split())
+    tile = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}">'
+            f'<rect x="{x+1}" y="{y+1}" width="{width-2}" height="{height-2}" rx="4" fill="white" '
+            'stroke="black" stroke-opacity=".5"/>'
+            f'<path fill="black" d="{path}"/></svg>')
+    renderer = QSvgRenderer(QByteArray(tile.encode()))
+    images = {}
+    for size in (16, 20, 24, 32, 40, 48):
+        icon = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+        icon.fill(Qt.transparent)
+        painter = QPainter(icon)
+        renderer.render(painter)
+        painter.end()
+        images[size] = icon
+    write_ico(root / "native/ProxiMicInputWindows/MythlinkIme.ico", images)
+
+
+def write_ico(destination, images):
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+    sizes = tuple(images)
     offset = 6 + 16 * len(sizes)
     directory, payloads = [], []
     for size in sizes:
@@ -71,8 +100,7 @@ def main():
         directory.append(struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(payload), offset))
         payloads.append(payload)
         offset += len(payload)
-    (exports / "mythlink.ico").write_bytes(struct.pack("<HHH", 0, 1, len(sizes)) + b"".join(directory + payloads))
-    print("Exported Mythlink symbol and app icons from the original sidebar artwork.")
+    destination.write_bytes(struct.pack("<HHH", 0, 1, len(sizes)) + b"".join(directory + payloads))
 
 
 if __name__ == "__main__":

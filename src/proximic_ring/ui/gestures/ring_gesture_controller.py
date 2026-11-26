@@ -181,7 +181,7 @@ class RingGestureController(QObject):
         previous_action = bindings.action_for(gesture)
         options = [dict(id="", label="无", path="解除此手势的全局绑定", shortcut="", available=True,
                         effect="此手势不执行全局功能，可在应用中配置动作。")]
-        if sys.platform == "darwin":
+        if sys.platform in {"darwin", "win32"}:
             options.append(dict(id="open_application", label="打开应用", path="选择要打开的本机应用", shortcut="",
                                 available=True, effect="触发后打开所选应用；已打开时切换到该应用。"))
             options.extend(dict(id="application-choice:" + item.bundle, label=item.label,
@@ -246,7 +246,7 @@ class RingGestureController(QObject):
             recent = next((item for item in self._recent_applications if item.bundle == bundle), None)
             if recent is not None:
                 candidate = dict(value=recent.bundle, label=recent.application_name)
-        if candidate is None or sys.platform != "darwin":
+        if candidate is None or sys.platform not in {"darwin", "win32"}:
             self.owner._app_gestures.notify("未找到此应用，请刷新应用列表后重试")
             return False
         try:
@@ -256,6 +256,8 @@ class RingGestureController(QObject):
             return False
         if not self._save_global_bindings(updated):
             return False
+        if bundle.startswith("win.") and candidate.get("path"):
+            self.owner._settings.setValue("gestures/windowsLaunch/" + bundle, candidate["path"])
         # History is shared independently of gesture transactions and survives undo.
         self._remember_application(updated.application_for(gesture))
         return True
@@ -391,9 +393,10 @@ class RingGestureController(QObject):
             generation = self._generation
         service, bindings = self.owner._app_gestures, self.owner._gesture_bindings
         endpoint = name in bindings.confirm + bindings.end
-        if (endpoint and touchpad is not None and getattr(touchpad, "_windows_ime", False)
-                and touchpad.inputMode != 'voice' and (touchpad.active or touchpad.busy)):
-            return False
+        if endpoint and service.windows_pointer_owns_gesture(name, bindings) and not busy:
+            if not global_action and not service.foreground_has_binding(name):
+                return False
+            endpoint = False  # An application/global action can still own the gesture in pointer mode.
         if (name in bindings.switch_mode
                 and getattr(self.owner, "_automatic_session_enabled", lambda: False)()):
             endpoint = True
@@ -569,7 +572,7 @@ class RingGestureController(QObject):
                     target = (self.owner._app_gestures.backend.capture(menu_action=True, scene=True,
                               focus_sensitive=False) if focus and focus.status == "nontext" else None)
                     if (target is not None and focus.target
-                            and (target.bundle, target.pid) != (focus.target[3], focus.target[4])):
+                            and not self.owner._app_gestures._matches_focus(target, (focus.target[3], focus.target[4]))):
                         target = None
                 except Exception:
                     target, focus = None, None
@@ -617,8 +620,12 @@ class RingGestureController(QObject):
             self.showRequested.emit("input", "")
             return
         if target is None or target.blocked or focus is None or focus.status != "nontext":
-            self.showRequested.emit("operation", "暂时无法确认输入焦点")
+            self.showRequested.emit("operation", "" if sys.platform == "win32" else "暂时无法确认输入焦点")
             return
+        self._show_outside_hints(target)
+
+    def _show_outside_hints(self, target):
+        catalog = self.owner._app_gestures.catalog
         scene = target.scene if target.scene in catalog.configured_scenes().get(target.bundle, []) else ""
         items = dict(catalog._bindings_for(target.bundle))
         if scene:
@@ -710,6 +717,15 @@ class RingGestureController(QObject):
                 if request.application.bundle == HOST_BUNDLE:
                     self.mainWindowRequested.emit()
                     self._application_opened(request, True, "")
+                elif request.application.bundle.startswith("win.") and sys.platform == "win32":
+                    from ...desktop.windows_applications import open_application
+                    bundle = request.application.bundle
+                    try:
+                        open_application(bundle, self.owner._settings.value("gestures/windowsLaunch/" + bundle, ""))
+                    except (OSError, ValueError) as exc:
+                        self._application_opened(request, False, str(exc))
+                    else:
+                        self._application_opened(request, True, "")
                 else:
                     self._application_launcher.open(request.application, lambda success, detail:
                         self._application_opened(request, success, detail))
@@ -718,7 +734,13 @@ class RingGestureController(QObject):
             with self._lock:
                 self._mode = "operation"  # Internal hint/scroll context, never a user-selected mode.
             if request.name == "index-pinch":
-                self.showMenu()
+                # The shared pinch already resolved and revalidated its target.
+                # Re-probing here can lose the editor while the profile settles.
+                if sys.platform == "win32" and request.input_focus is not None:
+                    self.owner._app_gestures.catalog.observe_scene(request.target)
+                    self._show_outside_hints(request.target)
+                else:
+                    self.showMenu()
                 self._log(request.name, "show")
                 return
             if request.name == "workflow-recommendations":
@@ -733,6 +755,13 @@ class RingGestureController(QObject):
                 self.hideRequested.emit()
                 self._screenshot.start()
                 self._log(request.name, 'show')
+                return
+            if sys.platform == "win32" and request.name in {"clench", "swipe-up", "swipe-down"}:
+                shortcut = {"clench": "Win+Tab", "swipe-up": "PageUp", "swipe-down": "PageDown"}[request.name]
+                try:
+                    self.owner._app_gestures.backend.post(request.target, shortcut, system_wide=True)
+                except (RuntimeError, ValueError, OSError) as exc:
+                    self.owner._app_gestures.notify(str(exc))
                 return
             if request.name in {"swipe-up", "swipe-down"}:
                 self._scroll.start(request, connection)

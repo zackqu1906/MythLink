@@ -80,7 +80,7 @@ def _verify_bundled_windows_ime(resource_root: Path) -> None:
     from ctypes import WinDLL
 
     library = WinDLL(str(dll))
-    for name in ("DllGetClassObject", "DllRegisterServer", "DllUnregisterServer"):
+    for name in ("DllGetClassObject", "DllRegisterServer", "DllUnregisterServer", "MythlinkSelectProfile"):
         getattr(library, name)
 
 

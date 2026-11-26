@@ -38,8 +38,10 @@ if [[ -z "$tsf_compiler" ]]; then
 fi
 tsf_source='native/ProxiMicInputWindows'
 mkdir -p .build/windows-ime
+tsf_windres="$(dirname "$(command -v "$tsf_compiler")")/x86_64-w64-mingw32-windres"
+"$tsf_windres" -I "$tsf_source" -i "$tsf_source/MythlinkTsf.rc" -O coff -o .build/windows-ime/MythlinkTsf.res.o
 "$tsf_compiler" -std=c++17 -O2 -static -shared "$tsf_source/TextService.cpp" "$tsf_source/MythlinkTsf.def" \
-    -o .build/windows-ime/MythlinkTsf.dll -lole32 -loleaut32 -ladvapi32 -luuid
+    .build/windows-ime/MythlinkTsf.res.o -o .build/windows-ime/MythlinkTsf.dll -lole32 -loleaut32 -ladvapi32 -luuid
 
 curl -fsSL --connect-timeout 20 --max-time 180 --retry 2 -o "$build_tools/python.nupkg" \
     https://api.nuget.org/v3-flatcontainer/python/3.11.9/python.3.11.9.nupkg
@@ -109,6 +111,7 @@ if ! PROXIMIC_DATA_HOME='C:\Mythlink-build-check' wine dist/Mythlink/Mythlink.ex
     exit 1
 fi
 echo 'Windows application self-check passed.'
+wine "$iscc" "/DMyAppVersion=$MYTHLINK_BUILD_VERSION" 'packaging\windows\MythlinkInput.iss'
 wine "$iscc" /DWineBuild=1 "/DMyAppVersion=$MYTHLINK_BUILD_VERSION" 'packaging\windows\Mythlink.iss'
 installer="dist/installer/Mythlink-$MYTHLINK_BUILD_VERSION-windows-x64-setup.exe"
 test -s "$installer"

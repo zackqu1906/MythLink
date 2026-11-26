@@ -35,20 +35,90 @@ CloseApplications=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
+[CustomMessages]
+english.InputTask=Add the Mythlink input method (requires administrator approval)
+chinesesimplified.InputTask=添加 Mythlink 输入法（需要管理员授权）
+english.InputInstallError=Could not register the Mythlink input method. Retry or go back and clear the input method task.
+chinesesimplified.InputInstallError=未能注册 Mythlink 输入法。请重试，或返回取消勾选输入法后继续安装。
+english.InputEnableError=Windows could not add Mythlink to your input methods. Retry or go back and clear the input method task.
+chinesesimplified.InputEnableError=Windows 未能将 Mythlink 添加到当前用户的输入法列表。请重试，或返回取消勾选输入法后继续安装。
+
+[InstallDelete]
+; Older installers left discoverable model sources and partial optional
+; Python packages behind. Only clean the bundled ASR code, before copying it.
+Type: filesandordirs; Name: "{app}\_internal\funasr"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\transformers\models"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\numba"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\llvmlite"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\llvmlite.libs"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\librosa"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\scipy"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\scipy.libs"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\sklearn"; Check: HasPreviousMythlinkRuntime
+Type: filesandordirs; Name: "{app}\_internal\soxr"; Check: HasPreviousMythlinkRuntime
+
 [Files]
-Source: "..\..\dist\Mythlink\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\.build\windows-ime\MythlinkInputSetup.exe"; Flags: dontcopy
+Source: "..\..\scripts\windows-ime-prototype.ps1"; DestDir: "{app}\_internal\windows-ime"; Flags: ignoreversion
+Source: "..\..\dist\Mythlink\*"; DestDir: "{app}"; Excludes: "_internal\windows-ime\windows-ime-prototype.ps1"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
+[Registry]
+Root: HKCU; Subkey: "Software\Mythlink\Installer"; ValueType: dword; ValueName: "InputProfile"; ValueData: "1"; Tasks: inputmethod; Flags: uninsdeletevalue uninsdeletekeyifempty
+
 [Tasks]
+Name: "inputmethod"; Description: "{cm:InputTask}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function HasPreviousMythlinkRuntime: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{app}\{#MyAppExeName}')) and
+    FileExists(ExpandConstant('{app}\_internal\proximic_ring\package-version.txt'));
+end;
+
+function SetInputProfile(const ScriptPath, Action: String): Boolean;
+var
+  ExitCode: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" -Action ' + Action,
+    '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+  Log(Format('Input profile %s returned %d', [Action, ExitCode]));
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ExitCode: Integer;
+begin
+  Result := '';
+  if not WizardIsTaskSelected('inputmethod') then Exit;
+  ExtractTemporaryFile('MythlinkInputSetup.exe');
+  if not Exec(ExpandConstant('{tmp}\MythlinkInputSetup.exe'),
+      '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-', '', SW_HIDE, ewWaitUntilTerminated, ExitCode)
+      or (ExitCode <> 0) then begin
+    Log(Format('Input method setup returned %d', [ExitCode]));
+    Result := CustomMessage('InputInstallError');
+    Exit;
+  end;
+  ExtractTemporaryFile('windows-ime-prototype.ps1');
+  if not SetInputProfile(ExpandConstant('{tmp}\windows-ime-prototype.ps1'), 'Enable') then
+    Result := CustomMessage('InputEnableError');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usUninstall) and
+     RegValueExists(HKCU, 'Software\Mythlink\Installer', 'InputProfile') then
+    SetInputProfile(ExpandConstant('{app}\_internal\windows-ime\windows-ime-prototype.ps1'), 'Disable');
+end;
+
 procedure InitializeWizard;
 var
   Padding: Integer;

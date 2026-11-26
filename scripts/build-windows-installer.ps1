@@ -82,6 +82,32 @@ with pefile.PE(str(bootloader), fast_load=True) as image:
     return $Requirement
 }
 
+function Set-InstallerSignature([string]$Installer) {
+    if ($env:WINDOWS_SIGNING_CERT_SHA1) {
+        $SignToolCandidates = @(
+            (Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe",
+            "$env:ProgramFiles\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
+        )
+        $SignTool = $SignToolCandidates | Where-Object {
+            $_ -and (Test-Path -LiteralPath $_ -PathType Leaf)
+        } | Select-Object -First 1
+        if (-not $SignTool) {
+            throw "WINDOWS_SIGNING_CERT_SHA1 is set, but signtool.exe was not found."
+        }
+        $TimestampUrl = if ($env:WINDOWS_TIMESTAMP_URL) {
+            $env:WINDOWS_TIMESTAMP_URL
+        } else {
+            "http://timestamp.digicert.com"
+        }
+        & $SignTool sign /sha1 $env:WINDOWS_SIGNING_CERT_SHA1 /fd SHA256 `
+            /tr $TimestampUrl /td SHA256 $Installer
+        if ($LASTEXITCODE -ne 0) { throw "Windows code signing failed." }
+        & $SignTool verify /pa $Installer
+        if ($LASTEXITCODE -ne 0) { throw "Windows signature verification failed." }
+    }
+}
+
 if ($InstallerOnly) {
     if ($Version -or $AutoVersion -or $Firmware) {
         throw "-InstallerOnly uses the existing bundle's version and firmware. Omit -Version, -AutoVersion, and -Firmware."
@@ -185,34 +211,16 @@ try {
     }
     Write-Host "Bundled Ringo, R1, QML, ADPCM, and ASR self-check passed."
 
+    & $Iscc "/DMyAppVersion=$AppVersion" "packaging\windows\MythlinkInput.iss"
+    if ($LASTEXITCODE -ne 0) { throw "Input method installer build failed." }
+    Set-InstallerSignature (Join-Path $ProjectRoot ".build\windows-ime\MythlinkInputSetup.exe")
+
     & $Iscc "/DMyAppVersion=$AppVersion" "packaging\windows\Mythlink.iss"
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 
     $Installer = Join-Path $ProjectRoot "dist\installer\Mythlink-$AppVersion-windows-x64-setup.exe"
     if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) { throw "Installer not found: $Installer" }
-    if ($env:WINDOWS_SIGNING_CERT_SHA1) {
-        $SignToolCandidates = @(
-            (Get-Command signtool.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
-            "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe",
-            "$env:ProgramFiles\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
-        )
-        $SignTool = $SignToolCandidates | Where-Object {
-            $_ -and (Test-Path -LiteralPath $_ -PathType Leaf)
-        } | Select-Object -First 1
-        if (-not $SignTool) {
-            throw "WINDOWS_SIGNING_CERT_SHA1 is set, but signtool.exe was not found."
-        }
-        $TimestampUrl = if ($env:WINDOWS_TIMESTAMP_URL) {
-            $env:WINDOWS_TIMESTAMP_URL
-        } else {
-            "http://timestamp.digicert.com"
-        }
-        & $SignTool sign /sha1 $env:WINDOWS_SIGNING_CERT_SHA1 /fd SHA256 `
-            /tr $TimestampUrl /td SHA256 $Installer
-        if ($LASTEXITCODE -ne 0) { throw "Windows code signing failed." }
-        & $SignTool verify /pa $Installer
-        if ($LASTEXITCODE -ne 0) { throw "Windows signature verification failed." }
-    }
+    Set-InstallerSignature $Installer
 } finally {
     $env:MYTHLINK_BUILD_VERSION = $PreviousBuildVersion
     $env:MYTHLINK_RING_FIRMWARE = $PreviousFirmware

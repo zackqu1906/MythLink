@@ -3,15 +3,23 @@
 // Display metadata only. Presets use the existing validated custom-key binding path.
 // macOS default combinations: https://support.apple.com/zh-cn/102650
 function systemShortcuts(platform) {
-    if (platform !== "osx") return []
-    return [
+    if (platform !== "osx" && platform !== "windows") return []
+    var windows = platform === "windows"
+    var presets = windows ? [
+        {id:"keyboard:search",label:"Windows 搜索",shortcut:"Win+S",description:"搜索应用、文件和设置。"},
+        {id:"keyboard:switch-app",label:"切换应用",shortcut:"Alt+Tab",description:"切换到最近使用的另一个窗口。"},
+        {id:"keyboard:task-view",label:"任务视图",shortcut:"Win+Tab",description:"查看打开的窗口和虚拟桌面。"},
+        {id:"keyboard:screenshot",label:"Windows 截图工具",shortcut:"Win+Shift+S",description:"打开 Windows 截图工具，选择截图区域。"},
+        {id:"keyboard:explorer",label:"文件资源管理器",shortcut:"Win+E",description:"打开文件资源管理器。"}
+    ] : [
         {id:"keyboard:spotlight",label:"聚焦搜索",shortcut:"Cmd+Space",description:"显示或隐藏 macOS 聚焦搜索栏。"},
         {id:"keyboard:switch-app",label:"切换应用",shortcut:"Cmd+Tab",description:"切换到最近使用的另一个应用。"},
         {id:"keyboard:screenshot",label:"截屏与录屏",shortcut:"Cmd+Shift+5",description:"打开系统截屏工具栏，选择截取区域或录制屏幕。"},
         {id:"keyboard:emoji",label:"表情与符号",shortcut:"Ctrl+Cmd+Space",description:"打开系统字符检视器，选择表情或其他符号。"},
         {id:"keyboard:dock",label:"显示／隐藏程序坞",shortcut:"Cmd+Alt+D",description:"切换 macOS 程序坞的显示状态。"}
-    ].map(function(action) {
-        return Object.assign({}, action, {keyboardPreset:true,systemShortcut:true,path:"macOS 系统快捷键",available:null})
+    ]
+    return presets.map(function(action) {
+        return Object.assign({}, action, {keyboardPreset:true,systemShortcut:true,path:(windows ? "Windows" : "macOS") + " 系统快捷键",available:null})
     })
 }
 
@@ -44,13 +52,13 @@ function actionDetails(action, applicationScope, applicationName, platform) {
     if (action.voiceAction) return "语音输入 · 可与应用和全局映射重叠，输入框内优先执行。"
         + "\n仅在全局默认中修改；同一功能可绑定多个手势，选择后自动保存。"
     if (action.category) {
-        return {application:"来自「" + applicationName + "」的菜单和场景预设。",system:"打开应用、截图、粘贴、窗口选择、滚动和 Agent 等系统功能。",voice:"调整听写、定稿、润色和编辑的输入手势。",shortcut:"macOS 系统组合键，或你自己录制的快捷键。"}[action.category] || ""
+        return {application:"「" + applicationName + "」的快捷键与预设。",system:"打开应用、截图、粘贴、窗口选择、滚动和 Agent 等系统功能。",voice:"调整听写、定稿、润色和编辑的输入手势。",shortcut:"系统组合键，或你自己录制的快捷键。"}[action.category] || ""
     }
     if (!action.id) return applicationScope ? "移除此处的覆盖，回退到应用默认或全局配置。" : "解除此手势的全局绑定，保留应用内的独立配置。"
     if (action.id === "open_application") return "选择本机应用；触发手势后打开它，已打开时切换到该应用。\n最近选择的 5 个应用会保留在系统功能中，供所有全局手势使用。"
     if (action.applicationBundle) return "打开所选应用；已打开时切换到该应用。\n可再次选择「打开应用」更换目标。"
     var preset = presetFor(action, platform)
-    if (preset) return preset.description + (isSystemMenu(action) ? "\n系统菜单：" + action.path : "\nmacOS 默认组合键；如已在系统中改键，请录入实际组合键。")
+    if (preset) return preset.description + (isSystemMenu(action) ? "\n系统菜单：" + action.path : "\n如已在系统中改键，请录入实际组合键。")
     if (action.systemShortcut || isSystemMenu(action)) return "系统菜单：" + action.path + "\n由 macOS 处理此组合键。"
     if (isBrowserControl(action)) return action.path + "\n通过扩展控制网页播放器，不发送键盘按键。"
     if (action.custom === true || String(action.id).indexOf("custom:") === 0)

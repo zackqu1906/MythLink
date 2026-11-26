@@ -77,7 +77,7 @@ Rectangle {
         if (sharedNavigation) return "浏览器所有场景共用 · 在默认配置中修改"
         if (!applicationScope) return "应用映射优先 · 输入焦点仅影响冲突手势"
         if (savedAction && savedAction.preset === true) return savedAction.path + " · 可按应用设置自定义"
-        if (ActionPresentation.presetFor(saved, Qt.platform.os)) return "macOS 系统组合键 · 如已改键，请录入实际组合键"
+        if (ActionPresentation.presetFor(saved, Qt.platform.os)) return "系统组合键 · 如已改键，请录入实际组合键"
         if (savedId.indexOf("custom:") === 0) return "自定义快捷键 · 按当前应用与场景范围生效"
         if (catalog.busy) return "正在核对快捷键…"
         if (catalog.menuState === "error" || catalog.menuState === "idle") return "尚未确认可用性 · 原绑定已保留"
@@ -333,7 +333,7 @@ Rectangle {
                         visible: editor.category === "all" && editor.searching
                         Layout.fillWidth: true; text: "录制自己的快捷键"; onClicked: { mappingMenu.close(); customDialog.open() }
                     }
-                    FigmaAction { objectName:"refreshMenuActionsButton"; visible:editor.applicationScope && editor.category === "application"; Layout.fillWidth:true; text:catalog.busy ? "读取中…" : "刷新快捷键"; quiet:true; enabled:!catalog.busy; onClicked:catalog.refreshMenu() }
+                    FigmaAction { objectName:"refreshMenuActionsButton"; visible:editor.applicationScope && editor.category === "application" && !catalog.selectedApp.startsWith("win."); Layout.fillWidth:true; text:catalog.busy ? "读取中…" : "刷新快捷键"; quiet:true; enabled:!catalog.busy; onClicked:catalog.refreshMenu() }
                     Label {
                         visible: editor.category === "all" || (editor.searching && !actions.count)
                         Layout.fillWidth: true; color:theme.muted; font.family:theme.family; font.pixelSize:14; wrapMode:Text.Wrap

@@ -32,6 +32,8 @@ def request(controller, name, *, busy=False, deliver=True, connection=None):
 
 def test_retired_mode_gesture_never_toggles_or_blocks_native_start(route):
     c, _, _, _, sent, _, _ = route
+    if c._global_gesture_bindings.screen_capture == "middle-pinch":
+        assert c.ringGestures.setGlobalBinding("screen_capture", "")
     for _ in range(2):
         assert not request(c, "middle-pinch")
         assert request(c, "tap")

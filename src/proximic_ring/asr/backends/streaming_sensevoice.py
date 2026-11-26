@@ -9,7 +9,7 @@ from typing import Callable
 import numpy as np
 
 from ..factory import ASRBackendSettings
-from ..funasr_compat import prepare_funasr_runtime
+from ..funasr_compat import DownloadProgress, download_sensevoice, prepare_funasr_runtime
 
 
 def _macos_cpu_chunk_size(device: str) -> int:
@@ -79,6 +79,7 @@ class StreamingSenseVoiceASR:
         repo_path: str | Path | None = None,
         final_redecode: bool = True,
         status_callback: Callable[[str], None] | None = None,
+        download_progress: DownloadProgress | None = None,
     ) -> None:
         self.model_name = model
         self.device = device
@@ -89,6 +90,8 @@ class StreamingSenseVoiceASR:
         _limit_macos_cpu_inference_threads(device)
 
         cls = self._load_external_class(self.repo_path)
+        if download_progress is not None and model == "iic/SenseVoiceSmall" and not Path(model).is_dir():
+            model = download_sensevoice(download_progress)
         if status_callback is not None:
             if Path(model).expanduser().is_dir():
                 status_callback("正在读取本地 ASR 模型参数：SenseVoiceSmall…")
@@ -125,6 +128,8 @@ class StreamingSenseVoiceASR:
         # startup.  Packaged builds intentionally contain only these runtime
         # registrations, so load them explicitly and deterministically.
         importlib.import_module("funasr.frontends.wav_frontend")
+        # The official checkpoint constructs SpecAugLFR even in evaluation mode.
+        importlib.import_module("funasr.models.specaug.specaug")
         importlib.import_module("funasr.tokenizer.sentencepiece_tokenizer")
         if repo_path is not None:
             if not repo_path.is_dir():
@@ -242,4 +247,5 @@ def create_streaming_backend(settings: ASRBackendSettings) -> StreamingSenseVoic
         repo_path=o.get("repo"),
         final_redecode=_bool_option(o.get("final_redecode"), True),
         status_callback=settings.status_callback,
+        download_progress=settings.download_progress,
     )

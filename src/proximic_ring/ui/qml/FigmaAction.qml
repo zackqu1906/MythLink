@@ -7,6 +7,8 @@ Basic.Button {
     id: control
     property string symbol: ""
     property bool primary: false
+    property bool joinedLeft: false
+    property bool joinedRight: false
     property bool quiet: false
     property bool navigation: false
     property url trailingAsset: ""
@@ -27,6 +29,10 @@ Basic.Button {
     Accessible.name: text
     background: Rectangle {
         radius: 8
+        topLeftRadius: control.joinedLeft ? 0 : radius
+        bottomLeftRadius: topLeftRadius
+        topRightRadius: control.joinedRight ? 0 : radius
+        bottomRightRadius: topRightRadius
         color: control.primary ? (control.enabled && control.down ? control.primaryPressedColor : control.enabled && control.hovered ? control.primaryHoverColor : control.primaryColor)
             : control.enabled && control.down ? theme.selection : control.enabled && control.hovered ? theme.subtle : control.quiet ? "transparent" : theme.background
         border.width: control.enabled && control.visualFocus ? 2 : control.primary || control.quiet ? 0 : 1

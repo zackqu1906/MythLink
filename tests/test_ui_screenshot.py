@@ -51,7 +51,7 @@ def test_screenshot_system_action_and_directory_settings(mapping_ui, tmp_path, m
     assert cap.directory == str(selected)
     assert find(root, 'screenshotDirectoryRow').property('description') == str(selected)
     pointer_click(root, 'openScreenshotDirectoryButton')
-    assert opened == [str(selected)] and selected.is_dir()
+    assert list(map(Path, opened)) == [selected] and selected.is_dir()
     for name in ('changeScreenshotDirectoryButton', 'openScreenshotDirectoryButton'):
         control = find(root, name)
         position = control.mapToScene(QPointF())

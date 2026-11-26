@@ -26,7 +26,10 @@ CLEANUP_PROMPT = """清理用户主动保存的截图 OCR 文字。只删除明�
 
 
 def recognize_saved_png(png):
-    """Run Apple Vision on the saved crop, without chat-window region filters."""
+    """Recognize the confirmed crop using the platform's local OCR engine."""
+    if sys.platform == "win32":
+        from .windows_ocr import recognize
+        return recognize(png)
     if sys.platform != "darwin":
         raise RuntimeError("保存截图的文字识别需要 macOS Apple Vision")
     import objc

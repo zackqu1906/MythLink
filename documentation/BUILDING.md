@@ -53,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -InstallerO
 
 完整 Windows 构建会编译 x64 TSF DLL，并将 DLL 和注册脚本放在安装目录的 `_internal\windows-ime`。Wine 构建使用 MinGW-w64 交叉编译，缺失时下载固定版本的 LLVM-MinGW。
 
-安装 Mythlink 后，在管理员 PowerShell 中运行安装目录里的 `_internal\windows-ime\windows-ime-prototype.ps1 -Action Install`。重新启动 Mythlink，按 Win+空格选择 Mythlink 输入法。覆盖更新 TSF 时，重新运行注册脚本并重启仍在使用旧组件的应用。
+Windows 安装向导默认勾选“添加 Mythlink 输入法”。安装或覆盖升级时，确认 Windows 管理员授权，安装程序会注册 x64 文本服务，并将 Mythlink 加入发起安装的用户的输入法列表。点入目标文本框并开始听写或外部笔画输入时，应用会请求系统切入 Mythlink。若目标应用没有响应，可按 Win+空格选择 Mythlink。正在使用旧组件的编辑器需要重新打开。
 
 从源码单独开发 TSF 时，可使用 CMake 和 Visual Studio C++ 工具链构建。MinGW-w64 可传 `-Compiler <g++.exe 的路径>`。
 
@@ -65,9 +65,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -InstallerO
 
 更新时再次执行 `-Action Install`。安装脚本按版本保存 DLL，已加载旧 DLL 的应用在重开后使用新版。执行 `-Action Status` 可查看注册路径和当前能查询到的加载进程。
 
-在目标文本框按 Win+空格选中 Mythlink。将 Mythlink 的「语音启停方式」设为「手势启停」，开启语音识别和「输入到当前光标」。原型预留单指双击切换语音和触摸板。原本配置为双击开始听写时，原型改用上滑，结束通常为单击。触摸板默认控制鼠标，点入文本框后双指双击开启笔画九宫格。
+将 Mythlink 的「语音启停方式」设为「手势启停」，开启语音识别和「输入到当前光标」。原型预留单指双击切换语音和触摸板。原本配置为双击开始听写时，原型改用上滑，结束通常为单击。触摸板默认控制鼠标，点入文本框后双指双击开启笔画九宫格。
 
-输入法支持 Windows x64 桌面文本框的听写和笔画。卸载前切换到其他输入法，再在管理员 PowerShell 中执行 `-Action Uninstall`。
+输入法支持 Windows x64 桌面文本框的听写和笔画。卸载主程序时会从当前用户的输入法列表移除 Mythlink。系统组件供多个 Windows 账户共用，管理员可在“已安装的应用”中卸载 Mythlink Input Method。源码开发时手动注册的组件可用管理员 PowerShell 执行 `-Action Uninstall` 移除。
 
 ## 构建资源
 

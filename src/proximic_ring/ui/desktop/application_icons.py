@@ -12,6 +12,28 @@ from PySide6.QtQuick import QQuickImageProvider
 def native_application_icon(bundle, path):
     if bundle == 'com.proximic.voice':
         return QImage(str(Path(__file__).parents[1] / 'assets/mythlink-app.png'))
+    if sys.platform == 'win32':
+        import ctypes
+        from ctypes import wintypes as w
+        class FileInfo(ctypes.Structure):
+            _fields_ = [('icon', w.HICON), ('index', ctypes.c_int), ('attributes', w.DWORD),
+                        ('display', w.WCHAR * 260), ('typeName', w.WCHAR * 80)]
+        info = FileInfo()
+        shell = ctypes.windll.shell32
+        pidl = ctypes.c_void_p()
+        try:
+            if path.startswith("shell:AppsFolder") and shell.SHParseDisplayName(path, None, ctypes.byref(pidl), 0, None) == 0:
+                shell.SHGetFileInfoW(pidl, 0, ctypes.byref(info), ctypes.sizeof(info), 0x108)
+            elif path and Path(path).is_file():
+                shell.SHGetFileInfoW(path, 0, ctypes.byref(info), ctypes.sizeof(info), 0x100)
+            if not info.icon:
+                shell.SHGetFileInfoW("application.exe", 0x80, ctypes.byref(info), ctypes.sizeof(info), 0x110)
+            return QImage.fromHICON(info.icon) if info.icon else QImage()
+        finally:
+            if info.icon:
+                ctypes.windll.user32.DestroyIcon(w.HICON(info.icon))
+            if pidl:
+                ctypes.windll.ole32.CoTaskMemFree(pidl)
     if sys.platform != 'darwin':
         return QImage()
     import AppKit

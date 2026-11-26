@@ -2,6 +2,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 import json
+import sys
 
 import pytest
 from PySide6.QtCore import QCoreApplication
@@ -16,6 +17,23 @@ from test_ring_gestures import request, deliver_gestures
 def outside(backend, bundle=BUNDLE):
     backend.target = replace(backend.target, bundle=bundle, profile=bundle,
                              focus="page", role="AXGroup", input_context="nontext")
+
+
+def observe_window_switch(controller, monkeypatch):
+    starts = []
+    if sys.platform == "win32":
+        backend = controller.appGestures.backend
+        post = backend.post
+        def record(target, shortcut, **options):
+            if shortcut == "Win+Tab" and options.get("system_wide"):
+                assert backend.same_target(target)
+                starts.append("clench")
+            else:
+                post(target, shortcut, **options)
+        monkeypatch.setattr(backend, "post", record)
+    else:
+        monkeypatch.setattr(controller.ringGestures._selector, "start", lambda req, conn: starts.append(req.name))
+    return starts
 
 
 @pytest.mark.parametrize("gesture", list(GESTURE_LABELS))
@@ -61,8 +79,7 @@ def test_independent_gestures_ignore_input_focus_for_application_and_global_acti
     assert c.ringGestures.setGlobalBinding("window_selector", gesture)
     if scope == "application":
         assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
-    starts, captures = [], []
-    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
+    starts, captures = observe_window_switch(c, monkeypatch), []
     capture = backend.capture
     def record_capture(**options):
         captures.append(options)
@@ -121,8 +138,7 @@ def test_app_wins_global_then_removal_restores_global_with_no_setting_loss(route
     assert c.ringGestures.setGlobalBinding("window_selector", "swipe-left")
     assert catalog.canBind("swipe-left") and c._settings.value(SETTINGS_KEY) == stored
     assert "应用绑定优先" in catalog.globalConflictNotice
-    starts = []
-    monkeypatch.setattr(c.ringGestures._selector, "start", lambda req, conn: starts.append(req.name))
+    starts = observe_window_switch(c, monkeypatch)
     request(c, "swipe-left")
     assert sent == [(BUNDLE, "Ctrl+Tab")] and starts == []
     assert catalog.setBinding(BUNDLE, "swipe-left", "")
@@ -139,10 +155,9 @@ def test_unconfigured_app_uses_global_even_with_saved_legacy_profiles(route, mon
     backend.target = replace(backend.target, profile=profile)
     assert service._legacy_configured and not service.catalog.owns(bundle)
     assert c.ringGestures.setGlobalBinding("window_selector", "circle-clockwise")
-    starts = []
-    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
+    starts = observe_window_switch(c, monkeypatch)
     request(c, "circle-clockwise")
-    assert starts == [True] and not sent
+    assert starts == ["clench"] and not sent
     catalog = configure(service, monkeypatch, bundle)
     assert catalog.setBinding(bundle, "circle-clockwise", ACTION["id"])
     request(c, "circle-clockwise")
@@ -159,8 +174,7 @@ def test_queued_actions_recheck_focus_only_for_input_conflicts(route, monkeypatc
     c, service, inline, backend, sent, messages, _ = route
     catalog = configure(service, monkeypatch)
     outside(backend)
-    starts = []
-    monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
+    starts = observe_window_switch(c, monkeypatch)
     assert c.ringGestures.setGlobalBinding("window_selector", gesture)
     if scope == "application": assert catalog.setBinding(BUNDLE, gesture, ACTION["id"])
     if change == "capture_failure": monkeypatch.setattr(backend, "capture", lambda **kw: None)

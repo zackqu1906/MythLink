@@ -30,8 +30,12 @@ def test_frozen_funasr_compat_reuses_legacy_modelscope_cache(
     hub = importlib.import_module("modelscope_hub.compat.snapshot_download")
     downloads = []
 
-    def finish_download(model_id, **_options):
+    def finish_download(model_id, **options):
         downloads.append(model_id)
+        assert set(options["allow_patterns"]) == {
+            "model.pt", "config.yaml", "configuration.json", "am.mvn",
+            "chn_jpn_yue_eng_ko_spectok.bpe.model",
+        }
         (cached / "model.pt").touch()
         return str(cached)
 

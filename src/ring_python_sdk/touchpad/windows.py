@@ -5,11 +5,13 @@ from collections import deque
 import ctypes
 import math
 import os
+import threading
 import time
 
 # SendInput mouse flags.
 _LEFT = (0x0002, 0x0004)
 _RIGHT = (0x0008, 0x0010)
+_XBUTTON = (0x0080, 0x0100)
 _WHEEL = 0x0800
 # Raw2 scroll arrives in Quartz pixel units. One 120-unit notch scrolls three
 # lines by default (about 60 px), so 2 wheel units per pixel keeps the speed
@@ -73,6 +75,8 @@ class WindowsSystemMouse:
         self._scroll_remainder = 0.
         self._scroll_stream = None
         self._click_ids = deque(maxlen=256)
+        self._button_lock = threading.RLock()
+        self._drag_held = False
 
     def enable(self):
         self._fraction_x = self._fraction_y = 0.
@@ -84,6 +88,40 @@ class WindowsSystemMouse:
     def disable(self):
         self.enabled = False
         self._fraction_x = self._fraction_y = 0.
+        self.release_drag()
+
+    def _begin_drag(self):
+        with self._button_lock:
+            if self.enabled and self.clicks_enabled and not self._drag_held:
+                self._send(_Input(type=0, mi=_MouseInput(dwFlags=_LEFT[0])))
+                self._drag_held = True
+
+    def release_drag(self):
+        with self._button_lock:
+            if self._drag_held:
+                self._send(_Input(type=0, mi=_MouseInput(dwFlags=_LEFT[1])))
+                self._drag_held = False
+
+    def navigate(self, direction, *, expires_at):
+        if direction not in {'back', 'forward'}:
+            raise ValueError('无效导航方向')
+        self.check_health()
+        with self._button_lock:
+            if not self.enabled or not math.isfinite(expires_at) or time.monotonic() > expires_at:
+                return dict(reason='navigation_expired_or_stopped', navigations_posted=0)
+            self.release_drag()
+            # Windows routes the two side buttons to Back and Forward.
+            button = 1 if direction == 'back' else 2
+            down, up = [_Input(type=0, mi=_MouseInput(mouseData=button, dwFlags=flag))
+                        for flag in _XBUTTON]
+            events = (_Input * 2)(down, up)
+            posted = self.user32.SendInput(2, events, ctypes.sizeof(_Input))
+            if posted != 2:
+                error = self._error('SendInput')
+                if posted == 1:
+                    self._send(up)
+                raise error
+            return dict(reason='posted', navigations_posted=1)
 
     def close(self):
         self.disable()
@@ -177,7 +215,11 @@ class WindowsSystemMouse:
                     if 'button' in event:
                         receipt['reason'] = 'native_expired'
                     continue
-                if event['kind'] == 'move':
+                if event['kind'] == 'button_down':
+                    self._begin_drag()
+                elif event['kind'] in {'move', 'drag'}:
+                    if event['kind'] == 'drag' and not self._drag_held:
+                        continue
                     dx = float(event['dx'])*self.gain
                     dy = float(event['dy'])*self.gain*(-1 if self.invert_y else 1)
                     if not math.isfinite(dx) or not math.isfinite(dy):

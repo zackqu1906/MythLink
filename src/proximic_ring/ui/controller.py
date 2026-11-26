@@ -364,6 +364,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     _runtimeStopping = Signal(object)
     _runtimeStarted = Signal(object)
     _runtimeVoiceAvailability = Signal(object, str)
+    _runtimeAsrDownload = Signal(object, object)
+    asrDownloadChanged = Signal()
     _runtimeVoiceStartRequested = Signal(object)
     voiceAvailabilityChanged = Signal()
     voiceSetupRequested = Signal()
@@ -550,11 +552,12 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._microphone_scan_busy = False
         self._microphone_devices_error = ""
         self._gesture_bindings = self._load_gesture_bindings(restore_selected_ring=True)
+        global_defaults = GlobalGestureBindings(screen_capture="middle-pinch" if sys.platform == "win32" else "")
         try:
             self._global_gesture_bindings = GlobalGestureBindings.from_json(
-                self._settings.value(GLOBAL_BINDINGS_KEY, GlobalGestureBindings().to_json()))
+                self._settings.value(GLOBAL_BINDINGS_KEY, global_defaults.to_json()))
         except (ValueError, TypeError):
-            self._global_gesture_bindings = GlobalGestureBindings()
+            self._global_gesture_bindings = global_defaults
         # This switch controls only optional post-processing for dictation.
         # Edit mode always needs the selected text model.
         self._llm_enabled = self._bool_setting("llm/enabled", True)
@@ -607,6 +610,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._r1_unbind_result = None
         self._audio_input_failed = False
         self._asr_backend_cache = ASRBackendCache()
+        self._asr_download = {}
         self._scan_worker: DeviceScanWorker | None = None
         self._available_devices: list[dict[str, object]] = []
         self._device_handles: dict[str, object] = {}
@@ -811,6 +815,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         self._runtimeStopping.connect(self._apply_runtime_stopping)
         self._runtimeStarted.connect(self._apply_runtime_started)
         self._runtimeVoiceAvailability.connect(self._apply_runtime_voice_availability)
+        self._runtimeAsrDownload.connect(self._apply_asr_download)
         self._runtimeVoiceStartRequested.connect(self._request_voice_from_gesture)
         self._runtimeSessionStarted.connect(self._apply_runtime_session_started)
         self._runtimeUpdate.connect(self._apply_runtime_update)
@@ -4050,6 +4055,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                     retry_voice_event=self._retry_voice_event,
                     voice_settings_provider=self._runtime_settings,
                     on_voice_availability=lambda error: self._runtimeVoiceAvailability.emit(gesture_connection, error),
+                    on_asr_download=lambda progress: self._runtimeAsrDownload.emit(gesture_connection, progress),
                     on_voice_start_requested=lambda: self._runtimeVoiceStartRequested.emit(gesture_connection),
                     on_session_started=self._runtimeSessionStarted.emit,
                     on_session_ended=self._suspend_recognition_for_interaction,
@@ -5492,6 +5498,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if self._device_stop_handled:
             return
         self._device_stop_handled = True
+        self._apply_asr_download(self._disconnect_event, None)
         if self._audio_settings_changes is not None:
             self._audio_settings_changes.close()
         self._audio_settings_timer.stop()
@@ -5627,6 +5634,19 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
     @Property(bool, notify=voiceAvailabilityChanged)
     def voiceRuntimeReady(self):
         return self._voice_runtime_ready
+
+    @Slot(object, object)
+    def _apply_asr_download(self, connection, progress):
+        if connection is not self._disconnect_event or (progress is not None and connection.is_set()):
+            return
+        value = {} if progress is None else dict(received=progress[0], total=progress[1])
+        if value != self._asr_download:
+            self._asr_download = value
+            self.asrDownloadChanged.emit()
+
+    @Property("QVariantMap", notify=asrDownloadChanged)
+    def asrDownload(self):
+        return self._asr_download
 
     @Property(str, notify=voiceAvailabilityChanged)
     def voiceRuntimeError(self):

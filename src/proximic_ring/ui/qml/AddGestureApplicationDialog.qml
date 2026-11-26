@@ -45,6 +45,18 @@ FigmaDialog {
             Label { objectName: dialog.selectionOnly ? "launchApplicationResultsHeading" : "applicationResultsHeading"; text: dialog.query ? "搜索结果" : dialog.showingRunning ? "当前已打开" : "本机应用"; color: theme.text; font.pixelSize: 14; font.weight: Font.DemiBold }
             Label { text: dialog.results.length + " 个"; color: theme.muted; font.pixelSize: 12 }
             Item { Layout.fillWidth: true }
+            FigmaAction {
+                visible: Qt.platform.os === "windows"; text: "浏览 .exe"; quiet: true; implicitHeight: 30
+                onClicked: {
+                    var bundle = dialog.catalog.browseExecutable()
+                    if (!bundle) return
+                    if (dialog.selectionOnly) dialog.applicationChosen(bundle)
+                    else if (dialog.catalog.addApplication(bundle)) {
+                        dialog.applicationAdded(bundle)
+                        dialog.close()
+                    }
+                }
+            }
             FigmaAction { objectName: dialog.selectionOnly ? "showAllLaunchApplications" : "showAllInstalledApplications"; visible: dialog.showingRunning; text: "所有应用"; quiet: true; implicitHeight: 30; onClicked: dialog.showAll = true }
             FigmaAction { text: dialog.catalog.listBusy ? "搜索中…" : "刷新"; quiet: true; implicitHeight: 30; enabled: !dialog.catalog.listBusy; onClicked: dialog.catalog.refreshApplications() }
         }

@@ -147,9 +147,37 @@ ColumnLayout {
         }
     }
 
+    ColumnLayout {
+        id: download
+        readonly property var progress: pane.controller.asrDownload
+        readonly property real received: progress.received || 0
+        readonly property real total: progress.total || 0
+        Layout.fillWidth: true
+        visible: pane.controller.asrBackend === "streaming_sensevoice" && progress.received !== undefined
+        spacing: 6
+        Label {
+            id: downloadLabel
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: theme.text
+            text: download.total > 0 && download.received >= download.total ? "正在校验 SenseVoice 模型…"
+                : download.total > 0 ? "正在下载 SenseVoice 模型　%1%（%2 / %3 MB）"
+                    .arg(Math.floor(download.received * 100 / download.total))
+                    .arg((download.received / 1000000).toFixed(1)).arg((download.total / 1000000).toFixed(1))
+                : download.received > 0 ? "正在下载 SenseVoice 模型　已下载 %1 MB".arg((download.received / 1000000).toFixed(1))
+                : "正在获取 SenseVoice 模型文件信息…"
+        }
+        ProgressBar {
+            objectName: "senseVoiceDownloadProgress"
+            Layout.fillWidth: true
+            Accessible.name: downloadLabel.text
+            indeterminate: download.visible && download.total === 0
+            value: download.total > 0 ? download.received / download.total : 0
+        }
+    }
     UiNotice {
         Layout.fillWidth: true
-        visible: pane.controller.connected && (pane.controller.voiceRetryPending || pane.controller.voiceRuntimeError.length > 0)
+        visible: !download.visible && pane.controller.connected && (pane.controller.voiceRetryPending || pane.controller.voiceRuntimeError.length > 0)
         text: pane.controller.voiceRetryPending ? pane.controller.statusDetail : pane.controller.voiceRuntimeError
         warning: !pane.controller.voiceRetryPending
     }

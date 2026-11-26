@@ -79,6 +79,9 @@ class AppGestureController(QObject):
     def __init__(self, owner, *, backend=None):
         super().__init__(owner)
         self.owner = owner
+        if backend is None and sys.platform == "win32":
+            from ...desktop.windows_shortcuts import WindowsAppShortcuts
+            backend = WindowsAppShortcuts()
         self.backend = backend or MacAppShortcuts()
         self._diagnostics = SceneDiagnostics(owner._diagnostic_log.path,
                                             run_id=owner._diagnostic_run_id, writer=owner._diagnostic_log)
@@ -205,7 +208,7 @@ class AppGestureController(QObject):
 
     @Property(bool, constant=True)
     def supported(self):
-        return sys.platform == "darwin"
+        return sys.platform in {"darwin", "win32"}
 
     @Property("QVariantList", constant=True)
     def apps(self):
@@ -340,7 +343,7 @@ class AppGestureController(QObject):
             self.owner._settings.setValue(key, "")
         saved = str(self.owner._settings.value(key))
         # A conflict in this ring's voice bindings can be absent with the other ring.
-        self._source_gesture = saved if sys.platform == "darwin" and saved in self._unused_source_gestures() else ""
+        self._source_gesture = saved if self.supported and saved in self._unused_source_gestures() else ""
 
     def _validate_source_conflict(self, profiles, voice):
         gesture = self._source_gesture
@@ -354,7 +357,7 @@ class AppGestureController(QObject):
     @Property(str, notify=changed)
     def inputSourceHint(self):
         return (GESTURE_LABELS[self._source_gesture] + " 切入 Mythlink"
-                if self._source_gesture else "从菜单栏选择 Mythlink")
+                if self._source_gesture else "开始输入时自动切换到 Mythlink" if sys.platform == "win32" else "从菜单栏选择 Mythlink")
 
     @Property("QVariantList", notify=changed)
     def inputSourceOptions(self):
@@ -486,7 +489,7 @@ class AppGestureController(QObject):
 
     @Slot()
     def refreshWeChatMenu(self):
-        if not self.supported or self._setup_closed:
+        if sys.platform != "darwin" or self._setup_closed:
             return
         self._menu_generation += 1
         generation = self._menu_generation
@@ -528,7 +531,7 @@ class AppGestureController(QObject):
 
     @Slot()
     def openSystemShortcuts(self):
-        if not self.supported:
+        if sys.platform != "darwin":
             return
         self._navigation_cancel.set()
         self._navigation_cancel = cancel = threading.Event()
@@ -555,9 +558,10 @@ class AppGestureController(QObject):
 
     def foreground_identity(self):
         """Read application identity without AX focus or editor contents."""
-        inline = getattr(self.owner, "_inline_input", None)
-        if getattr(inline, "_windows", False):
-            return inline._foreground_identity()
+        if sys.platform == "win32":
+            from ...desktop.windows_applications import api, window_info
+            info = window_info(api()[0].GetForegroundWindow())
+            return (info[0]["value"], info[1]) if info else None
         if sys.platform != "darwin":
             return None
         from ...platforms.macos.mac_workspace import frontmost_application
@@ -611,7 +615,7 @@ class AppGestureController(QObject):
 
     def _passive_outside_target(self, gesture, front):
         target = self.backend.capture(menu_action=True, scene=True, passive_undo=True)
-        if not target or target.blocked or (target.bundle, target.pid) != front:
+        if not target or target.blocked or not self._matches_focus(target, front):
             return None
         if target.input_context == "nontext":
             return target
@@ -620,12 +624,27 @@ class AppGestureController(QObject):
             return target
         return None
 
+    @staticmethod
+    def _matches_focus(target, origin):
+        return (target.bundle, target.pid) == origin or (
+            target.bundle.startswith("win.") and origin == (f"win32:{target.pid}", target.pid))
+
+    def windows_pointer_owns_gesture(self, name, bindings):
+        touchpad = getattr(self.owner, "_touchpad", None)
+        if not (getattr(touchpad, "_windows_ime", False) and touchpad.inputMode != "voice"
+                and (touchpad.active or touchpad.busy)):
+            return False
+        # A firmware pinch bound to dictation can be used with the cursor on.
+        # Raw2 taps and active stroke/capture sessions keep their existing owner.
+        return (touchpad.inputMode != "pointer" or touchpad.blocksVoice
+                or not (name.endswith("-pinch") and name in bindings.confirm + bindings.end))
+
     def envelope(self, event, *, audio_busy=False, start_focus=None, input_only=False, end_only=False):
         """Only gestures sharing an input binding need focus-based arbitration."""
         source = event.event if isinstance(event, BoundGestureEvent) else event
         name = str(getattr(source, "name", ""))
         bindings = event.bindings if isinstance(event, BoundGestureEvent) else self.owner._gesture_bindings
-        input_priority = name in self.input_gestures(bindings)
+        input_priority = name in self.input_gestures(bindings) and not self.windows_pointer_owns_gesture(name, bindings)
         created, generation = time.monotonic(), self._generation
         if (name and name == self._source_gesture
                 and not self.owner._global_gesture_bindings.action_for(name)
@@ -693,7 +712,9 @@ class AppGestureController(QObject):
                                if not input_only and self._catalog.uses_scene(name) else {})
                     if name in bindings.confirm:
                         options["require_editable"] = True
-                    elif empty_history or end_only:
+                        if not input_only and getattr(inline, "_windows", False):
+                            options["native_fallback"] = lambda front: self._passive_outside_target(name, front)
+                    elif empty_history or end_only or getattr(inline, "_windows", False):
                         options = {"allow_activation": False,
                                    "native_fallback": lambda front: self._passive_outside_target(name, front)}
                     start_focus = inline.capture_start_focus(**options)
@@ -751,7 +772,7 @@ class AppGestureController(QObject):
                     target = None
                     raise SceneActionError("foreground_changed")
                 if (target is not None and start_focus is not None and start_focus.target
-                        and (target.bundle, target.pid) != (start_focus.target[3], start_focus.target[4])):
+                        and not self._matches_focus(target, (start_focus.target[3], start_focus.target[4]))):
                     target = None
                     raise SceneActionError("foreground_changed")
         except Exception as exc:

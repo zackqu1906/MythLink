@@ -200,12 +200,13 @@ def test_windows_self_check_requires_the_tsf_script_and_loadable_dll(monkeypatch
     dll.touch()
     (payload / "windows-ime-prototype.ps1").touch()
     loaded = []
-    library = types.SimpleNamespace(DllGetClassObject=True, DllRegisterServer=True, DllUnregisterServer=True)
+    library = types.SimpleNamespace(DllGetClassObject=True, DllRegisterServer=True, DllUnregisterServer=True,
+                                    MythlinkSelectProfile=True)
     monkeypatch.setattr(ctypes, "WinDLL", lambda path: loaded.append(path) or library, raising=False)
     launcher._verify_bundled_windows_ime(tmp_path)
     assert loaded == [str(dll)]
-    del library.DllRegisterServer
-    with pytest.raises(AttributeError, match="DllRegisterServer"):
+    del library.MythlinkSelectProfile
+    with pytest.raises(AttributeError, match="MythlinkSelectProfile"):
         launcher._verify_bundled_windows_ime(tmp_path)
 
 

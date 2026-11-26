@@ -625,6 +625,7 @@ class RecognitionRuntime:
         retry_voice_event: threading.Event | None = None,
         voice_settings_provider: Callable[[], RuntimeSettings] | None = None,
         on_voice_availability: Callable[[str], None] | None = None,
+        on_asr_download: Callable[[tuple[int, int] | None], None] | None = None,
         on_voice_start_requested: Callable[[], None] | None = None,
         practice_active: Callable[[], bool] | None = None,
         practice_audio_consumer: Callable[[object, bool], bool] | None = None,
@@ -751,6 +752,7 @@ class RecognitionRuntime:
                 controller = _build_session_controller(
                     args, detector, streaming_observer=on_update,
                     desktop_overlay=SilentTranscriptOverlay(), on_state=on_state,
+                    on_asr_download=on_asr_download,
                     show_streaming_console=False,
                     push_to_talk_observer=(lambda active: on_push_to_talk(active) if not gesture_control else None)
                         if on_push_to_talk is not None else None,
