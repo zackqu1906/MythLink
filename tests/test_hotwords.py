@@ -50,6 +50,72 @@ def test_polish_shortlist_prioritizes_learned_form_over_other_possible_spellings
     assert len(candidates) == 6 and candidates[0] == ("飞鼠", "飞书")
 
 
+def test_manual_glossary_is_bounded_and_excludes_matches_and_disabled_words(tmp_path):
+    store = HotwordStore(tmp_path / "words.json")
+    for i in range(70):
+        store.add(f"Term{i}")
+    store.add("星图")
+    store.add("禁用词")
+    store.update(store.entries()[0]["id"], enabled=False)
+    matches, glossary = store.manual_polish_hints("打开星图")
+    assert matches == (("星图", ""),)
+    assert glossary[0] == "Term69" and "星图" not in glossary and "禁用词" not in glossary
+    assert sum(len(word) + 1 for word in glossary) <= 256 and len(glossary) <= 64
+
+
+def test_polish_points_to_mismatched_span_alongside_correct_literal():
+    from proximic_ring.voice.polish_vocabulary import polish_heard_form
+    assert polish_heard_form("下滑开关控制夏华润色", "下滑") == "夏华"
+    assert polish_heard_form("把夏华和瞎滑都写出来", "下滑") == ""
+    assert polish_heard_form("把 deep seek 的结果发来", "DeepSeek") == "deep seek"
+
+
+@pytest.mark.parametrize(("text", "heard", "word"), [
+    ("使用编辑代码写程序。口腔。", "口腔", "烤匠"),
+    ("这个东西交给 Clark 去做", "Clark", "Codex"),
+    ("是规则延迟高还是我写响应时间高", "我写", "模型"),
+    ("找他买杯哪铁", "哪铁", "拿铁"),
+    ("拿瓶水。这个睡不是很好喝", "睡", "水"),
+])
+def test_manual_polish_nominates_enabled_terms_beyond_glossary_budget(tmp_path, text, heard, word):
+    from proximic_ring.text_processing.prompts import polish_model_input
+
+    store = HotwordStore(tmp_path / "words.json")
+    store.add(word)
+    for i in range(40):
+        store.add(f"UnrelatedTerm{i}")
+    def payload():
+        return json.loads(polish_model_input(text, *store.manual_polish_hints(text))["user_content"])
+    assert {"word": word, "heard": heard} in payload()["personal_vocabulary"]
+    entry = next(e for e in store.entries() if e["word"] == word)
+    store.update(entry["id"], enabled=False)
+    assert word not in {h["word"] for h in payload()["personal_vocabulary"]}
+
+
+def test_polish_draft_respects_boundaries_and_competing_words():
+    from proximic_ring.voice.polish_vocabulary import correction_draft
+    assert correction_draft("dismiss miss", [("miss", "Myth")]) == "dismiss Myth"
+    options = [("张伟", "张玮"), ("张伟", "张炜")]
+    assert correction_draft("联系张伟", options) == "联系张伟"
+    assert correction_draft("联系张伟", options, [("张伟", "张炜")]) == "联系张炜"
+
+
+def test_learned_form_uses_observed_case_in_the_draft():
+    from proximic_ring.text_processing.prompts import polish_model_input
+    payload = json.loads(polish_model_input("MISS 绘制", (("Myth", "miss"),))["user_content"])
+    assert payload["correction_draft"] == "Myth 绘制"
+    assert payload["personal_vocabulary"] == [{"word": "Myth", "previous_asr": "miss", "heard": "MISS"}]
+
+
+def test_draft_keeps_compounds_and_explained_characters():
+    from proximic_ring.text_processing.prompts import polish_model_input
+    def draft(text, words):
+        return json.loads(polish_model_input(text, (), words)["user_content"])["correction_draft"]
+    assert "麦克风只做" in draft("戒指麦克风只做进场识别", ("分支", "近场识别"))
+    assert "张伟" in draft("伟大的伟，张伟", ("张玮",))
+    assert "响应时间" in draft("接口的想要时间太长", ("响应时间",))
+
+
 def test_manual_and_independent_corrections_survive_individual_undo(tmp_path):
     store = HotwordStore(tmp_path / "words.json")
     store.learn("edit-one", ["张玮", "Kubernetes"])

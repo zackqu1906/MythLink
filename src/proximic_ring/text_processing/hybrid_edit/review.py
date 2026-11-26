@@ -61,12 +61,12 @@ def line_missing(tail, output):
     return bool(LINE.search(tail)) and "\n" not in output.strip()
 
 
-def ask(complete, system, data, schema=None):
+def ask(complete, system, data, schema=None, *, operation):
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(data, ensure_ascii=False)},
     ]
-    return json.loads(complete(messages, schema))
+    return json.loads(complete(messages, schema, operation))
 
 
 def repair_tail(inp, plan, output, complete, *, check_lines=True):
@@ -82,7 +82,7 @@ def repair_tail(inp, plan, output, complete, *, check_lines=True):
     system = prompt("repair").strip() + "\n" + STYLE
     if check_lines and line_missing(tail, output):
         system += "\n逐项确认排版，要求分行时用实际换行符隔开对应事项。"
-    revised = ask(complete, system, data)["modified_text"]
+    revised = ask(complete, system, data, operation="repair")["modified_text"]
     return revised if aligned(plan["draft"], revised, plan) else output
 
 
@@ -100,7 +100,7 @@ def review_change(inp, plan, complete, *, staged=False):
         屏幕资料=inp["screen_context"],
         保存资料=inp.get("saved_context", ""),
     )
-    response = ask(complete, prompt("review").strip() + "\n" + STYLE, data, spelling.SCHEMA)
+    response = ask(complete, prompt("review").strip() + "\n" + STYLE, data, spelling.SCHEMA, operation="review")
     body = response["modified_text"]
     if (
         response["decision"] == "translate"

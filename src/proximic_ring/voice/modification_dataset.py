@@ -110,6 +110,7 @@ class ModificationDatasetCollector:
         self._pending_runtime_events_by_session: dict[int, list[dict]] = {}
         self._session_interactions: dict[int, str] = {}
         self._request_interactions: dict[int, str] = {}
+        self._active_edit_pipelines = {}
         self._routing_interactions: dict[int, str] = {}
         self._published_interactions: set[str] = set()
         self._deleted_interactions: set[str] = set()
@@ -137,6 +138,7 @@ class ModificationDatasetCollector:
             self._pending_runtime_events_by_session.clear()
             self._session_interactions.clear()
             self._request_interactions.clear()
+            self._active_edit_pipelines.clear()
             self._routing_interactions.clear()
 
     def begin_session(self, session_id: int) -> str:
@@ -755,9 +757,14 @@ class ModificationDatasetCollector:
             if request is None or request.get("status") != "processing":
                 return
             completed_at = _utc_now()
-            self._update_llm_request_locked(interaction_id, int(request_id), {
+            updates = {
                 "status": status, "completed_at": completed_at, "end_reason": reason,
-            })
+            }
+            pipeline = self._active_edit_pipelines.pop(int(request_id), None)
+            if pipeline is not None:
+                pipeline.finish(status)
+                updates["edit_pipeline"] = pipeline.snapshot()
+            self._update_llm_request_locked(interaction_id, int(request_id), updates)
             self._append_event_locked(interaction_id, {
                 "type": "llm_" + status, "request_id": int(request_id),
                 "occurred_at": completed_at, "reason": reason,
@@ -777,6 +784,9 @@ class ModificationDatasetCollector:
         with self._lock:
             interaction_id = self._ensure_interaction_locked(session_id)
             self._request_interactions[request_id] = interaction_id
+            pipeline = getattr(request, "edit_pipeline", None)
+            if pipeline is not None:
+                self._active_edit_pipelines[request_id] = pipeline
             settings = getattr(request, "settings", None)
             mode = str(getattr(request, "mode", ""))
             raw_text = str(getattr(request, "raw_text", ""))
@@ -797,7 +807,8 @@ class ModificationDatasetCollector:
             elif task_type == "edit":
                 model_input = edit_model_input(raw_text, target_text, context, edit_plan=getattr(request, "edit_plan", None))
             else:
-                model_input = self._llm_input(mode, raw_text, target_text, getattr(request, "polish_candidates", ()))
+                model_input = self._llm_input(mode, raw_text, target_text, getattr(request, "polish_candidates", ()),
+                                              getattr(request, "polish_glossary", ()))
             llm_request = {
                 "request_id": request_id,
                 "reexecuted": bool(getattr(request, "reexecuted", False)),
@@ -884,6 +895,7 @@ class ModificationDatasetCollector:
 
     def record_llm_result(self, request_id: int, result) -> None:
         with self._lock:
+            self._active_edit_pipelines.pop(int(request_id), None)
             branches = [_json_value(item) for item in getattr(result, "llm_branches", ())]
             interaction_id = self._request_interactions.get(int(request_id))
             if interaction_id is None:
@@ -893,7 +905,8 @@ class ModificationDatasetCollector:
             if interaction_id is None:
                 return
             record = self._interaction_data(interaction_id)
-            if any(r.get("request_id") == int(request_id) and r.get("status") == "cancelled"
+            if any(r.get("request_id") == int(request_id) and (r.get("status") == "cancelled"
+                   or (r.get("status") == "failed" and "end_reason" in r and "edit_pipeline" in r))
                    for r in record["llm"].get("requests", [])):
                 return
             updates = {
@@ -925,6 +938,8 @@ class ModificationDatasetCollector:
                 from ..text_processing.model import ROUTED_EDIT_BODY_VARIANTS, ROUTED_EDIT_HYBRID, normalize_routed_edit_variant
                 variant = normalize_routed_edit_variant(getattr(result, "routed_edit_variant", ""))
                 if variant == ROUTED_EDIT_HYBRID:
+                    if getattr(result, "edit_pipeline", None) is not None:
+                        updates["edit_pipeline"] = result.edit_pipeline
                     steps = list(getattr(result, "edit_steps", ()))
                     updates["edit_steps"] = steps
                     updates["system_prompt"] = "\n\n".join(step["system_prompt"] for step in steps)
@@ -1050,6 +1065,9 @@ class ModificationDatasetCollector:
                 self._publish_history_locked(interaction_id, force=True)
 
     def abandon_request(self, request_id: int, error: str) -> None:
+        with self._lock:
+            if request_id in self._active_edit_pipelines:
+                self.finish_pending_llm_request(request_id, reason=error)
         self.feedback(request_id, "abandoned", error=error)
 
     def record_application(
@@ -1969,6 +1987,7 @@ class ModificationDatasetCollector:
     @staticmethod
     def _history_entry(interaction_dir: Path, record: dict) -> dict | None:
         from .automatic_history import automatic_history_details
+        from .history_details import edit_route_summary
         audio = record.get("audio", {})
         audio_path = interaction_dir / str(audio.get("file", "audio.wav"))
         if not audio_path.is_file():
@@ -1996,6 +2015,8 @@ class ModificationDatasetCollector:
         display_mode = str(
             mode.get("final_applied") or mode.get("selected") or ""
         )
+        latest_edit = next((req for req in reversed(record.get("llm", {}).get("requests", []))
+                            if req.get("mode") == "edit"), {})
         # Project the actual processing path, without reading audio or changing
         # the stored binary dictation/edit training label.
         processing_mode = "edit" if display_mode == "edit" else "raw"
@@ -2063,6 +2084,7 @@ class ModificationDatasetCollector:
             "candidateEmpty": candidate_available and not bool(candidate_text),
             "editBeforeText": edit_before_text,
             "editSummary": edit_summary,
+            "editRoute": edit_route_summary(latest_edit),
             "application": str(
                 record.get("target", {}).get("application", "")
                 or (asr.get("context") or {}).get("application", "") or ""
@@ -2305,7 +2327,7 @@ class ModificationDatasetCollector:
         self._write_json(self._interaction_path(interaction_id), record)
 
     @staticmethod
-    def _llm_input(mode: str, raw_text: str, target_text: str, polish_candidates=()) -> dict:
+    def _llm_input(mode: str, raw_text: str, target_text: str, polish_candidates=(), polish_glossary=()) -> dict:
         from ..text_processing.prompts import (
             DICTATION_PROMPT,
             polish_model_input,
@@ -2315,7 +2337,7 @@ class ModificationDatasetCollector:
         )
 
         if str(mode) == "polish":
-            return polish_model_input(raw_text.strip(), polish_candidates)
+            return polish_model_input(raw_text.strip(), polish_candidates, polish_glossary)
         if str(mode) == "edit":
             user_content = (
                 "<待修改文本>\n"

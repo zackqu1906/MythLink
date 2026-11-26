@@ -5993,6 +5993,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
         if (edit_hotwords is None and normalized_mode == INPUT_MODE_EDIT
                 and routing_mode == INPUT_ROUTING_ROUTED_EDIT and variant == ROUTED_EDIT_HYBRID):
             edit_hotwords = self._hotwords.store.enabled_words()
+        polish_candidates, polish_glossary = (self._hotwords.store.manual_polish_hints(text)
+                                             if normalized_mode == TEXT_MODE_POLISH else ((), ()))
         request = TextProcessingRequest(
             request_id=request_id,
             session_id=int(session_id),
@@ -6009,7 +6011,8 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
             reexecuted=reexecuted,
             routed_edit_variant=variant,
             edit_hotwords=edit_hotwords or (),
-            polish_candidates=self._hotwords.store.polish_candidates(text) if normalized_mode == TEXT_MODE_POLISH else (),
+            polish_candidates=polish_candidates,
+            polish_glossary=polish_glossary,
         )
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
@@ -8853,6 +8856,7 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                                    language=self._asr_language, options=options),
             llm=self._llm_settings(), bindings=self._gesture_bindings, gain_db=self._asr_gain_db,
             hotwords=tuple(self._hotwords.store.snapshot()),
+            manual_polish_hints=self._hotwords.store.manual_polish_hints,
         )
 
     def _llm_settings(self) -> LLMSettings:

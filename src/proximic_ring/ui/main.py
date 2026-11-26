@@ -96,8 +96,9 @@ def main(argv: list[str] | None = None) -> int:
     from .shared.main_window_activation import MainWindowActivation
     main_activation = MainWindowActivation(window, agent_overlay, app)
     controller.ringGestures.mainWindowRequested.connect(main_activation.show)
-    from .shared.notifications import install_ring_disconnect_notice
+    from .shared.notifications import install_gesture_notice, install_ring_disconnect_notice
 
+    install_gesture_notice(window, controller)
     install_ring_disconnect_notice(window, controller)
     from .voice.hotword_notice import HotwordNotice
     hotword_notice = HotwordNotice(controller.hotwords, controller.inlineInput, app)

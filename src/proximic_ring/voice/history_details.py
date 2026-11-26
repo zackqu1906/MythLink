@@ -34,6 +34,48 @@ def _duration(milliseconds):
     return f"{milliseconds / 1000:.2f} 秒"
 
 
+def _step_duration(ms):
+    if not isinstance(ms, (int, float)) or ms < 0:
+        return ""
+    if ms < .01:
+        return "小于 0.01 毫秒"
+    return f"{ms:.2f} 毫秒" if ms < 1000 else _duration(ms)
+
+
+def edit_route_summary(request):
+    if request.get("routed_edit_variant") != ROUTED_EDIT_HYBRID:
+        return ""
+    pipeline = request.get("edit_pipeline")
+    if isinstance(pipeline, dict):
+        return _text(pipeline.get("route"))
+    # Earlier versions saved provider calls, but never timed their steps.
+    names = {"select_location": "模型选择候选位置", "resolve_target": "模型定位原词",
+             "confirm_edit": "模型确认候选改法", "review_edit": "模型复核初稿",
+             "edit_result": "模型返回正文"}
+    if request.get("status") == "completed" and request.get("edit_steps") == [] and not request.get("used_llm"):
+        return "规则直接处理"
+    return " → ".join(names.get(_dict(step).get("name"), "模型处理") for step in _list(request.get("edit_steps")))
+
+
+def _hybrid_history(request):
+    route = edit_route_summary(request)
+    pipeline = request.get("edit_pipeline")
+    if not isinstance(pipeline, dict):
+        return route, [], len(_list(request.get("edit_steps"))), "旧记录未保存分步耗时" if route else ""
+
+    rows = []
+    count = 0
+    for step in _list(pipeline.get("steps")):
+        step = _dict(step)
+        kind = step.get("kind")
+        count += int(kind == "model")
+        actor = {"rule": "规则", "model": "模型", "context": "上下文"}.get(kind, "")
+        status = {"failed": "失败", "cancelled": "已中止"}.get(step.get("status"), "")
+        rows.append({"label": " · ".join(filter(None, (actor, _text(step.get("label"))))),
+                     "time": " · ".join(filter(None, (_step_duration(step.get("duration_ms")), status)))})
+    return route, rows, count, ""
+
+
 def _model(name, provider=""):
     value = str(name or provider or "").lower()
     for token, label in (("deepseek", "DeepSeek"), ("clef", "Clef"), ("doubao", "豆包"),
@@ -213,14 +255,16 @@ def history_details(directory: Path, record: dict) -> dict:
         key = 'llm_' + str(index)
         title = '编辑请求 ' + str(index + 1) if edit_record and len(requests) > 1 else ''
         if routed and request.get('routed_edit_variant') == ROUTED_EDIT_HYBRID:
-            count = len(request.get('edit_steps') or [])
+            path, timings, count, note = _hybrid_history(request)
             label = ROUTED_EDIT_VARIANT_LABELS[ROUTED_EDIT_HYBRID]
             if count:
                 label += f' · {count} 次模型请求'
-            elif request.get('status') == 'completed':
+            elif path and request.get('status') == 'completed':
                 label += ' · 本地完成'
                 model = ''
-            classifications.append(item(key, label, title=title, model=model))
+            classifications.append(item(key + '_pipeline', path or label, title=title, model=model,
+                                        description=label if path else '', pipelineSteps=timings,
+                                        classificationNote=note))
         elif routed and request.get('routed_edit_variant') in ROUTED_EDIT_BODY_VARIANTS:
             classifications.append(item(key, ROUTED_EDIT_VARIANT_LABELS[request['routed_edit_variant']] + ' · 直接生成正文', title=title, model=model))
         elif classification:

@@ -294,6 +294,8 @@ def inline_ui(tmp_path, monkeypatch, request):
     engine.load(QUrl.fromLocalFile(str(Path(module.__file__).parent / "qml/Main.qml")))
     assert engine.rootObjects(), warnings
     root = engine.rootObjects()[0]
+    from proximic_ring.ui.shared.notifications import install_gesture_notice
+    install_gesture_notice(root, controller)
     root.setProperty("currentPage", 1)  # Existing interaction tests exercise the voice page.
     root.hide()
     controller._recognition_enabled = True

@@ -60,17 +60,28 @@ def test_application_shortcut_menu_shows_discovered_commands_before_presets(mapp
     assert root.grabWindow().save(str(shots / "application-menu-discovery-first.png"))
 
 
-def test_switching_cached_app_tabs_keeps_shortcuts_editable_without_rereading(mapping_ui):
+def test_switching_cached_app_tabs_keeps_shortcuts_editable_without_rereading(mapping_ui, monkeypatch):
     from PySide6.QtCore import QObject
     _, _, root, catalog, requests, click, add = mapping_ui
     add()
     other = "com.example.Other"
     assert catalog.addApplication(other)
+    assert catalog.setBinding(other, "circle-clockwise", "previous-tab")
     previous_requests = list(requests)
+    editor = root.findChild(QObject, "gestureActionEditor")
+    binding_reads = []
+    bindings_for = catalog._bindings_for
+    def track_bindings(bundle, *args, **kwargs):
+        binding_reads.append(bundle)
+        return bindings_for(bundle, *args, **kwargs)
+    monkeypatch.setattr(catalog, "_bindings_for", track_bindings)
     for bundle in [BUNDLE, other, BUNDLE]:
+        binding_reads.clear()
         click("gestureApplication_" + bundle)
         assert catalog.selectedApp == bundle and not catalog.busy
         assert catalog.menuState == "ready" and requests == previous_requests
+        assert set(binding_reads) == {bundle}
+        assert editor.property("savedId") == ("previous-tab" if bundle == other else "")
     click("menuAction_next-tab")
     assert root.findChild(QObject, "gestureActionEditor").property("savedId") == "next-tab"
     assert requests == previous_requests

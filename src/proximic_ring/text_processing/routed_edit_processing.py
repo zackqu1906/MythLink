@@ -49,7 +49,7 @@ def parse_routed_edit_response(raw, target):
 class RoutedEditTextProcessingMixin:
     def process_routed_edit_with_trace(self, text, settings, target_text, screen_context=None,
                                       *, variant=ROUTED_EDIT_HYBRID, saved_context=None,
-                                      cancelled=lambda: False, edit_steps=None, edit_hotwords=()):
+                                      cancelled=lambda: False, edit_steps=None, edit_hotwords=(), edit_pipeline=None):
         settings.validate()
         if not settings.enabled or not settings.supports_routed_edit:
             raise ValueError("手动＋编辑路由需要在服务设置中选择百炼 Qwen 或火山方舟 DeepSeek 模型")
@@ -66,7 +66,7 @@ class RoutedEditTextProcessingMixin:
             from .hybrid_edit.processing import process_hybrid_edit
             from .hybrid_edit.vocabulary import use_edit_hotwords
             with use_edit_hotwords(edit_hotwords):
-                return process_hybrid_edit(self, settings, model_input, cancelled, edit_steps)
+                return process_hybrid_edit(self, settings, model_input, cancelled, edit_steps, edit_pipeline)
         output = ""
         try:
             structured = variant == ROUTED_EDIT_ORIGINAL

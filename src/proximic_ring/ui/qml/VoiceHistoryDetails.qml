@@ -120,6 +120,28 @@ ColumnLayout {
                             fieldKey: result.modelData.key
                             contentText: result.modelData.text || ""
                         }
+                        Repeater {
+                            model: result.modelData.pipelineSteps || []
+                            delegate: RowLayout {
+                                id: stage
+                                required property int index
+                                required property var modelData
+                                Layout.fillWidth: true
+                                spacing: 12
+                                Label {
+                                    Layout.fillWidth: true; Layout.minimumWidth: 0
+                                    text: stage.modelData.label
+                                    color: theme.text; font.family: theme.family; font.pixelSize: theme.detailSize
+                                    wrapMode: Text.Wrap; textFormat: Text.PlainText
+                                }
+                                Label {
+                                    objectName: "voiceHistoryStepTime_" + result.modelData.key + "_" + stage.index
+                                    text: stage.modelData.time
+                                    color: theme.muted; font.family: theme.family; font.pixelSize: 13
+                                    textFormat: Text.PlainText
+                                }
+                            }
+                        }
                         Label {
                             visible: Boolean(result.modelData.errorText)
                             text: "失败原因"; color: theme.warning; font.family: theme.family

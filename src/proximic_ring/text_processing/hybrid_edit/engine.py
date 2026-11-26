@@ -162,7 +162,7 @@ def short_target(text):
 
 
 def semantic(inp, complete, reason):
-    response = ask(complete, prompt("location").strip(), inp)
+    response = ask(complete, prompt("location").strip(), inp, operation="location")
     return dict(mode="semantic", method=reason), response["modified_text"], "按完整口述交付"
 
 
@@ -174,7 +174,7 @@ def reviewed(inp, plan, complete):
         "屏幕资料": inp["screen_context"],
         "保存资料": inp.get("saved_context", ""),
     }
-    choice = ask(complete, prompt("confirm").strip(), payload, CONFIRM)
+    choice = ask(complete, prompt("confirm").strip(), payload, CONFIRM, operation="confirm")
     return (
         plan,
         plan["draft"] if choice["decision"] == "accept" else choice["modified_text"],
@@ -264,7 +264,7 @@ def resolve_or_edit(inp, complete):
             ):
                 hints.append(word)
     data = {**inp, "可能的原文片段（可全部舍弃）": hints}
-    response = ask(complete, prompt("resolve").strip(), data, RESOLVE_SCHEMA)
+    response = ask(complete, prompt("resolve").strip(), data, RESOLVE_SCHEMA, operation="resolve")
     old, new, which, tail = (response[n] for n in ["old", "new", "occurrence", "tail"])
     p = dict(mode="resolve", method="模型从整句提取确切原词", candidates=hints, selection=response)
     if response["decision"] == "whole":
@@ -342,7 +342,7 @@ def select_location(inp, complete):
             for n, (i, word, draft) in enumerate(opts, 1)
         ],
     }
-    selection = ask(complete, prompt("choose").strip(), payload, CHOICE)["index"]
+    selection = ask(complete, prompt("choose").strip(), payload, CHOICE, operation="choose")["index"]
     p = dict(
         mode="choose",
         method="由 模型比较逐处回填后的完整句子",
@@ -385,7 +385,7 @@ def edit_scoped(inp, complete):
             "可能的原文片段（可全部舍弃）": [],
             "定位说明": "序数及其单位表示用户所指的那一项。保留序号和其他项目，找出该项中与新词承担相同角色的原值。",
         }
-        res = ask(complete, prompt("resolve").strip(), data, RESOLVE_SCHEMA)
+        res = ask(complete, prompt("resolve").strip(), data, RESOLVE_SCHEMA, operation="ordinal")
         old, new, idx, tail = (res[n] for n in ("old", "new", "occurrence", "tail"))
         p = dict(mode="ordinal_scope", method="从所指项目里面选择原值", selection=res)
         if (
@@ -419,6 +419,10 @@ def edit_scoped(inp, complete):
 
 
 def edit(inp, complete):
+    return edit_with_steps(inp, lambda messages, schema, operation: complete(messages, schema))
+
+
+def edit_with_steps(inp, complete):
     text = inp["editable_text"]
     u = spelling.spoken(inp["utterance"])
     if text.strip() and LAST.fullmatch(u):
@@ -453,9 +457,9 @@ def edit(inp, complete):
             return p, out, decision
     last_response = ""
 
-    def record(messages, schema):
+    def record(messages, schema, operation):
         nonlocal last_response
-        last_response = complete(messages, schema)
+        last_response = complete(messages, schema, operation)
         return last_response
 
     p, out, decision = edit_scoped(inp, record)

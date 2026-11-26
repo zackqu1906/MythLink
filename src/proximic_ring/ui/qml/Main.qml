@@ -1139,13 +1139,17 @@ ApplicationWindow {
     Window {
         objectName: "appGestureNotice"
         transientParent: null
-        flags: Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
-        width: 380
+        flags: Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+               | Qt.WindowDoesNotAcceptFocus | Qt.WindowTransparentForInput
+        width: Math.min(380, Math.ceil(gestureNoticeMetrics.advanceWidth) + 28)
         height: appGestureNoticeText.implicitHeight + 28
-        x: Screen.virtualX + Screen.width - width - 24
-        y: Screen.virtualY + 48
         color: "transparent"
-        visible: appController.appGestures.notice.length > 0
+        visible: false
+        TextMetrics {
+            id: gestureNoticeMetrics
+            text: appGestureNoticeText.text
+            font: appGestureNoticeText.font
+        }
         Rectangle {
             anchors.fill: parent; radius: 12; color: "#FFFFFF"; border.color: "#E1E5F0"
             Label {

@@ -202,6 +202,14 @@ Rectangle {
                 elide: row.detailsVisible || row.textExpanded ? Text.ElideNone : Text.ElideRight
             }
             Label {
+                objectName: "voiceHistoryEditRoute"
+                Layout.fillWidth: true
+                visible: row.editEntry && !row.detailsVisible && Boolean(row.entry.editRoute)
+                text: "编辑路径 · " + (row.entry.editRoute || "")
+                color: theme.muted; font.family: theme.family; font.pixelSize: theme.detailSize
+                wrapMode: Text.Wrap; textFormat: Text.PlainText
+            }
+            Label {
                 id: editSummary
                 objectName: "voiceHistoryEditSummary"
                 Layout.fillWidth: true

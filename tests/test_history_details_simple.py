@@ -158,3 +158,15 @@ def test_failed_output_without_classification_does_not_invent_one(tmp_path, raw)
     saved['llm']['requests'][0].update(status='failed', error='模型输出不完整', raw_output=raw)
     row = routes(history_details(tmp_path, saved))[0]
     assert row['classificationText'] == '未取得分类'
+
+
+def test_old_hybrid_retry_shows_only_known_steps_without_inventing_timings(tmp_path):
+    saved = record()
+    first = saved['llm']['requests'][0]
+    first.update(routed_edit_variant='hybrid_edit_v1', edit_steps=[{'name': 'select_location'}])
+    saved['llm']['requests'].append(dict(first, edit_steps=[], candidate_text=''))
+    latest, earlier = routes(history_details(tmp_path, saved))
+    assert latest['text'] == '规则直接处理'
+    assert earlier['text'] == '模型选择候选位置'
+    assert all(not row['pipelineSteps'] and '未保存分步耗时' in row['classificationNote']
+               for row in (latest, earlier))

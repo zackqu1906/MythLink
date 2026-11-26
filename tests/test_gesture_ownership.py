@@ -142,7 +142,7 @@ def test_unconfigured_app_uses_global_even_with_saved_legacy_profiles(route, mon
     starts = []
     monkeypatch.setattr(c.ringGestures._selector, "start", lambda *args: starts.append(True))
     request(c, "circle-clockwise")
-    assert starts == [True] and not sent
+    assert starts == [True] and not sent and not service.notice
     catalog = configure(service, monkeypatch, bundle)
     assert catalog.setBinding(bundle, "circle-clockwise", ACTION["id"])
     request(c, "circle-clockwise")
@@ -150,6 +150,37 @@ def test_unconfigured_app_uses_global_even_with_saved_legacy_profiles(route, mon
     catalog.removeApplication(bundle)
     request(c, "circle-clockwise")
     assert len(starts) == 2 and len(sent) == 1
+
+
+def test_unassigned_app_gesture_notifies_only_for_an_unconfigured_foreground_app(route, monkeypatch):
+    c, service, _, backend, sent, messages, _ = route
+    outside(backend)
+    request(c, "circle-clockwise")
+    assert service.notice == "当前应用未配置手势"
+    service.dismissNotice()
+
+    catalog = configure(service, monkeypatch)
+    request(c, "circle-clockwise")
+    assert not service.notice
+    catalog.removeApplication(BUNDLE)
+    request(c, "circle-clockwise")
+    assert service.notice == "当前应用未配置手势"
+    assert not sent and not messages
+
+
+def test_queued_gesture_does_not_warn_after_foreground_app_changes(route):
+    c, service, _, backend, sent, _, _ = route
+    outside(backend)
+    request(c, "circle-clockwise", deliver=False)
+    backend.target = replace(backend.target, pid=99)
+    deliver_gestures(c)
+    assert not service.notice and not sent
+
+
+def test_voice_gesture_in_text_field_does_not_warn_about_unconfigured_app(route):
+    c, service, _, _, _, _, _ = route
+    assert request(c, "tap")
+    assert not service.notice
 
 
 @pytest.mark.parametrize("change", ["app", "pid", "window", "focus", "settings", "global", "generation", "disconnect", "busy", "capture_failure"])

@@ -2,26 +2,28 @@
 
 // Display metadata only. Presets use the existing validated custom-key binding path.
 // macOS default combinations: https://support.apple.com/zh-cn/102650
+var macShortcuts = [
+    {id:"keyboard:spotlight",label:"聚焦搜索",shortcut:"Cmd+Space",description:"显示或隐藏 macOS 聚焦搜索栏。"},
+    {id:"keyboard:switch-app",label:"切换应用",shortcut:"Cmd+Tab",description:"切换到最近使用的另一个应用。"},
+    {id:"keyboard:screenshot",label:"截屏与录屏",shortcut:"Cmd+Shift+5",description:"打开系统截屏工具栏，选择截取区域或录制屏幕。"},
+    {id:"keyboard:emoji",label:"表情与符号",shortcut:"Ctrl+Cmd+Space",description:"打开系统字符检视器，选择表情或其他符号。"},
+    {id:"keyboard:dock",label:"显示／隐藏程序坞",shortcut:"Cmd+Alt+D",description:"切换 macOS 程序坞的显示状态。"}
+].map(function(action) {
+    return Object.assign({}, action, {keyboardPreset:true,systemShortcut:true,path:"macOS 系统快捷键",available:null})
+})
+
 function systemShortcuts(platform) {
-    if (platform !== "osx") return []
-    return [
-        {id:"keyboard:spotlight",label:"聚焦搜索",shortcut:"Cmd+Space",description:"显示或隐藏 macOS 聚焦搜索栏。"},
-        {id:"keyboard:switch-app",label:"切换应用",shortcut:"Cmd+Tab",description:"切换到最近使用的另一个应用。"},
-        {id:"keyboard:screenshot",label:"截屏与录屏",shortcut:"Cmd+Shift+5",description:"打开系统截屏工具栏，选择截取区域或录制屏幕。"},
-        {id:"keyboard:emoji",label:"表情与符号",shortcut:"Ctrl+Cmd+Space",description:"打开系统字符检视器，选择表情或其他符号。"},
-        {id:"keyboard:dock",label:"显示／隐藏程序坞",shortcut:"Cmd+Alt+D",description:"切换 macOS 程序坞的显示状态。"}
-    ].map(function(action) {
-        return Object.assign({}, action, {keyboardPreset:true,systemShortcut:true,path:"macOS 系统快捷键",available:null})
-    })
+    return platform === "osx" ? macShortcuts : []
 }
 
 function presetFor(action, platform) {
     if (!action) return null
     // Normalize modifier order for persisted shortcuts, without changing their keys.
-    var keys = String(action.shortcut || "").split("+").sort().join("+")
-    return systemShortcuts(platform).filter(function(preset) {
-        return preset.label === action.label && preset.shortcut.split("+").sort().join("+") === keys
-    })[0] || null
+    return systemShortcuts(platform).find(function(preset) {
+        if (preset.label !== action.label) return false
+        var keys = String(action.shortcut || "").split("+").sort().join("+")
+        return preset.shortcut.split("+").sort().join("+") === keys
+    }) || null
 }
 
 function isSystemMenu(action) {

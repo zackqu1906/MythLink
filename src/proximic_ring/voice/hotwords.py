@@ -14,7 +14,7 @@ import time
 import unicodedata
 import uuid
 
-from .polish_vocabulary import PolishVocabulary, confirmed_asr_form
+from .polish_vocabulary import PolishVocabulary, confirmed_asr_form, review_forms
 
 
 # Seed's bidirectional endpoint documents 100 tokens. Without its tokenizer,
@@ -169,6 +169,25 @@ class HotwordStore:
 
     def polish_candidates(self, text: str) -> tuple[tuple[str, str], ...]:
         return self._polish_vocabulary.candidates(text)
+
+    def manual_polish_hints(self, text):
+        """Give an explicit polish request a bounded glossary for errors local phonetics misses."""
+        with self._lock:
+            candidates = self.polish_candidates(text)
+            matched = {word for word, _ in candidates}
+            # Reserve glossary space for relevant words even if they were added long ago.
+            nominated = [word for _, word in review_forms(text, self._enabled_words)]
+            glossary = []
+            budget = 256  # Count separators too; preserve the order of the user's vocabulary.
+            for word in dict.fromkeys([*nominated, *self._enabled_words]):
+                if word in matched:
+                    continue
+                cost = len(word) + 1
+                if cost > budget or len(glossary) == 64:
+                    break
+                glossary.append(word)
+                budget -= cost
+            return candidates, tuple(glossary)
 
     @staticmethod
     def _matches_tail(context, prefix):

@@ -40,7 +40,7 @@ class ManualTextProcessingMixin:
             thinking_budget=text_thinking_budget(len(text)), allow_empty_text=settings.provider in {"volcengine", "bailian"})
         return output.strip() if isinstance(output, str) else ""
 
-    def polish_with_trace(self, text: str, settings: LLMSettings, candidates=()) -> tuple[str, str]:
+    def polish_with_trace(self, text: str, settings: LLMSettings, candidates=(), glossary=()) -> tuple[str, str]:
         """Polish only this utterance; never enter instruction editing/racing."""
         settings.validate()
         if not settings.enabled:
@@ -50,7 +50,7 @@ class ManualTextProcessingMixin:
             raise ValueError("本句没有可润色的文字")
         if normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL and settings.local_auto_start:
             self._ensure_local_server(settings)
-        model_input = polish_model_input(raw_text, candidates)
+        model_input = polish_model_input(raw_text, candidates, glossary)
         response = self._request_chat(
             settings, system_prompt=model_input["system_prompt"],
             user_content=model_input["user_content"],
@@ -60,7 +60,9 @@ class ManualTextProcessingMixin:
         output = self._model_output_text(response)
         if not isinstance(response, str) or not response.strip():
             raise LLMResponseProcessingError("润色未返回正文，已保留听写", output)
-        return response.strip(), output
+        from ..voice.polish_vocabulary import preserve_spelled_forms
+
+        return preserve_spelled_forms(raw_text, response.strip(), candidates), output
 
     def process(
         self,

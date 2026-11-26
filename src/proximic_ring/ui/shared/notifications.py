@@ -1,5 +1,40 @@
-"""Present the Ring disconnect notice independently of the main window."""
+"""Present notifications independently of the main window."""
 from __future__ import annotations
+
+
+def show_corner_notice(window, diagnostic) -> None:
+    from PySide6.QtGui import QGuiApplication
+    from ..gestures.gesture_hud import hud_screen
+
+    screen = hud_screen(diagnostic)
+    if screen is None:
+        return
+    window.setScreen(screen)
+    area = screen.availableGeometry()
+    window.setPosition(area.x() + area.width() - window.width() - 24, area.y() + 24)
+    window.show()
+    if QGuiApplication.platformName() == "cocoa":
+        try:
+            _show_on_macos_spaces(window)
+        except Exception as exc:
+            diagnostic(f"[CORNER NOTICE] macOS Space presentation failed: {exc}")
+
+
+def install_gesture_notice(root, controller) -> None:
+    from PySide6.QtGui import QWindow
+
+    notice = root.findChild(QWindow, "appGestureNotice")
+    if notice is None:
+        raise RuntimeError("Gesture notice window is missing")
+
+    def present() -> None:
+        if controller.appGestures.notice:
+            show_corner_notice(notice, controller._append_background_diagnostic)
+        else:
+            notice.hide()
+
+    controller.appGestures.noticeChanged.connect(present)
+    present()
 
 
 def install_ring_disconnect_notice(root, controller) -> None:

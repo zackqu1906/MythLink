@@ -344,7 +344,7 @@ def run_task(inp, plan, complete):
         {"role": "system", "content": prompt(mode)},
         {"role": "user", "content": json.dumps(plan["user"], ensure_ascii=False)},
     ]
-    raw = complete(messages, None)
+    raw = complete(messages, None, mode)
     out = json.loads(raw)["modified_text"]
     correction = word_edits.feedback(inp, out, mode)
     final = finish(plan, inp, out)
@@ -356,5 +356,5 @@ def run_task(inp, plan, complete):
         messages.extend(
             [{"role": "assistant", "content": raw}, {"role": "user", "content": correction}]
         )
-        final = finish(plan, inp, json.loads(complete(messages, None))["modified_text"])
+        final = finish(plan, inp, json.loads(complete(messages, None, "retry"))["modified_text"])
     return plan, plan["draft"] if final is None else final, mode
