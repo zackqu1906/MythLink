@@ -7,6 +7,7 @@ import threading
 
 from proximic_ring.ble_runtime import run_ble
 from proximic_ring.ring_devices import ring_family
+from proximic_ring.windows_ble import paired_r1_devices
 
 
 class DeviceScanWorker(threading.Thread):
@@ -39,8 +40,27 @@ class DeviceScanWorker(threading.Thread):
             self._task = asyncio.current_task()
         try:
             if self.cancelled:
-                return []
-            return await scan_all_devices(self._timeout)
+                return [], ""
+            paired = await paired_r1_devices()
+            error = ""
+            try:
+                nearby = await scan_all_devices(self._timeout)
+            except Exception as exc:
+                if not paired:
+                    raise
+                nearby, error = [], str(exc) or type(exc).__name__
+            known = {device.address.casefold(): device for device in paired}
+            rows = []
+            for item in nearby:
+                cached = known.pop(item.identifier.casefold(), None)
+                name = item.name or (cached.name if cached else "")
+                rows.append({"name": name or "未命名设备", "identifier": item.identifier,
+                             "rssi": item.rssi if item.rssi is not None else "", "_device": item.device,
+                             "family": ring_family(name, getattr(item, "pnp_id", None))})
+            paired_rows = [{"name": device.name, "identifier": device.address, "rssi": "",
+                            "family": "R1", "_device": device, "pairedOnly": True}
+                           for device in known.values()]
+            return paired_rows + rows, error
         finally:
             with self._lock:
                 self._loop = self._task = None
@@ -48,12 +68,7 @@ class DeviceScanWorker(threading.Thread):
     def run(self) -> None:
         rows, error = [], ""
         try:
-            rows = [
-                {"name": item.name or "未命名设备", "identifier": item.identifier,
-                 "rssi": item.rssi if item.rssi is not None else "", "_device": item.device,
-                 "family": ring_family(item.name or "", getattr(item, "pnp_id", None))}
-                for item in run_ble(self._scan())
-            ]
+            rows, error = run_ble(self._scan())
         except (asyncio.CancelledError, WorkerCancelledError):
             pass
         except Exception as exc:

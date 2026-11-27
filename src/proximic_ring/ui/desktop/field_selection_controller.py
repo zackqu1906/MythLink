@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, QTimer, Signal, Slot, Qt
 
 from ...platforms.macos.mac_permissions import MacPermissionError
 from ...desktop.text_focus import MESSAGES
+from ...ring_devices import matches_tap_gesture
 
 
 class FieldSelectionController(QObject):
@@ -49,7 +50,7 @@ class FieldSelectionController(QObject):
                 self._epoch += 1
                 self.active.set()
                 action = "enter"
-            elif name == "tap":
+            elif matches_tap_gesture(name, getattr(self.fields.ring.owner, "_device_family", "")):
                 action = "confirm" if self._deferred and not voice_busy else "voice"
             elif name in {"swipe-up", "swipe-down", "swipe-left", "swipe-right"}:
                 action = "move"

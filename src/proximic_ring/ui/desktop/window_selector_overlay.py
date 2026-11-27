@@ -233,6 +233,9 @@ class WindowSelectorOverlay(QObject):
         self.previews.stop()
         self.window.rootObject().setProperty("presented", False)
         self.window.hide()
+        if sys.platform == "win32" and self.controller.phase == "switching_desktop":
+            # Recreate our unowned tool window on the newly active virtual desktop.
+            self.window.destroy()
         self.icons.images.clear()
 
     def close(self):

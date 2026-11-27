@@ -634,10 +634,15 @@ class AppGestureController(QObject):
         if not (getattr(touchpad, "_windows_ime", False) and touchpad.inputMode != "voice"
                 and (touchpad.active or touchpad.busy)):
             return False
-        # A firmware pinch bound to dictation can be used with the cursor on.
-        # Raw2 taps and active stroke/capture sessions keep their existing owner.
-        return (touchpad.inputMode != "pointer" or touchpad.blocksVoice
-                or not (name.endswith("-pinch") and name in bindings.confirm + bindings.end))
+        if touchpad.inputMode != "pointer" or touchpad.blocksVoice:
+            return True
+        if name.endswith("-pinch") and name in bindings.confirm + bindings.end:
+            return False
+        inline = self.owner._inline_input
+        if inline._utterance_id and ((name in bindings.undo and inline.canUndo)
+                or (name in bindings.switch_mode and inline.canHistoryForward)):
+            return False
+        return True
 
     def envelope(self, event, *, audio_busy=False, start_focus=None, input_only=False, end_only=False):
         """Only gestures sharing an input binding need focus-based arbitration."""

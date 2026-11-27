@@ -130,6 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     install_ring_disconnect_notice(window, controller)
     from .voice.hotword_notice import HotwordNotice
     hotword_notice = HotwordNotice(controller.hotwords, controller.inlineInput, app)
+    if controller.inlineInput._windows:
+        from .voice.windows_voice_panel import WindowsVoicePanel
+        voice_panel = WindowsVoicePanel(controller.inlineInput, app)
     from .gestures.gesture_hud import GestureHud
 
     gesture_hud = GestureHud(app, diagnostic=controller._append_background_diagnostic)

@@ -11,6 +11,42 @@ from PySide6.QtTest import QTest
 from test_inline_ui import inline_ui
 
 
+@pytest.fixture(autouse=True)
+def no_local_pairs(monkeypatch):
+    from proximic_ring.ui.shared import device_scan
+
+    async def empty():
+        return []
+
+    monkeypatch.setattr(device_scan, "paired_r1_devices", empty)
+
+
+@pytest.mark.parametrize("advertising", [False, True])
+def test_paired_r1_is_listed_once_and_keeps_live_scan_handle(monkeypatch, advertising):
+    from types import SimpleNamespace
+    from proximic_ring.ui.shared import device_scan
+    from ring_python_sdk import ble
+
+    paired = SimpleNamespace(name="R10047", address="AA:BB:CC:DD:EE:FF")
+    live = SimpleNamespace(name="", identifier=paired.address.lower(), rssi=-42, device=object())
+
+    async def pairs():
+        return [paired]
+
+    async def scan(_timeout):
+        return [live] if advertising else []
+
+    monkeypatch.setattr(device_scan, "paired_r1_devices", pairs)
+    monkeypatch.setattr(ble, "scan_all_devices", scan)
+    rows, error = asyncio.run(device_scan.DeviceScanWorker(None)._scan())
+    assert not error and len(rows) == 1
+    row = rows[0]
+    assert (row["name"], row["family"]) == ("R10047", "R1")
+    assert row["_device"] is (live.device if advertising else paired)
+    assert row["rssi"] == (-42 if advertising else "")
+    assert bool(row.get("pairedOnly")) is (not advertising)
+
+
 def wait_until(predicate):
     deadline = time.monotonic() + 3
     while not predicate() and time.monotonic() < deadline:

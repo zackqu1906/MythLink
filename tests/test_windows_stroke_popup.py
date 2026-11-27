@@ -322,7 +322,7 @@ def test_pending_strokes_follow_caret_without_moving_grid(windows_ui, tmp_path):
 
 @pytest.mark.parametrize("scale", [1, 1.25, 1.5, 2])
 def test_windows_anchor_converts_per_monitor_dpi(windows_ui, monkeypatch, scale):
-    from proximic_ring.ui.touchpad import stroke_session_controller as module
+    from proximic_ring.ui.shared import windows_caret as module
     from proximic_ring.voice.ime import windows_bridge
     from types import SimpleNamespace
     screen = SimpleNamespace(geometry=lambda: QRect(-1280, 0, 1280, 720),

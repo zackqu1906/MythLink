@@ -95,14 +95,12 @@ def test_two_clicks_reselect_save_and_copy_only_after_confirmation(screenshot):
     assert list(root.glob('*.png')) == paths
 
 
-@pytest.mark.parametrize('gesture', ['tap', 'swipe-right', 'index-pinch'])
+@pytest.mark.parametrize('gesture', ['tap', 'swipe-right'])
 @pytest.mark.parametrize('pointer_active', [False, True])
 def test_confirmation_gestures_are_independent_of_pointer_clicks(screenshot, gesture, pointer_active):
     from PySide6.QtGui import QCursor
     from test_ui_touchpad import prepare
     owner, cap, _, root = screenshot
-    if gesture == 'index-pinch':
-        owner._device_family = 'R1'
     if pointer_active:
         pointer, source = prepare(owner)
         pointer.start(); QTest.qWait(20)
@@ -132,6 +130,23 @@ def test_confirmation_gestures_are_independent_of_pointer_clicks(screenshot, ges
     if pointer_active:
         assert pointer.active
         pointer.stop(); QTest.qWait(20)
+
+
+def test_r1_three_pinches_select_corners_then_save(screenshot):
+    from PySide6.QtGui import QCursor
+    owner, cap, _, root = screenshot
+    owner._device_family = 'R1'
+    start(cap)
+    window = cap.windows[0]
+    gesture = SimpleNamespace(name='index-pinch')
+    for point, phase in [(QPoint(40, 50), 'selecting'), (QPoint(200, 160), 'preview')]:
+        QCursor.setPos(window.mapToGlobal(point))
+        assert cap.consume(gesture, owner._disconnect_event)
+        QTest.qWait(20)
+        assert cap.phase == phase
+    assert cap.consume(gesture, owner._disconnect_event)
+    QTest.qWait(20)
+    assert not cap.active and len(list(root.glob('*.png'))) == 1
 
 
 def test_failed_save_keeps_preview_and_existing_clipboard(screenshot, monkeypatch):

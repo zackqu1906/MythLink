@@ -10,6 +10,7 @@ from ...platforms.macos.mac_permissions import MacPermissionError
 from ...platforms.macos.native_access import NativeAccessChannel
 from ...desktop.text_focus import foreground_stamp
 from ...desktop.window_selector import MESSAGES, grid_move
+from ...desktop.virtual_desktops import cycle_desktop
 from ...gestures.gesture_settings import GESTURE_LABELS
 from ...diagnostics.scene_diagnostics import exception_details, safe_data
 
@@ -24,22 +25,29 @@ class WindowSelectorController(QObject):
     notice = Signal(str)
     _result = Signal(int, str, object)
     _gesture = Signal(str, int, object, float, bool)
+    _desktopResult = Signal(int, object, str)
 
     def __init__(self, ring, *, enabled=None, channel=None, clock=time.monotonic, stamp_reader=None):
         super().__init__(ring)
         self.ring = ring
         ring.changed.connect(self.changed)
-        self._enabled = (sys.platform == "darwin" and os.environ.get("PROXIMIC_STARTUP_PROBE") != "1"
+        self._enabled = (sys.platform in {"darwin", "win32"} and os.environ.get("PROXIMIC_STARTUP_PROBE") != "1"
                          if enabled is None else enabled)
+        if channel is None and sys.platform == "win32":
+            from ...desktop.windows_window_selector import WindowsSelectorChannel
+            channel = WindowsSelectorChannel()
         self._channel = channel or NativeAccessChannel()
         self._clock = clock
-        self._stamp_reader = stamp_reader or foreground_stamp
+        self._stamp_reader = stamp_reader or (foreground_stamp if sys.platform == "darwin" else lambda: None)
         self.blocked = threading.Event()
         self._closed = False
         self._epoch = 0
         self._phase = "closed"
         self.pointer_context = (self._epoch, self._phase)
         self._snapshot = {}
+        self._desktop_cancel = threading.Event()
+        self._desktop_steps = 0
+        self._desktop_status = ""
         self._groups = []
         self._app_index = None
         self._window_selections = {}
@@ -56,6 +64,11 @@ class WindowSelectorController(QObject):
         self._timer.timeout.connect(self.poll)
         self._result.connect(self._receive, Qt.QueuedConnection)
         self._gesture.connect(self._handle_gesture, Qt.QueuedConnection)
+        self._desktopResult.connect(self._desktop_finished, Qt.QueuedConnection)
+
+    @Property(str, notify=changed)
+    def desktopStatus(self):
+        return self._desktop_status
 
     @Property("QVariantList", notify=cardsChanged)
     def cards(self):
@@ -72,7 +85,10 @@ class WindowSelectorController(QObject):
         return "食指捏合" if self.ring.owner._device_family == "R1" else "单击或 Tap"
     @Property("QVariantMap", notify=changed)
     def globalLabels(self):
-        return {**{key: GESTURE_LABELS.get(value, "").split("（")[0] for key, value in self.ring.globalBindings.items()},
+        bindings = dict(self.ring.globalBindings)
+        if self.ring.owner._device_family == "R1" and bindings.get("show_menu") == "index-pinch":
+            bindings.pop("show_menu")  # This pinch confirms while the selector owns input.
+        return {**{key: GESTURE_LABELS.get(value, "").split("（")[0] for key, value in bindings.items()},
                 "switch_mode": "中指捏合"}
     @Property(int, notify=selectionChanged)
     def selected(self): return self._selected
@@ -142,6 +158,9 @@ class WindowSelectorController(QObject):
             self.cancel()
             return
         self._phase = "loading"
+        self._desktop_cancel = threading.Event()
+        self._desktop_steps = 0
+        self._desktop_status = ""
         self.pointer_context = (self._epoch, self._phase)
         self._snapshot = {}
         self._groups = []
@@ -162,7 +181,8 @@ class WindowSelectorController(QObject):
     def enqueue(self, name, connection, busy=False):
         # This runs on the model thread. Every selector gesture is consumed
         # synchronously, especially Tap: it can never start an utterance.
-        if name in {"clench", "index-pinch", "middle-pinch", "tap", "swipe-up", "swipe-down", "swipe-left", "swipe-right"}:
+        if name in {"clench", "index-pinch", "middle-pinch", "tap", "swipe-up", "swipe-down", "swipe-left", "swipe-right",
+                    "circle-clockwise", "circle-counterclockwise"}:
             self._gesture.emit(name, self._epoch, connection, time.monotonic(), busy)
 
     @Slot(str, int, object, float, bool)
@@ -177,6 +197,14 @@ class WindowSelectorController(QObject):
         if not self._valid(epoch) or busy:
             self.cancel()
             return
+        if name in {"circle-clockwise", "circle-counterclockwise"}:
+            self._desktop_steps += 1 if name == "circle-clockwise" else -1
+            self._touch()
+            if self._phase == "ready":
+                self._switch_desktop()
+            return
+        if self._phase == "switching_desktop":
+            return
         if name == "index-pinch":
             if self._phase == "ready": self._touch()
             self.ring.showMenu()
@@ -189,6 +217,45 @@ class WindowSelectorController(QObject):
             self.back()
         elif name.startswith("swipe-"):
             self.pick(grid_move(self._selected, len(self.cards), self._columns, name[6:]))
+
+    def _switch_desktop(self):
+        direction = 1 if self._desktop_steps > 0 else -1
+        self._desktop_steps -= direction
+        self._phase = "switching_desktop"
+        self._desktop_status = "正在切换桌面…"
+        self.pointer_context = (self._epoch, self._phase)
+        self.changed.emit()
+        epoch, cancelled = self._epoch, self._desktop_cancel
+        def switch():
+            try:
+                result, error = cycle_desktop(direction, cancelled), ""
+            except Exception as exc:
+                result, error = None, str(exc)
+            if not cancelled.is_set():
+                self._desktopResult.emit(epoch, result, error)
+        threading.Thread(target=switch, name="RingDesktopSwitch", daemon=True).start()
+
+    @Slot(int, object, str)
+    def _desktop_finished(self, epoch, result, error):
+        if not self._valid(epoch) or self._phase != "switching_desktop":
+            return
+        if error:
+            self._desktop_status = error
+            self._desktop_steps = 0
+        elif result:
+            index, count = result
+            self._desktop_status = f"桌面 {index} / {count}" if count > 1 else "当前只有一个桌面"
+        if self._desktop_steps:
+            self._switch_desktop()
+            return
+        self.dismissRequested.emit()
+        self._release_session(self._snapshot.get("token"))
+        self._snapshot, self._groups, self._app_index = {}, [], None
+        self._phase = "loading"
+        self.pointer_context = (epoch, self._phase)
+        self._touch()
+        self.cardsChanged.emit()
+        self._submit("selector_list", host_pid=os.getpid(), host_window=self._host_window())
 
     @Slot(int)
     def setColumns(self, columns):
@@ -343,7 +410,9 @@ class WindowSelectorController(QObject):
                 **{key: error[key] for key in ('ax_error', 'ax_operation', 'ax_attribute') if key in error},
                 locations=" > ".join(f"{f['module']}:{f['line']}:{f['function']}"
                                      for f in error.get("error_frames", [])[-3:]))
-        if status == "ready" and operation == "selector_list":
+        if status == "empty" and operation == "selector_list":
+            result = {**result, "cards": []}
+        if status in {"ready", "empty"} and operation == "selector_list":
             self.ring.owner._event_log("RING_WINDOW_SELECTOR", action="list_ready",
                                       epoch=epoch, elapsed_ms=elapsed, count=len(result["cards"]),
                                       **native)
@@ -354,6 +423,8 @@ class WindowSelectorController(QObject):
             self.cardsChanged.emit()
             self.selectionChanged.emit()
             self.presentRequested.emit()
+            if self._desktop_steps:
+                self._switch_desktop()
             return
         self.ring.owner._event_log("RING_WINDOW_SELECTOR", status=status, action=operation,
                                   epoch=epoch, elapsed_ms=elapsed, phase=self._phase,
@@ -366,7 +437,7 @@ class WindowSelectorController(QObject):
     @Slot()
     def poll(self):
         if not self.blocked.is_set(): return
-        if not self._valid(self._epoch) or self._clock() >= self._deadline:
+        if not self._valid(self._epoch) or (self._phase != "switching_desktop" and self._clock() >= self._deadline):
             self.ring.owner._event_log("RING_WINDOW_SELECTOR", action="cancel",
                 epoch=self._epoch, phase=self._phase,
                 reason="context_invalid" if not self._valid(self._epoch) else "timeout")
@@ -390,6 +461,8 @@ class WindowSelectorController(QObject):
 
     @Slot()
     def cancel(self):
+        self._desktop_cancel.set()
+        self._desktop_steps = 0
         token = self._snapshot.get("token")
         self._epoch += 1
         self._timer.stop()

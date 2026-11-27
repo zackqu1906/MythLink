@@ -5053,6 +5053,10 @@ class AppController(VoiceModesMixin, VoiceCaptureMixin, AutomaticVoiceMixin, Man
                 )
                 current["rssi"] = row.get("rssi", current.get("rssi", ""))
                 current["family"] = row.get("family", ring_family(current["name"]))
+            if row.get("pairedOnly"):
+                current["pairedOnly"] = True
+            else:
+                current.pop("pairedOnly", None)
         return added
 
     def _refresh_scan_message(self) -> None:

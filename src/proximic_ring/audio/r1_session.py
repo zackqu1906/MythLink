@@ -1,6 +1,7 @@
 """Adapt the R1-PC SDK to the app's shared gesture and pointer session."""
 
 import asyncio
+import sys
 import time
 
 from ring_python_sdk_r1 import (
@@ -45,13 +46,25 @@ class R1Session:
         return self.ring.info
 
     async def connect(self, target=None):
+        if sys.platform == "win32" and isinstance(target, str):
+            from ..windows_ble import paired_r1_devices
+            paired = await paired_r1_devices(target)
+            if paired:
+                device = paired[0]
+                target = RingDevice(device.address, device.name, None, device)
         await self.ring.connect(target, auto_reconnect=False)
         return True
 
     connect_target = connect
 
     async def connect_device(self, device):
-        return await self.connect(device if isinstance(device, RingDevice) else device.address)
+        if isinstance(device, RingDevice):
+            return await self.connect(device)
+        if sys.platform == "win32":
+            from bleak.backends.device import BLEDevice
+            if isinstance(device, BLEDevice):
+                return await self.connect(RingDevice(device.address, device.name or "R1", None, device))
+        return await self.connect(device.address)
 
     async def disconnect(self):
         await self.ring.close()

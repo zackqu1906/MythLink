@@ -363,6 +363,15 @@ class RingGestureController(QObject):
         if self.session_blocked():
             observe_gesture(self.owner, identity, status="not_triggered")
             return False
+        if self._selector.blocked.is_set():
+            selector_name = name
+            if matches_tap_gesture(name, self.owner._device_family):
+                selector_name = "tap"
+            elif not name.startswith(("swipe-", "circle-")):
+                action = self.owner._global_gesture_bindings.action_for(name)
+                selector_name = {"show_menu": "index-pinch", "window_selector": "clench"}.get(action, name)
+            self._selector.enqueue(selector_name, connection, bool(audio_busy or self.speech_busy()))
+            return False
         preview = getattr(self.owner, "_dictation_preview", None)
         if preview is not None and preview.consume(name, connection, audio_busy=audio_busy):
             return False
@@ -378,14 +387,6 @@ class RingGestureController(QObject):
             return False
         busy = bool(audio_busy or self.speech_busy())
         global_action = self.owner._global_gesture_bindings.action_for(name)
-        canonical = {"show_menu": "index-pinch", "window_selector": "clench"}
-        if self._selector.blocked.is_set():
-            selector_name = canonical.get(global_action, name)
-            if (name != "tap" and global_action != "window_selector"
-                    and matches_tap_gesture(name, self.owner._device_family)):
-                selector_name = "tap"
-            self._selector.enqueue(selector_name, connection, busy)
-            return False
         with self._lock:
             if self._transition is not None or self._scroll.applying.is_set():
                 observe_gesture(self.owner, identity, status="not_triggered")
@@ -762,8 +763,8 @@ class RingGestureController(QObject):
                 self._screenshot.start()
                 self._log(request.name, 'show')
                 return
-            if sys.platform == "win32" and request.name in {"clench", "swipe-up", "swipe-down"}:
-                shortcut = {"clench": "Win+Tab", "swipe-up": "PageUp", "swipe-down": "PageDown"}[request.name]
+            if sys.platform == "win32" and request.name in {"swipe-up", "swipe-down"}:
+                shortcut = {"swipe-up": "PageUp", "swipe-down": "PageDown"}[request.name]
                 try:
                     self.owner._app_gestures.backend.post(request.target, shortcut, system_wide=True)
                 except (RuntimeError, ValueError, OSError) as exc:

@@ -9,7 +9,6 @@ import uuid
 import math
 
 from PySide6.QtCore import QObject, Property, QRect, QTimer, Signal, Slot
-from PySide6.QtGui import QGuiApplication
 
 from ...touchpad.stroke.stroke_display import TRAIL_STYLE
 from ...voice.hotwords import STROKE_CONTEXT_CHARS
@@ -89,22 +88,8 @@ class StrokeSessionController(QObject):
             self.caretChanged.emit()
 
     def _screen_caret(self, caret):
-        if len(caret) != 4:
-            return None
-        from ...voice.ime.windows_bridge import caret_monitor_origin
-
-        # Qt scales each Windows display around its own native origin.
-        origin = caret_monitor_origin(caret)
-        screens = QGuiApplication.screens()
-        screen = next((s for s in screens if (s.geometry().x(), s.geometry().y()) == origin),
-                      QGuiApplication.primaryScreen())
-        if screen is None:
-            return None
-        x, y = screen.geometry().x(), screen.geometry().y()
-        scale = screen.devicePixelRatio()
-        logical_caret = [base + (value - base) / scale
-                         for value, base in zip(caret, (x, y, x, y))]
-        return logical_caret, screen.availableGeometry()
+        from ..shared.windows_caret import screen_caret
+        return screen_caret(caret)
 
     @Slot(list, result=QRect)
     @Slot(list, int, result=QRect)

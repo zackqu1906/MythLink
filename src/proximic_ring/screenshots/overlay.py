@@ -101,14 +101,16 @@ class CaptureOverlay(QWidget):
 
     def refresh(self):
         phase = self.controller.phase
-        titles = {'preparing': '正在截取屏幕…', 'locating': '点击第一个角',
-                  'selecting': '点击另一个角', 'preview': '选区已就绪'}
+        select = '食指捏合' if getattr(self.controller.owner, '_device_family', '') == 'R1' else '点击'
+        corner = '食指捏合选择' if select == '食指捏合' else select
+        titles = {'preparing': '正在截取屏幕…', 'locating': f'{corner}第一个角',
+                  'selecting': f'{corner}另一个角', 'preview': '选区已就绪'}
         exit_hint = self.controller.exit_hint
         self.back.setText('← ' + exit_hint)
         self.back.setToolTip(exit_hint + ' · Esc')
         hints = {'preparing': exit_hint,
-                 'locating': '两次点击选择对角 · 支持任意方向',
-                 'selecting': '移动光标预览 · 再次点击确定选区', 'preview': self.controller.preview_hint}
+                 'locating': f'移动光标到两个对角，分别{select}',
+                 'selecting': f'移动光标预览 · 再次{select}确定选区', 'preview': self.controller.preview_hint}
         self.title.setText('未能保存' if self.controller.notice and phase == 'preview' else titles.get(phase, ''))
         self.hint.setText(self.controller.notice or hints.get(phase, ''))
         self.confirm.setEnabled(phase == 'preview')

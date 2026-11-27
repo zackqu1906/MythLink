@@ -7,6 +7,7 @@ first recommendation cannot also send the newly opened parameter form.
 import time
 from PySide6.QtCore import QObject, Signal, Slot, QTimer, Qt
 from proximic_ring.agent_workflow.ui.editor_gestures import EditorGestureActions
+from proximic_ring.ring_devices import matches_tap_gesture
 from .hub_interaction import HubInteraction,DIRECTIONS
 from .hub_voice import HubVoice
 from proximic_ring.agent_workflow.parameters.parameter_contract import missing_required
@@ -107,6 +108,8 @@ class RecommendationInput(QObject, HubVoice, EditorGestureActions):
     def filter_gesture(self,event,connection):
         if not self.focused or self._closed:return False
         name=getattr(event,'name','');bindings=self.owner._gesture_bindings
+        if matches_tap_gesture(name, getattr(self.owner, '_device_family', '')):
+            name = 'tap'
         voice={g for pair in bindings.as_dict().values() for g in pair if g}
         if self.runtime.executing:return name in set(DIRECTIONS)|voice|{'tap'}
         # Native stroke candidates own ALL their navigation, including tap and

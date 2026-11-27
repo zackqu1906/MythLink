@@ -9,6 +9,7 @@
 AppId={{7F4E8DCA-785E-4D6D-A582-49736863F7B8}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={%LOCALAPPDATA}\Programs\Mythlink
 DefaultGroupName={#MyAppName}
@@ -42,6 +43,8 @@ english.InputInstallError=Could not register the Mythlink input method. Retry or
 chinesesimplified.InputInstallError=未能注册 Mythlink 输入法。请重试，或返回取消勾选输入法后继续安装。
 english.InputEnableError=Windows could not add Mythlink to your input methods. Retry or go back and clear the input method task.
 chinesesimplified.InputEnableError=Windows 未能将 Mythlink 添加到当前用户的输入法列表。请重试，或返回取消勾选输入法后继续安装。
+english.InputShellRefresh=Windows Explorer is still using the previous MythLink input method. Restart Windows Explorer in Task Manager, or sign out and back in, to refresh the taskbar icon.
+chinesesimplified.InputShellRefresh=Windows 资源管理器仍在使用旧版 MythLink 输入法。在任务管理器中重新启动“Windows 资源管理器”，或注销并重新登录，即可让任务栏重新加载输入法图标。
 
 [InstallDelete]
 ; Older installers left discoverable model sources and partial optional
@@ -77,6 +80,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  ShellRefreshNeeded: Boolean;
+
 function HasPreviousMythlinkRuntime: Boolean;
 begin
   Result := FileExists(ExpandConstant('{app}\{#MyAppExeName}')) and
@@ -86,11 +92,27 @@ end;
 function SetInputProfile(const ScriptPath, Action: String): Boolean;
 var
   ExitCode: Integer;
+  Options: String;
 begin
+  Options := '-Action ' + Action;
+  if Action = 'Enable' then Options := Options + ' -ReportShellRefresh';
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" -Action ' + Action,
-    '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ScriptPath + '" ' + Options,
+    '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  ShellRefreshNeeded := Result and (Action = 'Enable') and (ExitCode = 10);
+  Result := Result and ((ExitCode = 0) or ShellRefreshNeeded);
   Log(Format('Input profile %s returned %d', [Action, ExitCode]));
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  HeightChange: Integer;
+begin
+  if (CurPageID = wpFinished) and ShellRefreshNeeded then begin
+    WizardForm.FinishedLabel.Caption := CustomMessage('InputShellRefresh');
+    HeightChange := WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
+    WizardForm.RunList.Top := WizardForm.RunList.Top + HeightChange;
+  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

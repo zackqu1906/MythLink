@@ -16,6 +16,34 @@ from proximic_ring.voice import app_runtime
 sdk = pytest.importorskip("ring_python_sdk_r1")
 
 
+def test_windows_reconnect_passes_known_handles_through_to_the_sdk(monkeypatch):
+    from bleak.backends.device import BLEDevice
+    from proximic_ring import windows_ble
+    from proximic_ring.audio import r1_session
+
+    device = BLEDevice("AA:BB:CC:DD:EE:FF", "R10047", "paired-id")
+    targets, lookups = [], []
+
+    async def lookup(address):
+        lookups.append(address)
+        return [device] if address == device.address else []
+
+    async def connect(target, *, auto_reconnect):
+        assert not auto_reconnect
+        targets.append(target)
+
+    monkeypatch.setattr(r1_session, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(windows_ble, "paired_r1_devices", lookup)
+    session = object.__new__(r1_session.R1Session)
+    session.ring = SimpleNamespace(connect=connect)
+    asyncio.run(session.connect_target(device.address))
+    asyncio.run(session.connect_device(device))
+    asyncio.run(session.connect_target("AA:BB:CC:DD:EE:01"))
+    assert lookups == [device.address, "AA:BB:CC:DD:EE:01"]
+    assert all(isinstance(target, sdk.RingDevice) and target._device is device for target in targets[:2])
+    assert targets[2] == "AA:BB:CC:DD:EE:01"
+
+
 @pytest.mark.parametrize("confirmed", [True, False])
 def test_r1_checks_device_after_an_interrupted_unbind(confirmed):
     from proximic_ring.audio.r1_session import R1Session
@@ -51,6 +79,7 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
 
     stop, recognition, started, processed = (threading.Event() for _ in range(4))
     sources, gestures, battery, unavailable = (Queue() for _ in range(4))
+    routing, drained_while_routing = threading.Event(), threading.Event()
     toggles = Queue()
     calls, inputs = [], []
     states, rings = [], []
@@ -104,12 +133,18 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
 
     def microphone(selection):
         inputs.append(selection)
+        reads_during_route = 0
 
         def open_input():
             if not microphone_available:
                 raise RuntimeError("System microphone is unavailable")
 
         def read(frames):
+            nonlocal reads_during_route
+            if routing.is_set():
+                reads_during_route += 1
+                if reads_during_route >= 4:
+                    drained_while_routing.set()
             return None if stop.wait(.01) else np.zeros(frames, dtype=np.float32)
 
         return SimpleNamespace(error=None, device_name="PC", open=open_input, read=read, close=lambda: None)
@@ -131,6 +166,14 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
     monkeypatch.setattr(ring, "_INITIAL_MIC_SETTLE_S", 0)
     monkeypatch.setattr(app_runtime, "MicrophoneSource", microphone)
     monkeypatch.setattr(app_runtime, "_build_session_controller", model)
+    async def paired(_address):
+        return []
+    monkeypatch.setattr("proximic_ring.windows_ble.paired_r1_devices", paired)
+    def gesture_filter(event, busy):
+        if event.name == "index-pinch" and not busy:
+            routing.set()
+            return drained_while_routing.wait(2)
+        return True
     pinch = ("index-pinch", "")
     settings = app_runtime.RuntimeSettings(ring_selector="r1-identifier", ring_family="R1", data_dir=tmp_path,
                                            speech_control_mode="gesture", desktop_output=False, push_to_talk=False,
@@ -143,6 +186,7 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
             on_state=states.append, on_update=lambda _: None, on_connected=lambda: None,
             on_disconnected=lambda: None, on_started=started.set, on_gesture=gestures.put,
             on_battery=lambda *values: battery.put(values), on_ring_source=sources.put,
+            gesture_filter=gesture_filter,
             on_voice_availability=unavailable.put,
         )
         try:
@@ -159,6 +203,7 @@ def test_r1_connection_uses_sdk_and_pc_microphone(monkeypatch, tmp_path, microph
                 for sequence, action in enumerate(("start", "end"), 2):
                     rings[0].on_gesture(sdk.GestureEvent(sequence, 8, sequence * 1000, 0.9))
                     assert toggles.get(timeout=3) == (action, True, True)
+                assert drained_while_routing.is_set()
             else:
                 assert unavailable.get_nowait() == "System microphone is unavailable"
                 assert not recognition.is_set() and not processed.is_set()

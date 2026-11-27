@@ -70,6 +70,14 @@ class WindowsAppShortcuts:
                         current.focus is not None and current.focus == target.focus))
 
     def post(self, target, shortcut, *, require_focus=False, system_wide=False):
+        self._send_chord(shortcut, lambda: self.same_target(target, require_focus=require_focus))
+
+    def switch_desktop(self, direction):
+        # This shell shortcut also works on a desktop with no foreground HWND.
+        self._send_chord("Win+Ctrl+" + ("Right" if direction > 0 else "Left"))
+
+    @staticmethod
+    def _send_chord(shortcut, same_target=None):
         user = api()[0]
         keys = []
         for name in normalize_shortcut(shortcut).split("+"):
@@ -87,7 +95,7 @@ class WindowsAppShortcuts:
             item.ki = _KeyboardInput(wVk=key[0], dwFlags=int(key[1]) | (2 if up else 0))
             return item
         events = [event(key, False) for key in keys] + [event(key, True) for key in reversed(keys)]
-        if not self.same_target(target, require_focus=require_focus):
+        if same_target is not None and not same_target():
             raise RuntimeError("前台窗口已变化")
         count = user.SendInput(len(events), (_Input * len(events))(*events), ctypes.sizeof(_Input))
         if count != len(events):

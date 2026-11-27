@@ -87,7 +87,7 @@ Item {
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     visible: windowPreviews.status !== "permission"
-                    text: windowSelector.phase === "loading" ? "当前屏幕与桌面" : windowPreviews.hint
+                    text: windowSelector.desktopStatus || (windowSelector.phase === "loading" ? "当前屏幕与桌面" : windowPreviews.hint)
                     color: "#b0b0b0"; font.pixelSize: 13
                 }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: "部分应用未提供窗口"; color: "#bcbcbc"; font.pixelSize: 12; visible: windowSelector.partial }
@@ -236,6 +236,7 @@ Item {
                 anchors { left: parent.left; leftMargin: 22; verticalCenter: parent.verticalCenter }
                 spacing: 18
                 Text { text: windowSelector.atApps ? "↑ ↓ ← →  选择应用" : "↑ ↓ ← →  选择窗口"; color: "#cccccc"; font.pixelSize: 13 }
+                Text { text: "↻ 下一桌面 · ↺ 上一桌面"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { visible: !windowSelector.atApps && Boolean(windowSelector.globalLabels.switch_mode); text: windowSelector.globalLabels.switch_mode + "  返回上级"; color: "#cccccc"; font.pixelSize: 13 }
                 Text { text: windowSelector.confirmGestureLabel + (root.expandsSelection ? "  展开" : "  进入窗口"); color: "#f5f5f5"; font.pixelSize: 13 }
                 Text { visible: Boolean(windowSelector.globalLabels.window_selector); text: windowSelector.globalLabels.window_selector + "  取消窗口选择"; color: "#cccccc"; font.pixelSize: 13 }

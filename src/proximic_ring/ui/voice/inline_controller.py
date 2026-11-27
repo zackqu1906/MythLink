@@ -382,6 +382,8 @@ class InlineInputController(QObject):
 
     @Property(bool, notify=changed)
     def canUndo(self):
+        if self._windows and self._view.get("phase") in {"dictated", "undone"} and "can_cancel" in self._view:
+            return bool(self.ready and self._utterance_id and self._view["can_cancel"])
         return bool(self.active or (self.ready
                     and self._view.get("phase") == "undone"
                     and (self._view.get("undo_history_depth", 0) > 0 or self._view.get("can_system_undo"))))

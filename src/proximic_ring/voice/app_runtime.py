@@ -905,6 +905,7 @@ class RecognitionRuntime:
                         name = str(getattr(event, "name", ""))
                         end_only = getattr(event, "end_only", False)
                         live_microphone = current_microphone()
+                        gesture_controller = controller
                         accepted = (
                             gestures_enabled.is_set()
                             and not disconnect_event.is_set()
@@ -931,26 +932,35 @@ class RecognitionRuntime:
                             # Do this before logging or queuing any GUI work.
                             # The audio producer owns END and closes the normal
                             # interaction gate before submitting final ASR.
-                            can_request = (
-                                controller is not None and recognition_event.is_set()
-                                and not (audio_settings is not None and audio_settings.applying)
-                                and not (
-                                    cancel_utterance_event is not None
-                                    and cancel_utterance_event.is_set()
+                            # Order the START reservation with an audio settings claim. Focus
+                            # lookup and preparation may wait on Qt while capture must drain.
+                            preparations = []
+                            with audio_change_lock:
+                                can_request = (
+                                    controller is not None and controller is gesture_controller
+                                    and current_microphone() is live_microphone
+                                    and recognition_event.is_set() and not disconnect_event.is_set()
+                                    and not (audio_settings is not None and audio_settings.applying)
+                                    and not (cancel_utterance_event is not None and cancel_utterance_event.is_set())
                                 )
-                            )
-                            if can_request:
-                                if (gesture_control or on_demand_ring) and not end_only:
-                                    requested_action = controller.request_gesture_toggle(
-                                        prepare_gesture_start,
-                                        allow_start=is_start_endpoint,
-                                        allow_end=is_end_endpoint,
-                                        **({"explicit": True} if on_demand_ring else {}),
-                                    )
-                                    confirm_requested = requested_action is not None
-                                else:
-                                    confirm_requested = is_end_endpoint and controller.request_tap_end()
-                            else:
+                                if can_request:
+                                    if (gesture_control or on_demand_ring) and not end_only:
+                                        requested_action = controller.request_gesture_toggle(
+                                            preparations.append if prepare_gesture_start else None,
+                                            allow_start=is_start_endpoint, allow_end=is_end_endpoint,
+                                            **({"explicit": True} if on_demand_ring else {}),
+                                        )
+                                        confirm_requested = requested_action is not None
+                                    else:
+                                        confirm_requested = is_end_endpoint and controller.request_tap_end()
+                            for complete in preparations:
+                                try:
+                                    prepare_gesture_start(complete)
+                                except Exception:
+                                    if complete is not None:
+                                        complete(False)
+                                    raise
+                            if not can_request:
                                 blocked_reason = (
                                     "cancellation_pending"
                                     if cancel_utterance_event is not None and cancel_utterance_event.is_set()
@@ -998,10 +1008,7 @@ class RecognitionRuntime:
                                 on_gesture_detected(event)
                             except Exception:
                                 pass
-                        # A queued START and a settings claim must have one
-                        # ordering. Never hold this lock during model/device IO.
-                        with audio_change_lock:
-                            dispatch_gesture(event)
+                        dispatch_gesture(event)
 
                     gesture_worker = FirmwareGestureWorker(on_gesture=publish_gesture)
                     if firmware_gesture_epoch is not None:

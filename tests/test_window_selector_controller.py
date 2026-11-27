@@ -47,24 +47,68 @@ def test_r1_pinch_confirms_only_inside_window_selector(selector):
     c._device_family = 'R1'
     opened(c, s)
     assert s.confirmGestureLabel == '食指捏合'
+    s.setColumns(1)
+    assert not request(c, 'swipe-down') and s.selected == 1
+    assert not request(c, 'swipe-up') and s.selected == 0
     assert not request(c, 'index-pinch') and not s.atApps
+    s.setColumns(2)
+    assert not request(c, 'swipe-right') and s.selected == 1
+    assert not request(c, 'swipe-left') and s.selected == 0
     assert not request(c, 'index-pinch')
     until(lambda: not s.blocked.is_set())
     assert len(d.activated) == 1 and not sent
 
 
-@pytest.mark.parametrize("mode", ["operation"])
-def test_gestures_navigate_confirm_exact_window_and_never_start_voice(selector, mode):
+def test_rotations_refresh_desktop_windows_and_keep_selector_exclusive(selector, monkeypatch):
+    c, _, s, _, d, calls, _, _, sent = selector
+    started, resume = threading.Event(), threading.Event()
+    directions = []
+    def switch(direction, cancelled):
+        directions.append(direction)
+        started.set()
+        assert resume.wait(2)
+        return (2 if direction == 1 else 1, 3)
+    monkeypatch.setattr("proximic_ring.ui.desktop.window_selector_controller.cycle_desktop", switch)
+    opened(c, s)
+    assert not request(c, "circle-clockwise") and started.wait(1)
+    assert not request(c, "circle-counterclockwise")
+    assert not request(c, "tap") and not d.activated
+    resume.set()
+    until(lambda: s.phase == "ready")
+    assert directions == [1, -1] and s.desktopStatus == "桌面 1 / 3"
+    assert calls.count("selector_list") == 2 and not sent and s.blocked.is_set()
+
+
+def test_selector_window_is_shown_again_on_destination_desktop(selector, monkeypatch):
+    from PySide6.QtGui import QGuiApplication
+    from proximic_ring.ui.desktop.window_selector_overlay import WindowSelectorOverlay
+    c, _, s, _, _, _, _, _, _ = selector
+    monkeypatch.setattr("proximic_ring.ui.desktop.window_selector_controller.cycle_desktop",
+                        lambda direction, cancelled: (2, 3))
+    overlay = WindowSelectorOverlay(s, QGuiApplication.instance())
+    try:
+        opened(c, s)
+        assert overlay.window.isVisible()
+        request(c, "circle-clockwise")
+        until(lambda: s.phase == "ready" and s.desktopStatus == "桌面 2 / 3")
+        assert overlay.window.isVisible() and overlay.window.rootObject().property("presented")
+        assert not overlay.window.isActive()
+    finally:
+        s.cancel()
+        overlay.close()
+
+
+def test_gestures_navigate_confirm_exact_window_and_never_start_voice(selector):
     c, _, s, _, d, calls, notices, threads, sent = selector
     shown, hidden = [], []
     c.ringGestures.showRequested.connect(lambda *args: shown.append(args))
     c.ringGestures.hideRequested.connect(lambda: hidden.append(True))
-    if mode == "operation": request(c, "middle-pinch")
     old = c.ringGestures.envelope(type("Event", (), {"name": "circle-clockwise"})())
     request(c, "clench", deliver=False)
     assert not request(c, "tap", deliver=False)
     QCoreApplication.processEvents()
     until(lambda: s.phase == "ready")
+    mode = c.ringGestures.mode
     shown.clear()
     s.setColumns(2)
     assert s.atApps and len(s.cards) == 2 and s.cards[0]["windowCount"] == 2
@@ -83,6 +127,8 @@ def test_gestures_navigate_confirm_exact_window_and_never_start_voice(selector, 
     assert d.activated == [(10, d.b)] and hidden and not notices
     c._apply_gesture(old, c._disconnect_event)
     assert not sent and c.ringGestures.mode == mode
+    backend = c._app_gestures.backend
+    backend.target = replace(backend.target, input_context="text", focus="editor")
     assert request(c, "tap")
     assert all(t != threading.get_ident() for t in threads)
 
@@ -388,8 +434,8 @@ def test_pointer_context_tracks_entry_activation_and_exit(selector):
     c, _, s, _, _, _, _, _, _ = selector
     original = s.pointer_context
     request(c, 'clench', deliver=False)
-    QCoreApplication.processEvents()
-    assert s.pointer_context[1] in {'loading', 'ready'} and s.pointer_context != original
+    until(lambda: s.pointer_context[1] in {'loading', 'ready'})
+    assert s.pointer_context != original
     until(lambda: s.phase == 'ready')
     s.click(1)
     assert s.pointer_context[1] == 'activating'
@@ -414,7 +460,8 @@ def test_selector_preserves_touchpad_toggle_and_output(enabled, selector):
         assert tp.active is enabled
         if enabled:
             assert tp._run.output is original and original.active
-            assert original.options['click_context']() == s.pointer_context
+            selector_epoch, phase = s.pointer_context
+            assert original.options['click_context']() == ((selector_epoch, tp._capture_epoch), phase)
         s.cancel()
         assert tp.active is enabled
         assert len(source.starts) == int(enabled) and source.stops == 0

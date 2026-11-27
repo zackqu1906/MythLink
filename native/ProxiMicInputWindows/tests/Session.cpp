@@ -20,8 +20,10 @@ struct Range final : ITfRangeACP {
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
     ULONG STDMETHODCALLTYPE Release() override { const auto n = --refs; if (!n) delete this; return n; }
-    HRESULT STDMETHODCALLTYPE GetText(TfEditCookie, DWORD, WCHAR* buffer, ULONG size, ULONG* count) override {
-        *count = text.copy(buffer, (std::min<ULONG>)(size, end - start), start); return S_OK;
+    HRESULT STDMETHODCALLTYPE GetText(TfEditCookie, DWORD flags, WCHAR* buffer, ULONG size, ULONG* count) override {
+        *count = text.copy(buffer, (std::min<ULONG>)(size, end - start), start);
+        if (flags & TF_TF_MOVESTART) start += *count;
+        return S_OK;
     }
     HRESULT STDMETHODCALLTYPE ShiftStart(TfEditCookie, LONG delta, LONG* moved, const TF_HALTCOND*) override {
         const auto next = (std::max)(0L, start + delta); *moved = next - start; start = next; return S_OK;
@@ -116,10 +118,12 @@ struct Context final : ITfContext, ITfInsertAtSelection {
     HRESULT STDMETHODCALLTYPE EnumProperties(IEnumTfProperties**) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE GetDocumentMgr(ITfDocumentMgr**) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE CreateRangeBackup(TfEditCookie, ITfRange*, ITfRangeBackup**) override { return E_NOTIMPL; }
-    HRESULT STDMETHODCALLTYPE InsertTextAtSelection(TfEditCookie, DWORD, const WCHAR* value, LONG size,
+    HRESULT STDMETHODCALLTYPE InsertTextAtSelection(TfEditCookie, DWORD flags, const WCHAR* value, LONG size,
                                                     ITfRange** out) override {
-        text.replace(start, end - start, value, size);
-        end = start + size;
+        if (!(flags & TF_IAS_QUERYONLY)) {
+            text.replace(start, end - start, value, size);
+            end = start + size;
+        }
         *out = new Range(text, start, end);
         return S_OK;
     }
@@ -259,9 +263,20 @@ struct ServiceTest {
         assert(context.start == typed.end() && context.start == context.end);
         service.clearStroke();
         assert(!service.correctionWord_ && !service.correctionUndo_ && !service.correctionBusy());
+        const Service::VoiceChange sentence{1, L"旧词", L"听写\U0001F600", "voice"};
+        context.text = L"前" + sentence.dictated + L"后";
+        context.start = context.end = 1;
+        assert(service.restoreVoiceText(0, sentence, false) == E_ABORT);
+        context.start = context.end = 1 + static_cast<LONG>(sentence.dictated.size());
+        assert(service.restoreVoiceText(0, sentence, false) == S_OK);
+        assert(context.text == L"前旧词后" && context.start == 1 && context.end == 3);
+        assert(service.restoreVoiceText(0, sentence, true) == S_OK);
+        assert(context.text == L"前" + sentence.dictated + L"后" && context.start == context.end);
+        context.text[1] = L'新';
+        assert(service.restoreVoiceText(0, sentence, false) == E_ABORT && context.text[1] == L'新');
         service.context_.reset();
         service.stroke_.clear();
-        std::cout << "TSF session, deletion, and correction regressions passed\n";
+        std::cout << "TSF session, deletion, correction and dictation undo/redo regressions passed\n";
     }
 };
 }

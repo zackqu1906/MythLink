@@ -248,7 +248,9 @@ class ScreenCaptureController(QObject):
                                                 or connection.is_set()))): return
         if name == 'exit-capture':
             self.cancel()
-        elif name == 'pointer-click':
+        elif name == 'pointer-click' or (
+                name == 'index-pinch' and getattr(self.owner, '_device_family', '') == 'R1'
+                and self.phase in ('locating', 'selecting')):
             point = QCursor.pos()
             for window in self.windows:
                 if window.geometry().contains(point):

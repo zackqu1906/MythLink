@@ -5,6 +5,7 @@
 AppId=MythlinkTsf
 AppName=Mythlink Input Method
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
 DefaultDirName={commonpf64}\Mythlink Input Method
 DisableDirPage=yes
 UsePreviousAppDir=no
@@ -18,17 +19,32 @@ CloseApplications=no
 
 [Files]
 ; TSF editors can hold an older DLL open throughout the upgrade.
-Source: "{#InputDll}"; DestDir: "{commonpf64}\Mythlink Input Method"; DestName: "{#InstalledDll}"; Flags: onlyifdoesntexist uninsrestartdelete; AfterInstall: RegisterInputMethod
+Source: "{#InputDll}"; DestDir: "{commonpf64}\Mythlink Input Method"; DestName: "{#InstalledDll}"; Flags: onlyifdoesntexist uninsrestartdelete
 
 [Code]
+var
+  InputRegistered: Boolean;
+
 function ServiceDll: String;
 begin
   Result := ExpandConstant('{commonpf64}\Mythlink Input Method\{#InstalledDll}');
 end;
 
-procedure RegisterInputMethod;
+procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  RegisterServer(True, ServiceDll, False);
+  if CurStep <> ssPostInstall then Exit;
+  { The file may already exist even when the active registration needs repair. }
+  try
+    RegisterServer(True, ServiceDll, False);
+    InputRegistered := True;
+  except
+    Log('Could not register the Mythlink input method: ' + GetExceptionMessage);
+  end;
+end;
+
+function GetCustomSetupExitCode: Integer;
+begin
+  if InputRegistered then Result := 0 else Result := 1;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

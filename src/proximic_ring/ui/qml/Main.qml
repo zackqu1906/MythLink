@@ -416,6 +416,7 @@ ApplicationWindow {
                                 Label {
                                     Layout.fillWidth: true
                                     text: modelData.identifier
+                                          + (modelData.pairedOnly ? "  ·  已配对，本次未收到广播" : "")
                                           + (modelData.rssi === "" ? "" : "  ·  " + modelData.rssi + " dBm")
                                     color: root.textMuted
                                     font.pixelSize: 11

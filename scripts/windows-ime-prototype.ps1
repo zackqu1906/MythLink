@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory)]
     [ValidateSet('Build', 'Install', 'Uninstall', 'Enable', 'Disable', 'Run', 'Status')]
     [string]$Action,
-    [string]$Compiler
+    [string]$Compiler,
+    [switch]$ReportShellRefresh
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +14,17 @@ $Dll = Join-Path $Build 'MythlinkTsf.dll'
 $BundledDll = Join-Path $PSScriptRoot 'MythlinkTsf.dll'
 $InstallDirectory = Join-Path $env:ProgramFiles 'Mythlink TSF Prototype'
 $RegistrationKey = 'HKLM:\Software\Classes\CLSID\{40b2749b-c169-4a28-921c-c3367b96482b}\InprocServer32'
+
+function Get-LoadedInputDll($Process, $RegisteredDll) {
+    $Directories = @($InstallDirectory, (Join-Path $env:ProgramFiles 'Mythlink Input Method'))
+    if ($RegisteredDll) { $Directories += Split-Path -Parent $RegisteredDll }
+    try {
+        $Process.Modules | Where-Object {
+            $_.ModuleName -like 'MythlinkTsf*.dll' -and
+            $Directories -contains [IO.Path]::GetDirectoryName($_.FileName)
+        }
+    } catch {}
+}
 
 # Apply the simplified Chinese TSF profile to the invoking user's input list.
 if ($Action -in @('Enable', 'Disable')) {
@@ -26,6 +38,16 @@ public static extern bool InstallLayoutOrTip(string profile, uint flags);
     if (![Mythlink.UserInput]::InstallLayoutOrTip($Profile, $Flags)) {
         throw "Windows could not $Action the Mythlink input profile."
     }
+    if ($Action -eq 'Enable' -and $ReportShellRefresh) {
+        $RegisteredDll = (Get-Item -LiteralPath $RegistrationKey).GetValue('')
+        $SessionId = (Get-Process -Id $PID).SessionId
+        foreach ($Shell in (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
+            if ($Shell.SessionId -ne $SessionId) { continue }
+            foreach ($Module in (Get-LoadedInputDll $Shell $RegisteredDll)) {
+                if ($Module.FileName -ne $RegisteredDll) { exit 10 }
+            }
+        }
+    }
     return
 }
 
@@ -36,7 +58,7 @@ if ($Action -eq 'Status') {
     Get-Process | ForEach-Object {
         $Process = $_
         try {
-            $Process.Modules | Where-Object { $_.FileName -like "$InstallDirectory\MythlinkTsf*.dll" } |
+            Get-LoadedInputDll $Process $RegisteredDll |
                 ForEach-Object {
                     $Version = if ($_.FileName -eq $RegisteredDll) { 'Current' } else { 'Old (restart app)' }
                     [pscustomobject]@{ Process = $Process.ProcessName; Id = $Process.Id; Version = $Version; Dll = $_.FileName }
