@@ -16,6 +16,40 @@ from proximic_ring.voice import app_runtime
 sdk = pytest.importorskip("ring_python_sdk_r1")
 
 
+@pytest.mark.parametrize("reason, retry", [("stale_operation", True), ("disconnected", True),
+                                            ("authentication_failed", False), ("pairing_required", False)])
+def test_windows_reconnect_only_retries_transient_handshakes(monkeypatch, reason, retry):
+    from unittest.mock import AsyncMock
+    from proximic_ring.audio import r1_session
+
+    session = object.__new__(r1_session.R1Session)
+    session.ring = SimpleNamespace(connect=AsyncMock(side_effect=[sdk.RingError(reason), None]))
+    target = sdk.RingDevice("AA:BB:CC:DD:EE:FF", "R10047", None, object())
+    monkeypatch.setattr(r1_session, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(r1_session.asyncio, "sleep", AsyncMock())
+    if retry:
+        assert asyncio.run(session.connect(target))
+    else:
+        with pytest.raises(sdk.RingError, match=reason):
+            asyncio.run(session.connect(target))
+    assert all(call.args == (target,) for call in session.ring.connect.await_args_list)
+    assert session.ring.connect.await_count == (2 if retry else 1)
+
+
+def test_windows_releases_services_when_sdk_sees_a_dead_link(monkeypatch):
+    from unittest.mock import AsyncMock
+    from proximic_ring.audio.windows_r1 import WindowsR1Ring
+
+    ring = object.__new__(WindowsR1Ring)
+    lease = SimpleNamespace(maintain_connection=True)
+    client = SimpleNamespace(is_connected=False, _backend=SimpleNamespace(_session=lease), disconnect=AsyncMock())
+    ring._gatt = SimpleNamespace(client=client)
+    monkeypatch.setattr(sdk.Ring, "_close", AsyncMock())
+    asyncio.run(ring._close())
+    client.disconnect.assert_awaited_once()
+    assert not lease.maintain_connection
+
+
 def test_windows_reconnect_passes_known_handles_through_to_the_sdk(monkeypatch):
     from bleak.backends.device import BLEDevice
     from proximic_ring import windows_ble

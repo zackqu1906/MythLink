@@ -7,9 +7,11 @@ PreferenceSection {
     required property var controller
     readonly property var permissions: controller.inlineInput.permissions
     readonly property var input: controller.inlineInput
+    readonly property bool mac: Qt.platform.os === "osx"
     objectName: "settingsPermissionsGroup"
     title: "系统与权限"
     PreferenceRow {
+        visible: pane.mac
         Layout.fillWidth: true; title: "应用权限"; description: "蓝牙、麦克风、辅助功能与屏幕录制的授权状态。"
         SettingsStatusAction {
             preferenceStyle: true
@@ -22,6 +24,7 @@ PreferenceSection {
         }
     }
     PreferenceRow {
+        visible: pane.mac
         Layout.fillWidth: true; title: "蓝牙"; description: "用于连接 Ring。"
         SettingsStatusAction {
             preferenceStyle: true
@@ -32,6 +35,7 @@ PreferenceSection {
         }
     }
     PreferenceRow {
+        visible: pane.mac
         Layout.fillWidth: true; title: "麦克风"; description: "用于电脑麦克风收音与录音测试。"
         SettingsStatusAction {
             preferenceStyle: true
@@ -42,6 +46,7 @@ PreferenceSection {
         }
     }
     PreferenceRow {
+        visible: pane.mac
         Layout.fillWidth: true; title: "辅助功能"
         descriptionObjectName: "settingsAccessibilityHint"
         description: pane.permissions.accessibilityWarningText || "用于语音编辑、手势与按键控制。"
@@ -55,6 +60,7 @@ PreferenceSection {
         }
     }
     PreferenceRow {
+        visible: pane.mac
         Layout.fillWidth: true; title: "屏幕录制"
         descriptionObjectName: "screenRecordingPermissionHint"
         description: pane.permissions.screenRecordingMessage || "用于显示窗口实时预览。"
@@ -68,7 +74,7 @@ PreferenceSection {
         }
     }
     PreferenceRow {
-        Layout.fillWidth: true; title: "Ring 输入法"; visible: pane.input.enabled
+        Layout.fillWidth: true; title: "Ring 输入法"; visible: pane.input.enabled || pane.input.windowsInputMethodSetup
         id: inputMethodRow
         readonly property string versionState: pane.input.inputMethodVersion.state
         readonly property bool needsInputSettings: versionState === "activation_pending" || versionState === "activation_unknown"
@@ -82,11 +88,13 @@ PreferenceSection {
             statusReady: !pane.input.installing && pane.input.inputMethodVersion.current
             statusHint: pane.input.inputMethodVersion.detail
             buttonObjectName: "settingsInputMethodButton"
-            text: inputMethodRow.needsInputSettings ? "打开键盘设置" : pane.input.inputMethodVersion.current ? "输入设置"
+            text: pane.input.windowsInputMethodSetup ? (inputMethodRow.versionState === "not_installed" ? "安装输入法" : "修复输入法")
+                : inputMethodRow.needsInputSettings ? "打开键盘设置" : pane.input.inputMethodVersion.current ? "输入设置"
                 : inputMethodRow.versionState === "checking" ? "确认中…" : inputMethodRow.versionState === "not_installed" ? "安装输入法" : "更新输入法"
             buttonEnabled: !pane.input.installing && inputMethodRow.versionState !== "checking"
             onClicked: {
-                if (pane.input.inputMethodVersion.current || inputMethodRow.needsInputSettings) pane.input.openInputSettings()
+                if (pane.input.windowsInputMethodSetup) pane.input.installInputMethod()
+                else if (pane.input.inputMethodVersion.current || inputMethodRow.needsInputSettings) pane.input.openInputSettings()
                 else pane.input.installInputMethod()
             }
         }
@@ -102,6 +110,7 @@ PreferenceSection {
         Timer { id: copiedTimer; interval: 1800 }
     }
     PreferenceRow {
+        visible: pane.mac
         Layout.fillWidth: true; title: "自动锁屏组件"
         description: "用于离开锁屏与手势解锁；重新授权会暂停自动锁屏。"
         SettingsStatusAction {

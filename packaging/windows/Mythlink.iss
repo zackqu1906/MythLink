@@ -4,6 +4,7 @@
 #endif
 #define MyAppPublisher "Mythlink"
 #define MyAppExeName "Mythlink.exe"
+#define CurrentInputDll "MythlinkTsf-" + GetSHA256OfFile(SourcePath + "\..\..\dist\Mythlink\_internal\windows-ime\MythlinkTsf.dll") + ".dll"
 
 [Setup]
 AppId={{7F4E8DCA-785E-4D6D-A582-49736863F7B8}
@@ -45,6 +46,8 @@ english.InputEnableError=Windows could not add Mythlink to your input methods. R
 chinesesimplified.InputEnableError=Windows 未能将 Mythlink 添加到当前用户的输入法列表。请重试，或返回取消勾选输入法后继续安装。
 english.InputShellRefresh=Windows Explorer is still using the previous MythLink input method. Restart Windows Explorer in Task Manager, or sign out and back in, to refresh the taskbar icon.
 chinesesimplified.InputShellRefresh=Windows 资源管理器仍在使用旧版 MythLink 输入法。在任务管理器中重新启动“Windows 资源管理器”，或注销并重新登录，即可让任务栏重新加载输入法图标。
+english.InputEditorsRefresh=The MythLink input method was updated. Fully quit and reopen editors and browsers that were running during the upgrade to load the new version.
+chinesesimplified.InputEditorsRefresh=MythLink 输入法已更新。升级前已打开的编辑器和浏览器，请完全退出后重新打开，以加载新版输入法。
 
 [InstallDelete]
 ; Older installers left discoverable model sources and partial optional
@@ -61,7 +64,7 @@ Type: filesandordirs; Name: "{app}\_internal\sklearn"; Check: HasPreviousMythlin
 Type: filesandordirs; Name: "{app}\_internal\soxr"; Check: HasPreviousMythlinkRuntime
 
 [Files]
-Source: "..\..\.build\windows-ime\MythlinkInputSetup.exe"; Flags: dontcopy
+Source: "..\..\.build\windows-ime\MythlinkInputSetup.exe"; DestDir: "{app}\_internal\windows-ime"; Flags: ignoreversion
 Source: "..\..\scripts\windows-ime-prototype.ps1"; DestDir: "{app}\_internal\windows-ime"; Flags: ignoreversion
 Source: "..\..\dist\Mythlink\*"; DestDir: "{app}"; Excludes: "_internal\windows-ime\windows-ime-prototype.ps1"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -82,6 +85,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 [Code]
 var
   ShellRefreshNeeded: Boolean;
+  InputComponentReplaced: Boolean;
 
 function HasPreviousMythlinkRuntime: Boolean;
 begin
@@ -108,8 +112,12 @@ procedure CurPageChanged(CurPageID: Integer);
 var
   HeightChange: Integer;
 begin
-  if (CurPageID = wpFinished) and ShellRefreshNeeded then begin
-    WizardForm.FinishedLabel.Caption := CustomMessage('InputShellRefresh');
+  if (CurPageID = wpFinished) and WizardIsTaskSelected('inputmethod') and
+      (InputComponentReplaced or ShellRefreshNeeded) then begin
+    if InputComponentReplaced then
+      WizardForm.FinishedLabel.Caption := CustomMessage('InputEditorsRefresh');
+    if ShellRefreshNeeded then
+      WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10 + CustomMessage('InputShellRefresh');
     HeightChange := WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
     WizardForm.RunList.Top := WizardForm.RunList.Top + HeightChange;
   end;
@@ -118,9 +126,13 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ExitCode: Integer;
+  RegisteredDll: String;
 begin
   Result := '';
   if not WizardIsTaskSelected('inputmethod') then Exit;
+  if RegQueryStringValue(HKLM64, 'Software\Classes\CLSID\{40b2749b-c169-4a28-921c-c3367b96482b}\InprocServer32',
+      '', RegisteredDll) and (CompareText(ExtractFileName(RegisteredDll), '{#CurrentInputDll}') <> 0) then
+    InputComponentReplaced := True;
   ExtractTemporaryFile('MythlinkInputSetup.exe');
   if not Exec(ExpandConstant('{tmp}\MythlinkInputSetup.exe'),
       '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-', '', SW_HIDE, ewWaitUntilTerminated, ExitCode)

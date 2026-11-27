@@ -26,6 +26,12 @@ def connection_info(state, *, can_reconnect, preparing=False, error=""):
 
 def connection_error_message(error):
     summary = str(error).splitlines()[0].strip()
+    if "service_busy: " in summary:
+        return summary.split("service_busy: ", 1)[1]
+    if "unsupported_device: R1 business characteristics unavailable" in summary:
+        return "已找到戒指，但暂时读不到 R1 的连接服务。请唤醒戒指后重试。"
+    if "stale_operation" in summary:
+        return "戒指的上次连接尚未结束。请稍候，再点「重试连接」。"
     if "timeout" in summary.lower() or "timed out" in summary.lower():
         return "连接超时，设备未响应。请确认戒指已开机并靠近电脑。"
     return summary

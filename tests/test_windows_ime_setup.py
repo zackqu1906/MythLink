@@ -6,6 +6,83 @@ import sys
 
 import pytest
 
+from test_inline_ui import inline_ui
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows settings")
+def test_windows_settings_exposes_working_repair_for_current_dll(tmp_path, monkeypatch, request):
+    from PySide6.QtCore import QObject, QMetaObject, Q_ARG
+    from PySide6.QtTest import QTest
+    from proximic_ring.voice.ime import windows_install
+    from test_ui_device_discovery import wait_until
+
+    (tmp_path / "MythlinkInputSetup.exe").touch()
+    monkeypatch.setattr(windows_install, "component_dir", lambda: tmp_path)
+    monkeypatch.setattr(windows_install, "version_status", lambda: dict(
+        state="current", current=True, text="已是当前版本", detail="随应用更新"))
+    repairs = []
+    monkeypatch.setattr(windows_install, "repair", lambda: repairs.append(True))
+    controller, _, _, window, _ = request.getfixturevalue("inline_ui")
+    window.show()
+    QMetaObject.invokeMethod(window, "showSettings", Q_ARG("QVariant", 6))
+    QTest.qWait(100)
+    button = window.findChild(QObject, "settingsInputMethodButton")
+    assert button.isVisible() and button.property("text") == "修复输入法"
+    assert not window.findChild(QObject, "settingsAccessibilityButton").isVisible()
+    controller._inline_input.reset()
+    QMetaObject.invokeMethod(button, "click")
+    wait_until(lambda: repairs and "已安装并启用" in controller._inline_input.installationMessage)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows TSF registration")
+def test_registered_component_is_compared_by_content_and_guidance_is_actionable(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from proximic_ring.voice.ime import windows_install
+    from proximic_ring.ui.voice.inline_controller import InlineInputController
+
+    registered = tmp_path / "previous-or-current.dll"
+    bundled = tmp_path / "MythlinkTsf.dll"
+    bundled.write_bytes(b"new 0.6.43")
+    monkeypatch.setattr(windows_install, "component_dir", lambda: tmp_path)
+    monkeypatch.setattr(windows_install.winreg, "OpenKey", lambda *args: nullcontext())
+    monkeypatch.setattr(windows_install.winreg, "QueryValueEx", lambda *args: (str(registered), 1))
+    inline = SimpleNamespace(_windows=True, _set_input_method_version=lambda state: None)
+    assert windows_install.version_status()["state"] == "not_installed"
+    registered.write_bytes(b"old 0.6.43")
+    assert windows_install.version_status()["state"] == "outdated"
+    assert "修复输入法" in InlineInputController._routing_version_error(inline, "自动判断")
+    registered.write_bytes(bundled.read_bytes())
+    assert windows_install.version_status()["current"]
+    assert "完全退出" in InlineInputController._routing_version_error(inline, "自动判断")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows TSF installer")
+def test_repair_requires_registration_before_enabling_user_profile(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from proximic_ring.voice.ime import windows_install
+
+    (tmp_path / "MythlinkInputSetup.exe").touch()
+    monkeypatch.setattr(windows_install, "component_dir", lambda: tmp_path)
+    registered = {"current": False}
+    monkeypatch.setattr(windows_install, "version_status", lambda: registered)
+    calls, markers = [], []
+    def run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(windows_install.subprocess, "run", run)
+    monkeypatch.setattr(windows_install.winreg, "CreateKey", lambda *args: nullcontext())
+    monkeypatch.setattr(windows_install.winreg, "SetValueEx", lambda *args: markers.append(args))
+    with pytest.raises(RuntimeError, match="注册"):
+        windows_install.repair()
+    assert len(calls) == 1 and not markers
+    calls.clear()
+    registered["current"] = True
+    windows_install.repair()
+    assert "RunAs" in calls[0][-1] and calls[1][-2:] == ["-Action", "Enable"]
+    assert len(markers) == 1
+
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows Inno Setup")
 def test_failed_dll_registration_fails_install_and_reinstall(tmp_path):

@@ -1,6 +1,7 @@
 """Adapt the R1-PC SDK to the app's shared gesture and pointer session."""
 
 import asyncio
+import logging
 import sys
 import time
 
@@ -8,6 +9,9 @@ from ring_python_sdk_r1 import (
     Click, ConnectionState, ContactUpdate, GestureMode, Motion, Ring, RingDevice, RingError, TouchpadStage,
 )
 from ring_python_sdk.touchpad.events import Raw2PointerClick, Raw2PointerContact, Raw2PointerMove, Raw2Reset
+
+if sys.platform == "win32":
+    from .windows_r1 import WindowsR1Ring as Ring
 
 
 class R1Session:
@@ -22,8 +26,10 @@ class R1Session:
         self._touchpad_timeout = None
 
         def state_changed(state):
-            if state == ConnectionState.PAIRING and on_pairing is not None:
-                on_pairing()
+            if state == ConnectionState.PAIRING:
+                self._pairing_requested = True
+                if on_pairing is not None:
+                    on_pairing()
 
         # Use the SDK's per-user storage so a binding created by R1-PC can be reused.
         self.ring = Ring(on_state=state_changed, on_battery=self._battery_updated,
@@ -52,8 +58,34 @@ class R1Session:
             if paired:
                 device = paired[0]
                 target = RingDevice(device.address, device.name, None, device)
-        await self.ring.connect(target, auto_reconnect=False)
-        return True
+        self._pairing_requested = False
+        for delay in (4, 8, 0):
+            try:
+                await self.ring.connect(target, auto_reconnect=False)
+                return True
+            except RingError as exc:
+                if sys.platform != "win32":
+                    raise
+                from .windows_r1 import release_error_frames
+                release_error_frames(exc)
+                if not isinstance(target, RingDevice) or self._pairing_requested:
+                    raise
+                if exc.reason == "unsupported_device" and "business characteristics unavailable" in str(exc):
+                    # Bleak omits services for which Windows reports a sharing violation.
+                    from ..windows_ble import r1_service_open_status
+                    status = await r1_service_open_status(target.address)
+                    if not delay and status == "SHARING_VIOLATION":
+                        raise RingError("service_busy", "戒指的蓝牙服务仍被占用，请稍后重试。") from exc
+                    if status not in {"SUCCESS", "ALREADY_OPENED", "SHARING_VIOLATION"}:
+                        raise
+                elif not (exc.reason in {"stale_operation", "disconnected"} or (exc.reason == "bluetooth_error"
+                          and getattr(exc.__cause__, "winerror", None) in {-2147023673, 1223})):
+                    raise
+                if not delay:
+                    raise
+                logging.getLogger(__name__).info("R1 reconnect after %s, waiting %ss", exc.reason, delay)
+            # Leave the previous exception scope (and its WinRT objects) before retrying.
+            await asyncio.sleep(delay)
 
     connect_target = connect
 

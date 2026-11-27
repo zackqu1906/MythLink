@@ -213,6 +213,13 @@ class InlineInputController(QObject):
     def inputMethodVersion(self):
         return self._input_method_version
 
+    @Property(bool, constant=True)
+    def windowsInputMethodSetup(self):
+        if sys.platform != "win32":
+            return False
+        from ...voice.ime.windows_install import component_dir
+        return (component_dir() / "MythlinkInputSetup.exe").is_file()
+
     @Property(bool, notify=changed)
     def hasInstallDiagnostics(self):
         return bool(self._last_install_report or self._input_method_version.get("code"))
@@ -232,6 +239,10 @@ class InlineInputController(QObject):
 
     @Slot()
     def refreshInputMethodVersion(self):
+        if self.windowsInputMethodSetup and not (self._closed or self._installing):
+            from ...voice.ime.windows_install import version_status
+            self._set_input_method_version(version_status())
+            return
         if not self._enabled or self._windows or self._closed or self._installing:
             return
         from ...voice.ime.input_method_install import InputMethodInstaller
@@ -278,7 +289,8 @@ class InlineInputController(QObject):
 
     @Slot()
     def installInputMethod(self):
-        if not self._enabled or self._windows or self._installing or self._closed:
+        windows_setup = self.windowsInputMethodSetup
+        if (not windows_setup and (not self._enabled or self._windows)) or self._installing or self._closed:
             self._diagnose("installation_blocked", reason=(
                 "disabled" if not self._enabled else "already_installing" if self._installing else "closed"))
             return
@@ -294,7 +306,8 @@ class InlineInputController(QObject):
             self.changed.emit()
             return
         self._installing = True
-        self._installation_message = ("正在构建并更新输入法，请稍候…"
+        self._installation_message = ("请确认 Windows 管理员授权，随后会为当前用户启用输入法。" if windows_setup
+            else "正在构建并更新输入法，请稍候…"
             if self._input_method_version.get("state") == "needs_build"
             else "正在更新输入法，使用中的 Mythlink 会临时切换到系统键盘…")
         self._diagnose("installation_started", reason="user_request")
@@ -303,6 +316,13 @@ class InlineInputController(QObject):
         def work():
             installer = None
             try:
+                if windows_setup:
+                    from ...voice.ime.windows_install import repair
+                    repair()
+                    self._installationFinished.emit(
+                        "已安装并启用。请完全退出并重新打开正在输入的应用。"
+                        if self._windows else "已安装并启用。请重新打开 MythLink 和正在输入的应用。", {})
+                    return
                 from ...voice.ime.input_method_install import InputMethodInstaller
                 installer = InputMethodInstaller()
                 result = installer.install()
@@ -342,6 +362,18 @@ class InlineInputController(QObject):
     def openInputSettings(self):
         if sys.platform == "darwin":
             QDesktopServices.openUrl(QUrl("x-apple.systempreferences:com.apple.Keyboard-Settings.extension"))
+        elif sys.platform == "win32":
+            QDesktopServices.openUrl(QUrl("ms-settings:typing"))
+
+    def _routing_version_error(self, mode):
+        if not self._windows:
+            return f"请先在设置中更新输入法组件，再使用{mode}"
+        from ...voice.ime.windows_install import version_status
+        installed = version_status()
+        self._set_input_method_version(installed)
+        if installed["current"]:
+            return f"输入法已随应用更新，当前输入窗口尚未支持{mode}。请完全退出并重开正在输入的应用（浏览器需退出所有窗口）。"
+        return "请在 MythLink 设置的「系统与权限」中修复输入法，或重新运行安装包并勾选「添加 MythLink 输入法」。"
 
     @Slot()
     def openAccessibilitySettings(self):
@@ -1764,13 +1796,11 @@ class InlineInputController(QObject):
                                   and message.get("phase") == "listening")
             if (begin_acknowledged and self.session_automatic
                     and (not message.get("automatic_mode") or message.get("automatic_routing_version") != 3)):
-                self._transport_failed("请更新 MythLink 输入法并重新打开编辑器，再使用自动判断" if self._windows
-                                       else "请先在设置中更新输入法组件，再使用自动判断")
+                self._transport_failed(self._routing_version_error("自动判断"))
                 return
             if (begin_acknowledged and self.session_routed_edit
                     and (not message.get("routed_edit_mode") or message.get("routed_edit_version") != 1)):
-                self._transport_failed("请更新 MythLink 输入法并重新打开编辑器，再使用手动＋编辑路由" if self._windows
-                                       else "请先在设置中更新输入法组件，再使用手动＋编辑路由")
+                self._transport_failed(self._routing_version_error("手动＋编辑路由"))
                 return
             if begin_acknowledged and not self._windows:
                 self._source_return.begin_acknowledged(message)

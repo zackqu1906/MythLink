@@ -119,7 +119,7 @@ ColumnLayout {
     SettingsPermissions {
         id: permissionsGroup
         Layout.fillWidth: true
-        visible: Qt.platform.os === "osx"
+        visible: Qt.platform.os === "osx" || pane.controller.inlineInput.windowsInputMethodSetup
         controller: pane.controller
     }
     PreferenceSection {
