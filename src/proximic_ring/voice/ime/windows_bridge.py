@@ -131,7 +131,9 @@ def _create_pipe(first):
         handle = kernel.CreateNamedPipeW(
             rf"\\.\pipe\Mythlink.TSF.{session.value}", flags,
             _winapi.PIPE_TYPE_MESSAGE | _winapi.PIPE_READMODE_MESSAGE | 8,
-            _winapi.PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, ctypes.byref(attrs))
+            # The TIP writes whole, hex-encoded messages without blocking the
+            # editor. A completed model edit can carry 512K UTF-16 units.
+            _winapi.PIPE_UNLIMITED_INSTANCES, 65536, 4 * 1024 * 1024, 0, ctypes.byref(attrs))
         if handle == ctypes.c_void_p(-1).value:
             error = ctypes.get_last_error()
             if first and error == 5:

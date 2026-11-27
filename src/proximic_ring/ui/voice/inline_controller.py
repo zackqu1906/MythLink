@@ -1169,8 +1169,8 @@ class InlineInputController(QObject):
         self.settled_session_id = 0
         self._session_id = 0
         origin = self._foreground_identity()
-        self.session_automatic = bool(self.automatic_mode and not self._windows)
-        self.session_routed_edit = bool(self.routed_edit_mode and not self.session_automatic and not self._windows)
+        self.session_automatic = bool(self.automatic_mode)
+        self.session_routed_edit = bool(self.routed_edit_mode and not self.session_automatic)
         pending_focus, self._pending_gesture_focus = self._pending_gesture_focus, None
         if pending_focus is not None:
             focus, created = pending_focus
@@ -1348,6 +1348,9 @@ class InlineInputController(QObject):
     def automatic_progress(self, stage, tasks=()):
         if (self.session_automatic and self.active and not self._startup_buffering
                 and self._view.get("phase") in {"listening", "finishing", "editing"}):
+            if self._windows:
+                # The TSF pipe exchanges scalar fields. The host owns these labels.
+                self._view["automatic_tasks"] = list(tasks)
             return self._send("automatic_progress", stage=str(stage), tasks=list(tasks))
         return False
 
@@ -1473,6 +1476,7 @@ class InlineInputController(QObject):
     @Property(bool, notify=changed)
     def canPolish(self):
         return bool(not self.automatic_polish and not self.session_automatic and self.ready and self._utterance_id and self._view.get("phase") == "dictated"
+                    and (not self._windows or self._view.get("can_polish", False))
                     and self._view.get("raw") and not self._view.get("polished")
                     and not self._view.get("awaiting_readback") and not self._action_pending)
 
@@ -1760,11 +1764,13 @@ class InlineInputController(QObject):
                                   and message.get("phase") == "listening")
             if (begin_acknowledged and self.session_automatic
                     and (not message.get("automatic_mode") or message.get("automatic_routing_version") != 3)):
-                self._transport_failed("请先在设置中更新输入法组件，再使用自动判断")
+                self._transport_failed("请更新 MythLink 输入法并重新打开编辑器，再使用自动判断" if self._windows
+                                       else "请先在设置中更新输入法组件，再使用自动判断")
                 return
             if (begin_acknowledged and self.session_routed_edit
                     and (not message.get("routed_edit_mode") or message.get("routed_edit_version") != 1)):
-                self._transport_failed("请先在设置中更新输入法组件，再使用手动＋编辑路由")
+                self._transport_failed("请更新 MythLink 输入法并重新打开编辑器，再使用手动＋编辑路由" if self._windows
+                                       else "请先在设置中更新输入法组件，再使用手动＋编辑路由")
                 return
             if begin_acknowledged and not self._windows:
                 self._source_return.begin_acknowledged(message)

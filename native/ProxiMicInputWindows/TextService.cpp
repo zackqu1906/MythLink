@@ -161,6 +161,10 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         LONG start;
         std::wstring original, dictated;
         std::string source;
+        // A model edit replaces committed dictation. Both sides use an end
+        // caret so a second undo can still remove the original dictation.
+        std::string transform;
+        std::wstring instruction;
     };
     std::vector<VoiceChange> voiceUndo_, voiceRedo_;
     bool voiceHistoryPending_ = false, redoEnabled_ = false;
@@ -170,6 +174,11 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
     std::string phase_ = "idle";
     std::wstring raw_;
     std::wstring voiceError_;
+    std::optional<std::wstring> voicePrefix_;
+    bool editRequested_ = false, routedEdit_ = false, automatic_ = false;
+    bool polished_ = false, restoreRaw_ = true, retryEdit_ = false, automaticPolish_ = false;
+    std::wstring automaticStage_, previewText_;
+    std::string previewToken_;
     std::wstring preceding_;
     const std::wstring application_ = L"win32:" + std::to_wstring(GetCurrentProcessId());
     unsigned generation_ = 0, selection_ = 0, revision_ = 0;
@@ -347,7 +356,8 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
             return std::wstring(text + 1, length - 1);
         return std::wstring(text, length);
     }
-    bool probe(RECT* caret = nullptr, bool capturePreceding = false) {
+    bool probe(RECT* caret = nullptr, bool capturePreceding = false,
+               std::optional<std::wstring>* voiceSource = nullptr) {
         if (!context_ || !foreground()) return false;
         return SUCCEEDED(edit(context_.get(), TF_ES_READ, [&](TfEditCookie cookie) {
             ComPtr<ITfRange> range;
@@ -360,6 +370,14 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
                 selectionLength_ = length;
             }
             if (capturePreceding) preceding_ = precedingText(cookie, range.get());
+            if (voiceSource) {
+                ComPtr<ITfRange> prefix;
+                if (SUCCEEDED(range->Clone(prefix.out())) && SUCCEEDED(prefix->Collapse(cookie, TF_ANCHOR_START))) {
+                    ComPtr<ITfRange> read;
+                    if (auto before = readBeforeCaret(cookie, prefix.get(), 0, 65536, read))
+                        *voiceSource = std::move(before->text);
+                }
+            }
             if (caret) {
                 ComPtr<ITfContextView> view;
                 BOOL clipped{};
@@ -378,7 +396,7 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         fields.try_emplace("revision", "n" + std::to_string(revision_));
         pipe_.send(std::move(type), fields);
     }
-    void state(const std::string& request = {}) {
+    void state(const std::string& request = {}, bool includeVoiceSource = false) {
         RECT caret{};
         const bool showCaret = !stroke_.empty() || !utterance_.empty();
         const bool ready = probe(showCaret ? &caret : nullptr);
@@ -389,7 +407,23 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         fields["undo_history_depth"] = "n" + std::to_string(voiceUndo_.size());
         fields["can_redo"] = redoEnabled_ && !voiceRedo_.empty() ? "b1" : "b0";
         fields["redo_history_depth"] = "n" + std::to_string(voiceRedo_.size());
-        fields["can_cancel"] = phase_ == "listening" || phase_ == "finishing" || !voiceUndo_.empty() ? "b1" : "b0";
+        fields["can_cancel"] = phase_ == "listening" || phase_ == "finishing" || phase_ == "editing" ||
+            phase_ == "polishing" || !voiceUndo_.empty() ? "b1" : "b0";
+        fields["can_convert"] = canConvertVoice() ? "b1" : "b0";
+        fields["edit_requested"] = editRequested_ ? "b1" : "b0";
+        fields["routed_edit_mode"] = routedEdit_ ? "b1" : "b0";
+        fields["routed_edit_version"] = "n1";
+        fields["automatic_mode"] = automatic_ ? "b1" : "b0";
+        fields["automatic_routing_version"] = "n3";
+        fields["automatic_stage"] = encode(automaticStage_);
+        if (includeVoiceSource) fields["edit_source_text"] = encode(voicePrefix_.value_or(L""));
+        fields["polished"] = polished_ ? "b1" : "b0";
+        fields["can_polish"] = phase_ == "dictated" && !polished_ && ownsDictation() ? "b1" : "b0";
+        fields["polish_restore_available"] = polished_ && restoreRaw_ ? "b1" : "b0";
+        fields["can_retry_edit"] = retryEdit_ ? "b1" : "b0";
+        fields["edit_retry_version"] = "n1";
+        fields["retry_source_utterance_id"] = utterance_.empty() ? "s" : utterance_;
+        fields["voice_preview"] = encode(previewText_);
         fields["awaiting_readback"] = voiceHistoryPending_ ? "b1" : "b0";
         fields["error"] = encode(voiceError_);
         if (showCaret) {
@@ -499,11 +533,11 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         if (context) fields["context"] = encode(*context);
         reply("stroke_correction_state", std::move(fields));
     }
-    static std::optional<CorrectionText> readCorrectionText(TfEditCookie cookie, ITfRange* caret,
-                                                             LONG start, ComPtr<ITfRange>& range) {
+    static std::optional<CorrectionText> readBeforeCaret(TfEditCookie cookie, ITfRange* caret,
+                                                        LONG start, LONG limit, ComPtr<ITfRange>& range) {
         LONG position = 0, length = 0;
         if (!extent(caret, position, length) || length != 0 || start < 0 || position < start ||
-                position - start > correctionPrefixLimit + 2 * correctionWordLimit ||
+                position - start > limit ||
                 FAILED(caret->Clone(range.out()))) return std::nullopt;
         const LONG size = position - start;
         if (size == 0) return CorrectionText{start, {}};
@@ -516,6 +550,10 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         if (FAILED(range->GetText(cookie, 0, text.data(), size, &read)) || read != static_cast<ULONG>(size))
             return std::nullopt;
         return CorrectionText{start, std::move(text)};
+    }
+    static std::optional<CorrectionText> readCorrectionText(TfEditCookie cookie, ITfRange* caret,
+                                                             LONG start, ComPtr<ITfRange>& range) {
+        return readBeforeCaret(cookie, caret, start, correctionPrefixLimit + 2 * correctionWordLimit, range);
     }
     static bool correctionMatches(TfEditCookie cookie, ITfRange* caret, const CorrectionText& expected,
                                   ComPtr<ITfRange>& range) {
@@ -804,23 +842,41 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         }
         sendBackspace(toStart, before, requestId);
     }
-    bool voiceFinished() const { return phase_ == "dictated" || phase_ == "undone" || phase_ == "error"; }
+    bool voiceFinished() const {
+        return phase_ == "dictated" || phase_ == "edited" || phase_ == "undone" || phase_ == "error";
+    }
+    bool canConvertVoice() const {
+        return !automatic_ && !editRequested_ && composition_ && !raw_.empty() &&
+            (phase_ == "listening" || phase_ == "finishing");
+    }
+    void dismissPreview(const std::wstring& reason) {
+        if (previewToken_.empty()) return;
+        reply("dictation_preview_state", {{"token", previewToken_}, {"visible", "b0"}, {"reason", encode(reason)}});
+        previewToken_.clear();
+        previewText_.clear();
+    }
+    void rememberVoice(VoiceChange change) {
+        if (voiceUndo_.size() == 32) voiceUndo_.erase(voiceUndo_.begin());
+        voiceUndo_.push_back(std::move(change));
+        voiceRedo_.clear();
+    }
     void settle(std::string phase, std::wstring error = {}, const std::string& source = {}) {
         phase_ = std::move(phase);
+        editRequested_ = false;
         voiceError_ = error;
         state();
         reply("settled", {{"phase", encode(std::wstring(phase_.begin(), phase_.end()))},
                           {"source_utterance_id", source.empty() ? utterance_ : source},
-                          {"error", encode(error)}, {"text", encode(phase_ == "dictated" ? raw_ : L"")}});
+                          {"error", encode(error)}, {"text", encode(phase_ == "dictated" || phase_ == "edited" ? raw_ : L"")}});
     }
-    HRESULT restoreVoiceText(TfEditCookie cookie, const VoiceChange& change, bool redo) {
+    HRESULT restoreVoiceText(TfEditCookie cookie, const VoiceChange& change, bool redo, bool* wrote = nullptr) {
         const auto& before = redo ? change.original : change.dictated;
         const auto& after = redo ? change.dictated : change.original;
         ComPtr<ITfRange> range;
         LONG start{}, length{};
         if (FAILED(selected(cookie, range)) || !extent(range.get(), start, length)) return E_ABORT;
         const LONG size = static_cast<LONG>(before.size());
-        if (redo) {
+        if (redo && change.transform.empty()) {
             if (start != change.start || length != size) return E_ABORT;
         } else {
             LONG moved{};
@@ -833,9 +889,96 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
                      count != before.size() || actual != before)) return E_ABORT;
         auto hr = range->SetText(cookie, TF_ST_CORRECTION, after.data(), static_cast<LONG>(after.size()));
         if (FAILED(hr)) return hr;
-        if (redo && FAILED(range->Collapse(cookie, TF_ANCHOR_END))) return E_FAIL;
+        if (wrote) *wrote = true;
+        if ((redo || !change.transform.empty()) && FAILED(range->Collapse(cookie, TF_ANCHOR_END))) return E_FAIL;
         TF_SELECTION selection{range.get(), {TF_AE_NONE, FALSE}};
         return context_->SetSelection(cookie, 1, &selection);
+    }
+    bool ownsDictation() const {
+        return !voiceUndo_.empty() && voiceUndo_.back().source == utterance_ &&
+            voiceUndo_.back().transform.empty() && voiceUndo_.back().dictated == raw_;
+    }
+    bool matchesVoiceRange(TfEditCookie cookie, LONG start, const std::wstring& expected) {
+        ComPtr<ITfRange> caret, receipt;
+        if (FAILED(selected(cookie, caret))) return false;
+        const auto checked = readBeforeCaret(cookie, caret.get(), start, static_cast<LONG>(expected.size()), receipt);
+        return checked && checked->text == expected;
+    }
+    void requestVoiceEdit(bool retry = false) {
+        retryEdit_ = false;
+        if (!ownsDictation() || !voicePrefix_ || voiceStart_ != static_cast<LONG>(voicePrefix_->size())) {
+            settle("dictated", L"无法校验光标前的原文，已保留听写");
+            return;
+        }
+        if (voicePrefix_->empty() && !routedEdit_ && !automatic_) {
+            settle("dictated", L"光标前没有可编辑文字，已保留听写");
+            return;
+        }
+        const auto dictatedPrefix = *voicePrefix_ + raw_;
+        if (FAILED(edit(context_.get(), TF_ES_READ, [&](TfEditCookie cookie) {
+                return matchesVoiceRange(cookie, 0, dictatedPrefix) ? S_OK : E_ABORT;
+            }))) {
+            settle("dictated", L"输入框原文已变化，已保留听写");
+            return;
+        }
+        ++revision_;
+        editRequested_ = true;
+        phase_ = "editing";
+        voiceError_.clear();
+        state();
+        reply("edit_requested", {{"original", encode(*voicePrefix_)}, {"instruction", encode(raw_)},
+                                 {"edit_context_available", "b1"}, {"retry_edit", retry ? "b1" : "b0"}});
+    }
+    void finishVoiceUpdate() {
+        voiceRedo_.clear();
+        if (voiceStart_ >= 0 && !raw_.empty() && raw_.size() <= 65536)
+            rememberVoice({voiceStart_, original_, raw_, utterance_});
+        else if (!raw_.empty()) voiceUndo_.clear();
+        if (editRequested_ && !raw_.empty()) {
+            requestVoiceEdit();
+            return;
+        }
+        settle("dictated");
+        if (automaticPolish_ && ownsDictation()) {
+            previewToken_ = encode(decode(utterance_) + L"-" + std::to_wstring(revision_));
+            reply("dictation_preview_requested", {{"token", previewToken_}, {"raw", encode(raw_)},
+                                                  {"before_cursor", encode(voicePrefix_.value_or(L""))}});
+        }
+    }
+    bool applyVoiceResult(bool editResult, const std::wstring& text, const std::wstring& error) {
+        if (!error.empty() || text.empty() || text.size() > 512 * 1024) {
+            settle("dictated", !error.empty() ? error : L"模型未返回可用文字，已保留听写");
+            return false;
+        }
+        if (!ownsDictation() || (editResult && !voicePrefix_)) {
+            settle("error", L"本句已变化，无法应用结果");
+            return false;
+        }
+        const VoiceChange change{editResult ? 0 : voiceStart_, editResult ? *voicePrefix_ + raw_ : raw_,
+            editResult ? text + original_ : text, utterance_, editResult ? "edit" : "polish", raw_};
+        writing_ = true;
+        bool wrote = false;
+        const auto hr = edit(context_.get(), TF_ES_READWRITE, [&](TfEditCookie cookie) {
+            if (focusDirty_ || !foreground()) return E_ABORT;
+            const auto result = restoreVoiceText(cookie, change, true, &wrote);
+            if (FAILED(result)) return result;
+            return matchesVoiceRange(cookie, change.start, change.dictated) ? S_OK : E_FAIL;
+        });
+        writing_ = false;
+        ++revision_;
+        if (FAILED(hr)) {
+            if (wrote) { voiceUndo_.clear(); voiceRedo_.clear(); }
+            settle("error", wrote ? L"文本已更新，但未确认光标位置" : L"无法确认本句原文或光标，未替换文字");
+            return false;
+        }
+        if (!editResult && !restoreRaw_) {
+            voiceUndo_.back().dictated = text;
+            voiceRedo_.clear();
+        } else rememberVoice(change);
+        raw_ = text;
+        polished_ = !editResult;
+        settle(editResult ? "edited" : "dictated");
+        return true;
     }
     void requestVoiceHistory(bool redo) {
         auto& history = redo ? voiceRedo_ : voiceUndo_;
@@ -863,8 +1006,12 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
             }
             from.pop_back();
             if (redo || redoEnabled_) (redo ? voiceUndo_ : voiceRedo_).push_back(change);
-            raw_ = redo ? change.dictated : L"";
-            voiceHistoryResult_ = HistoryResult{redo ? "dictated" : "undone", change.source, {}};
+            const bool transformed = !change.transform.empty();
+            raw_ = redo ? change.dictated : transformed ? change.instruction : L"";
+            polished_ = redo && change.transform == "polish";
+            retryEdit_ = !redo && change.transform == "edit" && change.source == utterance_ && ownsDictation();
+            voiceHistoryResult_ = HistoryResult{redo && change.transform == "edit" ? "edited" :
+                redo || transformed ? "dictated" : "undone", change.source, {}};
             return S_OK;
         });
         HRESULT session = E_FAIL;
@@ -956,6 +1103,7 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         if (FAILED(hr) || FAILED(session)) report(FAILED(hr) ? hr : session, L"TSF 未授予写入会话");
     }
     void retire() {
+        dismissPreview(L"target_changed");
         if (composition_) replace(L"", true, true);
         composition_.reset();
         clearStroke();
@@ -966,6 +1114,9 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         voiceHistoryPending_ = false;
         voiceHistoryResult_.reset();
         voiceError_.clear();
+        voicePrefix_.reset();
+        editRequested_ = retryEdit_ = polished_ = automatic_ = routedEdit_ = false;
+        automaticStage_.clear();
         utterance_.clear();
         phase_ = "idle";
         raw_.clear();
@@ -981,28 +1132,52 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         if (epoch_.empty() || fields["epoch"] != epoch_) return;
         if (type == "configure") {
             redoEnabled_ = fields["redo_enabled"] == "b1";
+            automaticPolish_ = fields["automatic_polish"] == "b1";
+            if (!automaticPolish_ && !previewToken_.empty()) {
+                dismissPreview(L"mode_changed");
+                state();
+            }
             if (!redoEnabled_) voiceRedo_.clear();
             return;
         }
         if (type == "ping") { state(fields["request_id"]); return; }
+        if (type == "dictation_preview_result" || type == "dictation_preview_dismiss") {
+            if (previewToken_.empty() || previewToken_ != fields["token"]) return;
+            if (type == "dictation_preview_dismiss") dismissPreview(L"dismissed");
+            else if (phase_ == "dictated" && ownsDictation()) {
+                previewText_ = decode(fields["text"]);
+                reply("dictation_preview_state", {{"token", previewToken_}, {"visible", previewText_.empty() ? "b0" : "b1"}});
+            }
+            state();
+            return;
+        }
         if (fields["client_id"] != clientId()) return;
         if (type == "begin") {
-            if ((!utterance_.empty() && !voiceFinished()) || voiceHistoryPending_ || !stroke_.empty() || !probe()) return;
+            std::optional<std::wstring> prefix;
+            if ((!utterance_.empty() && !voiceFinished()) || voiceHistoryPending_ || !stroke_.empty() ||
+                !probe(nullptr, false, &prefix)) return;
             const auto expected = fields["selection_revision"];
             if (!expected.empty() && expected != "n" + std::to_string(selection_)) return;
+            dismissPreview(L"next_sentence");
+            voicePrefix_ = std::move(prefix);
             utterance_ = fields["utterance_id"];
+            editRequested_ = polished_ = retryEdit_ = false;
+            automatic_ = fields["automatic_mode"] == "b1";
+            routedEdit_ = fields["routed_edit_mode"] == "b1";
+            automaticStage_.clear();
             voiceStart_ = -1;
             original_.clear();
             raw_.clear();
             voiceError_.clear();
             ++revision_;
             phase_ = "listening";
-            state();
+            state({}, automatic_);
         } else if (type == "stroke_begin") {
             RECT caret{};
             const bool ok = (utterance_.empty() || voiceFinished()) && !voiceHistoryPending_ &&
                 probe(&caret, true) && caret.bottom > caret.top;
             if (ok) {
+                dismissPreview(L"mode_changed");
                 utterance_.clear();
                 raw_.clear();
                 voiceUndo_.clear();
@@ -1045,26 +1220,68 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
                 raw_ = decode(fields["text"]);
                 const auto error = decode(fields["error"]);
                 const bool final = fields["final"] == "b1";
-                if (!error.empty() || FAILED(replace(raw_, final))) {
+                if (final && automatic_) editRequested_ = fields["automatic_task"] == encode(L"edit");
+                if (!error.empty() || raw_.size() > 65536 || FAILED(replace(raw_, final, final && raw_.empty()))) {
                     replace(L"", true, true);
                     settle("error", error.empty() ? L"文本框未接受语音文字" : error);
                 } else if (final) {
-                    voiceRedo_.clear();
-                    if (voiceStart_ >= 0 && !raw_.empty() && raw_.size() <= 65536) {
-                        if (voiceUndo_.size() == 32) voiceUndo_.erase(voiceUndo_.begin());
-                        voiceUndo_.push_back({voiceStart_, original_, raw_, utterance_});
-                    } else {
-                        voiceUndo_.clear();
-                    }
-                    settle("dictated");
+                    finishVoiceUpdate();
                 } else {
+                    state();
+                }
+            } else if (type == "automatic_progress" && automatic_ && !voiceFinished()) {
+                automaticStage_ = decode(fields["stage"]);
+                state();
+            } else if (type == "convert" && (phase_ == "listening" || phase_ == "finishing") && !editRequested_) {
+                if (canConvertVoice()) {
+                    editRequested_ = true;
+                    voiceError_.clear();
+                    phase_ = "finishing";
+                    state();
+                    reply("finish_audio");
+                } else {
+                    voiceError_ = L"请在听写文字尚未定稿时右滑";
                     state();
                 }
             } else if ((type == "finish" || type == "finish_dictation") && phase_ == "listening") {
                 phase_ = "finishing";
                 state();
                 reply("finish_audio");
+            } else if (type == "retry_edit" && phase_ == "dictated" && retryEdit_ && !voiceHistoryPending_) {
+                requestVoiceEdit(true);
+            } else if (type == "polish" && phase_ == "dictated" && !automaticPolish_ && !polished_ &&
+                       !voiceHistoryPending_ && ownsDictation()) {
+                restoreRaw_ = fields["restore_raw_on_undo"] != "b0";
+                retryEdit_ = false;
+                phase_ = "polishing";
+                ++revision_;
+                state();
+                reply("polish_requested", {{"text", encode(raw_)}});
+            } else if (((type == "edit_result" && phase_ == "editing") ||
+                        (type == "polish_result" && phase_ == "polishing")) &&
+                       fields["revision"] == "n" + std::to_string(revision_)) {
+                applyVoiceResult(type == "edit_result", decode(fields["text"]), decode(fields["error"]));
+            } else if (type == "accept_dictation_preview" && automaticPolish_ && phase_ == "dictated" &&
+                       !previewText_.empty() && fields["token"] == previewToken_ &&
+                       fields["revision"] == "n" + std::to_string(revision_) && !voiceHistoryPending_) {
+                auto suggestion = std::move(previewText_);
+                const auto token = previewToken_;
+                dismissPreview(L"applying");
+                restoreRaw_ = true;
+                const bool applied = applyVoiceResult(false, suggestion, {});
+                reply("dictation_preview_state", {{"token", token}, {"visible", "b0"},
+                                                   {"reason", encode(applied ? L"applied" : L"write_unconfirmed")}});
+            } else if ((type == "cancel" || type == "finish_dictation") && phase_ == "finishing" && editRequested_) {
+                // Audio is already ending. The final transcript still belongs to this sentence.
+                ++revision_;
+                editRequested_ = false;
+                state();
+            } else if ((type == "cancel" && (phase_ == "editing" || phase_ == "polishing")) ||
+                       (type == "finish_dictation" && phase_ == "editing")) {
+                ++revision_;
+                settle("dictated");
             } else if (type == "cancel" && voiceFinished()) {
+                dismissPreview(L"cancel");
                 if (!voiceUndo_.empty()) requestVoiceHistory(false);
                 else settle("error", L"当前输入框没有可撤销的听写");
             } else if (type == "redo" && voiceFinished()) {

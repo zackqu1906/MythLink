@@ -638,9 +638,14 @@ class AppGestureController(QObject):
             return True
         if name.endswith("-pinch") and name in bindings.confirm + bindings.end:
             return False
+        if name in bindings.send:
+            # Even after dictation was retired, a focused composer can contain
+            # a draft. The input route still requires a live editor and HWND.
+            return False
         inline = self.owner._inline_input
         if inline._utterance_id and ((name in bindings.undo and inline.canUndo)
-                or (name in bindings.switch_mode and inline.canHistoryForward)):
+                or (name in bindings.switch_mode and (inline.canHistoryForward or inline.canRequestConversion))
+                or (name in bindings.polish and (inline.canPolish or inline.canRequestConversion))):
             return False
         return True
 
@@ -748,7 +753,7 @@ class AppGestureController(QObject):
                         raise SceneActionError("input_method_no_focus")
                     if start_focus.native_target is not None:
                         target = start_focus.native_target
-            if busy and input_priority and name in bindings.send + bindings.polish:
+            if busy and name in bindings.send + bindings.polish:
                 input_method_target = inline.capture_gesture_target()
                 if input_method_target is None:
                     raise SceneActionError("input_method_not_ready")
@@ -761,7 +766,7 @@ class AppGestureController(QObject):
                     target = self.backend.capture(plain_enter=True, focus_sensitive=False)
                     if (target is None or (target.bundle, target.pid) !=
                             (input_method_target[3], input_method_target[4])):
-                        target, input_method_target = None, None
+                        raise SceneActionError("foreground_changed")
             elif target is None and (not busy or name in bindings.send + bindings.polish):
                 front = None
                 scene_capture = False
@@ -1104,6 +1109,33 @@ class AppGestureController(QObject):
         if self._last_dispatch and self._last_dispatch[0] == signature and now - self._last_dispatch[1] < 0.35:
             self._trace(trace_id, "outcome", "duplicate_suppressed", target=target, action=action)
             return
+        if (action == "send" and input_method_target and not input_validated_at and target.pid == os.getpid()
+                and getattr(self.owner._inline_input, "_windows", False)):
+            # The TSF client for our own Qt editor services the probe on this
+            # GUI thread. Keep it pumping until the worker has a fresh receipt.
+            inline = self.owner._inline_input
+            connection, generation = self.owner._disconnect_event, self._generation
+            def valid():
+                if (self._setup_closed or time.monotonic() - now > 1 or generation != self._generation or connection.is_set()
+                        or connection is not self.owner._disconnect_event or not self.owner._runtime_active
+                        or not inline.gesture_target_is_current(input_method_target)):
+                    return "input_method_focus_changed"
+                return ""
+            def probe():
+                focus = inline.capture_start_focus(allow_activation=False)
+                if (focus is None or focus.status != "text" or not focus.target
+                        or focus.target[:len(input_method_target)] != input_method_target):
+                    raise SceneActionError("input_method_focus_changed")
+                return focus.target, time.monotonic()
+            def complete(receipt, error):
+                if error or valid():
+                    self.notify("输入目标已变化，未发送")
+                    return
+                self._dispatch(action, binding, target, trace_id=trace_id,
+                               input_method_target=receipt[0], input_validated_at=receipt[1])
+            if not self._input_actions.submit(probe, valid, complete):
+                self._trace(trace_id, "outcome", "input_validation_pending", action=action)
+            return
         self._trace(trace_id, "dispatch", "dispatch_started", target=target, action=action, shortcut=binding.shortcut)
         try:
             if input_method_target is not None:
@@ -1232,7 +1264,8 @@ class AppGestureController(QObject):
         if self._pending is None:
             return
         event, binding = self._pending
-        if event.sentence != self.sentence() or phase != "dictated" or not str(text).strip():
+        if (event.sentence != self.sentence() or phase != "dictated" or not str(text).strip()
+                or self.owner._inline_input.error):
             self.cancel_pending("本句没有成功定稿，已取消后续操作")
             return
         if (self._generation != event.generation or self.owner._disconnect_event.is_set()

@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 import json
 import threading
-import time
+from time import perf_counter
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
@@ -20,7 +20,7 @@ class PreviewRequest:
     raw: str
     interaction: str
     preflight_block: str = ""
-    started: float = field(default_factory=time.monotonic)
+    started: float = field(default_factory=perf_counter)
     cancelled: threading.Event = field(default_factory=threading.Event)
     invalidated_at: float = 0.
     shown: bool = False
@@ -83,7 +83,7 @@ class DictationPreviewController(QObject):
         if job is None or job is not self.current:
             return
         self.current = None
-        job.invalidated_at = job.invalidated_at or time.monotonic()
+        job.invalidated_at = job.invalidated_at or perf_counter()
         job.cancelled.set()
         output_blocked = reason in {"unchanged", "empty", "multiple_lines", "structured_output", "preview_unavailable"}
         expired_before_use = (not job.shown or job.accepting) and reason in {"user_input", "next_sentence", "target_changed"}
@@ -109,7 +109,7 @@ class DictationPreviewController(QObject):
             if job is not None and job.token == token:
                 if message.get("visible") is True:
                     job.shown = True
-                    self._record(job, shown=True, shown_after_ms=round((time.monotonic()-job.started)*1000))
+                    self._record(job, shown=True, shown_after_ms=round((perf_counter()-job.started)*1000))
                 elif reason == "applying":
                     self.current = None
                 else:
@@ -148,14 +148,14 @@ class DictationPreviewController(QObject):
             if job.cancelled.is_set():
                 result = dict(generation="not_started")
             else:
-                model_start = time.monotonic()
+                model_start = perf_counter()
                 candidates = self.owner._hotwords.store.polish_candidates(job.raw)
                 output = self._processor.suggest_dictation(settings, job.raw, prefix, context, candidates)
                 result = dict(generation="completed", output=output)
         except Exception as exc:
             result = dict(generation="failed" if model_start or not job.cancelled.is_set() else "not_started",
                           generation_error=str(exc))
-        finished = time.monotonic()
+        finished = perf_counter()
         if model_start is not None:
             result["model_ms"] = round((finished-model_start)*1000)
         result["elapsed_ms"] = round((finished-job.started)*1000)
@@ -210,7 +210,7 @@ class DictationPreviewController(QObject):
     def next_sentence(self):
         job = self.current
         if job and not job.cancelled.is_set():
-            job.invalidated_at = time.monotonic()
+            job.invalidated_at = perf_counter()
             job.cancelled.set()
             self._dismiss.emit(job, "next_sentence")
 

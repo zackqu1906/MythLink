@@ -1,6 +1,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 import json
+import os
 
 import pytest
 
@@ -180,8 +181,13 @@ def test_idle_actions_work_with_recognition_paused_and_other_input_method(route,
     assert sent == [(app, shortcut)]
 
 
-def test_continuous_send_finishes_commits_and_sends_exactly_once(route):
+@pytest.mark.parametrize("windows_pointer", [False, True])
+def test_continuous_send_finishes_commits_and_sends_exactly_once(route, windows_pointer, monkeypatch):
     c, s, inline, _, sent, messages, emit = route
+    if windows_pointer:
+        monkeypatch.setattr(c._touchpad, "_windows_ime", True)
+        monkeypatch.setattr(c._touchpad, "_state", "running")
+        monkeypatch.setattr(c._touchpad, "_mode", "pointer")
     inline._view.update(phase="listening", has_composition=True)
     emit("swipe-up")
     emit("swipe-up")
@@ -194,6 +200,78 @@ def test_continuous_send_finishes_commits_and_sends_exactly_once(route):
     assert sent == [("codex", "Return")]
     assert messages[-1] == ("end_input", {"outcome": "sent"})
     assert s._pending is None and inline._utterance_id == ""
+
+
+def test_swipe_up_cannot_follow_a_window_change_during_capture(route, monkeypatch):
+    _, service, inline, backend, sent, messages, emit = route
+    inline._view.update(phase="listening", has_composition=True)
+    capture = backend.capture
+    monkeypatch.setattr(backend, "capture", lambda **options: replace(capture(**options), pid=99))
+    event = emit("swipe-up")
+    assert event.route == "blocked" and not service._pending and not messages and not sent
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows keyboard backend")
+@pytest.mark.parametrize("move_focus", [False, True])
+def test_windows_send_pins_focus_until_the_native_key_pair(route, monkeypatch, move_focus):
+    import ctypes
+    from proximic_ring.desktop import windows_shortcuts as windows
+    c, service, inline, _, _, messages, emit = route
+    keys = []
+    class User32:
+        focus = 101
+        def GetForegroundWindow(self):
+            return 100
+        def GetGUIThreadInfo(self, thread, info):
+            gui = ctypes.cast(info, ctypes.POINTER(windows.GuiThreadInfo)).contents
+            gui.focus = gui.caret = self.focus
+            return True
+        def GetAsyncKeyState(self, vk):
+            return 0
+        def SendInput(self, count, events, size):
+            keys.extend((event.ki.wVk, event.ki.dwFlags) for event in events)
+            return count
+    user = User32()
+    monkeypatch.setattr(windows, "api", lambda: (user, None, None))
+    monkeypatch.setattr(windows, "window_info", lambda hwnd: ({"value": "win.test"}, 42, 8))
+    service.backend = windows.WindowsAppShortcuts()
+    proof = ("e", "c", "u", "win32:42", 42)
+    monkeypatch.setattr(inline, "capture_gesture_target", lambda: proof)
+    monkeypatch.setattr(inline, "same_gesture_target", lambda candidate: candidate == proof)
+    monkeypatch.setattr(c._touchpad, "_windows_ime", True)
+    monkeypatch.setattr(c._touchpad, "_state", "running")
+    monkeypatch.setattr(c._touchpad, "_mode", "pointer")
+    inline._view.update(application="win32:42", phase="listening", has_composition=True)
+    emit("swipe-up")
+    emit("swipe-up")
+    assert messages == [("finish", {})] and not keys
+    if move_focus:
+        user.focus = 102  # A second editor in the same application and window.
+    inline._view.update(phase="dictated", has_composition=False)
+    inline.settled.emit("dictated", "已定稿")
+    inline.settled.emit("dictated", "已定稿")
+    assert keys == ([] if move_focus else [(13, 0), (13, 2)])
+    assert not service._pending
+
+
+def test_self_send_revalidates_after_own_editor_processes_probe(route, monkeypatch):
+    from proximic_ring.voice.ime.focus_probe import InputFocus
+    _, service, inline, backend, sent, _, _ = route
+    backend.target = replace(backend.target, pid=os.getpid())
+    inline._windows = True
+    inline._view["phase"] = "dictated"
+    proof = ("e", "c", "u", backend.target.bundle, os.getpid())
+    monkeypatch.setattr(inline, "_foreground_identity", lambda: proof[3:])
+    monkeypatch.setattr(inline, "capture_start_focus", lambda **_: InputFocus("text", (*proof, (0, 0))))
+    queue = []
+    monkeypatch.setattr(service._input_actions, "submit", lambda *job: queue.append(job) or True)
+    target = backend.capture(plain_enter=True)
+    service._dispatch("send", AppBinding("swipe-up", "Return"), target, input_method_target=proof)
+    assert not sent and len(queue) == 1
+    work, valid, complete = queue.pop()
+    assert not valid()
+    complete(work(), None)
+    assert sent == [("codex", "Return")]
 
 
 def test_failed_send_keeps_sentence_and_never_shows_sent_feedback(route, monkeypatch):

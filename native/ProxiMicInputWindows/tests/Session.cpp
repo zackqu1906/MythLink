@@ -1,7 +1,13 @@
 // Compile with the same Windows SDK/compiler as the DLL; no registration or
 // target application is needed. Exercise the real OnEndEdit implementation.
 #define MYTHLINK_TSF_TEST
+#define INITGUID
+#include <windows.h>
+static HWND testEditor;
+static HWND foregroundForTest() { return testEditor ? testEditor : GetForegroundWindow(); }
+#define GetForegroundWindow foregroundForTest
 #include "../TextService.cpp"
+#undef GetForegroundWindow
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -40,7 +46,7 @@ struct Range final : ITfRangeACP {
         *offset = start; *length = end - start; return S_OK;
     }
     HRESULT STDMETHODCALLTYPE SetText(TfEditCookie, DWORD flags, const WCHAR* value, LONG length) override {
-        assert(flags == TF_ST_CORRECTION);
+        assert(flags == TF_ST_CORRECTION || flags == 0);
         text.replace(start, end - start, value, length);
         end = start + length;
         return S_OK;
@@ -66,7 +72,22 @@ struct Range final : ITfRangeACP {
     }
 };
 
-struct Context final : ITfContext, ITfInsertAtSelection {
+struct Composition final : ITfComposition {
+    std::wstring& text;
+    LONG start;
+    LONG& end;
+    ULONG refs = 1;
+    Composition(std::wstring& text, LONG start, LONG& end) : text(text), start(start), end(end) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void**) override { return E_NOINTERFACE; }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { const auto n = --refs; if (!n) delete this; return n; }
+    HRESULT STDMETHODCALLTYPE GetRange(ITfRange** out) override { *out = new Range(text, start, end); return S_OK; }
+    HRESULT STDMETHODCALLTYPE ShiftStart(TfEditCookie, ITfRange*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ShiftEnd(TfEditCookie, ITfRange*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE EndComposition(TfEditCookie) override { return S_OK; }
+};
+
+struct Context final : ITfContext, ITfInsertAtSelection, ITfContextComposition {
     bool ownWrite = true;
     HRESULT writerStatus = S_OK;
     TfClientId requestedClient = 0;
@@ -75,14 +96,19 @@ struct Context final : ITfContext, ITfInsertAtSelection {
     std::wstring text;
     LONG start = 0, end = 0;
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
-        if (iid != IID_ITfInsertAtSelection) return E_NOINTERFACE;
-        *out = static_cast<ITfInsertAtSelection*>(this);
+        if (iid == IID_ITfInsertAtSelection) *out = static_cast<ITfInsertAtSelection*>(this);
+        else if (iid == IID_ITfContextComposition) *out = static_cast<ITfContextComposition*>(this);
+        else return E_NOINTERFACE;
         AddRef();
         return S_OK;
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
     ULONG STDMETHODCALLTYPE Release() override { return 1; }
     HRESULT STDMETHODCALLTYPE RequestEditSession(TfClientId, ITfEditSession* edit, DWORD flags, HRESULT* result) override {
+        if (testEditor && !(flags & TF_ES_ASYNC)) {
+            *result = edit->DoEditSession(0);
+            return S_OK;
+        }
         assert(!pending);
         pending = edit;
         pending->AddRef();
@@ -130,6 +156,16 @@ struct Context final : ITfContext, ITfInsertAtSelection {
     HRESULT STDMETHODCALLTYPE InsertEmbeddedAtSelection(TfEditCookie, DWORD, IDataObject*, ITfRange**) override {
         return E_NOTIMPL;
     }
+    HRESULT STDMETHODCALLTYPE StartComposition(TfEditCookie, ITfRange* range, ITfCompositionSink*,
+                                             ITfComposition** out) override {
+        *out = new Composition(text, static_cast<Range*>(range)->start, end);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE EnumCompositions(IEnumITfCompositionView**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE FindComposition(TfEditCookie, ITfRange*, IEnumITfCompositionView**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE TakeOwnership(TfEditCookie, ITfCompositionView*, ITfCompositionSink*, ITfComposition**) override {
+        return E_NOTIMPL;
+    }
 };
 
 struct Record final : ITfEditRecord {
@@ -142,7 +178,90 @@ struct Record final : ITfEditRecord {
 };
 
 struct ServiceTest {
+    static void voiceActions() {
+        Context context;
+        Service service;
+        testEditor = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+        assert(testEditor);
+        service.context_.reset(&context);
+        service.threadFocus_ = service.enabled_ = true;
+        service.epoch_ = encode(L"test");
+        auto send = [&](const std::string& kind, Fields fields = {}) {
+            fields["client_id"] = service.clientId();
+            fields["epoch"] = service.epoch_;
+            fields["utterance_id"] = encode(L"session");
+            fields.try_emplace("revision", "n" + std::to_string(service.revision_));
+            service.dispatch(kind, std::move(fields));
+        };
+        auto begin = [&](Fields options = {}) {
+            send("reset");
+            context.text = L"明天开会下午三点";
+            context.start = 4;
+            context.end = 6;  // Replace a selection while dictating; preserve the suffix.
+            send("begin", std::move(options));
+            assert(service.phase_ == "listening" && service.voicePrefix_ == L"明天开会");
+        };
+        auto final = [&](const wchar_t* text, const wchar_t* task = L"") {
+            send("update", {{"text", encode(text)}, {"final", "b1"}, {"automatic_task", encode(task)}});
+        };
+        auto convert = [&] {
+            begin({{"routed_edit_mode", "b1"}});
+            send("update", {{"text", encode(L"改到")}});
+            assert(service.canConvertVoice());
+            send("convert");
+            assert(service.editRequested_ && service.phase_ == "finishing");
+            final(L"改到后天");
+            assert(service.phase_ == "editing" && context.text == L"明天开会改到后天三点");
+        };
+        convert();
+        send("edit_result", {{"revision", "n0"}, {"text", encode(L"过期")}});
+        assert(service.phase_ == "editing" && context.text == L"明天开会改到后天三点");
+        send("edit_result", {{"text", encode(L"后天开会")}});
+        assert(service.phase_ == "edited" && context.text == L"后天开会下午三点");
+        send("cancel");
+        assert(service.voiceHistoryResult_ && service.voiceHistoryResult_->phase == "dictated");
+        assert(context.text == L"明天开会改到后天三点" && context.start == context.end && service.retryEdit_);
+        // Deliver the edit result only if the exact requested prefix still matches.
+        convert();
+        context.text[0] = L'今';
+        send("edit_result", {{"text", encode(L"不应写入")}});
+        assert(service.phase_ == "error" && context.text == L"今天开会改到后天三点");
+        convert();
+        send("cancel");
+        send("edit_result", {{"text", encode(L"迟到的结果")}});
+        assert(service.phase_ == "dictated" && context.text == L"明天开会改到后天三点");
+        begin();
+        send("update", {{"text", encode(L"普通听写")}});
+        send("convert");
+        send("cancel");
+        assert(service.phase_ == "finishing" && !service.editRequested_);
+        final(L"普通听写");
+        assert(service.phase_ == "dictated" && context.text == L"明天开会普通听写三点");
+        begin({{"automatic_mode", "b1"}});
+        final(L"改写", L"edit");
+        assert(service.phase_ == "editing");
+        send("edit_result", {{"error", encode(L"模型不可用")}});
+        assert(service.phase_ == "dictated" && context.text == L"明天开会改写三点");
+        begin();
+        final(L"早上");
+        send("polish", {{"restore_raw_on_undo", "b1"}});
+        assert(service.phase_ == "polishing");
+        send("polish_result", {{"text", encode(L"上午")}});
+        assert(service.polished_ && context.text == L"明天开会上午三点");
+        send("configure", {{"automatic_polish", "b1"}});
+        begin();
+        final(L"早上");
+        assert(!service.previewToken_.empty());
+        send("dictation_preview_result", {{"token", service.previewToken_}, {"text", encode(L"上午")}});
+        assert(context.text == L"明天开会早上三点" && service.previewText_ == L"上午");
+        send("accept_dictation_preview", {{"token", service.previewToken_}});
+        assert(context.text == L"明天开会上午三点" && service.previewToken_.empty());
+        service.context_.reset();
+        DestroyWindow(testEditor);
+        testEditor = nullptr;
+    }
     static void run() {
+        voiceActions();
         Service service;
         Context context;
         Record record;
@@ -276,7 +395,7 @@ struct ServiceTest {
         assert(service.restoreVoiceText(0, sentence, false) == E_ABORT && context.text[1] == L'新');
         service.context_.reset();
         service.stroke_.clear();
-        std::cout << "TSF session, deletion, correction and dictation undo/redo regressions passed\n";
+        std::cout << "TSF dictation, conversion, polish, preview, undo/redo and stroke regressions passed\n";
     }
 };
 }
