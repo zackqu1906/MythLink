@@ -55,6 +55,11 @@ class AutomaticVoiceMixin:
         self._cancel_automatic_voice()
         enabled = self._inline_input.session_automatic if self._inline_enabled() else self._input_routing_mode == INPUT_ROUTING_AUTO
         if not enabled:
+            # A short sentence can finish before the focused Windows editor
+            # acknowledges basic dictation. BEGIN already rechecked the target.
+            if (buffered and self._inline_input.session_basic_dictation
+                    and buffered[0][2] == self._inline_input._utterance_id):
+                self._inline_input.update(buffered[1], True, buffered[2])
             return
         target = self._inline_input.target_reference() if self._inline_enabled() else self._speech_start_target
         capture = getattr(self, "_voice_capture", None)

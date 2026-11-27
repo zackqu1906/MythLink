@@ -36,6 +36,19 @@ const GUID profileCategories[] = {
 HMODULE module;
 std::atomic<long> objects{};
 
+bool ownsEditorFocus(HWND window, DWORD process, DWORD thread) {
+    DWORD pid{};
+    const DWORD windowThread = GetWindowThreadProcessId(window, &pid);
+    if (!windowThread || pid != process) return false;
+    // Windows 11 Notepad hosts RichEdit on another thread in the same
+    // window. Only the thread owning its actual focused child may write.
+    GUITHREADINFO gui{sizeof(gui)};
+    if (!GetGUIThreadInfo(windowThread, &gui)) return false;
+    if (!gui.hwndFocus) return windowThread == thread;
+    if (windowThread != thread && !IsChild(window, gui.hwndFocus)) return false;
+    return GetWindowThreadProcessId(gui.hwndFocus, &pid) == thread && pid == process;
+}
+
 template<class T> class ComPtr {
     T* ptr_ = nullptr;
 public:
@@ -245,10 +258,7 @@ class Service final : public ITfTextInputProcessor, public ITfThreadMgrEventSink
         return encode(id).substr(1);
     }
     bool foreground() const {
-        DWORD pid{};
-        HWND foregroundWindow = GetForegroundWindow();
-        return enabled_ && threadFocus_ && GetWindowThreadProcessId(foregroundWindow, &pid)
-            == GetCurrentThreadId() && pid == GetCurrentProcessId();
+        return enabled_ && threadFocus_ && ownsEditorFocus(GetForegroundWindow(), GetCurrentProcessId(), GetCurrentThreadId());
     }
     template<class T> static HRESULT advise(IUnknown* object, REFIID iid, T* sink, DWORD& cookie) {
         ComPtr<ITfSource> source;

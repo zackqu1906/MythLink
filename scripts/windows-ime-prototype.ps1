@@ -60,7 +60,7 @@ if ($Action -eq 'Status') {
         try {
             Get-LoadedInputDll $Process $RegisteredDll |
                 ForEach-Object {
-                    $Version = if ($_.FileName -eq $RegisteredDll) { 'Current' } else { 'Old (restart app)' }
+                    $Version = if ($_.FileName -eq $RegisteredDll) { 'Current' } else { 'Previous version loaded' }
                     [pscustomobject]@{ Process = $Process.ProcessName; Id = $Process.Id; Version = $Version; Dll = $_.FileName }
                 }
         } catch {}
@@ -120,7 +120,7 @@ if ($Action -in @('Install', 'Uninstall')) {
         if ($Key) {
             # Keep the existing TSF profile and change only its COM server path.
             Set-Item -LiteralPath $RegistrationKey -Value $InstalledDll
-            Write-Host "Updated Mythlink. Restart any app still using the previous DLL."
+            Write-Host "Updated Mythlink. Open editors can continue dictating. Reopen an editor to load the new editing features."
             return
         }
         $Arguments = @('/s', "`"$InstalledDll`"")

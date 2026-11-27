@@ -21,8 +21,8 @@ def test_panel_tracks_partial_final_and_undo_without_taking_focus():
     inline.error, inline.status, inline.cancelLabel = "", "正在听写", "取消"
     inline.canUndo, inline.canHistoryForward, inline.canRetryEdit = True, False, False
     inline.canConvert, inline.canPolish = True, False
-    inline.session_automatic, inline.automatic_polish = False, False
-    inline._view = {"phase": "listening", "raw": "这是一段听写", "can_cancel": True}
+    inline.session_automatic = inline.session_basic_dictation = inline.automatic_polish = False
+    inline._view = {"phase": "listening", "raw": "这是一段听写", "can_cancel": True, "can_polish": False}
     panel = WindowsVoicePanel(inline, app)
     try:
         inline.changed.emit()
@@ -37,6 +37,12 @@ def test_panel_tracks_partial_final_and_undo_without_taking_focus():
         assert "食指捏合" in actions()[-1]["description"]
         assert root.property("statusText") == inline.status and panel.window.height() == 36
         inline.canConvert = False
+        inline.session_basic_dictation = True
+        del inline._view["can_polish"]
+        inline.changed.emit()
+        assert "基础听写" in root.property("statusText")
+        assert [item["label"] for item in actions()] == ["取消", "发送", "结束"]
+        inline.session_basic_dictation = False
         inline._view.update(phase="editing", edit_requested=True)
         inline.changed.emit()
         assert root.property("processing") and [item["label"] for item in actions()] == ["取消"]

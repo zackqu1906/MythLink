@@ -62,7 +62,8 @@ class WindowsVoicePanel(QObject):
             add("switch_mode", "重做" if inline.canRetryEdit else "下一步")
         if preview:
             add("polish", "采纳", ["swipe-down"])
-        elif not inline.session_automatic and not inline.automatic_polish and (pending or inline.canPolish):
+        elif not inline.session_automatic and not inline.automatic_polish and (
+                (pending and "can_polish" in view) or inline.canPolish):
             add("polish", "润色")
         if not writing and (pending or (phase in {"dictated", "edited"} and view.get("raw") and not inline.error)):
             add("send", "发送")
@@ -73,7 +74,9 @@ class WindowsVoicePanel(QObject):
         icon = ("status-error" if inline.error else "processing-spinner" if busy else
                 "listening-waveform" if phase == "listening" else "status-done")
         title = inline.error or inline.status
-        if phase == "listening" and not (inline.session_automatic or inline.error or view.get("raw")):
+        if phase == "listening" and inline.session_basic_dictation and not inline.error:
+            title = "基础听写 · 当前窗口使用旧版输入法"
+        elif phase == "listening" and not (inline.session_automatic or inline.error or view.get("raw")):
             title = "听写 · 可以说话"
         elif phase == "dictated" and not (inline.error or view.get("raw")):
             title = "未识别到语音"

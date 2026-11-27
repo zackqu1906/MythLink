@@ -70,6 +70,7 @@ class InlineInputController(QObject):
         self._final_sent = False
         self.automatic_mode = False
         self.session_automatic = False
+        self.session_basic_dictation = False
         self.routed_edit_mode = False
         self.session_routed_edit = False
         self._first_text_update_sent = False
@@ -320,7 +321,7 @@ class InlineInputController(QObject):
                     from ...voice.ime.windows_install import repair
                     repair()
                     self._installationFinished.emit(
-                        "已安装并启用。请完全退出并重新打开正在输入的应用。"
+                        "已安装并启用。可回到原文本框继续听写。"
                         if self._windows else "已安装并启用。请重新打开 MythLink 和正在输入的应用。", {})
                     return
                 from ...voice.ime.input_method_install import InputMethodInstaller
@@ -372,7 +373,7 @@ class InlineInputController(QObject):
         installed = version_status()
         self._set_input_method_version(installed)
         if installed["current"]:
-            return f"输入法已随应用更新，当前输入窗口尚未支持{mode}。请完全退出并重开正在输入的应用（浏览器需退出所有窗口）。"
+            return f"当前文本框未确认{mode}。请重新点入文本框后重试；仍然失败时，请保存工作并重开这个应用。"
         return "请在 MythLink 设置的「系统与权限」中修复输入法，或重新运行安装包并勾选「添加 MythLink 输入法」。"
 
     @Slot()
@@ -414,8 +415,8 @@ class InlineInputController(QObject):
 
     @Property(bool, notify=changed)
     def canUndo(self):
-        if self._windows and self._view.get("phase") in {"dictated", "undone"} and "can_cancel" in self._view:
-            return bool(self.ready and self._utterance_id and self._view["can_cancel"])
+        if self._windows and self._view.get("phase") in {"dictated", "undone"}:
+            return bool(self.ready and self._utterance_id and self._view.get("can_cancel"))
         return bool(self.active or (self.ready
                     and self._view.get("phase") == "undone"
                     and (self._view.get("undo_history_depth", 0) > 0 or self._view.get("can_system_undo"))))
@@ -476,6 +477,7 @@ class InlineInputController(QObject):
         # A manual request must reach the IME so an unavailable capability can
         # produce a specific explanation instead of silently ignoring a swipe.
         return bool(not self.session_automatic and self.active and self._view.get("has_composition") and
+                    (not self._windows or "can_convert" in self._view) and
                     not self._view.get("edit_requested") and
                     self._view.get("phase") in {"listening", "finishing"})
 
@@ -1179,8 +1181,13 @@ class InlineInputController(QObject):
         history = self._source_return.begin_history
         focus = self._startup_focus_target
         expected = {"selection_revision": focus[5][0]} if self._windows and focus else {}
-        return self._send("begin", automatic_mode=self.session_automatic,
-                          routed_edit_mode=self.session_routed_edit,
+        # An editor can keep its previous TSF DLL loaded after an upgrade.
+        # Negotiate with this focused client's state for each new transaction.
+        self.session_basic_dictation = self._windows and (
+            (self.session_automatic and self._view.get("automatic_routing_version") != 3)
+            or (self.session_routed_edit and self._view.get("routed_edit_version") != 1))
+        return self._send("begin", automatic_mode=self.session_automatic and not self.session_basic_dictation,
+                          routed_edit_mode=self.session_routed_edit and not self.session_basic_dictation,
                           **({"system_undo_trial": True, "host_posts_undo": True} if self._history_action_mode == "system_retry"
                              and not self._source_return.enabled else {}),
                           **expected,
@@ -1203,6 +1210,7 @@ class InlineInputController(QObject):
         origin = self._foreground_identity()
         self.session_automatic = bool(self.automatic_mode)
         self.session_routed_edit = bool(self.routed_edit_mode and not self.session_automatic)
+        self.session_basic_dictation = False
         pending_focus, self._pending_gesture_focus = self._pending_gesture_focus, None
         if pending_focus is not None:
             focus, created = pending_focus
@@ -1794,6 +1802,12 @@ class InlineInputController(QObject):
             begin_acknowledged = (self._reply_stage == "begin" and client_id == self._client_id
                                   and utterance_id == self._utterance_id and message.get("ready")
                                   and message.get("phase") == "listening")
+            if begin_acknowledged and self.session_basic_dictation:
+                if message.get("automatic_mode") or message.get("routed_edit_mode"):
+                    self._transport_failed(self._routing_version_error("基础听写"))
+                    return
+                self.session_automatic = self.session_routed_edit = False
+                self._diagnose("begin", reason="windows_editor_basic_dictation")
             if (begin_acknowledged and self.session_automatic
                     and (not message.get("automatic_mode") or message.get("automatic_routing_version") != 3)):
                 self._transport_failed(self._routing_version_error("自动判断"))

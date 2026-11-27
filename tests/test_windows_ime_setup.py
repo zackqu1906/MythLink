@@ -9,6 +9,45 @@ import pytest
 from test_inline_ui import inline_ui
 
 
+@pytest.mark.parametrize("routing", ["auto", "manual_routed_edit"])
+def test_running_windows_editor_negotiates_plain_dictation_per_sentence(inline_ui, monkeypatch, routing):
+    controller, bridge, _, _, event = inline_ui
+    inline = controller._inline_input
+    inline.reset()
+    inline._windows = True
+    monkeypatch.setattr(controller._text_processing_worker, "warmup_router", lambda: None)
+    controller.inputRoutingMode = routing
+    origin = ("win32:42", 42)
+    monkeypatch.setattr(inline, "_foreground_identity", lambda: origin)
+    target = (inline._epoch, inline._client_id, "", *origin, (7, 0))
+
+    def start(capabilities):
+        from time import monotonic
+        inline.pin_start_focus(target, monotonic())
+        assert inline.begin()
+        event(phase="idle", ready=True, utterance_id="", application=origin[0], selection=[7, 0],
+              request_id=inline._startup_focus_request, **capabilities)
+        return bridge.messages[-1]
+
+    begin = start({})
+    assert begin["type"] == "begin" and begin["selection_revision"] == 7
+    assert not begin["automatic_mode"] and not begin["routed_edit_mode"]
+    if routing == "auto":
+        controller._submit_automatic_voice("兼容听写", 31, None, inline=True)
+    else:
+        assert inline.update("兼容听写", True, 31)
+    assert not any(m.get("text") == "兼容听写" for m in bridge.messages)
+    event(phase="listening", ready=True, application=origin[0], selection=[7, 0])
+    assert inline.session_basic_dictation and inline.session_routing_mode == "manual"
+    assert not inline.error
+    assert [m["text"] for m in bridge.messages if m["type"] == "update" and m.get("final")] == ["兼容听写"]
+    inline.reset()
+    begin = start(dict(automatic_routing_version=3, routed_edit_version=1))
+    assert not inline.session_basic_dictation and controller.inputRoutingMode == routing
+    assert begin["automatic_mode"] == (routing == "auto")
+    assert begin["routed_edit_mode"] == (routing == "manual_routed_edit")
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows settings")
 def test_windows_settings_exposes_working_repair_for_current_dll(tmp_path, monkeypatch, request):
     from PySide6.QtCore import QObject, QMetaObject, Q_ARG
@@ -54,7 +93,7 @@ def test_registered_component_is_compared_by_content_and_guidance_is_actionable(
     assert "修复输入法" in InlineInputController._routing_version_error(inline, "自动判断")
     registered.write_bytes(bundled.read_bytes())
     assert windows_install.version_status()["current"]
-    assert "完全退出" in InlineInputController._routing_version_error(inline, "自动判断")
+    assert "重新点入文本框" in InlineInputController._routing_version_error(inline, "自动判断")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows TSF installer")

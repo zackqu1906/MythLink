@@ -27,7 +27,7 @@ def version_status():
         return dict(state="unknown", current=False, text="无法校验", detail="Windows 无法读取输入法组件。")
     if current:
         return dict(state="current", current=True, text="已是当前版本",
-                    detail="输入法随应用安装更新。升级前已打开的编辑器需完全退出再打开，才能加载新版。")
+                    detail="输入法随应用安装更新。已打开的编辑器可继续听写。若候选窗显示「基础听写」，重新打开该应用可启用新版编辑功能。")
     return dict(state="outdated", current=False, text="需要更新", detail="已注册的输入法与应用内的版本不同。")
 
 

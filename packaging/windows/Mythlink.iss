@@ -46,8 +46,8 @@ english.InputEnableError=Windows could not add Mythlink to your input methods. R
 chinesesimplified.InputEnableError=Windows 未能将 Mythlink 添加到当前用户的输入法列表。请重试，或返回取消勾选输入法后继续安装。
 english.InputShellRefresh=Windows Explorer is still using the previous MythLink input method. Restart Windows Explorer in Task Manager, or sign out and back in, to refresh the taskbar icon.
 chinesesimplified.InputShellRefresh=Windows 资源管理器仍在使用旧版 MythLink 输入法。在任务管理器中重新启动“Windows 资源管理器”，或注销并重新登录，即可让任务栏重新加载输入法图标。
-english.InputEditorsRefresh=The MythLink input method was updated. Fully quit and reopen editors and browsers that were running during the upgrade to load the new version.
-chinesesimplified.InputEditorsRefresh=MythLink 输入法已更新。升级前已打开的编辑器和浏览器，请完全退出后重新打开，以加载新版输入法。
+english.InputEditorsRefresh=The MythLink input method was updated. You can keep dictating in open apps. If the voice panel shows basic dictation, reopen that app when you need the new editing features.
+chinesesimplified.InputEditorsRefresh=MythLink 输入法已更新，可以在已打开的应用中继续听写。若候选窗显示“基础听写”，需要新版编辑功能时再重新打开该应用。
 
 [InstallDelete]
 ; Older installers left discoverable model sources and partial optional

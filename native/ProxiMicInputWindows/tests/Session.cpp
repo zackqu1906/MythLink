@@ -5,9 +5,26 @@
 #include <windows.h>
 static HWND testEditor;
 static HWND foregroundForTest() { return testEditor ? testEditor : GetForegroundWindow(); }
+// Simulate a foreground window hosted on a different TSF thread.
+static HWND splitFrame, splitFocus;
+static DWORD windowThreadForTest(HWND window, DWORD* process) {
+    const DWORD thread = GetWindowThreadProcessId(window, process);
+    return splitFrame && window == splitFrame ? thread + 1 : thread;
+}
+static BOOL guiInfoForTest(DWORD thread, GUITHREADINFO* info) {
+    if (splitFrame && thread == GetCurrentThreadId() + 1) {
+        info->hwndFocus = splitFocus;
+        return TRUE;
+    }
+    return GetGUIThreadInfo(thread, info);
+}
 #define GetForegroundWindow foregroundForTest
+#define GetWindowThreadProcessId windowThreadForTest
+#define GetGUIThreadInfo guiInfoForTest
 #include "../TextService.cpp"
 #undef GetForegroundWindow
+#undef GetWindowThreadProcessId
+#undef GetGUIThreadInfo
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -441,6 +458,17 @@ static void checkIndicator(const wchar_t* dllPath) {
 }
 
 int main(int argc, char** argv) {
+    splitFrame = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 10, 10, nullptr, nullptr, nullptr, nullptr);
+    splitFocus = CreateWindowExW(0, L"EDIT", L"", WS_CHILD, 0, 0, 1, 1, splitFrame, nullptr, nullptr, nullptr);
+    assert(splitFrame && splitFocus);
+    const DWORD process = GetCurrentProcessId(), editorThread = GetCurrentThreadId();
+    assert(ownsEditorFocus(splitFrame, process, editorThread));
+    assert(!ownsEditorFocus(splitFrame, process, editorThread + 1));
+    assert(!ownsEditorFocus(splitFrame, process + 1, editorThread));
+    splitFocus = nullptr;
+    assert(!ownsEditorFocus(splitFrame, process, editorThread));
+    DestroyWindow(splitFrame);
+    splitFrame = nullptr;
     ServiceTest::run();
     if (argc == 2) {
         wchar_t path[MAX_PATH]{};
